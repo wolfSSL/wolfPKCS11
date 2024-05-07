@@ -1620,6 +1620,84 @@ static CK_RV test_attribute_types(void* args)
     return ret;
 }
 
+static CK_RV test_attribute_get(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    static byte keyData[] = { 0x01 };
+    static byte id[] = { 0x01, 0x02, 0x03 };
+    int i = 0;
+    CK_BBOOL falseBool = 0;
+    CK_ATTRIBUTE createTmpl[] = {
+        { CKA_CLASS,             &pubKeyClass,     sizeof(pubKeyClass)      },
+        { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
+        { CKA_EXTRACTABLE,       &ckTrue,           sizeof(ckTrue)            },
+        { CKA_VALUE,             keyData,           sizeof(keyData)           },
+        { CKA_ID,                id,                sizeof(id)                },
+        { CKA_PRIVATE,           &falseBool,        sizeof(falseBool)         }
+    };
+    CK_ULONG tmplCnt = sizeof(createTmpl) / sizeof(*createTmpl);
+    CK_ATTRIBUTE getTmpl[] = {
+        { CKA_CLASS,          NULL,   0    },
+        { CKA_KEY_TYPE,       NULL,   0    },
+        { CKA_PRIVATE,        NULL,   0    },
+        { CKA_ID,             NULL,   0    },
+    };
+    CK_ULONG getTmplCnt = sizeof(getTmpl) / sizeof(*getTmpl);
+
+    ret = funcList->C_CreateObject(session, createTmpl, tmplCnt, &obj);
+    CHECK_CKR(ret, "Create Object");
+
+    ret = funcList->C_GetAttributeValue(session, obj, getTmpl, getTmplCnt);
+    CHECK_CKR(ret, "C_GetAttributeValue");
+
+    for (i = 0; i < (int)getTmplCnt; i++) {
+        getTmpl[i].pValue = XMALLOC(getTmpl[i].ulValueLen * sizeof(byte), 
+                                                NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (getTmpl[i].pValue == NULL)
+            ret = CKR_DEVICE_MEMORY;
+        CHECK_CKR(ret, "Allocate get attribute memory");
+    }
+
+    ret = funcList->C_GetAttributeValue(session, obj, getTmpl, getTmplCnt);
+    CHECK_CKR(ret, "C_GetAttributeValue");
+
+    if (getTmpl[0].ulValueLen != sizeof(pubKeyClass) ||
+        (*((CK_OBJECT_CLASS *)(getTmpl[0].pValue))) != pubKeyClass) {
+            ret = -1;
+            CHECK_CKR(ret, "CKA_CLASS value match creation params");
+    }
+
+    if (getTmpl[1].ulValueLen != sizeof(genericKeyType) ||
+        (*((CK_OBJECT_CLASS *)(getTmpl[1].pValue))) != genericKeyType) {
+            ret = -1;
+            CHECK_CKR(ret, "CKA_KEY_TYPE value match creation params");
+    }
+
+    if (getTmpl[2].ulValueLen != sizeof(falseBool) ||
+        (*((CK_BBOOL *)(getTmpl[2].pValue))) != falseBool) {
+            ret = -1;
+            CHECK_CKR(ret, "CKA_PRIVATE boolean match creation params");
+    }
+
+    if (getTmpl[3].ulValueLen != sizeof(id) ||
+        XMEMCMP(getTmpl[3].pValue, id, sizeof(id)) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "CKA_ID value and len match creation params");
+    }
+
+    for (i = 0; i < (int)getTmplCnt; i++)
+    {
+        if (getTmpl[i].pValue != NULL)
+            XFREE(getTmpl[i].pValue, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    }
+    if (obj != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, obj);
+
+    return ret;
+}
+
 static CK_RV get_generic_key(CK_SESSION_HANDLE session, unsigned char* data,
                              CK_ULONG len, CK_BBOOL extractable,
                              CK_OBJECT_HANDLE* key)
@@ -7675,6 +7753,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_object),
     PKCS11TEST_FUNC_SESS_DECL(test_attribute),
     PKCS11TEST_FUNC_SESS_DECL(test_attribute_types),
+    PKCS11TEST_FUNC_SESS_DECL(test_attribute_get),
     PKCS11TEST_FUNC_SESS_DECL(test_attributes_secret),
 #ifndef NO_RSA
     PKCS11TEST_FUNC_SESS_DECL(test_attributes_rsa),
