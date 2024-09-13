@@ -2930,8 +2930,8 @@ static CK_RV test_pubkey_sig_fail(CK_SESSION_HANDLE session, CK_MECHANISM* mech,
         CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED, "Verify wrong init");
     }
     if (ret == CKR_OK) {
-       ret = funcList->C_VerifyInit(session, mech, pub);
-       CHECK_CKR(ret, "Verify Init");
+        ret = funcList->C_VerifyInit(session, mech, pub);
+        CHECK_CKR(ret, "Verify Init");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_Sign(session, hash, hashSz, out, &outSz);
@@ -3794,11 +3794,13 @@ static CK_RV test_rsa_fixed_keys_oaep(void* args)
                                                                              0);
         CHECK_CKR(ret, "SHA1 No AAD");
     }
+#ifdef WOLFSSL_SHA224
     if (ret == CKR_OK) {
         ret = rsa_oaep_test(session, priv, pub, CKM_SHA224, CKG_MGF1_SHA224,
                                                                        NULL, 0);
         CHECK_CKR(ret, "SHA224 No AAD");
     }
+#endif
     if (ret == CKR_OK) {
         ret = rsa_oaep_test(session, priv, pub, CKM_SHA384, CKG_MGF1_SHA384,
                                                                        NULL, 0);
@@ -3893,10 +3895,12 @@ static CK_RV test_rsa_fixed_keys_pss(void* args)
         ret = rsa_pss_test(session, priv, pub, CKM_SHA1, CKG_MGF1_SHA1, 20);
         CHECK_CKR(ret, "RSA PKCS#1 PSS - SHA1");
     }
+#ifdef WOLFSSL_SHA224
     if (ret == CKR_OK) {
         ret = rsa_pss_test(session, priv, pub, CKM_SHA224, CKG_MGF1_SHA224, 28);
         CHECK_CKR(ret, "RSA PKCS#1 PSS - SHA224");
     }
+#endif
     if (ret == CKR_OK) {
         ret = rsa_pss_test(session, priv, pub, CKM_SHA384, CKG_MGF1_SHA384, 48);
         CHECK_CKR(ret, "RSA PKCS#1 PSS - SHA384");
@@ -4819,10 +4823,15 @@ static CK_RV ecdsa_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE privKey,
         ret = funcList->C_VerifyInit(session, &mech, pubKey);
         CHECK_CKR(ret, "ECDSA Verify Init");
     }
+#ifndef WOLFSSL_MAXQ10XX_CRYPTO
+    /* In the case of MAXQ1065 it will be signed by the pre-provisioned private
+     * key so verify operation will fail as this is NOT the corresponding
+     * public key. */
     if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, hash, hashSz, out, outSz);
         CHECK_CKR(ret, "ECDSA Verify");
     }
+#endif
     if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, hash, hashSz - 1, out, outSz);
         CHECK_CKR_FAIL(ret, CKR_SIGNATURE_INVALID, "ECDSA Verify bad hash");
