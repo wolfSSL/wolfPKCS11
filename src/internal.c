@@ -59,6 +59,10 @@
 #define WOLFPKCS11_NEED_RSA_RNG
 #endif
 
+#if defined(WOLFPKCS11_TPM) && defined(WOLFSSL_MAXQ10XX_CRYPTO)
+    #error "wolfTPM and MAXQ10XX are incompatable with each other."
+#endif
+
 /* Size of hash calculated from PIN. */
 #define PIN_HASH_SZ                    32
 /* Size of seed used when calculating hash from PIN. */
@@ -3380,8 +3384,10 @@ static int wp11_Slot_Init(WP11_Slot* slot, int id)
 
     ret = WP11_Lock_Init(&slot->lock);
     if (ret == 0) {
-    #ifdef WOLFPKCS11_TPM
+    #if defined(WOLFPKCS11_TPM)
         ret = wp11_TpmInit(slot);
+    #elif defined (WOLFSSL_MAXQ10XX_CRYPTO)
+        slot->devId = MAXQ_DEVICE_ID;
     #endif
         /* Create the minimum number of unused sessions. */
         for (i = 0; ret == 0 && i < WP11_SESSION_CNT_MIN; i++) {
@@ -3448,7 +3454,13 @@ int WP11_Library_Init(void)
     if (libraryInitCount == 0) {
         ret = WP11_Lock_Init(&globalLock);
         if (ret == 0)
+#ifdef WOLFSSL_MAXQ10XX_CRYPTO
+/* TODO: can we even do this? Has wolfCrypt even been initialized yet? */
+            ret = wc_InitRng_ex(&globalRandom, NULL, MAXQ_DEVICE_ID);
+#else
             ret = wc_InitRng(&globalRandom);
+#endif
+
         for (i = 0; (ret == 0) && (i < slotCnt); i++) {
             ret = wp11_Slot_Init(&slotList[i], i + 1);
         }
