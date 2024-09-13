@@ -59,6 +59,10 @@
 #define WOLFPKCS11_NEED_RSA_RNG
 #endif
 
+#if defined(WOLFPKCS11_TPM) && defined(WOLFSSL_MAXQ10XX_CRYPTO)
+    #error "wolfTPM and MAXQ10XX are incompatable with each other."
+#endif
+
 /* Helper to get size of struct field */
 #define FIELD_SIZE(type, field) (sizeof(((type *)0)->field))
 
@@ -3538,8 +3542,10 @@ static int wp11_Slot_Init(WP11_Slot* slot, int id)
 
     ret = WP11_Lock_Init(&slot->lock);
     if (ret == 0) {
-    #ifdef WOLFPKCS11_TPM
+    #if defined(WOLFPKCS11_TPM)
         ret = wp11_TpmInit(slot);
+    #elif defined (WOLFSSL_MAXQ10XX_CRYPTO)
+        slot->devId = MAXQ_DEVICE_ID;
     #endif
         /* Create the minimum number of unused sessions. */
         for (i = 0; ret == 0 && i < WP11_SESSION_CNT_MIN; i++) {
@@ -3605,8 +3611,16 @@ int WP11_Library_Init(void)
 
     if (libraryInitCount == 0) {
         ret = WP11_Lock_Init(&globalLock);
-        if (ret == 0)
+        if (ret == 0) {
+#ifdef WOLFSSL_MAXQ10XX_CRYPTO
+            ret = wolfCrypt_Init();
+            if (ret == 0) {
+                ret = wc_InitRng_ex(&globalRandom, NULL, MAXQ_DEVICE_ID);
+            }
+#else
             ret = wc_InitRng(&globalRandom);
+#endif
+        }
         for (i = 0; (ret == 0) && (i < slotCnt); i++) {
             ret = wp11_Slot_Init(&slotList[i], i + 1);
         }
@@ -4725,7 +4739,7 @@ int WP11_Session_SetCbcParams(WP11_Session* session, unsigned char* iv,
     WP11_Data* key;
 
     /* AES object on session. */
-    ret = wc_AesInit(&cbc->aes, NULL, INVALID_DEVID);
+    ret = wc_AesInit(&cbc->aes, NULL, session->devId);
     if (ret == 0) {
         if (object->onToken)
             WP11_Lock_LockRO(object->lock);
@@ -7659,7 +7673,7 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
     WC_RNG rng;
 #endif
 
-    ret = wc_ecc_init_ex(&pubKey, NULL, INVALID_DEVID);
+    ret = wc_ecc_init_ex(&pubKey, NULL, priv->slot->devId);
     if (ret == 0) {
         ret = wc_ecc_import_x963(point, pointLen, &pubKey);
     }
@@ -8280,7 +8294,7 @@ int WP11_AesGcm_Encrypt(unsigned char* plain, word32 plainSz,
     word32 authTagSz = gcm->tagBits / 8;
     unsigned char* authTag = enc + plainSz;
 
-    ret = wc_AesInit(&aes, NULL, INVALID_DEVID);
+    ret = wc_AesInit(&aes, NULL, session->devId);
     if (ret == 0) {
         if (secret->onToken)
             WP11_Lock_LockRO(secret->lock);
@@ -8332,7 +8346,7 @@ int WP11_AesGcm_EncryptUpdate(unsigned char* plain, word32 plainSz,
     word32 authTagSz = gcm->tagBits / 8;
     unsigned char* authTag = gcm->authTag;
 
-    ret = wc_AesInit(&aes, NULL, INVALID_DEVID);
+    ret = wc_AesInit(&aes, NULL, session->devId);
     if (ret == 0) {
         if (secret->onToken)
             WP11_Lock_LockRO(secret->lock);
@@ -8412,7 +8426,7 @@ int WP11_AesGcm_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
     word32 authTagSz = gcm->tagBits / 8;
     unsigned char* authTag = enc + encSz - authTagSz;
 
-    ret = wc_AesInit(&aes, NULL, INVALID_DEVID);
+    ret = wc_AesInit(&aes, NULL, session->devId);
     if (ret == 0) {
         if (secret->onToken) {
             WP11_Lock_LockRO(secret->lock);
@@ -8825,7 +8839,7 @@ int WP11_Hmac_Init(CK_MECHANISM_TYPE mechanism, WP11_Object* secret,
     if (ret == 0)
         hmac->hmacSz = wc_HmacSizeByType(hashType);
     if (ret == 0)
-        ret = wc_HmacInit(&hmac->hmac, NULL, INVALID_DEVID);
+        ret = wc_HmacInit(&hmac->hmac, NULL, secret->slot->devId);
     if (ret == 0) {
         if (secret->onToken)
             WP11_Lock_LockRO(secret->lock);

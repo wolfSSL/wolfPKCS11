@@ -2621,7 +2621,7 @@ CK_RV C_DigestFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pDigest,
 CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
                     CK_OBJECT_HANDLE hKey)
 {
-    int ret;
+    int ret = 0;
     WP11_Session* session;
     WP11_Object* obj = NULL;
     CK_KEY_TYPE type;
@@ -2635,10 +2635,27 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
         return CKR_ARGUMENTS_BAD;
 
     ret = WP11_Object_Find(session, hKey, &obj);
-    if (ret != 0)
+#ifdef WOLFSSL_MAXQ10XX_CRYPTO
+    if ((ret != 0) && (hKey == 0) && (pMechanism->mechanism == CKM_ECDSA)) {
+        if (pMechanism->pParameter != NULL || pMechanism->ulParameterLen != 0) {
+            return CKR_MECHANISM_PARAM_INVALID;
+        }
+
+        /* Do not worry; the private key is pre-provisioned, but note there is
+         * no object to set. */
+        init = WP11_INIT_ECDSA_SIGN;
+        WP11_Session_SetMechanism(session, pMechanism->mechanism);
+        WP11_Session_SetOpInitialized(session, init);
+
+        return CKR_OK;
+    } else
+#endif
+    if (ret != 0) {
         return CKR_OBJECT_HANDLE_INVALID;
+    }
 
     type = WP11_Object_GetType(obj);
+
     switch (pMechanism->mechanism) {
 #ifndef NO_RSA
         case CKM_RSA_X_509:
@@ -2837,8 +2854,9 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 #endif
 #ifdef HAVE_ECC
         case CKM_ECDSA:
-            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_ECDSA_SIGN))
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_ECDSA_SIGN)) {
                 return CKR_OPERATION_NOT_INITIALIZED;
+            }
 
             sigLen = WP11_Ec_SigLen(obj);
             if (pSignature == NULL) {
