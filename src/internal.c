@@ -3453,14 +3453,16 @@ int WP11_Library_Init(void)
 
     if (libraryInitCount == 0) {
         ret = WP11_Lock_Init(&globalLock);
-        if (ret == 0)
+        if (ret == 0) {
 #ifdef WOLFSSL_MAXQ10XX_CRYPTO
-/* TODO: can we even do this? Has wolfCrypt even been initialized yet? */
-            ret = wc_InitRng_ex(&globalRandom, NULL, MAXQ_DEVICE_ID);
+            ret = wolfCrypt_Init();
+            if (ret == 0) {
+                ret = wc_InitRng_ex(&globalRandom, NULL, MAXQ_DEVICE_ID);
+            }
 #else
             ret = wc_InitRng(&globalRandom);
 #endif
-
+        }
         for (i = 0; (ret == 0) && (i < slotCnt); i++) {
             ret = wp11_Slot_Init(&slotList[i], i + 1);
         }
