@@ -39,6 +39,7 @@
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/asn_public.h>
 #include <wolfssl/wolfcrypt/aes.h>
+#include <wolfssl/ssl.h>
 
 #include <wolfpkcs11/internal.h>
 #include <wolfpkcs11/store.h>
@@ -3375,9 +3376,9 @@ static void wp11_Slot_Final(WP11_Slot* slot)
 static int wp11_Slot_Init(WP11_Slot* slot, int id)
 {
     int ret = 0;
+    char label[LABEL_SZ] = { 0, };
     int i;
     WP11_Session* curr;
-    char label[LABEL_SZ] = { 0, };
 
     XMEMSET(slot, 0, sizeof(*slot));
     slot->id = id;
@@ -3397,6 +3398,67 @@ static int wp11_Slot_Init(WP11_Slot* slot, int id)
             ret = wp11_Token_Init(&slot->token, label);
             slot->token.state = WP11_TOKEN_STATE_UNKNOWN;
         }
+#if 0
+    //#ifdef WOLFSSL_MAXQ10XX_CRYPTO
+    {
+        CK_BBOOL ckFalse = CK_FALSE;
+        CK_BBOOL ckTrue  = CK_TRUE;
+        CK_OBJECT_HANDLE priv_handle = CK_INVALID_HANDLE;
+        CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
+        CK_KEY_TYPE keyType =CKK_EC;
+        unsigned char kid[2] = { 0x10, 0x04 };
+
+        WP11_Object* priv_object = NULL;
+        CK_ATTRIBUTE      privKeyTmpl[] = {
+            { CKA_CLASS,    &keyClass,    sizeof(keyClass) },
+            { CKA_KEY_TYPE, &keyType,     sizeof(keyType) }, 
+            { CKA_DECRYPT,  &ckFalse,     sizeof(ckFalse) },
+            { CKA_SIGN,     &ckTrue,      sizeof(ckTrue) },
+            { CKA_ID,       kid,          sizeof(kid) },
+            { CKA_TOKEN,    &ckTrue,      sizeof(ckTrue) }
+        };
+        int               privKeyTmplCnt = 6;
+        CK_SESSION_HANDLE session;
+
+        if (ret == 0) {
+            ret = WP11_Slot_OpenSession(slot,
+                                        CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                        NULL, NULL, &session);
+        }
+
+        if (ret == 0) {
+            ret = WP11_Session_Get(session, &curr);
+        }
+
+        /* Create a private key object with ID 1004. This is created during the
+         * init_tls scripts in the MAXQ10XX SDK and is the private key used for
+         * for client auth. */
+
+        if (ret == 0) {
+            /* this is just using last session created.  Is this ok?  Should 
+             * I access through some API? ....same with AddObject() */
+            rv = NewObject(curr, CKK_EC, CKO_PRIVATE_KEY,
+                           privKeyTmpl, privKeyTmplCnt,
+                           &priv_object);
+        }
+
+        /*TODO: Populate priv and the template.  See WP11_Ec_GenerateKeyPair
+                for priv and whatever calls C_GenerateKeyPair for the template.
+                Might not need to do anything....we'll see. 
+         */
+
+        if (rv == CKR_OK) {
+            rv = AddObject(curr, priv_object,
+                           privKeyTmpl, privKeyTmplCnt,
+                           &priv_handle);
+        }
+
+        if (rv == CKR_OK) {
+            //WP11_Slot_CloseSession(slot, &session);
+            WP11_Slot_CloseSession(slot, curr);
+        }
+    }
+    #endif
 
         if (ret != 0) {
             wp11_Slot_Final(slot);
@@ -3456,6 +3518,9 @@ int WP11_Library_Init(void)
         if (ret == 0) {
 #ifdef WOLFSSL_MAXQ10XX_CRYPTO
             ret = wolfCrypt_Init();
+            wolfSSL_Init();
+            wolfSSL_Debugging_ON();
+            wolfSSL_CTX_new(wolfTLSv1_2_client_method());
             if (ret == 0) {
                 ret = wc_InitRng_ex(&globalRandom, NULL, MAXQ_DEVICE_ID);
             }
@@ -3650,6 +3715,51 @@ int WP11_Slot_OpenSession(WP11_Slot* slot, unsigned long flags, void* app,
     }
     WP11_Lock_UnlockRW(&slot->lock);
 
+
+    /* Total hack!!  But figure out how to do it properly later. */
+#if 0
+//    #ifdef WOLFSSL_MAXQ10XX_CRYPTO
+    {
+        CK_BBOOL ckFalse = CK_FALSE;
+        CK_BBOOL ckTrue  = CK_TRUE;
+        CK_OBJECT_HANDLE priv_handle = CK_INVALID_HANDLE;
+        CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
+        CK_KEY_TYPE keyType =CKK_EC;
+        unsigned char kid[2] = { 0x10, 0x04 };
+        CK_RV rv;
+
+        WP11_Object* priv_object = NULL;
+        CK_ATTRIBUTE      privKeyTmpl[] = {
+            { CKA_CLASS,    &keyClass,    sizeof(keyClass) },
+            { CKA_KEY_TYPE, &keyType,     sizeof(keyType) }, 
+            { CKA_DECRYPT,  &ckFalse,     sizeof(ckFalse) },
+            { CKA_SIGN,     &ckTrue,      sizeof(ckTrue) },
+            { CKA_ID,       kid,          sizeof(kid) },
+        };
+        int               privKeyTmplCnt = 5;
+
+        /* Create a private key object with ID 1004. This is created during the
+         * init_tls scripts in the MAXQ10XX SDK and is the private key used for
+         * for client auth. */
+
+        if (ret == 0) {
+            rv = NewObject(curr, CKK_EC, CKO_PRIVATE_KEY,
+                           privKeyTmpl, privKeyTmplCnt,
+                           &priv_object);
+        }
+
+        /*TODO: Populate priv and the template.  See WP11_Ec_GenerateKeyPair
+                for priv and whatever calls C_GenerateKeyPair for the template.
+                Might not need to do anything....we'll see. 
+         */
+
+        if (rv == CKR_OK) {
+            rv = AddObject(curr, priv_object,
+                           privKeyTmpl, privKeyTmplCnt,
+                           &priv_handle);
+        }
+    }
+    #endif
     /* Ignored at this time. */
     (void)app;
     (void)notify;
@@ -7397,6 +7507,46 @@ int WP11_Ec_Sign(unsigned char* hash, word32 hashLen, unsigned char* sig,
     return ret;
 }
 
+#if 1
+int WP11_Ec_ProvisionedKey_Sign(WP11_Session* session,
+                                unsigned char *hash, word32 hashLen,
+                                unsigned char *sig, word32* sigLen)
+{
+/* The public key registered as a private key in the TLS client is not sent down
+ * to wolfPKCS11. So, we do it again here. This is from wolfssl's
+ * certs/ecc-client-keyPub.der.
+                 * TODO: move to internal.c. It knows about devId = 1065.
+                 * TODO: check siglen */
+
+byte dummyBytes[] = {
+0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a,
+0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00, 0x04, 0x55, 0xbf, 0xf4, 0x0f, 0x44,
+0x50, 0x9a, 0x3d, 0xce, 0x9b, 0xb7, 0xf0, 0xc5, 0x4d, 0xf5, 0x70, 0x7b, 0xd4, 0xec, 0x24, 0x8e,
+0x19, 0x80, 0xec, 0x5a, 0x4c, 0xa2, 0x24, 0x03, 0x62, 0x2c, 0x9b, 0xda, 0xef, 0xa2, 0x35, 0x12,
+0x43, 0x84, 0x76, 0x16, 0xc6, 0x56, 0x95, 0x06, 0xcc, 0x01, 0xa9, 0xbd, 0xf6, 0x75, 0x1a, 0x42,
+0xf7, 0xbd, 0xa9, 0xb2, 0x36, 0x22, 0x5f, 0xc7, 0x5d, 0x7f, 0xb4
+};
+    ecc_key dummyKey;
+    word32 idx = 0;
+    word32 localSigLen = *sigLen;
+    WC_RNG rng;
+    int ret;
+    WP11_Slot* slot = WP11_Session_GetSlot(session);
+    ret = wc_ecc_init_ex(&dummyKey, NULL, slot->devId);
+    //ret = wc_ecc_init_ex(&dummyKey, NULL, 1065);
+
+    ret = wc_EccPublicKeyDecode(dummyBytes, &idx, &dummyKey,
+                                sizeof(dummyBytes));
+    ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
+    ret = wc_ecc_sign_hash(hash, (int)hashLen,
+                           sig, &localSigLen, &rng,
+                           &dummyKey);
+    Rng_Free(&rng);
+    wc_ecc_free(&dummyKey);
+    *sigLen = localSigLen;
+    return ret;
+}
+#endif
 /**
  * ECDSA verify encoded hash with public key.
  *
@@ -8393,7 +8543,7 @@ int WP11_Hmac_Init(CK_MECHANISM_TYPE mechanism, WP11_Object* secret,
     if (ret == 0)
         hmac->hmacSz = wc_HmacSizeByType(hashType);
     if (ret == 0)
-        ret = wc_HmacInit(&hmac->hmac, NULL, INVALID_DEVID);
+        ret = wc_HmacInit(&hmac->hmac, NULL, secret->slot->devId);
     if (ret == 0) {
         if (secret->onToken)
             WP11_Lock_LockRO(secret->lock);
