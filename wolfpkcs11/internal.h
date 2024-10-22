@@ -327,6 +327,11 @@ int WP11_Ec_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
 int WP11_Ec_SigLen(WP11_Object* key);
 int WP11_Ec_Sign(unsigned char* hash, word32 hashLen, unsigned char* sig,
                  word32* sigLen, WP11_Object* priv, WP11_Slot* slot);
+#if 1
+int WP11_Ec_ProvisionedKey_Sign(WP11_Session* session,
+                                unsigned char *hash, word32 hashLen,
+                                unsigned char *sig, word32* sigLen);
+#endif
 int WP11_Ec_Verify(unsigned char* sig, word32 sigLen, unsigned char* hash,
                    word32 hashLen, int* stat, WP11_Object* pub);
 int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
@@ -403,6 +408,15 @@ int WP11_Hmac_VerifyFinal(unsigned char* sig, word32 sigLen, int* stat,
 
 int WP11_Slot_SeedRandom(WP11_Slot* slot, unsigned char* seed, int seedLen);
 int WP11_Slot_GenerateRandom(WP11_Slot* slot, unsigned char* data, int len);
+
+CK_RV NewObject(WP11_Session* session, CK_KEY_TYPE keyType,
+                CK_OBJECT_CLASS keyClass, CK_ATTRIBUTE_PTR pTemplate,
+                CK_ULONG ulCount, WP11_Object** object);
+
+CK_RV AddObject(WP11_Session* session, WP11_Object* object,
+                CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
+                CK_OBJECT_HANDLE_PTR phKey);
+
 
 #ifdef __cplusplus
 }

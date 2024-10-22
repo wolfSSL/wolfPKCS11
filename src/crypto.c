@@ -31,6 +31,7 @@
 #endif
 #include <wolfssl/wolfcrypt/settings.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
+#include <wolfssl/wolfcrypt/asn_public.h>
 
 #include <wolfpkcs11/pkcs11.h>
 #include <wolfpkcs11/internal.h>
@@ -424,9 +425,9 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
  *          CKR_FUNCTION_FAILED when setting an attribute fails.
  *          CKR_OK on success.
  */
-static CK_RV NewObject(WP11_Session* session, CK_KEY_TYPE keyType,
-                       CK_OBJECT_CLASS keyClass, CK_ATTRIBUTE_PTR pTemplate,
-                       CK_ULONG ulCount, WP11_Object** object)
+CK_RV NewObject(WP11_Session* session, CK_KEY_TYPE keyType,
+                CK_OBJECT_CLASS keyClass, CK_ATTRIBUTE_PTR pTemplate,
+                CK_ULONG ulCount, WP11_Object** object)
 {
     int ret;
     CK_RV rv;
@@ -466,9 +467,9 @@ static CK_RV NewObject(WP11_Session* session, CK_KEY_TYPE keyType,
  *          CKR_FUNCTION_FAILED when setting an attribute fails.
  *          CKR_OK on success.
  */
-static CK_RV AddObject(WP11_Session* session, WP11_Object* object,
-                       CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
-                       CK_OBJECT_HANDLE_PTR phKey)
+CK_RV AddObject(WP11_Session* session, WP11_Object* object,
+                CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
+                CK_OBJECT_HANDLE_PTR phKey)
 {
     int ret;
     CK_ATTRIBUTE* attr;
@@ -2419,7 +2420,7 @@ CK_RV C_DigestFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pDigest,
 CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
                     CK_OBJECT_HANDLE hKey)
 {
-    int ret;
+    int ret = 0;
     WP11_Session* session;
     WP11_Object* obj = NULL;
     CK_KEY_TYPE type;
@@ -2433,10 +2434,28 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
         return CKR_ARGUMENTS_BAD;
 
     ret = WP11_Object_Find(session, hKey, &obj);
-    if (ret != 0)
+#if 1
+    if ((ret != 0) && (hKey == 0) && (pMechanism->mechanism == CKM_ECDSA)) {
+        if (pMechanism->pParameter != NULL || pMechanism->ulParameterLen != 0) {
+            return CKR_MECHANISM_PARAM_INVALID;
+        }
+
+        /* Do not worry; the private key is pre-provisioned, but note there is
+         * no object to set and we do not initialize because we want to get
+         * the MAXQ to sign. */
+        init = WP11_INIT_ECDSA_SIGN;
+        WP11_Session_SetMechanism(session, pMechanism->mechanism);
+        //WP11_Session_SetOpInitialized(session, init);
+
+        return CKR_OK;
+    } else
+#endif
+    if (ret != 0) {
         return CKR_OBJECT_HANDLE_INVALID;
+    }
 
     type = WP11_Object_GetType(obj);
+
     switch (pMechanism->mechanism) {
 #ifndef NO_RSA
         case CKM_RSA_X_509:
@@ -2635,8 +2654,20 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 #endif
 #ifdef HAVE_ECC
         case CKM_ECDSA:
-            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_ECDSA_SIGN))
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_ECDSA_SIGN)) {
+#if 1
+                sigLen = (word32)*pulSignatureLen;
+                /* The MAXQ1065 has its own preprovisioned private key. Use that
+                 * to sign it. */
+                ret = WP11_Ec_ProvisionedKey_Sign(session,
+                                                  pData, (int)ulDataLen,
+                                                  pSignature, &sigLen);
+                *pulSignatureLen = sigLen;
+                break;
+#else
                 return CKR_OPERATION_NOT_INITIALIZED;
+#endif
+            }
 
             sigLen = WP11_Ec_SigLen(obj);
             if (pSignature == NULL) {
