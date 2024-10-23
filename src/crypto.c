@@ -2487,11 +2487,10 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
         }
 
         /* Do not worry; the private key is pre-provisioned, but note there is
-         * no object to set and we do not initialize because we want to get
-         * the MAXQ to sign. */
+         * no object to set. */
         init = WP11_INIT_ECDSA_SIGN;
         WP11_Session_SetMechanism(session, pMechanism->mechanism);
-        //WP11_Session_SetOpInitialized(session, init);
+        WP11_Session_SetOpInitialized(session, init);
 
         return CKR_OK;
     } else
@@ -2701,7 +2700,7 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 #ifdef HAVE_ECC
         case CKM_ECDSA:
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_ECDSA_SIGN)) {
-#if 1
+#if 0
                 sigLen = (word32)*pulSignatureLen;
                 /* The MAXQ1065 has its own preprovisioned private key. Use that
                  * to sign it. */

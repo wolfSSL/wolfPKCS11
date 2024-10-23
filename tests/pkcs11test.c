@@ -2935,12 +2935,14 @@ static CK_RV test_pubkey_sig_fail(CK_SESSION_HANDLE session, CK_MECHANISM* mech,
     }
     if (ret == CKR_OK) {
         ret = funcList->C_Sign(session, hash, hashSz, out, &outSz);
+#if 0
 #ifdef WOLFSSL_MAXQ10XX_CRYPTO
         if (mech->mechanism == CKM_ECDSA) {
             /* In the case of MAXQ10XX the ECC private key is pre-provisioned
              * so its fine to call it in this state */
             CHECK_CKR(ret, "Sign");
         } else
+#endif
 #endif
         {
             CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
