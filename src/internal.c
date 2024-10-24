@@ -82,6 +82,10 @@
 #define WP11_MAX_SYM_KEY_SZ            64
 #endif
 
+#ifndef WP11_MAX_CERT_SZ
+#define WP11_MAX_CERT_SZ              4096
+#endif
+
 /* Sizes for storage. */
 #define WP11_MAX_IV_SZ                 16
 #define WP11_MAX_GCM_NONCE_SZ          16
@@ -136,6 +140,13 @@ typedef struct WP11_Data {
     word32 len;                        /* Length of key data in bytes         */
 } WP11_Data;
 
+/* Certificate */
+typedef struct WP11_Cert {
+    byte data[WP11_MAX_CERT_SZ];       /* Certificate data                    */
+    word32 len;                        /* Length of certificate data in bytes */
+    CK_BBOOL trusted;
+} WP11_Cert;
+
 #ifndef NO_DH
 typedef struct WP11_DhKey {
     byte key[WP11_MAX_DH_KEY_SZ];      /* Public or private key               */
@@ -156,6 +167,7 @@ struct WP11_Object {
         WP11_DhKey dhKey;              /* DH parameters object                */
     #endif
         WP11_Data symmKey;             /* Symmetric key object                */
+        WP11_Cert cert;                /* Certificate object                  */
     } data;
 #ifdef WOLFPKCS11_TPM
     WOLFTPM2_KEYBLOB tpmKey;
@@ -5269,6 +5281,46 @@ int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
 
     return ret;
 }
+
+int WP11_Object_SetCert(WP11_Object* object, unsigned char** data,
+                             CK_ULONG* len)
+{
+    int ret = 0;
+    WP11_Cert* cert;
+
+    if (object->onToken)
+        WP11_Lock_LockRW(object->lock);
+
+    cert = &object->data.cert;
+    cert->len = 0;
+    XMEMSET(cert->data, 0, sizeof(cert->data));
+
+    /* First item is if trusted (CKA_TRUSTED) */
+    if (ret == 0 && data[0] != NULL && len[0] != (int)sizeof(CK_BBOOL))
+        ret = BAD_FUNC_ARG;
+
+    if (ret == 0 && data[0] != NULL)
+        cert->trusted = *(CK_BBOOL*)data[0];
+
+    /* Second item is the subject (CKA_SUBJECT) */
+
+    /* Third is certificate data (CKA_VALUE) */
+    if (ret == 0 && data[2] != NULL) {
+        if (cert->len == 0)
+            cert->len = (word32)len[2];
+        else if (len[2] < (CK_ULONG)cert->len)
+            ret = BUFFER_E;
+    }
+    if (ret == 0 && data[2] != NULL)
+        XMEMCPY(cert->data, data[2], cert->len);
+
+    if (object->onToken)
+        WP11_Lock_UnlockRW(object->lock);
+
+    return ret;
+
+}
+
 
 /**
  * Set the object's class.
