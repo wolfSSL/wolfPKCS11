@@ -99,8 +99,7 @@ static CK_ATTRIBUTE_TYPE secretKeyParams[] = {
 
 /* Certificate data attributes */
 static CK_ATTRIBUTE_TYPE certParams[] = {
-    CKA_TRUSTED,
-    CKA_SUBJECT,
+    CKA_CERTIFICATE_TYPE,
     CKA_VALUE,
 };
 #define CERT_PARAMS_CNT     (sizeof(certParams)/sizeof(*certParams))
@@ -113,7 +112,7 @@ static CK_ATTRIBUTE_TYPE certParams[] = {
 #elif !defined(NO_DH)
 #define OBJ_MAX_PARAMS        DH_KEY_PARAMS_CNT
 #else
-#define OBJ_MAX_PARAMS        CERT_PARAMS_CNT
+#define OBJ_MAX_PARAMS        SECRET_KEY_PARAMS_CNT
 #endif
 
 typedef struct AttributeType {

@@ -144,7 +144,7 @@ typedef struct WP11_Data {
 typedef struct WP11_Cert {
     byte data[WP11_MAX_CERT_SZ];       /* Certificate data                    */
     word32 len;                        /* Length of certificate data in bytes */
-    CK_BBOOL trusted;
+    CK_CERTIFICATE_TYPE type;
 } WP11_Cert;
 
 #ifndef NO_DH
@@ -5283,7 +5283,7 @@ int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
 }
 
 int WP11_Object_SetCert(WP11_Object* object, unsigned char** data,
-                             CK_ULONG* len)
+                        CK_ULONG* len)
 {
     int ret = 0;
     WP11_Cert* cert;
@@ -5295,30 +5295,26 @@ int WP11_Object_SetCert(WP11_Object* object, unsigned char** data,
     cert->len = 0;
     XMEMSET(cert->data, 0, sizeof(cert->data));
 
-    /* First item is if trusted (CKA_TRUSTED) */
-    if (ret == 0 && data[0] != NULL && len[0] != (int)sizeof(CK_BBOOL))
+    /* First item is certificate type */
+    if (ret == 0 && data[0] != NULL && len[0] != (int)sizeof(CK_ULONG))
         ret = BAD_FUNC_ARG;
-
     if (ret == 0 && data[0] != NULL)
-        cert->trusted = *(CK_BBOOL*)data[0];
+        cert->type = (word32)*(CK_ULONG*)data[0];
 
-    /* Second item is the subject (CKA_SUBJECT) */
-
-    /* Third is certificate data (CKA_VALUE) */
-    if (ret == 0 && data[2] != NULL) {
-        if (cert->len == 0)
-            cert->len = (word32)len[2];
-        else if (len[2] < (CK_ULONG)cert->len)
+    /* Second item is certificate data (CKA_VALUE) */
+    if (ret == 0 && data[1] != NULL) {
+        if ((word32)len[1] > sizeof(cert->data))
             ret = BUFFER_E;
+        else
+            cert->len = (word32)len[1];
     }
-    if (ret == 0 && data[2] != NULL)
-        XMEMCPY(cert->data, data[2], cert->len);
+    if (ret == 0 && data[1] != NULL)
+        XMEMCPY(cert->data, data[1], cert->len);
 
     if (object->onToken)
         WP11_Lock_UnlockRW(object->lock);
 
     return ret;
-
 }
 
 
@@ -6238,6 +6234,9 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             }
             break;
         case CKA_VALUE:
+            if (object->objClass == CKO_CERTIFICATE) {
+                break; /* Handled in WP11_Object_SetCert */
+            }
             switch (object->type) {
 #ifdef HAVE_ECC
                 case CKK_EC:
@@ -6251,8 +6250,8 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                 case CKK_GENERIC_SECRET:
                    break;
                 default:
-                   ret = BAD_FUNC_ARG;
-                   break;
+                    ret = BAD_FUNC_ARG;
+                    break;
             }
             break;
         case CKA_KEY_TYPE:
@@ -6260,6 +6259,26 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             break;
         case CKA_TOKEN:
             /* Handled in layer above */
+            break;
+        case CKA_CERTIFICATE_TYPE:
+            /* Handled in WP11_Object_SetCert */
+            break;
+        case CKA_SUBJECT:
+        case CKA_ISSUER:
+        case CKA_SERIAL_NUMBER:
+        case CKA_AC_ISSUER:
+        case CKA_ATTR_TYPES:
+        case CKA_CERTIFICATE_CATEGORY:
+        case CKA_JAVA_MIDP_SECURITY_DOMAIN:
+        case CKA_URL:
+        case CKA_HASH_OF_SUBJECT_PUBLIC_KEY:
+        case CKA_HASH_OF_ISSUER_PUBLIC_KEY:
+        case CKA_NAME_HASH_ALGORITHM:
+        case CKA_CHECK_VALUE:
+            /* Fields are allowed, but not saved yet */
+            if (object->objClass != CKO_CERTIFICATE) {
+                ret = BAD_FUNC_ARG;
+            }
             break;
         default:
             ret = BAD_FUNC_ARG;

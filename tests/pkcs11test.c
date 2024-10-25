@@ -7580,8 +7580,8 @@ static CK_RV test_hmac_sha512_fail(void* args)
 
 static CK_RV test_x509(void* args)
 {
-    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_RV ret = CKR_OK;
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_CERTIFICATE_TYPE certType = CKC_X_509;
     CK_UTF8CHAR label[] = "A certificate object";
     CK_BYTE subject[] = "C = US, ST = Montana, L = Bozeman, O = wolfSSL, "
