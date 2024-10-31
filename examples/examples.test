@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+
+# Test the examples.
+
+# Initialize the token and setup passwords.
+./examples/init_token
+RESULT=$?
+[ $RESULT -ne 0 ] && echo "\n\nInitialization of token failed" && exit 1
+
+
+# Get the slot information and display
+./examples/slot_info
+RESULT=$?
+[ $RESULT -ne 0 ] && echo "\n\nGetting slot information failed" && exit 1
+
+# Get the token information and display
+./examples/token_info
+RESULT=$?
+[ $RESULT -ne 0 ] && echo "\n\nGetting token information failed" && exit 1
+
+# Get information on mechanisms and display.
+./examples/mech_info
+RESULT=$?
+[ $RESULT -ne 0 ] && echo "\n\nGetting mechanism information failed" && exit 1
+
+# Add an AES key to the session
+./examples/add_aes_key
+RESULT=$?
+[ $RESULT -ne 0 ] && echo "\n\nAdding an AES key failed" && exit 1
+
+# Add an AES key to the token
+./examples/add_aes_key -privId "aes-128"
+RESULT=$?
+[ $RESULT -ne 0 ] && echo "\n\nAdding an AES key to the token failed" && exit 1
+
+# Add an HMAC key to the session
+./examples/add_hmac_key
+RESULT=$?
+[ $RESULT -ne 0 ] && echo "\n\nAdding an HMAC key failed" && exit 1
+
+# Add an HMAC key to the token
+./examples/add_hmac_key -privId "hmac-256"
+RESULT=$?
+[ $RESULT -ne 0 ] && echo "\n\nAdding an HMAC key to the token failed" && exit 1
+
+# Add an RSA key to the session
+./examples/add_rsa_key
+RESULT=$?
+[ $RESULT -ne 0 ] && echo "\n\nAdding an RSA key failed" && exit 1
+
+# Add an RSA key to the token
+./examples/add_rsa_key -privId "rsa-2048"
+RESULT=$?
+[ $RESULT -ne 0 ] && echo "\n\nAdding an RSA key to the token failed" && exit 1
+
+# Add an RSA key from file to the session
+./examples/add_rsa_key_file -rsa ./examples/rsa-2048.der
+RESULT=$?
+[ $RESULT -ne 0 ] && echo "\n\nAdding an RSA key from file failed" && exit 1
+
+# Add an RSA key to the token
+./examples/add_rsa_key_file -privId "rsa-2048.der" -rsa ./examples/rsa-2048.der
+RESULT=$?
+[ $RESULT -ne 0 ] && echo "\n\nAdding an RSA key from file to the token failed" && exit 1
+
+# Show all objects on token
+./examples/obj_list
+RESULT=$?
+[ $RESULT -ne 0 ] && echo "\n\nShowing objects stored on token failed" && exit 1
+
+exit 0

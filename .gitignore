@@ -33,6 +33,16 @@ coverage.info
 tests/pkcs11test
 tests/pkcs11mtt
 tests/pkcs11str
+examples/add_aes_key
+examples/add_hmac_key
+examples/add_rsa_key
+examples/add_rsa_key_file
+examples/init_token
+examples/mech_info
+examples/obj_list
+examples/slot_info
+examples/token_info
+store/wp11*
 test/*
 *.gcda
 *.gcno
