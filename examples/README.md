@@ -12,7 +12,7 @@ User.
 ```
 
 Steps (see pkcs11_init_token):
-  1. Initialize token with Securtiy Officer's (SO) Pin and a label using
+  1. Initialize token with Security Officer's (SO) Pin and a label using
      C_InitToken.
   2. Open a session on the token with C_OpenSession.
   3. Login to the token with SO's PIN using C_Login
@@ -24,7 +24,7 @@ Steps (see pkcs11_init_token):
 Show the slot information.
 
 ```
-  ./examples/slot_into
+  ./examples/slot_info
 ```
 
 pkcs11_slot_info() uses C_GetSlotInfo to get the data structure and prints the
@@ -50,7 +50,7 @@ Show information on mechanism of slot.
 ```
 
 pkcs11_mechs_info() shows all mechanisms available for a slot. Calls
-C_GetMechanismList to get all avaialble mechanisms.
+C_GetMechanismList to get all available mechanisms.
 
 pkcs11_mech_info() retrieves the mechanism's info with C_GetMechanismInfo and
 prints it.
@@ -156,7 +156,7 @@ and C_FindObjectsFinal() and prints them.
 pkcs11_obj_attr() uses C_GetAttributeValue() to get the attribute values of an
 object that is identified by its handle.
 
-pkcs11_key_attr() uses C_GetAttributeValue() to get common attriubtes of keys.
+pkcs11_key_attr() uses C_GetAttributeValue() to get common attributes of keys.
 
 pkcs11_rsa_attr() uses C_GetAttributeValue() to get the public fields of an RSA
 key.
