@@ -1,0 +1,54 @@
+# vim:ft=automake
+# All paths should be given relative to the root
+
+noinst_PROGRAMS += examples/add_aes_key
+examples_add_aes_key_SOURCES = examples/add_aes_key.c
+examples_add_aes_key_LDADD =
+
+noinst_PROGRAMS += examples/add_hmac_key
+examples_add_hmac_key_SOURCES = examples/add_hmac_key.c
+examples_add_hmac_key_LDADD =
+
+noinst_PROGRAMS += examples/add_rsa_key
+examples_add_rsa_key_SOURCES = examples/add_rsa_key.c
+examples_add_rsa_key_LDADD =
+
+noinst_PROGRAMS += examples/add_rsa_key_file
+examples_add_rsa_key_file_SOURCES = examples/add_rsa_key_file.c
+examples_add_rsa_key_file_LDADD =
+
+noinst_PROGRAMS += examples/init_token
+examples_init_token_SOURCES = examples/init_token.c
+examples_init_token_LDADD =
+
+noinst_PROGRAMS += examples/mech_info
+examples_mech_info_SOURCES = examples/mech_info.c
+examples_mech_info_LDADD =
+
+noinst_PROGRAMS += examples/obj_list
+examples_obj_list_SOURCES = examples/obj_list.c
+examples_obj_list_LDADD =
+
+noinst_PROGRAMS += examples/slot_info
+examples_slot_info_SOURCES = examples/slot_info.c
+examples_slot_info_LDADD =
+
+noinst_PROGRAMS += examples/token_info
+examples_token_info_SOURCES = examples/token_info.c
+examples_token_info_LDADD =
+
+dist_noinst_SCRIPTS += examples/examples.test
+EXTRA_DIST += examples/rsa-2048.der
+
+if BUILD_STATIC
+examples_add_aes_key_LDADD      += src/libwolfpkcs11.la
+examples_add_hmac_key_LDADD     += src/libwolfpkcs11.la
+examples_add_rsa_key_LDADD      += src/libwolfpkcs11.la
+examples_add_rsa_key_file_LDADD += src/libwolfpkcs11.la
+examples_init_token_LDADD       += src/libwolfpkcs11.la
+examples_mech_info_LDADD        += src/libwolfpkcs11.la
+examples_obj_list_LDADD         += src/libwolfpkcs11.la
+examples_slot_info_LDADD        += src/libwolfpkcs11.la
+examples_token_info_LDADD       += src/libwolfpkcs11.la
+endif
+

@@ -17,7 +17,7 @@ tests_pkcs11str_SOURCES = tests/pkcs11str.c
 tests_pkcs11str_LDADD =
 
 if BUILD_STATIC
-tests_pkcs11test_LDADD +=src/libwolfpkcs11.la
+tests_pkcs11test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11mtt_LDADD  += src/libwolfpkcs11.la
 tests_pkcs11str_LDADD  += src/libwolfpkcs11.la
 endif
