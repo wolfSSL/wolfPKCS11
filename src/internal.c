@@ -4691,7 +4691,7 @@ int WP11_Session_SetCbcParams(WP11_Session* session, unsigned char* iv,
     WP11_Data* key;
 
     /* AES object on session. */
-    ret = wc_AesInit(&cbc->aes, NULL, INVALID_DEVID);
+    ret = wc_AesInit(&cbc->aes, NULL, session->devId);
     if (ret == 0) {
         if (object->onToken)
             WP11_Lock_LockRO(object->lock);
@@ -8226,7 +8226,7 @@ int WP11_AesGcm_Encrypt(unsigned char* plain, word32 plainSz,
     word32 authTagSz = gcm->tagBits / 8;
     unsigned char* authTag = enc + plainSz;
 
-    ret = wc_AesInit(&aes, NULL, INVALID_DEVID);
+    ret = wc_AesInit(&aes, NULL, session->devId);
     if (ret == 0) {
         if (secret->onToken)
             WP11_Lock_LockRO(secret->lock);
@@ -8278,7 +8278,7 @@ int WP11_AesGcm_EncryptUpdate(unsigned char* plain, word32 plainSz,
     word32 authTagSz = gcm->tagBits / 8;
     unsigned char* authTag = gcm->authTag;
 
-    ret = wc_AesInit(&aes, NULL, INVALID_DEVID);
+    ret = wc_AesInit(&aes, NULL, session->devId);
     if (ret == 0) {
         if (secret->onToken)
             WP11_Lock_LockRO(secret->lock);
@@ -8358,7 +8358,7 @@ int WP11_AesGcm_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
     word32 authTagSz = gcm->tagBits / 8;
     unsigned char* authTag = enc + encSz - authTagSz;
 
-    ret = wc_AesInit(&aes, NULL, INVALID_DEVID);
+    ret = wc_AesInit(&aes, NULL, session->devId);
     if (ret == 0) {
         if (secret->onToken) {
             WP11_Lock_LockRO(secret->lock);
