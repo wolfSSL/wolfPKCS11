@@ -63,6 +63,16 @@ RESULT=$?
 RESULT=$?
 [ $RESULT -ne 0 ] && echo "\n\nAdding an RSA key from file to the token failed" && exit 1
 
+# Add a cert to the session
+./examples/add_cert
+RESULT=$?
+[ $RESULT -ne 0 ] && echo "\n\nAdding a certificate failed" && exit 1
+
+# Add a cert to the token
+./examples/add_cert -privId "cert-2048"
+RESULT=$?
+[ $RESULT -ne 0 ] && echo "\n\nAdding a certificate to the token failed" && exit 1
+
 # Show all objects on token
 ./examples/obj_list
 RESULT=$?

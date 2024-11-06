@@ -37,6 +37,7 @@ examples/add_aes_key
 examples/add_hmac_key
 examples/add_rsa_key
 examples/add_rsa_key_file
+examples/add_cert
 examples/init_token
 examples/mech_info
 examples/obj_list

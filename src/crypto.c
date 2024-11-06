@@ -97,15 +97,22 @@ static CK_ATTRIBUTE_TYPE secretKeyParams[] = {
 /* Count of secret key data attributes. */
 #define SECRET_KEY_PARAMS_CNT (sizeof(secretKeyParams)/sizeof(*secretKeyParams))
 
+/* Certificate data attributes */
+static CK_ATTRIBUTE_TYPE certParams[] = {
+    CKA_CERTIFICATE_TYPE,
+    CKA_VALUE,
+};
+#define CERT_PARAMS_CNT     (sizeof(certParams)/sizeof(*certParams))
+
 /* Identify maximum count for stack array. */
 #ifndef NO_RSA
-#define KEY_MAX_PARAMS        RSA_KEY_PARAMS_CNT
+#define OBJ_MAX_PARAMS        RSA_KEY_PARAMS_CNT
 #elif defined(HAVE_ECC)
-#define KEY_MAX_PARAMS        EC_KEY_PARAMS_CNT
+#define OBJ_MAX_PARAMS        EC_KEY_PARAMS_CNT
 #elif !defined(NO_DH)
-#define KEY_MAX_PARAMS        DH_KEY_PARAMS_CNT
+#define OBJ_MAX_PARAMS        DH_KEY_PARAMS_CNT
 #else
-#define KEY_MAX_PARAMS        SECRET_KEY_PARAMS_CNT
+#define OBJ_MAX_PARAMS        SECRET_KEY_PARAMS_CNT
 #endif
 
 typedef struct AttributeType {
@@ -173,6 +180,16 @@ static AttributeType attrType[] = {
     { CKA_UNWRAP_TEMPLATE,             ATTR_TYPE_DATA  },
     { CKA_DERIVE_TEMPLATE,             ATTR_TYPE_DATA  },
     { CKA_ALLOWED_MECHANISMS,          ATTR_TYPE_DATA  },
+    { CKA_CERTIFICATE_TYPE,            ATTR_TYPE_ULONG },
+    { CKA_CERTIFICATE_CATEGORY,        ATTR_TYPE_ULONG },
+    { CKA_ID,                          ATTR_TYPE_DATA  },
+    { CKA_ISSUER,                      ATTR_TYPE_DATA  },
+    { CKA_SERIAL_NUMBER,               ATTR_TYPE_DATA  },
+    { CKA_PUBLIC_KEY_INFO,             ATTR_TYPE_DATA  },
+    { CKA_URL,                         ATTR_TYPE_DATA  },
+    { CKA_HASH_OF_SUBJECT_PUBLIC_KEY,  ATTR_TYPE_DATA  },
+    { CKA_HASH_OF_ISSUER_PUBLIC_KEY,   ATTR_TYPE_DATA  },
+    { CKA_NAME_HASH_ALGORITHM,         ATTR_TYPE_ULONG },
 };
 /* Count of elements in attribute type list. */
 #define ATTR_TYPE_SIZE     (sizeof(attrType) / sizeof(*attrType))
@@ -253,7 +270,7 @@ static CK_RV CheckAttributes(CK_ATTRIBUTE* pTemplate, CK_ULONG ulCount, int set)
         else if (attrType[j].type == ATTR_TYPE_BOOL) {
             if (attr->pValue == NULL && set)
                 return CKR_ATTRIBUTE_VALUE_INVALID;
-            if ((attr->pValue != NULL) && 
+            if ((attr->pValue != NULL) &&
                 (attr->ulValueLen != sizeof(CK_BBOOL)))
                 return CKR_BUFFER_TOO_SMALL;
             if (set && *(CK_BBOOL*)attr->pValue != CK_TRUE &&
@@ -264,7 +281,7 @@ static CK_RV CheckAttributes(CK_ATTRIBUTE* pTemplate, CK_ULONG ulCount, int set)
         else if (attrType[j].type == ATTR_TYPE_DATE) {
             if (attr->pValue == NULL && set)
                 return CKR_ATTRIBUTE_VALUE_INVALID;
-            if ((attr->pValue != NULL) && 
+            if ((attr->pValue != NULL) &&
                 (attr->ulValueLen != sizeof(CK_DATE)))
                 return CKR_BUFFER_TOO_SMALL;
         }
@@ -302,11 +319,12 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
     CK_RV rv;
     CK_ATTRIBUTE* attr;
     int i, j;
-    unsigned char* data[KEY_MAX_PARAMS] = { 0, };
-    CK_ULONG len[KEY_MAX_PARAMS] = { 0, };
+    unsigned char* data[OBJ_MAX_PARAMS] = { 0, };
+    CK_ULONG len[OBJ_MAX_PARAMS] = { 0, };
     CK_ATTRIBUTE_TYPE* attrs = NULL;
     int cnt;
     CK_KEY_TYPE type;
+    CK_OBJECT_CLASS objClass;
 
     if (pTemplate == NULL)
         return CKR_ARGUMENTS_BAD;
@@ -317,38 +335,45 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
     if (rv != CKR_OK)
         return rv;
 
-    /* Get the value and length of key specific attribute types. */
     type = WP11_Object_GetType(obj);
-    switch (type) {
-#ifndef NO_RSA
-        case CKK_RSA:
-            attrs = rsaKeyParams;
-            cnt = RSA_KEY_PARAMS_CNT;
-            break;
-#endif
-#ifdef HAVE_ECC
-        case CKK_EC:
-            attrs = ecKeyParams;
-            cnt = EC_KEY_PARAMS_CNT;
-            break;
-#endif
-#ifndef NO_DH
-        case CKK_DH:
-            attrs = dhKeyParams;
-            cnt = DH_KEY_PARAMS_CNT;
-            break;
-#endif
-#ifndef NO_AES
-        case CKK_AES:
-#endif
-        case CKK_GENERIC_SECRET:
-            attrs = secretKeyParams;
-            cnt = SECRET_KEY_PARAMS_CNT;
-            break;
-        default:
-            (void)len;
-            return CKR_OBJECT_HANDLE_INVALID;
-   }
+    objClass = WP11_Object_GetClass(obj);
+    if (objClass == CKO_CERTIFICATE) {
+        attrs = certParams;
+        cnt = CERT_PARAMS_CNT;
+    }
+    else {
+        /* Get the value and length of key specific attribute types. */
+        switch (type) {
+        #ifndef NO_RSA
+            case CKK_RSA:
+                attrs = rsaKeyParams;
+                cnt = RSA_KEY_PARAMS_CNT;
+                break;
+        #endif
+        #ifdef HAVE_ECC
+            case CKK_EC:
+                attrs = ecKeyParams;
+                cnt = EC_KEY_PARAMS_CNT;
+                break;
+        #endif
+        #ifndef NO_DH
+            case CKK_DH:
+                attrs = dhKeyParams;
+                cnt = DH_KEY_PARAMS_CNT;
+                break;
+        #endif
+        #ifndef NO_AES
+            case CKK_AES:
+        #endif
+            case CKK_GENERIC_SECRET:
+                attrs = secretKeyParams;
+                cnt = SECRET_KEY_PARAMS_CNT;
+                break;
+            default:
+                (void)len;
+                return CKR_OBJECT_HANDLE_INVALID;
+        }
+    }
 
     for (i = 0; i < cnt; i++) {
         for (j = 0; j < (int)ulCount; j++) {
@@ -362,33 +387,38 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
         }
     }
 
-    /* Set the value and length of key specific attributes
-     * Old key data is cleared.
-     */
-    switch (type) {
-#ifndef NO_RSA
-        case CKK_RSA:
-            ret = WP11_Object_SetRsaKey(obj, data, len);
-            break;
-#endif
-#ifdef HAVE_ECC
-        case CKK_EC:
-            ret = WP11_Object_SetEcKey(obj, data, len);
-            break;
-#endif
-#ifndef NO_DH
-        case CKK_DH:
-            ret = WP11_Object_SetDhKey(obj, data, len);
-            break;
-#endif
-#ifndef NO_AES
-        case CKK_AES:
-#endif
-        case CKK_GENERIC_SECRET:
-            ret = WP11_Object_SetSecretKey(obj, data, len);
-            break;
-        default:
-            break;
+    if (objClass == CKO_CERTIFICATE) {
+        ret = WP11_Object_SetCert(obj, data, len);
+    }
+    else {
+        /* Set the value and length of key specific attributes
+         * Old key data is cleared.
+         */
+        switch (type) {
+    #ifndef NO_RSA
+            case CKK_RSA:
+                ret = WP11_Object_SetRsaKey(obj, data, len);
+                break;
+    #endif
+    #ifdef HAVE_ECC
+            case CKK_EC:
+                ret = WP11_Object_SetEcKey(obj, data, len);
+                break;
+    #endif
+    #ifndef NO_DH
+            case CKK_DH:
+                ret = WP11_Object_SetDhKey(obj, data, len);
+                break;
+    #endif
+    #ifndef NO_AES
+            case CKK_AES:
+    #endif
+            case CKK_GENERIC_SECRET:
+                ret = WP11_Object_SetSecretKey(obj, data, len);
+                break;
+            default:
+                break;
+        }
     }
     if (ret == MEMORY_E)
         return CKR_DEVICE_MEMORY;
@@ -635,23 +665,9 @@ static CK_RV CreateObject(WP11_Session* session, CK_ATTRIBUTE_PTR pTemplate,
                           CK_ULONG ulCount, WP11_Object** object)
 {
     CK_RV rv;
-    CK_KEY_TYPE keyType = -1;
-    CK_OBJECT_CLASS keyClass = -1;
+    CK_ULONG objType = -1;
+    CK_OBJECT_CLASS objectClass = -1;
     CK_ATTRIBUTE* attr;
-
-    FindAttributeType(pTemplate, ulCount, CKA_KEY_TYPE, &attr);
-    if (attr == NULL)
-        return CKR_TEMPLATE_INCOMPLETE;
-    if (attr->pValue == NULL)
-        return CKR_ATTRIBUTE_VALUE_INVALID;
-    if (attr->ulValueLen != sizeof(CK_KEY_TYPE))
-        return CKR_ATTRIBUTE_VALUE_INVALID;
-    keyType = *(CK_KEY_TYPE*)attr->pValue;
-
-    if (keyType != CKK_RSA && keyType != CKK_EC && keyType != CKK_DH &&
-                          keyType != CKK_AES && keyType != CKK_GENERIC_SECRET) {
-        return CKR_ATTRIBUTE_VALUE_INVALID;
-    }
 
     FindAttributeType(pTemplate, ulCount, CKA_CLASS, &attr);
     if (attr != NULL) {
@@ -659,10 +675,40 @@ static CK_RV CreateObject(WP11_Session* session, CK_ATTRIBUTE_PTR pTemplate,
             return CKR_ATTRIBUTE_VALUE_INVALID;
         if (attr->ulValueLen != sizeof(CK_OBJECT_CLASS))
             return CKR_ATTRIBUTE_VALUE_INVALID;
-        keyClass = *(CK_OBJECT_CLASS*)attr->pValue;
+        objectClass = *(CK_OBJECT_CLASS*)attr->pValue;
     }
 
-    rv = NewObject(session, keyType, keyClass, pTemplate, ulCount, object);
+    if (objectClass == CKO_CERTIFICATE) {
+        FindAttributeType(pTemplate, ulCount, CKA_CERTIFICATE_TYPE, &attr);
+        if (attr == NULL)
+            return CKR_TEMPLATE_INCOMPLETE;
+        if (attr->pValue == NULL)
+            return CKR_ATTRIBUTE_VALUE_INVALID;
+        if (attr->ulValueLen != sizeof(CK_ULONG))
+            return CKR_ATTRIBUTE_VALUE_INVALID;
+        objType = *(CK_ULONG*)attr->pValue;
+        if (objType != CKC_X_509 && objType != CKC_X_509_ATTR_CERT &&
+            objType != CKC_WTLS) {
+            return CKR_ATTRIBUTE_VALUE_INVALID;
+        }
+    }
+    else {
+        FindAttributeType(pTemplate, ulCount, CKA_KEY_TYPE, &attr);
+        if (attr == NULL)
+            return CKR_TEMPLATE_INCOMPLETE;
+        if (attr->pValue == NULL)
+            return CKR_ATTRIBUTE_VALUE_INVALID;
+        if (attr->ulValueLen != sizeof(CK_ULONG))
+            return CKR_ATTRIBUTE_VALUE_INVALID;
+        objType = *(CK_ULONG*)attr->pValue;
+
+        if (objType != CKK_RSA && objType != CKK_EC && objType != CKK_DH &&
+            objType != CKK_AES && objType != CKK_GENERIC_SECRET) {
+            return CKR_ATTRIBUTE_VALUE_INVALID;
+        }
+    }
+
+    rv = NewObject(session, objType, objectClass, pTemplate, ulCount, object);
 
     return rv;
 }
