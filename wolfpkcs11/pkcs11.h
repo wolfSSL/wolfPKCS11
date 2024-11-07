@@ -143,8 +143,21 @@ extern "C" {
 #define CKA_APPLICATION                       0x00000010UL
 #define CKA_VALUE                             0x00000011UL
 #define CKA_OBJECT_ID                         0x00000012UL
+
+#define CKA_CERTIFICATE_TYPE                  0x00000080UL
+#define CKA_ISSUER                            0x00000081UL
+#define CKA_SERIAL_NUMBER                     0x00000082UL
+#define CKA_AC_ISSUER                         0x00000083UL
 #define CKA_OWNER                             0x00000084UL
+#define CKA_ATTR_TYPES                        0x00000085UL
 #define CKA_TRUSTED                           0x00000086UL
+#define CKA_CERTIFICATE_CATEGORY              0x00000087UL
+#define CKA_JAVA_MIDP_SECURITY_DOMAIN         0x00000088UL
+#define CKA_URL                               0x00000089UL
+#define CKA_HASH_OF_SUBJECT_PUBLIC_KEY        0x0000008AUL
+#define CKA_HASH_OF_ISSUER_PUBLIC_KEY         0x0000008BUL
+#define CKA_NAME_HASH_ALGORITHM               0x0000008CUL
+#define CKA_CHECK_VALUE                       0x00000090UL
 #define CKA_KEY_TYPE                          0x00000100UL
 #define CKA_SUBJECT                           0x00000101UL
 #define CKA_ID                                0x00000102UL
@@ -322,6 +335,11 @@ extern "C" {
 
 #define CKZ_DATA_SPECIFIED                    0x00000001UL
 
+#define CKC_X_509                             0x00000000UL
+#define CKC_X_509_ATTR_CERT                   0x00000001UL
+#define CKC_WTLS                              0x00000002UL
+#define CKC_VENDOR_DEFINED                    0x80000000UL
+
 typedef unsigned char     CK_BYTE;
 typedef CK_BYTE           CK_CHAR;
 typedef CK_BYTE           CK_UTF8CHAR;
@@ -335,7 +353,7 @@ typedef CK_UTF8CHAR*      CK_UTF8CHAR_PTR;
 typedef CK_ULONG*         CK_ULONG_PTR;
 typedef void*             CK_VOID_PTR;
 typedef CK_VOID_PTR*      CK_VOID_PTR_PTR;
-
+typedef CK_ULONG          CK_CERTIFICATE_TYPE;
 typedef CK_ULONG          CK_RV;
 
 

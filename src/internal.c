@@ -19,7 +19,6 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
-
 #ifdef HAVE_CONFIG_H
     #include <wolfpkcs11/config.h>
 #endif
@@ -82,6 +81,10 @@
 #define WP11_MAX_SYM_KEY_SZ            64
 #endif
 
+#ifndef WP11_MAX_CERT_SZ
+#define WP11_MAX_CERT_SZ              4096
+#endif
+
 /* Sizes for storage. */
 #define WP11_MAX_IV_SZ                 16
 #define WP11_MAX_GCM_NONCE_SZ          16
@@ -136,6 +139,13 @@ typedef struct WP11_Data {
     word32 len;                        /* Length of key data in bytes         */
 } WP11_Data;
 
+/* Certificate */
+typedef struct WP11_Cert {
+    byte data[WP11_MAX_CERT_SZ];       /* Certificate data                    */
+    word32 len;                        /* Length of certificate data in bytes */
+    CK_CERTIFICATE_TYPE type;
+} WP11_Cert;
+
 #ifndef NO_DH
 typedef struct WP11_DhKey {
     byte key[WP11_MAX_DH_KEY_SZ];      /* Public or private key               */
@@ -156,6 +166,7 @@ struct WP11_Object {
         WP11_DhKey dhKey;              /* DH parameters object                */
     #endif
         WP11_Data symmKey;             /* Symmetric key object                */
+        WP11_Cert cert;                /* Certificate object                  */
     } data;
 #ifdef WOLFPKCS11_TPM
     WOLFTPM2_KEYBLOB tpmKey;
@@ -813,6 +824,10 @@ int wolfPKCS11_Store_Open(int type, CK_ULONG id1, CK_ULONG id2, int read,
             break;
         case WOLFPKCS11_STORE_DHKEY_PUB:
             XSNPRINTF(name, sizeof(name), "%s/wp11_dhkey_pub_%016lx_%016lx",
+                      str, id1, id2);
+            break;
+        case WOLFPKCS11_STORE_CERT:
+            XSNPRINTF(name, sizeof(name), "%s/wp11_cert_%016lx_%016lx",
                       str, id1, id2);
             break;
         default:
@@ -1539,6 +1554,68 @@ static int wp11_DecryptData(byte* out, byte* data, int len, byte* key,
                                                        AES_BLOCK_SIZE, NULL, 0);
     }
 
+    return ret;
+}
+
+/**
+ * Load a certificate from storage.
+ *
+ * @param [in, out]  object   Certificate object.
+ * @param [in]       tokenId  Id of token this cert belongs to.
+ * @param [in]       objId    Id of object for token.
+ * @return  0 on success.
+ * @return  MEMORY_E when dynamic memory allocation fails.
+ * @return  BUFFER_E when loading fails.
+ * @return  NOT_AVAILABLE_E when unable to locate data.
+ */
+static int wp11_Object_Load_Cert(WP11_Object* object, int tokenId, int objId)
+{
+    int ret;
+    void* storage = NULL;
+
+    /* Open access to cert. */
+    ret = wp11_storage_open(WOLFPKCS11_STORE_CERT, tokenId, objId, 1, &storage);
+    if (ret == 0) {
+        /* Read certificate. */
+        ret = wp11_storage_read_alloc_array(storage, &object->keyData,
+                                                           &object->keyDataLen);
+        wp11_storage_close(storage);
+    }
+
+    return ret;
+}
+
+/**
+ * Store an certificate to storage.
+ *
+ * @param [in]  object   Certificte object.
+ * @param [in]  tokenId  Id of token this cert belongs to.
+ * @param [in]  objId    Id of object for token.
+ * @return  0 on success.
+ * @return  MEMORY_E when dynamic memory allocation fails.
+ * @return  BUFFER_E when storing fails.
+ * @return  NOT_AVAILABLE_E when unable to write data.
+ */
+static int wp11_Object_Store_Cert(WP11_Object* object, int tokenId, int objId)
+{
+    int ret;
+    void* storage = NULL;
+
+    if (object->data.cert.len <= 0) {
+        ret = BAD_FUNC_ARG;
+        goto exit;
+    }
+
+    /* Open access to cert. */
+    ret = wp11_storage_open(WOLFPKCS11_STORE_CERT, tokenId, objId, 0, &storage);
+    if (ret == 0) {
+        /* Write cert to storage. */
+        ret = wp11_storage_write_array(storage, object->data.cert.data,
+                                                        object->data.cert.len);
+        wp11_storage_close(storage);
+    }
+
+exit:
     return ret;
 }
 
@@ -2562,31 +2639,36 @@ static int wp11_Object_Load(WP11_Object* object, int tokenId, int objId)
         wp11_storage_close(storage);
     }
     if (ret == 0) {
-        /* Load separate key data. */
-        switch (object->type) {
-        #ifndef NO_RSA
-            case CKK_RSA:
-                ret = wp11_Object_Load_RsaKey(object, tokenId, objId);
-                break;
-        #endif
-        #ifdef HAVE_ECC
-            case CKK_EC:
-                ret = wp11_Object_Load_EccKey(object, tokenId, objId);
-                break;
-        #endif
-        #ifndef NO_DH
-            case CKK_DH:
-                ret = wp11_Object_Load_DhKey(object, tokenId, objId);
-                break;
-        #endif
-        #ifndef NO_AES
-            case CKK_AES:
-        #endif
-            case CKK_GENERIC_SECRET:
-                ret = wp11_Object_Load_SymmKey(object, tokenId, objId);
-                break;
-            default:
-                ret = NOT_AVAILABLE_E;
+        if (object->objClass == CKO_CERTIFICATE) {
+            ret = wp11_Object_Load_Cert(object, tokenId, objId);
+        }
+        else {
+            /* Load separate key data. */
+            switch (object->type) {
+            #ifndef NO_RSA
+                case CKK_RSA:
+                    ret = wp11_Object_Load_RsaKey(object, tokenId, objId);
+                    break;
+            #endif
+            #ifdef HAVE_ECC
+                case CKK_EC:
+                    ret = wp11_Object_Load_EccKey(object, tokenId, objId);
+                    break;
+            #endif
+            #ifndef NO_DH
+                case CKK_DH:
+                    ret = wp11_Object_Load_DhKey(object, tokenId, objId);
+                    break;
+            #endif
+            #ifndef NO_AES
+                case CKK_AES:
+            #endif
+                case CKK_GENERIC_SECRET:
+                    ret = wp11_Object_Load_SymmKey(object, tokenId, objId);
+                    break;
+                default:
+                    ret = NOT_AVAILABLE_E;
+            }
         }
     }
 
@@ -2675,31 +2757,36 @@ static int wp11_Object_Store(WP11_Object* object, int tokenId, int objId)
                                                             sizeof(object->iv));
     }
     if (ret == 0) {
-        /* Store key data separately. */
-        switch (object->type) {
-        #ifndef NO_RSA
-            case CKK_RSA:
-                ret = wp11_Object_Store_RsaKey(object, tokenId, objId);
-                break;
-        #endif
-        #ifdef HAVE_ECC
-            case CKK_EC:
-                ret = wp11_Object_Store_EccKey(object, tokenId, objId);
-                break;
-        #endif
-        #ifndef NO_DH
-            case CKK_DH:
-                ret = wp11_Object_Store_DhKey(object, tokenId, objId);
-                break;
-        #endif
-        #ifndef NO_AES
-            case CKK_AES:
-        #endif
-            case CKK_GENERIC_SECRET:
-                ret = wp11_Object_Store_SymmKey(object, tokenId, objId);
-                break;
-            default:
-                ret = NOT_AVAILABLE_E;
+        if (object->objClass == CKO_CERTIFICATE) {
+            ret = wp11_Object_Store_Cert(object, tokenId, objId);
+        }
+        else {
+            /* Store key data separately. */
+            switch (object->type) {
+            #ifndef NO_RSA
+                case CKK_RSA:
+                    ret = wp11_Object_Store_RsaKey(object, tokenId, objId);
+                    break;
+            #endif
+            #ifdef HAVE_ECC
+                case CKK_EC:
+                    ret = wp11_Object_Store_EccKey(object, tokenId, objId);
+                    break;
+            #endif
+            #ifndef NO_DH
+                case CKK_DH:
+                    ret = wp11_Object_Store_DhKey(object, tokenId, objId);
+                    break;
+            #endif
+            #ifndef NO_AES
+                case CKK_AES:
+            #endif
+                case CKK_GENERIC_SECRET:
+                    ret = wp11_Object_Store_SymmKey(object, tokenId, objId);
+                    break;
+                default:
+                    ret = NOT_AVAILABLE_E;
+            }
         }
     }
 
@@ -2720,30 +2807,36 @@ static int wp11_Object_Decode(WP11_Object* object)
 {
     int ret;
 
-    switch (object->type) {
-    #ifndef NO_RSA
-        case CKK_RSA:
-            ret = wp11_Object_Decode_RsaKey(object);
-            break;
-    #endif
-    #ifdef HAVE_ECC
-        case CKK_EC:
-            ret = wp11_Object_Decode_EccKey(object);
-            break;
-    #endif
-    #ifndef NO_DH
-        case CKK_DH:
-            ret = wp11_Object_Decode_DhKey(object);
-            break;
-    #endif
-    #ifndef NO_AES
-        case CKK_AES:
-    #endif
-        case CKK_GENERIC_SECRET:
-            ret = wp11_Object_Decode_SymmKey(object);
-            break;
-        default:
-            ret = NOT_AVAILABLE_E;
+    if (object->objClass == CKO_CERTIFICATE) {
+        object->encoded = 0;
+        ret = 0;
+    }
+    else {
+        switch (object->type) {
+        #ifndef NO_RSA
+            case CKK_RSA:
+                ret = wp11_Object_Decode_RsaKey(object);
+                break;
+        #endif
+        #ifdef HAVE_ECC
+            case CKK_EC:
+                ret = wp11_Object_Decode_EccKey(object);
+                break;
+        #endif
+        #ifndef NO_DH
+            case CKK_DH:
+                ret = wp11_Object_Decode_DhKey(object);
+                break;
+        #endif
+        #ifndef NO_AES
+            case CKK_AES:
+        #endif
+            case CKK_GENERIC_SECRET:
+                ret = wp11_Object_Decode_SymmKey(object);
+                break;
+            default:
+                ret = NOT_AVAILABLE_E;
+        }
     }
 
     /* Authentication failure means this object isn't for this user. */
@@ -2765,46 +2858,51 @@ static int wp11_Object_Encode(WP11_Object* object, int protect)
 {
     int ret;
 
-    switch (object->type) {
-    #ifndef NO_RSA
-        case CKK_RSA:
-            ret = wp11_Object_Encode_RsaKey(object);
-            if (protect && ret == 0 && object->objClass == CKO_PRIVATE_KEY) {
-                wc_FreeRsaKey(&object->data.rsaKey);
-                object->encoded = 1;
-            }
-            break;
-    #endif
-    #ifdef HAVE_ECC
-        case CKK_EC:
-            ret = wp11_Object_Encode_EccKey(object);
-            if (protect && ret == 0 && object->objClass == CKO_PRIVATE_KEY) {
-                wc_ecc_free(&object->data.ecKey);
-                object->encoded = 1;
-            }
-            break;
-    #endif
-    #ifndef NO_DH
-        case CKK_DH:
-            ret = wp11_Object_Encode_DhKey(object);
-            if (protect && ret == 0 && object->objClass == CKO_PRIVATE_KEY) {
-                XMEMSET(object->data.dhKey.key, 0, object->data.dhKey.len);
-                object->encoded = 1;
-            }
-            break;
-    #endif
-    #ifndef NO_AES
-        case CKK_AES:
-    #endif
-        case CKK_GENERIC_SECRET:
-            ret = wp11_Object_Encode_SymmKey(object);
-            if (protect && ret == 0) {
-                XMEMSET(object->data.symmKey.data, 0, object->data.symmKey.len);
-                object->encoded = 1;
-            }
-            break;
-        default:
-            ret = NOT_AVAILABLE_E;
+    if (object->objClass == CKO_CERTIFICATE) {
+        ret = 0;
+    }
+    else {
+        switch (object->type) {
+        #ifndef NO_RSA
+            case CKK_RSA:
+                ret = wp11_Object_Encode_RsaKey(object);
+                if (protect && ret == 0 && object->objClass == CKO_PRIVATE_KEY) {
+                    wc_FreeRsaKey(&object->data.rsaKey);
+                    object->encoded = 1;
+                }
+                break;
+        #endif
+        #ifdef HAVE_ECC
+            case CKK_EC:
+                ret = wp11_Object_Encode_EccKey(object);
+                if (protect && ret == 0 && object->objClass == CKO_PRIVATE_KEY) {
+                    wc_ecc_free(&object->data.ecKey);
+                    object->encoded = 1;
+                }
+                break;
+        #endif
+        #ifndef NO_DH
+            case CKK_DH:
+                ret = wp11_Object_Encode_DhKey(object);
+                if (protect && ret == 0 && object->objClass == CKO_PRIVATE_KEY) {
+                    XMEMSET(object->data.dhKey.key, 0, object->data.dhKey.len);
+                    object->encoded = 1;
+                }
+                break;
+        #endif
+        #ifndef NO_AES
+            case CKK_AES:
+        #endif
+            case CKK_GENERIC_SECRET:
+                ret = wp11_Object_Encode_SymmKey(object);
+                if (protect && ret == 0) {
+                    XMEMSET(object->data.symmKey.data, 0, object->data.symmKey.len);
+                    object->encoded = 1;
+                }
+                break;
+            default:
+                ret = NOT_AVAILABLE_E;
+        }
     }
 
     return ret;
@@ -2828,6 +2926,11 @@ static void wp11_Object_Unstore(WP11_Object* object, int tokenId, int objId)
     wp11_storage_open(WOLFPKCS11_STORE_OBJECT, tokenId, objId, 0, &storage);
     wp11_storage_close(storage);
 
+    /* CKK_* and CKC_* values overlap, check for cert separately */
+    if (object->objClass == CKO_CERTIFICATE) {
+        storeObjType = WOLFPKCS11_STORE_CERT;
+    }
+    else {
     /* Open access to symmetric key. */
     switch (object->type) {
     #ifndef NO_RSA
@@ -2860,6 +2963,7 @@ static void wp11_Object_Unstore(WP11_Object* object, int tokenId, int objId)
         case CKK_GENERIC_SECRET:
             storeObjType = WOLFPKCS11_STORE_SYMMKEY;
             break;
+        }
     }
     wp11_storage_open(storeObjType, tokenId, objId, 0, &storage);
     wp11_storage_close(storage);
@@ -4842,24 +4946,29 @@ void WP11_Object_Free(WP11_Object* object)
         XFREE(object->label, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     if (object->keyId != NULL)
         XFREE(object->keyId, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-#ifndef NO_RSA
-    if (object->type == CKK_RSA)
-        wc_FreeRsaKey(&object->data.rsaKey);
-#endif
-#ifdef HAVE_ECC
-    if (object->type == CKK_EC)
-        wc_ecc_free(&object->data.ecKey);
-#endif
-#ifndef NO_DH
-    if (object->type == CKK_DH)
-        wc_FreeDhKey(&object->data.dhKey.params);
-#endif
-    if (object->type == CKK_AES || object->type == CKK_GENERIC_SECRET)
-        XMEMSET(object->data.symmKey.data, 0, object->data.symmKey.len);
-#ifndef WOLFPKCS11_NO_STORE
-    if (object->keyData != NULL)
-        XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-#endif
+    if (object->objClass == CKO_CERTIFICATE) {
+        XMEMSET(object->data.cert.data, 0, object->data.cert.len);
+    }
+    else {
+    #ifndef NO_RSA
+        if (object->type == CKK_RSA)
+            wc_FreeRsaKey(&object->data.rsaKey);
+    #endif
+    #ifdef HAVE_ECC
+        if (object->type == CKK_EC)
+            wc_ecc_free(&object->data.ecKey);
+    #endif
+    #ifndef NO_DH
+        if (object->type == CKK_DH)
+            wc_FreeDhKey(&object->data.dhKey.params);
+    #endif
+        if (object->type == CKK_AES || object->type == CKK_GENERIC_SECRET)
+            XMEMSET(object->data.symmKey.data, 0, object->data.symmKey.len);
+    #ifndef WOLFPKCS11_NO_STORE
+        if (object->keyData != NULL)
+            XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    #endif
+    }
 
     /* Dispose of object. */
     XFREE(object, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -5269,6 +5378,42 @@ int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
 
     return ret;
 }
+
+int WP11_Object_SetCert(WP11_Object* object, unsigned char** data,
+                        CK_ULONG* len)
+{
+    int ret = 0;
+    WP11_Cert* cert;
+
+    if (object->onToken)
+        WP11_Lock_LockRW(object->lock);
+
+    cert = &object->data.cert;
+    cert->len = 0;
+    XMEMSET(cert->data, 0, sizeof(cert->data));
+
+    /* First item is certificate type */
+    if (ret == 0 && data[0] != NULL && len[0] != (int)sizeof(CK_ULONG))
+        ret = BAD_FUNC_ARG;
+    if (ret == 0 && data[0] != NULL)
+        cert->type = (word32)*(CK_ULONG*)data[0];
+
+    /* Second item is certificate data (CKA_VALUE) */
+    if (ret == 0 && data[1] != NULL) {
+        if ((word32)len[1] > sizeof(cert->data))
+            ret = BUFFER_E;
+        else
+            cert->len = (word32)len[1];
+    }
+    if (ret == 0 && data[1] != NULL)
+        XMEMCPY(cert->data, data[1], cert->len);
+
+    if (object->onToken)
+        WP11_Lock_UnlockRW(object->lock);
+
+    return ret;
+}
+
 
 /**
  * Set the object's class.
@@ -5882,33 +6027,43 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             break;
 
         default:
-            switch (object->type) {
-#ifndef NO_RSA
-                case CKK_RSA:
-                    ret = RsaObject_GetAttr(object, type, data, len);
+            {
+                if ((object->objClass == CKO_CERTIFICATE) &&
+                    (type == CKA_VALUE)) {
+                    ret = GetData((byte*)object->data.cert.data,
+                                object->data.cert.len, data, len);
                     break;
-#endif
-#ifdef HAVE_ECC
-                case CKK_EC:
-                    ret = EcObject_GetAttr(object, type, data, len);
+                }
+                else {
+                    switch (object->type) {
+        #ifndef NO_RSA
+                        case CKK_RSA:
+                            ret = RsaObject_GetAttr(object, type, data, len);
+                            break;
+        #endif
+        #ifdef HAVE_ECC
+                        case CKK_EC:
+                            ret = EcObject_GetAttr(object, type, data, len);
+                            break;
+        #endif
+        #ifndef NO_DH
+                        case CKK_DH:
+                            ret = DhObject_GetAttr(object, type, data, len);
+                            break;
+        #endif
+        #ifndef NO_AES
+                        case CKK_AES:
+        #endif
+                        case CKK_GENERIC_SECRET:
+                            ret = SecretObject_GetAttr(object, type, data, len);
+                            break;
+                        default:
+                            ret = NOT_AVAILABLE_E;
+                            break;
+                    }
                     break;
-#endif
-#ifndef NO_DH
-                case CKK_DH:
-                    ret = DhObject_GetAttr(object, type, data, len);
-                    break;
-#endif
-#ifndef NO_AES
-                case CKK_AES:
-#endif
-                case CKK_GENERIC_SECRET:
-                    ret = SecretObject_GetAttr(object, type, data, len);
-                    break;
-                default:
-                    ret = NOT_AVAILABLE_E;
-                    break;
+                }
             }
-            break;
     }
 
     if (object->onToken)
@@ -6186,6 +6341,9 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             }
             break;
         case CKA_VALUE:
+            if (object->objClass == CKO_CERTIFICATE) {
+                break; /* Handled in WP11_Object_SetCert */
+            }
             switch (object->type) {
 #ifdef HAVE_ECC
                 case CKK_EC:
@@ -6199,8 +6357,8 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                 case CKK_GENERIC_SECRET:
                    break;
                 default:
-                   ret = BAD_FUNC_ARG;
-                   break;
+                    ret = BAD_FUNC_ARG;
+                    break;
             }
             break;
         case CKA_KEY_TYPE:
@@ -6208,6 +6366,26 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             break;
         case CKA_TOKEN:
             /* Handled in layer above */
+            break;
+        case CKA_CERTIFICATE_TYPE:
+            /* Handled in WP11_Object_SetCert */
+            break;
+        case CKA_SUBJECT:
+        case CKA_ISSUER:
+        case CKA_SERIAL_NUMBER:
+        case CKA_AC_ISSUER:
+        case CKA_ATTR_TYPES:
+        case CKA_CERTIFICATE_CATEGORY:
+        case CKA_JAVA_MIDP_SECURITY_DOMAIN:
+        case CKA_URL:
+        case CKA_HASH_OF_SUBJECT_PUBLIC_KEY:
+        case CKA_HASH_OF_ISSUER_PUBLIC_KEY:
+        case CKA_NAME_HASH_ALGORITHM:
+        case CKA_CHECK_VALUE:
+            /* Fields are allowed, but not saved yet */
+            if (object->objClass != CKO_CERTIFICATE) {
+                ret = BAD_FUNC_ARG;
+            }
             break;
         default:
             ret = BAD_FUNC_ARG;

@@ -263,8 +263,10 @@ int WP11_Object_SetDhKey(WP11_Object* object, unsigned char** data,
                          CK_ULONG* len);
 int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
                              CK_ULONG* len);
-int WP11_Object_SetClass(WP11_Object* object, CK_OBJECT_CLASS objClass);
+int WP11_Object_SetCert(WP11_Object* object, unsigned char** data,
+                             CK_ULONG* len);
 
+int WP11_Object_SetClass(WP11_Object* object, CK_OBJECT_CLASS objClass);
 CK_OBJECT_CLASS WP11_Object_GetClass(WP11_Object* object);
 
 int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,

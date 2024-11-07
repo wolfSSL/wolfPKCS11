@@ -17,6 +17,10 @@ noinst_PROGRAMS += examples/add_rsa_key_file
 examples_add_rsa_key_file_SOURCES = examples/add_rsa_key_file.c
 examples_add_rsa_key_file_LDADD =
 
+noinst_PROGRAMS += examples/add_cert
+examples_add_cert_SOURCES = examples/add_cert.c
+examples_add_cert_LDADD =
+
 noinst_PROGRAMS += examples/init_token
 examples_init_token_SOURCES = examples/init_token.c
 examples_init_token_LDADD =
@@ -45,6 +49,7 @@ examples_add_aes_key_LDADD      += src/libwolfpkcs11.la
 examples_add_hmac_key_LDADD     += src/libwolfpkcs11.la
 examples_add_rsa_key_LDADD      += src/libwolfpkcs11.la
 examples_add_rsa_key_file_LDADD += src/libwolfpkcs11.la
+examples_add_cert_LDADD         += src/libwolfpkcs11.la
 examples_init_token_LDADD       += src/libwolfpkcs11.la
 examples_mech_info_LDADD        += src/libwolfpkcs11.la
 examples_obj_list_LDADD         += src/libwolfpkcs11.la
