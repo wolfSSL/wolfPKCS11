@@ -39,7 +39,6 @@
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/asn_public.h>
 #include <wolfssl/wolfcrypt/aes.h>
-#include <wolfssl/ssl.h>
 
 #include <wolfpkcs11/internal.h>
 #include <wolfpkcs11/store.h>
@@ -3376,9 +3375,9 @@ static void wp11_Slot_Final(WP11_Slot* slot)
 static int wp11_Slot_Init(WP11_Slot* slot, int id)
 {
     int ret = 0;
-    char label[LABEL_SZ] = { 0, };
     int i;
     WP11_Session* curr;
+    char label[LABEL_SZ] = { 0, };
 
     XMEMSET(slot, 0, sizeof(*slot));
     slot->id = id;
@@ -3457,9 +3456,6 @@ int WP11_Library_Init(void)
         if (ret == 0) {
 #ifdef WOLFSSL_MAXQ10XX_CRYPTO
             ret = wolfCrypt_Init();
-            wolfSSL_Init();
-            wolfSSL_Debugging_ON();
-            wolfSSL_CTX_new(wolfTLSv1_2_client_method());
             if (ret == 0) {
                 ret = wc_InitRng_ex(&globalRandom, NULL, MAXQ_DEVICE_ID);
             }
