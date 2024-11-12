@@ -406,15 +406,6 @@ int WP11_Hmac_VerifyFinal(unsigned char* sig, word32 sigLen, int* stat,
 int WP11_Slot_SeedRandom(WP11_Slot* slot, unsigned char* seed, int seedLen);
 int WP11_Slot_GenerateRandom(WP11_Slot* slot, unsigned char* data, int len);
 
-CK_RV NewObject(WP11_Session* session, CK_KEY_TYPE keyType,
-                CK_OBJECT_CLASS keyClass, CK_ATTRIBUTE_PTR pTemplate,
-                CK_ULONG ulCount, WP11_Object** object);
-
-CK_RV AddObject(WP11_Session* session, WP11_Object* object,
-                CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
-                CK_OBJECT_HANDLE_PTR phKey);
-
-
 #ifdef __cplusplus
 }
 #endif
