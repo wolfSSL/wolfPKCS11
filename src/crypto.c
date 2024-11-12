@@ -455,9 +455,9 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
  *          CKR_FUNCTION_FAILED when setting an attribute fails.
  *          CKR_OK on success.
  */
-CK_RV NewObject(WP11_Session* session, CK_KEY_TYPE keyType,
-                CK_OBJECT_CLASS keyClass, CK_ATTRIBUTE_PTR pTemplate,
-                CK_ULONG ulCount, WP11_Object** object)
+static CK_RV NewObject(WP11_Session* session, CK_KEY_TYPE keyType,
+                       CK_OBJECT_CLASS keyClass, CK_ATTRIBUTE_PTR pTemplate,
+                       CK_ULONG ulCount, WP11_Object** object)
 {
     int ret;
     CK_RV rv;
@@ -497,9 +497,9 @@ CK_RV NewObject(WP11_Session* session, CK_KEY_TYPE keyType,
  *          CKR_FUNCTION_FAILED when setting an attribute fails.
  *          CKR_OK on success.
  */
-CK_RV AddObject(WP11_Session* session, WP11_Object* object,
-                CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
-                CK_OBJECT_HANDLE_PTR phKey)
+static CK_RV AddObject(WP11_Session* session, WP11_Object* object,
+                       CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
+                       CK_OBJECT_HANDLE_PTR phKey)
 {
     int ret;
     CK_ATTRIBUTE* attr;
@@ -2700,18 +2700,7 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 #ifdef HAVE_ECC
         case CKM_ECDSA:
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_ECDSA_SIGN)) {
-#if 0
-                sigLen = (word32)*pulSignatureLen;
-                /* The MAXQ1065 has its own preprovisioned private key. Use that
-                 * to sign it. */
-                ret = WP11_Ec_ProvisionedKey_Sign(session,
-                                                  pData, (int)ulDataLen,
-                                                  pSignature, &sigLen);
-                *pulSignatureLen = sigLen;
-                break;
-#else
                 return CKR_OPERATION_NOT_INITIALIZED;
-#endif
             }
 
             sigLen = WP11_Ec_SigLen(obj);

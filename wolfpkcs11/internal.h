@@ -329,11 +329,6 @@ int WP11_Ec_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
 int WP11_Ec_SigLen(WP11_Object* key);
 int WP11_Ec_Sign(unsigned char* hash, word32 hashLen, unsigned char* sig,
                  word32* sigLen, WP11_Object* priv, WP11_Slot* slot);
-#if 1
-int WP11_Ec_ProvisionedKey_Sign(WP11_Session* session,
-                                unsigned char *hash, word32 hashLen,
-                                unsigned char *sig, word32* sigLen);
-#endif
 int WP11_Ec_Verify(unsigned char* sig, word32 sigLen, unsigned char* hash,
                    word32 hashLen, int* stat, WP11_Object* pub);
 int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
