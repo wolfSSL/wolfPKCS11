@@ -31,7 +31,6 @@
 #endif
 #include <wolfssl/wolfcrypt/settings.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
-#include <wolfssl/wolfcrypt/asn_public.h>
 
 #include <wolfpkcs11/pkcs11.h>
 #include <wolfpkcs11/internal.h>
@@ -2480,7 +2479,7 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
         return CKR_ARGUMENTS_BAD;
 
     ret = WP11_Object_Find(session, hKey, &obj);
-#if 1
+#ifdef WOLFSSL_MAXQ10XX_CRYPTO
     if ((ret != 0) && (hKey == 0) && (pMechanism->mechanism == CKM_ECDSA)) {
         if (pMechanism->pParameter != NULL || pMechanism->ulParameterLen != 0) {
             return CKR_MECHANISM_PARAM_INVALID;
