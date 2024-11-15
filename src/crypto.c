@@ -1288,6 +1288,30 @@ CK_RV C_EncryptInit(CK_SESSION_HANDLE hSession,
             break;
         }
     #endif
+
+    #ifdef HAVE_AESCCM
+        case CKM_AES_CCM: {
+             CK_CCM_PARAMS* params;
+
+            if (type != CKK_AES)
+                return CKR_KEY_TYPE_INCONSISTENT;
+            if (pMechanism->pParameter == NULL)
+                return CKR_MECHANISM_PARAM_INVALID;
+            if (pMechanism->ulParameterLen != sizeof(CK_CCM_PARAMS))
+                return CKR_MECHANISM_PARAM_INVALID;
+
+            params = (CK_CCM_PARAMS*)pMechanism->pParameter;
+            ret = WP11_Session_SetCcmParams(session,
+                                            (int)params->ulDataLen,
+                                            params->pIv, (int)params->ulIvLen,
+                                            params->pAAD, (int)params->ulAADLen,
+                                            (int)params->ulMacLen);
+            if (ret != 0)
+                return CKR_MECHANISM_PARAM_INVALID;
+            init = WP11_INIT_AES_CCM_ENC;
+            break;
+        }
+    #endif
 #endif
         default:
             (void)type;
@@ -1466,6 +1490,27 @@ CK_RV C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 
             ret = WP11_AesGcm_Encrypt(pData, (int)ulDataLen, pEncryptedData,
                                                      &encDataLen, obj, session);
+            if (ret < 0)
+                return CKR_FUNCTION_FAILED;
+            *pulEncryptedDataLen = encDataLen;
+            break;
+    #endif
+    #ifdef HAVE_AESCCM
+        case CKM_AES_CCM:
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CCM_ENC))
+                return CKR_OPERATION_NOT_INITIALIZED;
+
+            encDataLen = (word32)ulDataLen +
+                                            WP11_AesCcm_GetMacLen(session);
+            if (pEncryptedData == NULL) {
+                *pulEncryptedDataLen = encDataLen;
+                return CKR_OK;
+            }
+            if (encDataLen > (word32)*pulEncryptedDataLen)
+                return CKR_BUFFER_TOO_SMALL;
+
+            ret = WP11_AesCcm_Encrypt(pData, (int)ulDataLen, pEncryptedData,
+                                      &encDataLen, obj, session);
             if (ret < 0)
                 return CKR_FUNCTION_FAILED;
             *pulEncryptedDataLen = encDataLen;
@@ -1858,6 +1903,29 @@ CK_RV C_DecryptInit(CK_SESSION_HANDLE hSession,
             break;
         }
     #endif
+    #ifdef HAVE_AESCCM
+        case CKM_AES_CCM: {
+            CK_CCM_PARAMS* params;
+
+            if (type != CKK_AES)
+                return CKR_KEY_TYPE_INCONSISTENT;
+            if (pMechanism->pParameter == NULL)
+                return CKR_MECHANISM_PARAM_INVALID;
+            if (pMechanism->ulParameterLen != sizeof(CK_CCM_PARAMS))
+                return CKR_MECHANISM_PARAM_INVALID;
+
+            params = (CK_CCM_PARAMS*)pMechanism->pParameter;
+            ret = WP11_Session_SetCcmParams(session,
+                                            (int)params->ulDataLen,
+                                            params->pIv, (int)params->ulIvLen,
+                                            params->pAAD, (int)params->ulAADLen,
+                                            (int)params->ulMacLen);
+            if (ret != 0)
+                return CKR_MECHANISM_PARAM_INVALID;
+            init = WP11_INIT_AES_CCM_DEC;
+            break;
+        }
+    #endif
 #endif
         default:
             (void)type;
@@ -2037,6 +2105,27 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
 
             ret = WP11_AesGcm_Decrypt(pEncryptedData, (int)ulEncryptedDataLen,
                                               pData, &decDataLen, obj, session);
+            if (ret < 0)
+                return CKR_FUNCTION_FAILED;
+            *pulDataLen = decDataLen;
+            break;
+    #endif
+    #ifdef HAVE_AESCCM
+        case CKM_AES_CCM:
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CCM_DEC))
+                return CKR_OPERATION_NOT_INITIALIZED;
+
+            decDataLen = (word32)ulEncryptedDataLen -
+                                            WP11_AesCcm_GetMacLen(session);
+            if (pData == NULL) {
+                *pulDataLen = decDataLen;
+                return CKR_OK;
+            }
+            if (decDataLen > (word32)*pulDataLen)
+                return CKR_BUFFER_TOO_SMALL;
+
+            ret = WP11_AesCcm_Decrypt(pEncryptedData, (int)ulEncryptedDataLen,
+                                      pData, &decDataLen, obj, session);
             if (ret < 0)
                 return CKR_FUNCTION_FAILED;
             *pulDataLen = decDataLen;

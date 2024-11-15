@@ -256,6 +256,18 @@ typedef struct WP11_GcmParams {
     int encSz;                         /* Size of encrypted data in bytes     */
 } WP11_GcmParams;
 #endif
+
+#ifdef HAVE_AESCCM
+typedef struct WP11_CcmParams {
+    int dataSz;                        /* Data size in bytes                  */
+    unsigned char iv[WP11_MAX_GCM_NONCE_SZ];
+                                       /* IV/nonce data                       */
+    int ivSz;                          /* IV/nonce size in bytes              */
+    unsigned char* aad;                /* Additional Authentication Data      */
+    int aadSz;                         /* AAD size in bytes                   */
+    int macSz;                         /* Size of MAC data in bytes           */
+} WP11_CcmParams;
+#endif
 #endif
 
 #ifndef NO_HMAC
@@ -291,6 +303,9 @@ struct WP11_Session {
     #endif
     #ifdef HAVE_AESGCM
         WP11_GcmParams gcm;            /* AES-GCM parameters                  */
+    #endif
+    #ifdef HAVE_AESCCM
+        WP11_CcmParams ccm;            /* AES-CCM parameters                  */
     #endif
 #endif
 #ifndef NO_HMAC
@@ -617,6 +632,14 @@ static void wp11_Session_Final(WP11_Session* session)
         if (session->params.gcm.enc != NULL) {
             XFREE(session->params.gcm.enc, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             session->params.gcm.enc = NULL;
+        }
+    }
+#endif
+#ifdef HAVE_AESCCM
+    if (session->mechanism == CKM_AES_CCM) {
+        if (session->params.ccm.aad != NULL) {
+            XFREE(session->params.ccm.aad, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            session->params.ccm.aad = NULL;
         }
     }
 #endif
@@ -4584,7 +4607,7 @@ int WP11_Session_SetCbcParams(WP11_Session* session, unsigned char* iv,
 
 #ifdef HAVE_AESGCM
 /**
- * Set the parameters to use for an AES-CBC operation.
+ * Set the parameters to use for an AES-GCM operation.
  *
  * @param  session  [in]  Session object.
  * @param  iv       [in]  Initialization vector.
@@ -4621,6 +4644,55 @@ int WP11_Session_SetGcmParams(WP11_Session* session, unsigned char* iv,
                 gcm->aadSz = aadLen;
             }
         }
+    }
+
+    return ret;
+}
+#endif /* HAVE_AESGCM */
+
+#ifdef HAVE_AESCCM
+/**
+ * Set the parameters to use for an AES-CCM operation.
+ *
+ * @param  dataSz   [in]  Length of data in bytes.
+ * @param  session  [in]  Session object.
+ * @param  iv       [in]  Nonce.
+ * @param  ivSz     [in]  Length of nonce in bytes.
+ * @param  aad      [in]  Additional authentication data.
+ * @param  aadSz    [in]  Length of additional authentication data.
+ * @param  macSz    [in]  Length of the MAC in bytes.
+ * @return  BAD_FUNC_ARG if the IV/nonce is too big.
+ *          Other -ve value on failure.
+ *          0 on success.
+ */
+int WP11_Session_SetCcmParams(WP11_Session* session, int dataSz,
+                              unsigned char* iv, int ivSz,
+                              unsigned char* aad, int aadSz,
+                              int macSz)
+{
+    int ret = 0;
+    WP11_CcmParams* ccm = &session->params.ccm;
+
+    if (ivSz > WP11_MAX_GCM_NONCE_SZ)
+        ret = BAD_FUNC_ARG;
+
+    if (ret == 0) {
+        ccm->dataSz = dataSz;
+        XMEMSET(ccm, 0, sizeof(*ccm));
+        XMEMCPY(ccm->iv, iv, ivSz);
+        ccm->ivSz = ivSz;
+        if (aad != NULL) {
+            ccm->aad = (unsigned char*)XMALLOC(aadSz, NULL,
+                DYNAMIC_TYPE_TMP_BUFFER);
+            if (ccm->aad == NULL) {
+                ret = MEMORY_E;
+            }
+            if (ret == 0) {
+                XMEMCPY(ccm->aad, aad, aadSz);
+                ccm->aadSz = aadSz;
+            }
+        }
+        ccm->macSz = macSz;
     }
 
     return ret;
@@ -8302,6 +8374,146 @@ int WP11_AesGcm_DecryptFinal(unsigned char* dec, word32* decSz,
     return ret;
 }
 #endif /* HAVE_AESGCM */
+
+#ifdef HAVE_AESCCM
+/**
+ * Return the number of data bytes from CCM parameters.
+ *
+ * @param  session  [in]  Session object.
+ * @return  Data byte length.
+ */
+int WP11_AesCcm_DataLen(WP11_Session* session)
+{
+    WP11_CcmParams* ccm = &session->params.ccm;
+
+    return ccm->dataSz;
+}
+
+/**
+ * Return the MAC size from the CCM parameters.
+ *
+ * @param  session  [in]  Session object.
+ * @return  MAC byte length.
+ */
+int WP11_AesCcm_GetMacLen(WP11_Session* session)
+{
+    WP11_CcmParams* ccm = &session->params.ccm;
+
+    return ccm->macSz;
+}
+
+/**
+ * Encrypt plain text with AES-CCM placing authentication tag on end.
+ * Output buffer must be large enough to hold all data.
+ *
+ * @param  plain    [in]      Plain text.
+ * @param  plainSz  [in]      Length of plain text in bytes.
+ * @param  enc      [in]      Buffer to hold encrypted data.
+ * @param  encSz    [in,out]  On in, length of buffer in bytes.
+ *                            On out, length of encrypted data including
+ *                            authentication tag in bytes.
+ * @param  secret   [in]      Secret key object.
+ * @param  session  [in]      Session object holding CCM parameters.
+ * @return  -ve on encryption failure.
+ *          0 on success.
+ */
+int WP11_AesCcm_Encrypt(unsigned char* plain, word32 plainSz,
+                        unsigned char* enc, word32* encSz, WP11_Object* secret,
+                        WP11_Session* session)
+{
+    int ret;
+    Aes aes;
+    WP11_Data* key;
+    WP11_CcmParams* ccm = &session->params.ccm;
+    word32 authTagSz = ccm->macSz;
+    unsigned char* authTag = enc + plainSz;
+
+    ret = wc_AesInit(&aes, NULL, INVALID_DEVID);
+    if (ret == 0) {
+        if (secret->onToken)
+            WP11_Lock_LockRO(secret->lock);
+        key = &secret->data.symmKey;
+        ret = wc_AesCcmSetKey(&aes, key->data, key->len);
+        if (secret->onToken)
+            WP11_Lock_UnlockRO(secret->lock);
+
+        if (ret == 0)
+            ret = wc_AesCcmEncrypt(&aes, enc, plain, plainSz,
+                                   ccm->iv, ccm->ivSz,
+                                   authTag, authTagSz,
+                                   ccm->aad, ccm->aadSz);
+        if (ret == 0)
+            *encSz = plainSz + authTagSz;
+
+        if (ccm->aad != NULL) {
+            XFREE(ccm->aad, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            ccm->aad = NULL;
+            ccm->aadSz = 0;
+        }
+
+        wc_AesFree(&aes);
+    }
+
+    return ret;
+}
+
+/**
+ * Decrypt data, including authentication tag, with AES-CCM
+ * Output buffer must be large enough to hold all decrypted data.
+ *
+ * @param  enc      [in]      Encrypted data.
+ * @param  encSz    [in]      Length of encrypted data in bytes.
+ * @param  dec      [in]      Buffer to hold decrypted data.
+ * @param  decSz    [in,out]  On in, length of buffer in bytes.
+ *                            On out, length of decrypted data in bytes.
+ * @param  session  [in]      Session object holding Aes object.
+ * @return  AES_CCM_AUTH_E when data does not authenticate.
+ *          Other -ve on encryption failure.
+ *          0 on success.
+ */
+int WP11_AesCcm_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
+                        word32* decSz, WP11_Object* secret,
+                        WP11_Session* session)
+{
+    int ret;
+    Aes aes;
+    WP11_Data* key;
+    WP11_CcmParams* ccm = &session->params.ccm;
+    word32 authTagSz = ccm->macSz;
+    unsigned char* authTag = enc + encSz - authTagSz;
+    encSz -= authTagSz;
+
+    ret = wc_AesInit(&aes, NULL, INVALID_DEVID);
+    if (ret == 0) {
+        if (secret->onToken)
+            WP11_Lock_LockRO(secret->lock);
+        key = &secret->data.symmKey;
+        ret = wc_AesCcmSetKey(&aes, key->data, key->len);
+        if (secret->onToken)
+            WP11_Lock_UnlockRO(secret->lock);
+
+        if (ret == 0)
+            ret = wc_AesCcmDecrypt(&aes, dec, enc, encSz,
+                                   ccm->iv, ccm->ivSz,
+                                   authTag, authTagSz,
+                                   ccm->aad, ccm->aadSz);
+
+        if (ret == 0) {
+            *decSz = encSz;
+        }
+
+        if (ccm->aad != NULL) {
+            XFREE(ccm->aad, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            ccm->aad = NULL;
+            ccm->aadSz = 0;
+        }
+
+        wc_AesFree(&aes);
+    }
+
+    return ret;
+}
+#endif /* HAVE_AESCCM */
 #endif /* !NO_AES */
 
 #ifndef NO_HMAC
