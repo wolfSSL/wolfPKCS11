@@ -13,7 +13,7 @@ Build wolfSSL:
 git clone https://github.com/wolfSSL/wolfssl.git
 cd wolfssl
 ./autogen.sh
-./configure --enable-aescfb --enable-aesccm --enable-cryptocb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
+./configure --enable-aescfb --enable-cryptocb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 make
 make check
 sudo make install
@@ -32,6 +32,10 @@ cd wolfPKCS11
 make
 make check
 ```
+### Optional: AES-CCM Support
+
+To have AES-CCM support in wolfPKCS11, simiply configure wolfSSL with the
+addition of `--enable-aesccm`
 
 ### TPM support with wolfTPM
 

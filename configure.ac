@@ -238,18 +238,6 @@ else
     DISABLE_DEFS="$DISABLE_DEFS -DHAVE_AESGCM"
 fi
 
-AC_ARG_ENABLE([aesccm],
-    [AS_HELP_STRING([--enable-aesccm],[Enable AES-CCM (default: enabled)])],
-    [ ENABLED_AESCCM=$enableval ],
-    [ ENABLED_AESCCM=yes ]
-    )
-if test "$ENABLED_AES" = "yes" && test "$ENABLED_AESCCM" = "yes"
-then
-    AM_CFLAGS="$AM_CFLAGS -DHAVE_AESCCM"
-else
-    DISABLE_DEFS="$DISABLE_DEFS -DHAVE_AESCCM"
-fi
-
 AC_ARG_ENABLE([hmac],
     [AS_HELP_STRING([--enable-hmac],[Enable HMAC (default: enabled)])],
     [ ENABLED_HMAC=$enableval ],
