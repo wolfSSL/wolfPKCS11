@@ -6030,8 +6030,8 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             {
                 if ((object->objClass == CKO_CERTIFICATE) &&
                     (type == CKA_VALUE)) {
-                    ret = GetData((byte*)object->data.cert.data,
-                                object->data.cert.len, data, len);
+                    ret = GetData((byte*)object->keyData,
+                                object->keyDataLen, data, len);
                     break;
                 }
                 else {

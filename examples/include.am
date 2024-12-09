@@ -21,6 +21,10 @@ noinst_PROGRAMS += examples/add_cert
 examples_add_cert_SOURCES = examples/add_cert.c
 examples_add_cert_LDADD =
 
+noinst_PROGRAMS += examples/add_cert_file
+examples_add_cert_file_SOURCES = examples/add_cert_file.c
+examples_add_cert_file_LDADD =
+
 noinst_PROGRAMS += examples/init_token
 examples_init_token_SOURCES = examples/init_token.c
 examples_init_token_LDADD =

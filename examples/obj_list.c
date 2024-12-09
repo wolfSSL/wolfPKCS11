@@ -363,6 +363,48 @@ static CK_RV pkcs11_rsa_attr(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE obj)
     return ret;
 }
 
+static CK_RV pkcs11_cert_attr(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE obj)
+{
+    CK_RV ret = CKR_OK;
+    CK_ATTRIBUTE getTmpl[] = {
+        { CKA_VALUE,             NULL,   0    },
+    };
+    CK_ULONG getTmplCnt = sizeof(getTmpl) / sizeof(*getTmpl);
+    CK_ULONG i;
+
+    printf("Get cert attr\n");
+
+    ret = funcList->C_GetAttributeValue(session, obj, getTmpl, getTmplCnt);
+    CHECK_CKR(ret, "Get Attribute Value sizes");
+
+    for (i = 0; i < getTmplCnt; i++) {
+        if (getTmpl[i].ulValueLen > 0) {
+            printf("cert attr, templ[%d].len = %d\n", (int)i, (int)getTmpl[i].ulValueLen);
+            getTmpl[i].pValue = malloc(getTmpl[i].ulValueLen * sizeof(byte));
+            if (getTmpl[i].pValue == NULL)
+                ret = CKR_DEVICE_MEMORY;
+            CHECK_CKR(ret, "Allocate get attribute memory");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, obj, getTmpl, getTmplCnt);
+        CHECK_CKR(ret, "Get Attribute Values");
+    }
+
+    if (ret == CKR_OK) {
+        i = 0;
+        pkcs11_print_data("Value", getTmpl[i].pValue, getTmpl[i].ulValueLen);
+        i++;
+    }
+
+    for (i = 0; i < getTmplCnt; i++) {
+        free(getTmpl[i].pValue);
+    }
+
+    return ret;
+}
+
 /* Retrieve the object attributes and display as text.
  *
  * return CKR_OK on success, other value on failure.
@@ -428,6 +470,9 @@ static CK_RV pkcs11_obj_attr(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE obj)
         }
         else if (objClass == CKO_SECRET_KEY) {
             ret = pkcs11_key_attr(session, obj, &keyType);
+        }
+        else if (objClass == CKO_CERTIFICATE) {
+            ret = pkcs11_cert_attr(session, obj);
         }
     }
     fprintf(stderr, "\n");
