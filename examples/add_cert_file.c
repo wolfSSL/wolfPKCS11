@@ -159,7 +159,7 @@ static CK_RV load_cert(char* filename, unsigned char **certData,
     }
     if (ret == 0) {
         XFSEEK(file, 0, XSEEK_END);
-        len = XFTELL(file);
+        len = (int)XFTELL(file);
         if (len == 0) {
             fprintf(stderr, "File: %s is empty\n", filename);
             ret = 1;
@@ -172,7 +172,7 @@ static CK_RV load_cert(char* filename, unsigned char **certData,
         }
     }
     if (ret == 0) {
-        buffer = XMALLOC(len + 1, NULL, DYNAMIC_TYPE_FILE);
+        buffer = (unsigned char *)XMALLOC(len + 1, NULL, DYNAMIC_TYPE_FILE);
         if (buffer == NULL) {
             fprintf(stderr, "Malloc error on %d bytes\n", len);
             ret = 1;
