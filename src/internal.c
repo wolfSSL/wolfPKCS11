@@ -141,7 +141,7 @@ typedef struct WP11_Data {
 
 /* Certificate */
 typedef struct WP11_Cert {
-    byte data[WP11_MAX_CERT_SZ];       /* Certificate data                    */
+    byte *data;                        /* Certificate data                    */
     word32 len;                        /* Length of certificate data in bytes */
     CK_CERTIFICATE_TYPE type;
 } WP11_Cert;
@@ -1619,6 +1619,21 @@ exit:
     return ret;
 }
 
+/**
+ * "Decode" the certificate.
+ *
+ * Certificates are not encrypted.
+ *
+ * @param [in, out]  object  Certificate object.
+ */
+static void wp11_Object_Decode_Cert(WP11_Object* object)
+{
+    object->data.cert.data = object->keyData;
+    object->data.cert.len = object->keyDataLen;
+    object->keyData = NULL;
+    object->encoded = 0;
+}
+
 #ifndef NO_RSA
 /**
  * Decode the RSA key.
@@ -2808,7 +2823,7 @@ static int wp11_Object_Decode(WP11_Object* object)
     int ret;
 
     if (object->objClass == CKO_CERTIFICATE) {
-        object->encoded = 0;
+        wp11_Object_Decode_Cert(object);
         ret = 0;
     }
     else {
@@ -4947,7 +4962,7 @@ void WP11_Object_Free(WP11_Object* object)
     if (object->keyId != NULL)
         XFREE(object->keyId, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     if (object->objClass == CKO_CERTIFICATE) {
-        XMEMSET(object->data.cert.data, 0, object->data.cert.len);
+        XFREE(object->data.cert.data, NULL, DYNAMIC_TYPE_CERT);
     }
     else {
     #ifndef NO_RSA
@@ -4964,11 +4979,12 @@ void WP11_Object_Free(WP11_Object* object)
     #endif
         if (object->type == CKK_AES || object->type == CKK_GENERIC_SECRET)
             XMEMSET(object->data.symmKey.data, 0, object->data.symmKey.len);
-    #ifndef WOLFPKCS11_NO_STORE
-        if (object->keyData != NULL)
-            XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-    #endif
     }
+
+#ifndef WOLFPKCS11_NO_STORE
+    if (object->keyData != NULL)
+        XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+#endif
 
     /* Dispose of object. */
     XFREE(object, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -5390,7 +5406,6 @@ int WP11_Object_SetCert(WP11_Object* object, unsigned char** data,
 
     cert = &object->data.cert;
     cert->len = 0;
-    XMEMSET(cert->data, 0, sizeof(cert->data));
 
     /* First item is certificate type */
     if (ret == 0 && data[0] != NULL && len[0] != (int)sizeof(CK_ULONG))
@@ -5400,13 +5415,20 @@ int WP11_Object_SetCert(WP11_Object* object, unsigned char** data,
 
     /* Second item is certificate data (CKA_VALUE) */
     if (ret == 0 && data[1] != NULL) {
-        if ((word32)len[1] > sizeof(cert->data))
-            ret = BUFFER_E;
-        else
-            cert->len = (word32)len[1];
+        cert->len = (word32)len[1];
     }
-    if (ret == 0 && data[1] != NULL)
+    if (ret == 0 && data[1] != NULL) {
+        if (cert->data != NULL) {
+            XFREE(cert->data, NULL, DYNAMIC_TYPE_CERT);
+        }
+        cert->data = (byte *)XMALLOC(cert->len, NULL, DYNAMIC_TYPE_CERT);
+        if (cert->data == NULL) {
+            ret = MEMORY_E;
+        }
+    }
+    if (ret == 0 && data[1] != NULL) {
         XMEMCPY(cert->data, data[1], cert->len);
+    }
 
     if (object->onToken)
         WP11_Lock_UnlockRW(object->lock);
