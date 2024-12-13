@@ -8428,7 +8428,7 @@ int WP11_AesCcm_Encrypt(unsigned char* plain, word32 plainSz,
     word32 authTagSz = ccm->macSz;
     unsigned char* authTag = enc + plainSz;
 
-    ret = wc_AesInit(&aes, NULL, INVALID_DEVID);
+    ret = wc_AesInit(&aes, NULL, session->devId);
     if (ret == 0) {
         if (secret->onToken)
             WP11_Lock_LockRO(secret->lock);
@@ -8483,7 +8483,7 @@ int WP11_AesCcm_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
     unsigned char* authTag = enc + encSz - authTagSz;
     encSz -= authTagSz;
 
-    ret = wc_AesInit(&aes, NULL, INVALID_DEVID);
+    ret = wc_AesInit(&aes, NULL, session->devId);
     if (ret == 0) {
         if (secret->onToken)
             WP11_Lock_LockRO(secret->lock);

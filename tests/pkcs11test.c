@@ -7026,21 +7026,23 @@ static CK_RV test_aes_gcm_gen_key_id(void* args)
 #endif
 
 #ifdef HAVE_AESCCM
-static CK_RV test_aes_ccm_encdec(CK_SESSION_HANDLE session, unsigned char* aad,
-                                 int aadLen, int macLen, unsigned char* exp,
+static CK_RV test_aes_ccm_encdec(CK_SESSION_HANDLE session,
+                                 int macLen, unsigned char* exp,
                                  unsigned char* expMac, CK_OBJECT_HANDLE key)
 {
     CK_RV ret;
     byte plain[32];
     byte enc[48]; /* 32 bytes of plaintext + 16 bytes of mac */
     byte dec[32];
-    byte iv[12];
+    byte aad[10];
+    byte iv[13];
     CK_ULONG plainSz, encSz, decSz;
     CK_MECHANISM mech;
     CK_CCM_PARAMS ccmParams;
 
     memset(plain, 9, sizeof(plain));
     memset(iv, 9, sizeof(iv));
+    memset(aad, 9, sizeof(aad));
     plainSz = sizeof(plain);
     encSz = sizeof(enc);
     decSz = sizeof(dec);
@@ -7048,7 +7050,7 @@ static CK_RV test_aes_ccm_encdec(CK_SESSION_HANDLE session, unsigned char* aad,
     ccmParams.pIv    = iv;
     ccmParams.ulIvLen = sizeof(iv);
     ccmParams.pAAD      = aad;
-    ccmParams.ulAADLen  = aadLen;
+    ccmParams.ulAADLen  = sizeof(aad);
     ccmParams.ulMacLen  = macLen;
 
     mech.mechanism      = CKM_AES_CCM;
@@ -7130,7 +7132,7 @@ static CK_RV test_aes_ccm_gen_key(void* args)
 
     ret = gen_aes_key(session, 16, NULL, 0, 0, &key);
     if (ret == CKR_OK)
-        ret = test_aes_ccm_encdec(session, NULL, 0, 16, NULL, NULL, key);
+        ret = test_aes_ccm_encdec(session, 16, NULL, NULL, key);
 
     return ret;
 }
