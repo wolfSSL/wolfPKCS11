@@ -285,12 +285,102 @@ static CK_RV pkcs11_add_cert(CK_SESSION_HANDLE session,
     };
     CK_ULONG cnt = sizeof(certTmpl)/sizeof(*certTmpl);
     CK_OBJECT_HANDLE obj;
+    CK_ATTRIBUTE getTmpl[] = {
+        { CKA_VALUE,          NULL,   0    }
+    };
+    CK_ULONG getTmplCnt = sizeof(getTmpl) / sizeof(*getTmpl);
 
     if (privId == NULL)
         cnt -= 2;
 
     ret = funcList->C_CreateObject(session, certTmpl, cnt, &obj);
     CHECK_CKR(ret, "CreateObject Certificate");
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, obj, getTmpl, getTmplCnt);
+        CHECK_CKR(ret, "C_GetAttributeValue");
+
+        if (ret == CKR_OK) {
+            getTmpl[0].pValue = XMALLOC(getTmpl[0].ulValueLen * sizeof(byte),
+                                                    NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            if (getTmpl[0].pValue == NULL)
+                ret = CKR_DEVICE_MEMORY;
+            CHECK_CKR(ret, "Allocate get attribute memory");
+
+            if (ret == CKR_OK) {
+                ret = funcList->C_GetAttributeValue(session, obj, getTmpl, getTmplCnt);
+                CHECK_CKR(ret, "C_GetAttributeValue");
+
+                if (sizeof(certificate) != getTmpl[0].ulValueLen) {
+                    ret = CKR_GENERAL_ERROR;
+                }
+                if (XMEMCMP(certificate, getTmpl[0].pValue, sizeof(certificate)) != 0) {
+                    ret = CKR_GENERAL_ERROR;
+                }
+                CHECK_CKR(ret, "Verify that stored cert matches original");
+
+                XFREE(getTmpl[0].pValue, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            }
+        }
+    }
+
+    /* If it was stored on the token, verify behavior remains*/
+    if (privIdLen > 0) {
+        if (ret == CKR_OK) {
+            if (userPinLen != 0)
+                funcList->C_Logout(session);
+            funcList->C_CloseSession(session);
+        }
+        if (ret == CKR_OK) {
+            CK_FLAGS sessFlags = CKF_SERIAL_SESSION | CKF_RW_SESSION;
+
+            ret = funcList->C_OpenSession(slot, sessFlags, NULL, NULL, &session);
+            CHECK_CKR(ret, "Open Session");
+            if (ret == CKR_OK && userPinLen != 0) {
+                ret = funcList->C_Login(session, CKU_USER, userPin, userPinLen);
+                CHECK_CKR(ret, "Login");
+            }
+        }
+        CK_ATTRIBUTE findTmpl[] = {
+            { CKA_ID,          privId,   privIdLen    }
+        };
+        CK_ULONG findTmplCnt = sizeof(findTmpl) / sizeof(*findTmpl);
+        CK_ULONG count = 1;
+        ret = funcList->C_FindObjectsInit(session, findTmpl, findTmplCnt);
+        CHECK_CKR(ret, "C_FindObjectsInit");
+        if (ret == CKR_OK) {
+            ret = funcList->C_FindObjects(session, &obj, 1, &count);
+            CHECK_CKR(ret, "C_FindObjects");
+            ret = funcList->C_FindObjectsFinal(session);
+        }
+        if (ret == CKR_OK) {
+            getTmpl[0].pValue = NULL;
+            getTmpl[0].ulValueLen = 0;
+            ret = funcList->C_GetAttributeValue(session, obj, getTmpl, getTmplCnt);
+            CHECK_CKR(ret, "C_GetAttributeValue");
+            if (ret == CKR_OK) {
+                getTmpl[0].pValue = XMALLOC(getTmpl[0].ulValueLen * sizeof(byte),
+                                                        NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                if (getTmpl[0].pValue == NULL)
+                    ret = CKR_DEVICE_MEMORY;
+                CHECK_CKR(ret, "Allocate get attribute memory");
+
+                if (ret == CKR_OK) {
+                    ret = funcList->C_GetAttributeValue(session, obj, getTmpl, getTmplCnt);
+                    CHECK_CKR(ret, "C_GetAttributeValue");
+
+                    if (sizeof(certificate) != getTmpl[0].ulValueLen) {
+                        ret = CKR_GENERAL_ERROR;
+                    }
+                    if (XMEMCMP(certificate, getTmpl[0].pValue, sizeof(certificate)) != 0) {
+                        ret = CKR_GENERAL_ERROR;
+                    }
+                    CHECK_CKR(ret, "Verify that stored cert matches original");
+
+                    XFREE(getTmpl[0].pValue, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                }
+            }
+        }
+    }
 
     return ret;
 }
