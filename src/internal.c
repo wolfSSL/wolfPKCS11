@@ -1628,9 +1628,10 @@ exit:
  */
 static void wp11_Object_Decode_Cert(WP11_Object* object)
 {
-    object->data.cert.data = object->keyData;
-    object->data.cert.len = object->keyDataLen;
-    object->keyData = NULL;
+    if (object->data.cert.data == NULL) {
+        object->data.cert.data = object->keyData;
+        object->data.cert.len = object->keyDataLen;
+    }
     object->encoded = 0;
 }
 
@@ -4952,6 +4953,7 @@ void WP11_Session_FindFinal(WP11_Session* session)
  */
 void WP11_Object_Free(WP11_Object* object)
 {
+    int certFreed = 0;
 #ifdef WOLFPKCS11_TPM
     wolfTPM2_UnloadHandle(&object->slot->tpmDev, &object->tpmKey.handle);
 #endif
@@ -4963,6 +4965,7 @@ void WP11_Object_Free(WP11_Object* object)
         XFREE(object->keyId, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     if (object->objClass == CKO_CERTIFICATE) {
         XFREE(object->data.cert.data, NULL, DYNAMIC_TYPE_CERT);
+        certFreed = 1;
     }
     else {
     #ifndef NO_RSA
@@ -4982,8 +4985,10 @@ void WP11_Object_Free(WP11_Object* object)
     }
 
 #ifndef WOLFPKCS11_NO_STORE
-    if (object->keyData != NULL)
+    if (object->keyData != NULL && certFreed == 0)
         XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+#else
+    (void)certFreed;
 #endif
 
     /* Dispose of object. */

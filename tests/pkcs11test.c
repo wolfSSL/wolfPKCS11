@@ -7581,6 +7581,7 @@ static CK_RV test_hmac_sha512_fail(void* args)
 static CK_RV test_x509(void* args)
 {
     CK_RV ret = CKR_OK;
+    int sessFlags = CKF_SERIAL_SESSION | CKF_RW_SESSION;
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_CERTIFICATE_TYPE certType = CKC_X_509;
     CK_UTF8CHAR label[] = "A certificate object";
@@ -7733,6 +7734,11 @@ static CK_RV test_x509(void* args)
         { CKA_VALUE,          NULL,   0    }
     };
     CK_ULONG getTmplCnt = sizeof(getTmpl) / sizeof(*getTmpl);
+    CK_ATTRIBUTE findTmpl[] = {
+        { CKA_ID,          id,   sizeof(id)}
+    };
+    CK_ULONG findTmplCnt = sizeof(findTmpl) / sizeof(*findTmpl);
+    CK_ULONG count = 1;
 
     ret = funcList->C_CreateObject(session, tmpl, tmplCnt, &obj);
     CHECK_CKR(ret, "Create certificate object");
@@ -7762,8 +7768,61 @@ static CK_RV test_x509(void* args)
                 XFREE(getTmpl[0].pValue, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             }
         }
+    }
+
+    /* Do a login/logout cycle and check that the value still matches */
+    if (userPinLen != 0)
+        funcList->C_Logout(session);
+    funcList->C_CloseSession(session);
+
+    ret = funcList->C_OpenSession(slot, sessFlags, NULL, NULL, &session);
+    CHECK_CKR(ret, "Open Session");
+    if (ret == CKR_OK && userPinLen != 0) {
+        ret = funcList->C_Login(session, CKU_USER, userPin, userPinLen);
+        CHECK_CKR(ret, "Login");
+    }
+
+    ret = funcList->C_FindObjectsInit(session, findTmpl, findTmplCnt);
+    CHECK_CKR(ret, "C_FindObjectsInit");
+    if (ret == CKR_OK) {
+        ret = funcList->C_FindObjects(session, &obj, 1, &count);
+        CHECK_CKR(ret, "C_FindObjects");
+        if (ret == CKR_OK) {
+            ret = funcList->C_FindObjectsFinal(session);
+            CHECK_CKR(ret, "C_FindObjectsFinal");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        getTmpl[0].pValue = NULL;
+        getTmpl[0].ulValueLen = 0;
+        ret = funcList->C_GetAttributeValue(session, obj, getTmpl, getTmplCnt);
+        CHECK_CKR(ret, "C_GetAttributeValue");
+        if (ret == CKR_OK) {
+            getTmpl[0].pValue = XMALLOC(getTmpl[0].ulValueLen * sizeof(byte),
+                                                    NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            if (getTmpl[0].pValue == NULL)
+                ret = CKR_DEVICE_MEMORY;
+            CHECK_CKR(ret, "Allocate get attribute memory");
+
+            if (ret == CKR_OK) {
+                ret = funcList->C_GetAttributeValue(session, obj, getTmpl, getTmplCnt);
+                CHECK_CKR(ret, "C_GetAttributeValue");
+
+                if (sizeof(certificate) != getTmpl[0].ulValueLen) {
+                    ret = CKR_GENERAL_ERROR;
+                }
+                if (XMEMCMP(certificate, getTmpl[0].pValue, sizeof(certificate)) != 0) {
+                    ret = CKR_GENERAL_ERROR;
+                }
+                CHECK_CKR(ret, "Verify that stored cert matches original");
+
+                XFREE(getTmpl[0].pValue, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            }
+        }
         ret = funcList->C_DestroyObject(session, obj);
     }
+
     return ret;
 }
 
