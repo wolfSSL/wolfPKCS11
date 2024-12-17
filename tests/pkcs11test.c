@@ -7024,6 +7024,120 @@ static CK_RV test_aes_gcm_gen_key_id(void* args)
     return ret;
 }
 #endif
+
+#ifdef HAVE_AESCCM
+static CK_RV test_aes_ccm_encdec(CK_SESSION_HANDLE session,
+                                 int macLen, unsigned char* exp,
+                                 unsigned char* expMac, CK_OBJECT_HANDLE key)
+{
+    CK_RV ret;
+    byte plain[32];
+    byte enc[48]; /* 32 bytes of plaintext + 16 bytes of mac */
+    byte dec[32];
+    byte aad[10];
+    byte iv[13];
+    CK_ULONG plainSz, encSz, decSz;
+    CK_MECHANISM mech;
+    CK_CCM_PARAMS ccmParams;
+
+    memset(plain, 9, sizeof(plain));
+    memset(iv, 9, sizeof(iv));
+    memset(aad, 9, sizeof(aad));
+    plainSz = sizeof(plain);
+    encSz = sizeof(enc);
+    decSz = sizeof(dec);
+
+    ccmParams.pIv    = iv;
+    ccmParams.ulIvLen = sizeof(iv);
+    ccmParams.pAAD      = aad;
+    ccmParams.ulAADLen  = sizeof(aad);
+    ccmParams.ulMacLen  = macLen;
+
+    mech.mechanism      = CKM_AES_CCM;
+    mech.ulParameterLen = sizeof(ccmParams);
+    mech.pParameter     = &ccmParams;
+
+    ret = funcList->C_EncryptInit(session, &mech, key);
+    CHECK_CKR(ret, "AES-CCM Encrypt Init");
+    if (ret == CKR_OK) {
+        encSz = 0;
+        ret = funcList->C_Encrypt(session, plain, plainSz, NULL, &encSz);
+        CHECK_CKR(ret, "AES-CCM Encrypt");
+    }
+    if (ret == CKR_OK && encSz != plainSz + macLen) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-CCM Encrypt encrypted length");
+    }
+    if (ret == CKR_OK) {
+        encSz = 0;
+        ret = funcList->C_Encrypt(session, plain, plainSz, enc, &encSz);
+        CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL, "AES-CCM Encrypt");
+        encSz = sizeof(enc);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Encrypt(session, plain, plainSz, enc, &encSz);
+        CHECK_CKR(ret, "AES-CCM Encrypt");
+    }
+    if (ret == CKR_OK && encSz != plainSz + macLen) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-CCM Encrypt Result not correct length");
+    }
+    if (ret == CKR_OK && exp != NULL && XMEMCMP(enc, exp, plainSz) != 0) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-CCM Encrypt Result not matching expected");
+    }
+    if (ret == CKR_OK && expMac != NULL &&
+                             XMEMCMP(enc + plainSz, expMac, macLen) != 0) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-CCM Encrypt Result not matching expected tag");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DecryptInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CCM Decrypt Init");
+    }
+    if (ret == CKR_OK) {
+        decSz = 0;
+        ret = funcList->C_Decrypt(session, enc, encSz, NULL, &decSz);
+        CHECK_CKR(ret, "AES-CCM Decrypt");
+    }
+    if (ret == CKR_OK && decSz != plainSz) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-CCM Decrypt decrypted length");
+    }
+    if (ret == CKR_OK) {
+        decSz = 0;
+        ret = funcList->C_Decrypt(session, enc, encSz, dec, &decSz);
+        CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL, "AES-CCM Decrypt");
+        decSz = sizeof(dec);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Decrypt(session, enc, encSz, dec, &decSz);
+        CHECK_CKR(ret, "AES-CCM Decrypt");
+    }
+    if (ret == CKR_OK) {
+        if (decSz != plainSz || XMEMCMP(plain, dec, decSz) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "AES-CCM Decrypted data match plain text");
+        }
+    }
+
+    return ret;
+}
+
+static CK_RV test_aes_ccm_gen_key(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE key;
+
+    ret = gen_aes_key(session, 16, NULL, 0, 0, &key);
+    if (ret == CKR_OK)
+        ret = test_aes_ccm_encdec(session, 16, NULL, NULL, key);
+
+    return ret;
+}
+
+#endif /* HAVE_AESCCM */
 #endif
 
 #ifndef NO_HMAC
@@ -8081,7 +8195,10 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_aes_gcm_gen_key),
     PKCS11TEST_FUNC_SESS_DECL(test_aes_gcm_gen_key_id),
 #endif
+#ifdef HAVE_AESCCM
+    PKCS11TEST_FUNC_SESS_DECL(test_aes_ccm_gen_key),
 #endif
+#endif /* !NO_AES */
 #ifndef NO_HMAC
 #ifndef NO_MD5
     PKCS11TEST_FUNC_SESS_DECL(test_hmac_md5),

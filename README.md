@@ -32,7 +32,10 @@ cd wolfPKCS11
 make
 make check
 ```
+### Optional: AES-CCM Support
 
+To have AES-CCM support in wolfPKCS11, simiply configure wolfSSL with the
+addition of `--enable-aesccm`
 
 ### TPM support with wolfTPM
 
