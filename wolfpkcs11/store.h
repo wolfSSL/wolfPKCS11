@@ -40,13 +40,14 @@
  * @param [in]   id1    Numeric identifier 1.
  * @param [in]   id2    Numeric identifier 2.
  * @param [in]   read   1 when opening for read and 0 for write.
+ * @param [in]   variableSz additional size needed for type (needed on write)
  * @param [out]  store  Return pointer to context data.
  * @return  0 on success.
  * @return  -4 when data not available.
  * @return  Other value to indicate failure.
  */
 int wolfPKCS11_Store_Open(int type, CK_ULONG id1, CK_ULONG id2, int read,
-    void** store);
+    int variableSz, void** store);
 
 /*
  * Closes access to location being read or written.
