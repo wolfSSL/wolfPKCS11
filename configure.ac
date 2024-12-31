@@ -239,9 +239,9 @@ else
 fi
 
 AC_ARG_ENABLE([aesccm],
-    [AS_HELP_STRING([--enable-aesccm],[Enable AES-CCM (default: enabled)])],
+    [AS_HELP_STRING([--enable-aesccm],[Enable AES-CCM (default: disabled)])],
     [ ENABLED_AESCCM=$enableval ],
-    [ ENABLED_AESCCM=yes ]
+    [ ENABLED_AESCCM=no ]
     )
 if test "$ENABLED_AES" = "yes" && test "$ENABLED_AESCCM" = "yes"
 then
