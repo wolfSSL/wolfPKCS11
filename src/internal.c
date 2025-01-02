@@ -1078,7 +1078,7 @@ int wolfPKCS11_Store_Write(void* store, unsigned char* buffer, int len)
 static int wp11_storage_open_readonly(int type, CK_ULONG id1, CK_ULONG id2,
                               void** storage)
 {
-    return wolfPKCS11_Store_OpenSz(type, id1, id2, 1, 0, storage);
+    return wolfPKCS11_Store_Open(type, id1, id2, 1, storage);
 }
 
 /*
@@ -1096,7 +1096,12 @@ static int wp11_storage_open_readonly(int type, CK_ULONG id1, CK_ULONG id2,
 static int wp11_storage_open(int type, CK_ULONG id1, CK_ULONG id2,
                              int variableSz, void** storage)
 {
+#ifdef WOLFPKCS11_TPM_STORE
     return wolfPKCS11_Store_OpenSz(type, id1, id2, 0, variableSz, storage);
+#else
+    (void)variableSz; /* not used */
+    return wolfPKCS11_Store_Open(type, id1, id2, 0, storage);
+#endif
 }
 
 /*
