@@ -731,7 +731,7 @@ static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
  * @return  NOT_AVAILABLE_E when data not available.
  * @return  Other value to indicate failure.
  */
-int wolfPKCS11_Store_Open(int type, CK_ULONG id1, CK_ULONG id2, int read,
+int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
     int variableSz, void** store)
 {
     int ret = 0;
@@ -909,6 +909,24 @@ int wolfPKCS11_Store_Open(int type, CK_ULONG id1, CK_ULONG id2, int read,
 }
 
 /**
+ * Opens access to location to read/write token data.
+ *
+ * @param [in]   type   Type of data to be stored. See WOLFPKCS11_STORE_*.
+ * @param [in]   id1    Numeric identifier 1.
+ * @param [in]   id2    Numeric identifier 2.
+ * @param [in]   read   1 when opening for read and 0 for write.
+ * @param [out]  store  Returns file pointer.
+ * @return  0 on success.
+ * @return  NOT_AVAILABLE_E when data not available.
+ * @return  Other value to indicate failure.
+ */
+int wolfPKCS11_Store_Open(int type, CK_ULONG id1, CK_ULONG id2, int read,
+    void** store)
+{
+    return wolfPKCS11_Store_OpenSz(type, id1, id2, read, 0, store);
+}
+
+/**
  * Closes access to location being read or written.
  * Any dynamic memory associated with the store is freed here.
  *
@@ -1037,7 +1055,7 @@ int wolfPKCS11_Store_Write(void* store, unsigned char* buffer, int len)
 static int wp11_storage_open_readonly(int type, CK_ULONG id1, CK_ULONG id2,
                               void** storage)
 {
-    return wolfPKCS11_Store_Open(type, id1, id2, 1, 0, storage);
+    return wolfPKCS11_Store_OpenSz(type, id1, id2, 1, 0, storage);
 }
 
 /*
@@ -1055,7 +1073,7 @@ static int wp11_storage_open_readonly(int type, CK_ULONG id1, CK_ULONG id2,
 static int wp11_storage_open(int type, CK_ULONG id1, CK_ULONG id2,
                              int variableSz, void** storage)
 {
-    return wolfPKCS11_Store_Open(type, id1, id2, 0, variableSz, storage);
+    return wolfPKCS11_Store_OpenSz(type, id1, id2, 0, variableSz, storage);
 }
 
 /*
