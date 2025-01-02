@@ -235,6 +235,7 @@ extern "C" {
 #define CKM_AES_CBC                           0x00001082UL
 #define CKM_AES_CBC_PAD                       0x00001085UL
 #define CKM_AES_GCM                           0x00001087UL
+#define CKM_AES_CCM                           0x00001088UL
 
 #define CKR_OK                                0x00000000UL
 #define CKR_CANCEL                            0x00000001UL
@@ -540,6 +541,17 @@ typedef struct CK_GCM_PARAMS {
     CK_ULONG          ulTagBits;
 } CK_GCM_PARAMS;
 typedef CK_GCM_PARAMS* CK_GCM_PARAMS_PTR;
+
+
+typedef struct CK_CCM_PARAMS {
+    CK_ULONG          ulDataLen;
+    CK_BYTE_PTR       pIv;
+    CK_ULONG          ulIvLen;
+    CK_BYTE_PTR       pAAD;
+    CK_ULONG          ulAADLen;
+    CK_ULONG          ulMacLen;
+} CK_CCM_PARAMS;
+typedef CK_CCM_PARAMS* CK_CCM_PARAMS_PTR;
 
 
 /* Function list types. */

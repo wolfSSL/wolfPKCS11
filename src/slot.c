@@ -246,6 +246,9 @@ static CK_MECHANISM_TYPE mechanismList[] = {
 #ifdef HAVE_AESGCM
     CKM_AES_GCM,
 #endif
+#ifdef HAVE_AESCCM
+    CKM_AES_CCM,
+#endif
 #endif
 #ifndef NO_HMAC
 #ifndef NO_MD5
@@ -381,6 +384,12 @@ static CK_MECHANISM_INFO aesGcmMechInfo = {
     16, 32, CKF_ENCRYPT | CKF_DECRYPT
 };
 #endif
+#ifdef HAVE_AESCCM
+/* Info on AES-CCM mechanism. */
+static CK_MECHANISM_INFO aesCcmMechInfo = {
+    16, 32, CKF_ENCRYPT | CKF_DECRYPT
+};
+#endif
 #endif
 #ifndef NO_HMAC
 #ifndef NO_MD5
@@ -496,6 +505,11 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
 #ifdef HAVE_AESGCM
         case CKM_AES_GCM:
             XMEMCPY(pInfo, &aesGcmMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifdef HAVE_AESCCM
+        case CKM_AES_CCM:
+            XMEMCPY(pInfo, &aesCcmMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
 #endif
 #endif
