@@ -1701,10 +1701,237 @@ static int wp11_Object_Load_Cert(WP11_Object* object, int tokenId, int objId)
     return ret;
 }
 
+#if defined(MAXQ10XX_PRODUCTION_KEY)
+#include "maxq10xx_key.h"
+#else
+/* TEST KEY. This must be changed for production environments!! */
+static const mxq_u1 KeyPairImport[] = {
+    0xd0,0x97,0x31,0xc7,0x63,0xc0,0x9e,0xe3,0x9a,0xb4,0xd0,0xce,0xa7,0x89,0xab,
+    0x52,0xc8,0x80,0x3a,0x91,0x77,0x29,0xc3,0xa0,0x79,0x2e,0xe6,0x61,0x8b,0x2d,
+    0x53,0x70,0xcc,0xa4,0x62,0xd5,0x4a,0x47,0x74,0xea,0x22,0xfa,0xa9,0xd4,0x95,
+    0x4e,0xca,0x32,0x70,0x88,0xd6,0xeb,0x58,0x24,0xa3,0xc5,0xbf,0x29,0xdc,0xfd,
+    0xe5,0xde,0x8f,0x48,0x19,0xe8,0xc6,0x4f,0xf2,0x46,0x10,0xe2,0x58,0xb9,0xb6,
+    0x72,0x5e,0x88,0xaf,0xc2,0xee,0x8b,0x6f,0xe5,0x36,0xe3,0x60,0x7c,0xf8,0x2c,
+    0xea,0x3a,0x4f,0xe3,0x6d,0x73
+};
+#endif /* MAXQ10XX_PRODUCTION_KEY || !DEBUG_WOLFSSL */
+
+static int crypto_sha256(const uint8_t *buf, uint32_t len, uint8_t *hash,
+    uint32_t hashSz, uint32_t blkSz)
+{
+    int ret;
+    uint32_t i = 0, chunk;
+    wc_Sha256 sha256;
+
+    /* validate arguments */
+    if ((buf == NULL && len > 0) || hash == NULL ||
+        hashSz < WC_SHA256_DIGEST_SIZE || blkSz == 0) {
+        return BAD_FUNC_ARG;
+    }
+
+    /* Init Sha256 structure */
+    ret = wc_InitSha256(&sha256);
+    if (ret != 0) {
+        return ret;
+    }
+
+    sha256.maxq_ctx.soft_hash = 1;
+
+    while (i < len) {
+        chunk = blkSz;
+        if ((chunk + i) > len) {
+            chunk = len - i;
+        }
+        /* Perform chunked update */
+        ret = wc_Sha256Update(&sha256, (buf + i), chunk);
+        if (ret != 0) {
+            break;
+        }
+        i += chunk;
+    }
+
+    if (ret == 0) {
+        /* Get final digest result */
+        ret = wc_Sha256Final(&sha256, hash);
+    }
+    return ret;
+}
+
+static int crypto_ecc_sign(const uint8_t *key, uint32_t keySz,
+    const uint8_t *hash, uint32_t hashSz, uint8_t *sig, uint32_t* sigSz,
+    uint32_t curveSz, int curveId, WC_RNG* rng)
+{
+    int ret;
+    mp_int r, s;
+    ecc_key ecc;
+
+    /* validate arguments */
+    if (key == NULL || hash == NULL || sig == NULL || sigSz == NULL ||
+        curveSz == 0 || hashSz == 0 || keySz < curveSz ||
+        *sigSz < (curveSz * 2)) {
+        return BAD_FUNC_ARG;
+    }
+
+    /* Initialize signature result */
+    XMEMSET(sig, 0, curveSz * 2);
+
+    /* Setup the ECC key */
+    ret = wc_ecc_init(&ecc);
+    if (ret < 0) {
+        return ret;
+    }
+
+    ecc.maxq_ctx.hw_ecc = -1;
+
+    /* Setup the signature r/s variables */
+    ret = mp_init(&r);
+    if (ret != MP_OKAY) {
+        wc_ecc_free(&ecc);
+        return ret;
+    }
+
+    ret = mp_init(&s);
+    if (ret != MP_OKAY) {
+        mp_clear(&r);
+        wc_ecc_free(&ecc);
+        return ret;
+    }
+
+    /* Import private key "k" */
+    ret = wc_ecc_import_private_key_ex(key, keySz, /* private key "d" */
+                                       NULL, 0,    /* public (optional) */
+                                       &ecc, curveId);
+
+    if (ret == 0) {
+        ret = wc_ecc_sign_hash_ex(hash, hashSz, /* computed hash digest */
+                                  rng, &ecc,    /* random and key context */
+                                  &r, &s);
+    }
+
+    if (ret == 0) {
+        /* export r/s */
+        mp_to_unsigned_bin_len(&r, sig, curveSz);
+        mp_to_unsigned_bin_len(&s, sig + curveSz, curveSz);
+    }
+
+    mp_clear(&r);
+    mp_clear(&s);
+    wc_ecc_free(&ecc);
+    return ret;
+}
+
+static int ECDSA_sign(mxq_u1* dest, int* signlen, mxq_u1* key,
+                      mxq_u1* data, mxq_length data_length, int curve)
+{
+    int ret;
+    int hashlen = WC_SHA256_DIGEST_SIZE;
+    unsigned char hash[WC_SHA256_DIGEST_SIZE];
+    WC_RNG rng;
+    int algo = ALGO_ECDSA_SHA_256;
+    int wc_curve_id = ECC_SECP256R1;
+    int wc_curve_size = 32;
+    uint32_t sigSz = 0;
+
+    if (curve != MXQ_KEYPARAM_EC_P256R1) {
+        return BAD_FUNC_ARG;
+    }
+
+    sigSz = (2 * wc_curve_size);
+    if (*signlen < (int)sigSz) {
+        return BAD_FUNC_ARG;
+    }
+
+    ret = wc_InitRng(&rng);
+    if (ret != 0) {
+        return ret;
+    }
+
+    ret = crypto_sha256(data, data_length, /* input message */
+                        hash, hashlen,     /* hash digest result */
+                        32                 /* configurable block/chunk size */
+                       );
+
+    if (ret == 0) {
+        ret = crypto_ecc_sign(
+            (key + (2 * wc_curve_size)), wc_curve_size,    /* private key */
+            hash, hashlen,               /* computed hash digest */
+            dest, &sigSz,                /* signature r/s */
+            wc_curve_size,               /* curve size in bytes */
+            wc_curve_id,                 /* curve id */
+            &rng);
+
+        *signlen = sigSz;
+    }
+
+    wc_FreeRng(&rng);
+    return ret;
+}
+
+static int wp11_maxq10xx_store_cert(int objId, byte *data, word32 len) {
+
+    DecodedCert dcert;
+
+    mxq_u1 signature[256];
+    int    signature_len = sizeof(signature);
+
+    unsigned char sign_key[MAX_SIGNKEY_DATASIZE];
+    int           sign_key_len = 32;
+    int           sign_key_curve = MXQ_KEYPARAM_EC_P256R1;
+    int           sign_key_type = MXQ_KEYTYPE_ECC;
+    int           sign_key_algo = ALGO_ECDSA_SHA_256;
+
+    mxq_keyuse_t  uu1 = MXQ_KEYUSE_VERIFY_KEY_CERT;
+    mxq_algo_id_t aa1 = ALGO_ECDSA_SHA_256;
+    mxq_keyuse_t  uu2 = MXQ_KEYUSE_NONE;
+    mxq_algo_id_t aa2 = ALGO_NONE;
+    int pk_offset = 0;
+
+    mxq_keytype_id_t key_type = MXQ_KEYTYPE_ECC;
+    mxq_keyparam_id_t mxq_keytype = MXQ_KEYPARAM_EC_P256R1;
+    int keycomplen = 32;
+
+    mxq_u1     dest[2048];
+    mxq_length destlen = sizeof(dest);
+
+    int verifkeyid = 0x1000;
+
+    /* We need the public key offset so we need to decode the certificate. */
+    InitDecodedCert(&decodedCert, data, len, 0);
+    ret = ParseCert(&decodedCert, CERT_TYPE, NO_VERIFY, NULL);
+    fprintf(stderr, "ParseCert returned %d\n");
+    pk_offset = decodedCert.publicKeyIndex;
+
+    if (decodedCert.signatureOID != CTC_SHA256wECDSA) {
+        WOLFSSL_MSG("MAXQ: signature algo not supported");
+        return NOT_COMPILED_IN;
+    }
+
+    if (decodedCert.keyOID != ECDSAk) {
+        WOLFSSL_MSG("MAXQ: key algo not supported");
+        return NOT_COMPILED_IN;
+    }
+
+    if (decodedCert.pkCurveOID != ECC_SECP256R1_OID) {
+        WOLFSSL_MSG("MAXQ: key curve not supported");
+        return NOT_COMPILED_IN;
+    }
+
+    MXQ_Build_EC_Cert(dest, &destlen, key_type, mxq_keytype, keycomplen, keycomplen, pk_offset, decodedCert.certBegin, decodedCert.sigIndex - decodedCert.certBegin, decodedCert.maxIdx, 0, 0, uu1, aa1, uu2, aa2, decodedCert.source);
+
+    XMEMCPY(sign_key, KeyPairImport, sizeof(KeyPairImport));
+
+    rc = ECDSA_sign(signature, &signature_len, sign_key, data, len,
+                    sign_key_curve);
+
+    MXQ_ImportRootCert(objId, sign_key_algo, verifkeyid, dest, destlen, signature, signature_len);
+
+    FreeDecodedCert(&decodedCert);
+}
+
 /**
  * Store an certificate to storage.
  *
- * @param [in]  object   Certificate object.
+* @param [in]  object   Certificate object.
  * @param [in]  tokenId  Id of token this cert belongs to.
  * @param [in]  objId    Id of object for token.
  * @return  0 on success.
@@ -1731,6 +1958,10 @@ static int wp11_Object_Store_Cert(WP11_Object* object, int tokenId, int objId)
                                                          object->data.cert.len);
         wp11_storage_close(storage);
     }
+
+    /* todo: write a function that saves to maxq and call it here. ensure objID
+     * is a hex string. The function should be based on code from
+     * maxq10xx_rootcert-import.c. */   
 
 exit:
     return ret;
