@@ -7138,6 +7138,99 @@ static CK_RV test_aes_ccm_gen_key(void* args)
 }
 
 #endif /* HAVE_AESCCM */
+
+#ifdef HAVE_AESECB
+static CK_RV test_aes_ecb_encdec(CK_SESSION_HANDLE session,
+                                 CK_OBJECT_HANDLE key)
+{
+    CK_RV ret;
+    byte plain[32];
+    byte enc[32];
+    byte dec[32];
+    CK_ULONG plainSz, encSz, decSz;
+    CK_MECHANISM mech;
+
+    memset(plain, 9, sizeof(plain));
+    plainSz = sizeof(plain);
+    encSz = sizeof(enc);
+    decSz = sizeof(dec);
+
+    mech.mechanism      = CKM_AES_ECB;
+    mech.ulParameterLen = 0;
+    mech.pParameter     = NULL;
+
+    ret = funcList->C_EncryptInit(session, &mech, key);
+    CHECK_CKR(ret, "AES-ECB Encrypt Init");
+    if (ret == CKR_OK) {
+        encSz = 0;
+        ret = funcList->C_Encrypt(session, plain, plainSz, NULL, &encSz);
+        CHECK_CKR(ret, "AES-ECB Encrypt");
+    }
+    if (ret == CKR_OK && encSz != plainSz) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-ECB Encrypt encrypted length");
+    }
+    if (ret == CKR_OK) {
+        encSz = 0;
+        ret = funcList->C_Encrypt(session, plain, plainSz, enc, &encSz);
+        CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL, "AES-ECB Encrypt");
+        encSz = sizeof(enc);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Encrypt(session, plain, plainSz, enc, &encSz);
+        CHECK_CKR(ret, "AES-ECB Encrypt");
+    }
+    if (ret == CKR_OK && encSz != plainSz) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-ECB Encrypt Result not correct length");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DecryptInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-ECB Decrypt Init");
+    }
+    if (ret == CKR_OK) {
+        decSz = 0;
+        ret = funcList->C_Decrypt(session, enc, encSz, NULL, &decSz);
+        CHECK_CKR(ret, "AES-ECB Decrypt");
+    }
+    if (ret == CKR_OK && decSz != plainSz) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-ECB Decrypt decrypted length");
+    }
+    if (ret == CKR_OK) {
+        decSz = 0;
+        ret = funcList->C_Decrypt(session, enc, encSz, dec, &decSz);
+        CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL, "AES-ECB Decrypt");
+        decSz = sizeof(dec);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Decrypt(session, enc, encSz, dec, &decSz);
+        CHECK_CKR(ret, "AES-ECB Decrypt");
+    }
+    if (ret == CKR_OK) {
+        if (decSz != plainSz || XMEMCMP(plain, dec, decSz) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "AES-ECB Decrypted data match plain text");
+        }
+    }
+
+    return ret;
+}
+
+static CK_RV test_aes_ecb_gen_key(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE key;
+
+    ret = gen_aes_key(session, 16, NULL, 0, 0, &key);
+    if (ret == CKR_OK)
+        ret = test_aes_ecb_encdec(session, key);
+
+    return ret;
+}
+
+#endif /* HAVE_AESECB */
 #endif
 
 #ifndef NO_HMAC
@@ -8197,6 +8290,9 @@ static TEST_FUNC testFunc[] = {
 #endif
 #ifdef HAVE_AESCCM
     PKCS11TEST_FUNC_SESS_DECL(test_aes_ccm_gen_key),
+#endif
+#ifdef HAVE_AESECB
+    PKCS11TEST_FUNC_SESS_DECL(test_aes_ecb_gen_key),
 #endif
 #endif /* !NO_AES */
 #ifndef NO_HMAC

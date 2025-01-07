@@ -4832,7 +4832,7 @@ int WP11_Session_SetCcmParams(WP11_Session* session, int dataSz,
 
     return ret;
 }
-#endif /* HAVE_AESGCM */
+#endif /* HAVE_AESCCM */
 #endif /* !NO_AES */
 
 /**
@@ -8660,6 +8660,94 @@ int WP11_AesCcm_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
     return ret;
 }
 #endif /* HAVE_AESCCM */
+
+#ifdef HAVE_AESECB
+/**
+ * Encrypt plain text with AES-ECB.
+ * Output buffer must be large enough to hold all data.
+ *
+ * @param  plain    [in]      Plain text.
+ * @param  plainSz  [in]      Length of plain text in bytes.
+ * @param  enc      [in]      Buffer to hold encrypted data.
+ * @param  encSz    [in,out]  On in, length of buffer in bytes.
+ *                            On out, length of encrypted data including
+ *                            authentication tag in bytes.
+ * @param  secret   [in]      Secret key object.
+ * @param  session  [in]      Session object.
+ * @return  -ve on encryption failure.
+ *          0 on success.
+ */
+int WP11_AesEcb_Encrypt(unsigned char* plain, word32 plainSz,
+                        unsigned char* enc, word32* encSz, WP11_Object* secret,
+                        WP11_Session* session)
+{
+    int ret;
+    Aes aes;
+    WP11_Data* key;
+
+    ret = wc_AesInit(&aes, NULL, session->devId);
+    if (ret == 0) {
+        if (secret->onToken)
+            WP11_Lock_LockRO(secret->lock);
+        key = &secret->data.symmKey;
+        ret = wc_AesSetKey(&aes, key->data, key->len, NULL, AES_ENCRYPTION);
+        if (secret->onToken)
+            WP11_Lock_UnlockRO(secret->lock);
+
+        if (ret == 0)
+            ret = wc_AesEcbEncrypt(&aes, enc, plain, plainSz);
+        if (ret == 0)
+            *encSz = plainSz;
+
+        wc_AesFree(&aes);
+    }
+
+    return ret;
+}
+
+/**
+ * Decrypt data with AES-ECB.
+ * Output buffer must be large enough to hold all decrypted data.
+ *
+ * @param  enc      [in]      Encrypted data.
+ * @param  encSz    [in]      Length of encrypted data in bytes.
+ * @param  dec      [in]      Buffer to hold decrypted data.
+ * @param  decSz    [in,out]  On in, length of buffer in bytes.
+ *                            On out, length of decrypted data in bytes.
+ * @param  session  [in]      Session object holding Aes object.
+ * @return  -ve on decryption failure.
+ *          0 on success.
+ */
+int WP11_AesEcb_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
+                        word32* decSz, WP11_Object* secret,
+                        WP11_Session* session)
+{
+    int ret;
+    Aes aes;
+    WP11_Data* key;
+
+    ret = wc_AesInit(&aes, NULL, session->devId);
+    if (ret == 0) {
+        if (secret->onToken)
+            WP11_Lock_LockRO(secret->lock);
+        key = &secret->data.symmKey;
+        ret = wc_AesSetKey(&aes, key->data, key->len, NULL, AES_DECRYPTION);
+        if (secret->onToken)
+            WP11_Lock_UnlockRO(secret->lock);
+
+        if (ret == 0)
+            ret = wc_AesEcbDecrypt(&aes, dec, enc, encSz);
+
+        if (ret == 0) {
+            *decSz = encSz;
+        }
+
+        wc_AesFree(&aes);
+    }
+
+    return ret;
+}
+#endif /* HAVE_AESECB */
 #endif /* !NO_AES */
 
 #ifndef NO_HMAC

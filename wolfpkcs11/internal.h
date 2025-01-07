@@ -118,6 +118,8 @@ extern "C" {
 #define WP11_INIT_AES_CBC_PAD_DEC      0x0006
 #define WP11_INIT_AES_CCM_ENC          0x0007
 #define WP11_INIT_AES_CCM_DEC          0x0008
+#define WP11_INIT_AES_ECB_ENC          0x0009
+#define WP11_INIT_AES_ECB_DEC          0x000A
 #define WP11_INIT_HMAC_SIGN            0x0010
 #define WP11_INIT_HMAC_VERIFY          0x0011
 #define WP11_INIT_RSA_X_509_ENC        0x0020
@@ -401,6 +403,12 @@ int WP11_AesCcm_Encrypt(unsigned char* plain, word32 plainSz,
                         unsigned char* enc, word32* encSz, WP11_Object* secret,
                         WP11_Session* session);
 int WP11_AesCcm_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
+                        word32* decSz, WP11_Object* secret,
+                        WP11_Session* session);
+int WP11_AesEcb_Encrypt(unsigned char* plain, word32 plainSz,
+                        unsigned char* enc, word32* encSz, WP11_Object* secret,
+                        WP11_Session* session);
+int WP11_AesEcb_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
                         word32* decSz, WP11_Object* secret,
                         WP11_Session* session);
 
