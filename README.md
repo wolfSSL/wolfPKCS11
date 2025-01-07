@@ -32,11 +32,6 @@ cd wolfPKCS11
 make
 make check
 ```
-### Optional: AES-CCM Support
-
-To have AES-CCM support in wolfPKCS11, simiply configure wolfSSL with the
-addition of `--enable-aesccm`
-
 ### TPM support with wolfTPM
 
 Enables using a TPM for cryptography and keystore.
@@ -44,6 +39,20 @@ Tested using `./configure --enable-singlethreaded --enable-wolftpm --disable-dh 
 
 Note: The TPM does not support DH, so only RSA and ECC are supported.
 
+### Optional: AES-CCM Support
+
+To have AES-CCM support in wolfPKCS11, configure both wolfSSL and wolfPKCS11
+with the addition of `--enable-aesccm`.
+
+### Optional: AES-ECB Support
+
+To have AES-ECB support in wolfPKCS11, configure wolfSSL with the C macro
+`HAVE_AES_ECB` defined. For example, `CFLAGS="-DHAVE_AES_ECB"`. Then
+enable it in wolfPKCS11 with the addition of `--enable-aesecb` during the
+configure step.
+
+WARNING: ECB (Electronic Code Book) mode AES is generally considered to be
+insecure. Please consider using a different mode of AES.
 
 ### Build options and defines
 
