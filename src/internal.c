@@ -54,9 +54,21 @@
     #endif
 #endif
 
+#ifdef WOLFSSL_MAXQ10XX_CRYPTO
+#include <wolfpkcs11/port/maxim/MXQ_API.h>
+#include <wolfssl/wolfcrypt/asn.h>
+#define MAX_CERT_DATASIZE      2048
+#define MAX_SIG_DATASIZE       64
+#define ECC_KEYCOMPLEN         32
+#endif /* WOLFSSL_MAXQ10XX_CRYPTO */
+
 #if defined(WC_RSA_BLINDING) && (!defined(HAVE_FIPS) || \
     (defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION > 2)))
 #define WOLFPKCS11_NEED_RSA_RNG
+#endif
+
+#if defined(WOLFPKCS11_TPM) && defined(WOLFSSL_MAXQ10XX_CRYPTO)
+    #error "wolfTPM and MAXQ10XX are incompatable with each other."
 #endif
 
 /* Helper to get size of struct field */
@@ -1697,6 +1709,270 @@ static int wp11_Object_Load_Cert(WP11_Object* object, int tokenId, int objId)
     return ret;
 }
 
+#ifdef WOLFSSL_MAXQ10XX_CRYPTO
+#ifdef MAXQ10XX_PRODUCTION_KEY
+#include "maxq10xx_key.h"
+#else
+/* TEST KEY. This must be changed for production environments!! */
+static const mxq_u1 KeyPairImport[] = {
+    0xd0,0x97,0x31,0xc7,0x63,0xc0,0x9e,0xe3,0x9a,0xb4,0xd0,0xce,0xa7,0x89,0xab,
+    0x52,0xc8,0x80,0x3a,0x91,0x77,0x29,0xc3,0xa0,0x79,0x2e,0xe6,0x61,0x8b,0x2d,
+    0x53,0x70,0xcc,0xa4,0x62,0xd5,0x4a,0x47,0x74,0xea,0x22,0xfa,0xa9,0xd4,0x95,
+    0x4e,0xca,0x32,0x70,0x88,0xd6,0xeb,0x58,0x24,0xa3,0xc5,0xbf,0x29,0xdc,0xfd,
+    0xe5,0xde,0x8f,0x48,0x19,0xe8,0xc6,0x4f,0xf2,0x46,0x10,0xe2,0x58,0xb9,0xb6,
+    0x72,0x5e,0x88,0xaf,0xc2,0xee,0x8b,0x6f,0xe5,0x36,0xe3,0x60,0x7c,0xf8,0x2c,
+    0xea,0x3a,0x4f,0xe3,0x6d,0x73
+};
+#endif /* MAXQ10XX_PRODUCTION_KEY */
+
+static int crypto_sha256(const byte *buf, word32 len, byte *hash,
+    word32 hashSz, word32 blkSz)
+{
+    int ret;
+    word32 i = 0, chunk;
+    wc_Sha256 sha256;
+
+    /* validate arguments */
+    if ((buf == NULL && len > 0) || hash == NULL ||
+        hashSz < WC_SHA256_DIGEST_SIZE || blkSz == 0) {
+        return BAD_FUNC_ARG;
+    }
+
+    /* Init Sha256 structure */
+    ret = wc_InitSha256(&sha256);
+    if (ret != 0) {
+        return ret;
+    }
+
+    sha256.maxq_ctx.soft_hash = 1;
+
+    while (i < len) {
+        chunk = blkSz;
+        if ((chunk + i) > len) {
+            chunk = len - i;
+        }
+        /* Perform chunked update */
+        ret = wc_Sha256Update(&sha256, (buf + i), chunk);
+        if (ret != 0) {
+            break;
+        }
+        i += chunk;
+    }
+
+    if (ret == 0) {
+        /* Get final digest result */
+        ret = wc_Sha256Final(&sha256, hash);
+    }
+    return ret;
+}
+
+static int crypto_ecc_sign(const byte *key, word32 keySz,
+    const byte *hash, word32 hashSz, byte *sig, word32* sigSz,
+    word32 curveSz, int curveId, WC_RNG* rng)
+{
+    int ret;
+    mp_int r, s;
+    ecc_key ecc;
+
+    /* validate arguments */
+    if (key == NULL || hash == NULL || sig == NULL || sigSz == NULL ||
+        curveSz == 0 || hashSz == 0 || keySz < curveSz ||
+        *sigSz < (curveSz * 2)) {
+        return BAD_FUNC_ARG;
+    }
+
+    /* Initialize signature result */
+    XMEMSET(sig, 0, curveSz * 2);
+
+    /* Setup the ECC key */
+    ret = wc_ecc_init(&ecc);
+    if (ret < 0) {
+        return ret;
+    }
+
+    ecc.maxq_ctx.hw_ecc = -1;
+
+    /* Setup the signature r/s variables */
+    ret = mp_init(&r);
+    if (ret != MP_OKAY) {
+        wc_ecc_free(&ecc);
+        return ret;
+    }
+
+    ret = mp_init(&s);
+    if (ret != MP_OKAY) {
+        mp_clear(&r);
+        wc_ecc_free(&ecc);
+        return ret;
+    }
+
+    ret = wc_ecc_import_private_key_ex(key, keySz, /* private key "d" */
+                                       NULL, 0,    /* public (optional) */
+                                       &ecc, curveId);
+
+    if (ret == 0) {
+        ret = wc_ecc_sign_hash_ex(hash, hashSz, /* computed hash digest */
+                                  rng, &ecc,    /* random and key context */
+                                  &r, &s);
+    }
+
+    if (ret == 0) {
+        /* export r/s */
+        mp_to_unsigned_bin_len(&r, sig, curveSz);
+        mp_to_unsigned_bin_len(&s, sig + curveSz, curveSz);
+    }
+
+    mp_clear(&r);
+    mp_clear(&s);
+    wc_ecc_free(&ecc);
+    return ret;
+}
+
+static int ECDSA_sign(mxq_u1* dest, int* signlen, mxq_u1* key,
+                      mxq_u1* data, mxq_length data_length, int curve)
+{
+    int ret;
+    int hashlen = WC_SHA256_DIGEST_SIZE;
+    unsigned char hash[WC_SHA256_DIGEST_SIZE];
+    WC_RNG rng;
+    int wc_curve_id = ECC_SECP256R1;
+    int wc_curve_size = 32;
+    word32 sigSz = 0;
+
+    if (curve != MXQ_KEYPARAM_EC_P256R1) {
+        return BAD_FUNC_ARG;
+    }
+
+    sigSz = (2 * wc_curve_size);
+    if (*signlen < (int)sigSz) {
+        return BAD_FUNC_ARG;
+    }
+
+    ret = wc_InitRng(&rng);
+    if (ret != 0) {
+        return ret;
+    }
+
+    ret = crypto_sha256(data, data_length, /* input message */
+                        hash, hashlen,     /* hash digest result */
+                        32                 /* configurable block/chunk size */
+                       );
+
+    if (ret == 0) {
+        ret = crypto_ecc_sign(
+            (key + (2 * wc_curve_size)), wc_curve_size,    /* private key */
+            hash, hashlen,               /* computed hash digest */
+            dest, &sigSz,                /* signature r/s */
+            wc_curve_size,               /* curve size in bytes */
+            wc_curve_id,                 /* curve id */
+            &rng);
+
+        *signlen = sigSz;
+    }
+
+    wc_FreeRng(&rng);
+    return ret;
+}
+
+static int wp11_maxq10xx_store_cert(int objId, byte *data, word32 len)
+{
+    DecodedCert decodedCert;
+    byte *certBody = NULL;
+
+    int    signature_len = MAX_SIG_DATASIZE;
+    mxq_u1 signature[MAX_SIG_DATASIZE];
+
+    int           sign_key_curve = MXQ_KEYPARAM_EC_P256R1;
+    int           sign_key_algo = ALGO_ECDSA_SHA_256;
+
+    mxq_err_t mxq_rc;
+    mxq_keyuse_t  uu1 = MXQ_KEYUSE_VERIFY_KEY_CERT;
+    mxq_algo_id_t aa1 = ALGO_ECDSA_SHA_256;
+    mxq_keyuse_t  uu2 = MXQ_KEYUSE_NONE;
+    mxq_algo_id_t aa2 = ALGO_NONE;
+    int verifkeyid = 0x1000;
+
+    mxq_keytype_id_t key_type = MXQ_KEYTYPE_ECC;
+    mxq_keyparam_id_t mxq_keytype = MXQ_KEYPARAM_EC_P256R1;
+    int keycomplen = ECC_KEYCOMPLEN;
+
+    mxq_length destlen = MAX_CERT_DATASIZE;
+    mxq_u1     dest[MAX_CERT_DATASIZE];
+
+    int ret = 0;
+
+    /* We need the public key offset so we need to decode the cert. */
+    InitDecodedCert(&decodedCert, data, len, 0);
+
+    ret = ParseCert(&decodedCert, CERT_TYPE, NO_VERIFY, NULL);
+    #ifdef WOLFPKCS11_DEBUG_STORE
+    fprintf(stderr, "ParseCert returned %d\n", ret);
+    #endif
+
+    if (ret == 0) {
+        if (decodedCert.signatureOID != CTC_SHA256wECDSA) {
+            #ifdef WOLFPKCS11_DEBUG_STORE
+            fprintf(stderr, "MAXQ: signature algo not supported\n");
+            #endif
+            ret = BAD_FUNC_ARG;
+        }
+
+        if (decodedCert.keyOID != ECDSAk) {
+            #ifdef WOLFPKCS11_DEBUG_STORE
+            fprintf(stderr, "MAXQ: key algo not supported\n");
+            #endif
+            ret = BAD_FUNC_ARG;
+        }
+
+        if (decodedCert.pkCurveOID != ECC_SECP256R1_OID) {
+            #ifdef WOLFPKCS11_DEBUG_STORE
+            fprintf(stderr, "MAXQ: key curve not supported\n");
+            #endif
+            ret = BAD_FUNC_ARG;
+        }
+
+        certBody = (byte *)decodedCert.source;
+    }
+
+    if (ret == 0) {
+        mxq_rc = MXQ_Build_EC_Cert(dest, &destlen, key_type, mxq_keytype,
+            keycomplen, keycomplen, decodedCert.publicKeyIndex,
+            decodedCert.certBegin, decodedCert.sigIndex - decodedCert.certBegin,
+            decodedCert.maxIdx, 0, 0, uu1, aa1, uu2, aa2, certBody);
+        if (mxq_rc) {
+            #ifdef WOLFPKCS11_DEBUG_STORE
+            fprintf(stderr, "MAXQ: MXQ_Build_EC_Cert failure\n");
+            #endif
+            ret = WC_HW_E;
+        }
+    }
+
+    if (ret == 0) {
+        ret = ECDSA_sign(signature, &signature_len, KeyPairImport,
+            dest, destlen, sign_key_curve);
+        if (ret != 0) {
+            #ifdef WOLFPKCS11_DEBUG_STORE
+            fprintf(stderr, "MAXQ: wolfssl signing failure\n");
+            #endif
+        }
+    }
+
+    if (ret == 0) {
+        mxq_rc = MXQ_ImportRootCert(objId, sign_key_algo, verifkeyid,
+            dest, destlen, signature, signature_len);
+        if (mxq_rc) {
+            #ifdef WOLFPKCS11_DEBUG_STORE
+            fprintf(stderr, "MAXQ: MXQ_ImportRootCert failure\n");
+            #endif
+            ret = WC_HW_E;
+        }
+    }
+
+    FreeDecodedCert(&decodedCert);
+    return ret;
+}
+#endif /* WOLFSSL_MAXQ10XX_CRYPTO */
+
 /**
  * Store an certificate to storage.
  *
@@ -1727,6 +2003,14 @@ static int wp11_Object_Store_Cert(WP11_Object* object, int tokenId, int objId)
                                                          object->data.cert.len);
         wp11_storage_close(storage);
     }
+
+#ifdef WOLFSSL_MAXQ10XX_CRYPTO
+    /* Save to MAXQ10XX */
+    if (ret == 0) {
+        ret = wp11_maxq10xx_store_cert(objId, object->data.cert.data,
+                                       object->data.cert.len);
+    }
+#endif /* WOLFSSL_MAXQ10XX_CRYPTO */
 
 exit:
     return ret;
@@ -3538,8 +3822,10 @@ static int wp11_Slot_Init(WP11_Slot* slot, int id)
 
     ret = WP11_Lock_Init(&slot->lock);
     if (ret == 0) {
-    #ifdef WOLFPKCS11_TPM
+    #if defined(WOLFPKCS11_TPM)
         ret = wp11_TpmInit(slot);
+    #elif defined (WOLFSSL_MAXQ10XX_CRYPTO)
+        slot->devId = MAXQ_DEVICE_ID;
     #endif
         /* Create the minimum number of unused sessions. */
         for (i = 0; ret == 0 && i < WP11_SESSION_CNT_MIN; i++) {
@@ -3605,8 +3891,16 @@ int WP11_Library_Init(void)
 
     if (libraryInitCount == 0) {
         ret = WP11_Lock_Init(&globalLock);
-        if (ret == 0)
+        if (ret == 0) {
+#ifdef WOLFSSL_MAXQ10XX_CRYPTO
+            ret = wolfCrypt_Init();
+            if (ret == 0) {
+                ret = wc_InitRng_ex(&globalRandom, NULL, MAXQ_DEVICE_ID);
+            }
+#else
             ret = wc_InitRng(&globalRandom);
+#endif
+        }
         for (i = 0; (ret == 0) && (i < slotCnt); i++) {
             ret = wp11_Slot_Init(&slotList[i], i + 1);
         }
@@ -4725,7 +5019,7 @@ int WP11_Session_SetCbcParams(WP11_Session* session, unsigned char* iv,
     WP11_Data* key;
 
     /* AES object on session. */
-    ret = wc_AesInit(&cbc->aes, NULL, INVALID_DEVID);
+    ret = wc_AesInit(&cbc->aes, NULL, session->devId);
     if (ret == 0) {
         if (object->onToken)
             WP11_Lock_LockRO(object->lock);
@@ -7659,7 +7953,7 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
     WC_RNG rng;
 #endif
 
-    ret = wc_ecc_init_ex(&pubKey, NULL, INVALID_DEVID);
+    ret = wc_ecc_init_ex(&pubKey, NULL, priv->slot->devId);
     if (ret == 0) {
         ret = wc_ecc_import_x963(point, pointLen, &pubKey);
     }
@@ -8280,7 +8574,7 @@ int WP11_AesGcm_Encrypt(unsigned char* plain, word32 plainSz,
     word32 authTagSz = gcm->tagBits / 8;
     unsigned char* authTag = enc + plainSz;
 
-    ret = wc_AesInit(&aes, NULL, INVALID_DEVID);
+    ret = wc_AesInit(&aes, NULL, session->devId);
     if (ret == 0) {
         if (secret->onToken)
             WP11_Lock_LockRO(secret->lock);
@@ -8332,7 +8626,7 @@ int WP11_AesGcm_EncryptUpdate(unsigned char* plain, word32 plainSz,
     word32 authTagSz = gcm->tagBits / 8;
     unsigned char* authTag = gcm->authTag;
 
-    ret = wc_AesInit(&aes, NULL, INVALID_DEVID);
+    ret = wc_AesInit(&aes, NULL, session->devId);
     if (ret == 0) {
         if (secret->onToken)
             WP11_Lock_LockRO(secret->lock);
@@ -8412,7 +8706,7 @@ int WP11_AesGcm_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
     word32 authTagSz = gcm->tagBits / 8;
     unsigned char* authTag = enc + encSz - authTagSz;
 
-    ret = wc_AesInit(&aes, NULL, INVALID_DEVID);
+    ret = wc_AesInit(&aes, NULL, session->devId);
     if (ret == 0) {
         if (secret->onToken) {
             WP11_Lock_LockRO(secret->lock);
@@ -8825,7 +9119,7 @@ int WP11_Hmac_Init(CK_MECHANISM_TYPE mechanism, WP11_Object* secret,
     if (ret == 0)
         hmac->hmacSz = wc_HmacSizeByType(hashType);
     if (ret == 0)
-        ret = wc_HmacInit(&hmac->hmac, NULL, INVALID_DEVID);
+        ret = wc_HmacInit(&hmac->hmac, NULL, secret->slot->devId);
     if (ret == 0) {
         if (secret->onToken)
             WP11_Lock_LockRO(secret->lock);
