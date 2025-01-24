@@ -77,6 +77,14 @@ See wolfpkcs11/store.h for prototypes of functions to implement.
 
 Sets the private key's label against the public key when generating key pairs.
 
+#### MAXQ10xx
+
+Support has been added to use the maxq10xx hardware for cryptographic operations
+and storage of certificate.
+
+NOTE: In the code, we have embedded a test key. This must be changed for
+      production environments!! Please contact Analog Devices to learn how to
+      obtain and use a production key.
 
 ## Environment variables
 

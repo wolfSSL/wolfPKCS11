@@ -2635,8 +2635,30 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
         return CKR_ARGUMENTS_BAD;
 
     ret = WP11_Object_Find(session, hKey, &obj);
-    if (ret != 0)
+#ifdef WOLFSSL_MAXQ10XX_CRYPTO
+    if ((ret != 0) && (hKey == 0) && (pMechanism->mechanism == CKM_ECDSA)) {
+        /* Check for the expected devId because we are not setting the object.
+         * If this wasn't MAXQ it would be strange behaviour. */
+        if (session->devId != MAXQ_DEVICE_ID) {
+            return CKR_MECHANISM_PARAM_INVALID;
+        }
+
+        if (pMechanism->pParameter != NULL || pMechanism->ulParameterLen != 0) {
+            return CKR_MECHANISM_PARAM_INVALID;
+        }
+
+        /* The private key is pre-provisioned so no object to set. */
+        init = WP11_INIT_ECDSA_SIGN;
+        WP11_Session_SetMechanism(session, pMechanism->mechanism);
+        WP11_Session_SetOpInitialized(session, init);
+
+        return CKR_OK;
+    }
+    else
+#endif
+    if (ret != 0) {
         return CKR_OBJECT_HANDLE_INVALID;
+    }
 
     type = WP11_Object_GetType(obj);
     switch (pMechanism->mechanism) {
