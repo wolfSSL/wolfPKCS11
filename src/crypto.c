@@ -2637,12 +2637,6 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
     ret = WP11_Object_Find(session, hKey, &obj);
 #ifdef WOLFSSL_MAXQ10XX_CRYPTO
     if ((ret != 0) && (hKey == 0) && (pMechanism->mechanism == CKM_ECDSA)) {
-        /* Check for the expected devId because we are not setting the object.
-         * If this wasn't MAXQ it would be strange behaviour. */
-        if (session->devId != MAXQ_DEVICE_ID) {
-            return CKR_MECHANISM_PARAM_INVALID;
-        }
-
         if (pMechanism->pParameter != NULL || pMechanism->ulParameterLen != 0) {
             return CKR_MECHANISM_PARAM_INVALID;
         }
