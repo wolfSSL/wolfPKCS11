@@ -19,12 +19,12 @@ jobs:
 
     steps:
 #pull wolfPKCS11
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         submodules: true
 
 #setup wolfssl
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         repository: wolfssl/wolfssl
         path: wolfssl
@@ -46,7 +46,7 @@ jobs:
           sudo ldconfig
 
 #setup ibmswtpm2
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         repository: kgoldman/ibmswtpm2
         path: ibmswtpm2
@@ -57,7 +57,7 @@ jobs:
           ./tpm_server &
 
 #setup wolftpm
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         repository: wolfssl/wolftpm
         path: wolftpm
@@ -94,7 +94,7 @@ jobs:
 # capture logs on failure
     - name: Upload failure logs
       if: failure() || cancelled()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: wolfpkcs11-test-logs
         path: |
