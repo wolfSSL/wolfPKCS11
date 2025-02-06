@@ -82,6 +82,13 @@ Sets the private key's label against the public key when generating key pairs.
 Support has been added to use the maxq10xx hardware for cryptographic operations
 and storage of certificate.
 
+Before usage:
+1. Make sure the maxq10xx-sdk is installed and it has installed the proper
+   header files into the source code for wolfPKCS11.
+2. Edit `examples/maxq10xx_init.sh` to ensure it is pointing to the correct
+   location.
+3. Execute `examples/maxq10xx_init.sh` to ensure it is properly initialized.
+
 NOTE: In the code, we have embedded a test key. This must be changed for
       production environments!! Please contact Analog Devices to learn how to
       obtain and use a production key.
