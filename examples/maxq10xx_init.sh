@@ -7,12 +7,9 @@ MAXQ_SDK=/path/to/maxq10xx-sdk
 
 MAXQ_TOOLBOX=${MAXQ_SDK}/maxq10xx-toolbox/bin
 
-# Zeroize the onboard NV Memory.
+# Delete Object ID 1004 to start a fresh
 ${MAXQ_TOOLBOX}/maxq10xx_admin-auth
-${MAXQ_TOOLBOX}/maxq10xx_set-state 4
-${MAXQ_TOOLBOX}/maxq10xx_set-state 3
-sleep 2
-${MAXQ_TOOLBOX}/maxq10xx_get-status
+${MAXQ_TOOLBOX}/maxq10xx_delete-object 1004
 
 # Setup Object ID 1004 to have an ECDSA secp256r1 keypair.
 ${MAXQ_TOOLBOX}/maxq10xx_admin-auth
