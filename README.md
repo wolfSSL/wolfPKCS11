@@ -77,10 +77,11 @@ See wolfpkcs11/store.h for prototypes of functions to implement.
 
 Sets the private key's label against the public key when generating key pairs.
 
-#### MAXQ10xx
+#### Analog Devices, Inc. MAXQ10xx Secure Elements ([MAXQ1065](https://www.analog.com/en/products/maxq1065.html)/MAXQ1080)
 
-Support has been added to use the maxq10xx hardware for cryptographic operations
+Support has been added to use the MAXQ10xx hardware for cryptographic operations
 and storage of certificate.
+
 
 Before usage:
 1. Make sure the maxq10xx-sdk is installed and it has installed the proper
