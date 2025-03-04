@@ -1,12 +1,32 @@
-#include "internal.h"
+/* slot.c
+ *
+ * Copyright (C) 2006-2022 wolfSSL Inc.
+ *
+ * This file is part of wolfPKCS11.
+ *
+ * wolfPKCS11 is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * wolfPKCS11 is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
+ */
+
 
 #include <wolfpkcs11/pkcs11.h>
+#include <wolfpkcs11/internal.h>
 
 /**
  * Get list of slots with a token attached.
  *
- * @param  tokenPresent  [in]      Only return slots with token present when
- *                                 true.
+ * @param  tokenPresent  [in]      Only return slots with tokens when true.
  * @param  pSlotList     [in]      Array to hold slot ids.
  *                                 NULL indicates the length is required.
  * @param  pulCount      [in,out]  On in, the number of array entries in
@@ -14,15 +34,14 @@
  *                                 On out, the number of slots put in array.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_ARGUMENTS_BAD when pulCount is NULL.
- *          CKR_BUFFER_TOO_SMALL when there are more slots than entries in
- *          array.
+ *          CKR_BUFFER_TOO_SMALL when there are more slots than entries in array.
  *          CKR_OK on success.
  */
 CK_RV C_GetSlotList(CK_BBOOL tokenPresent, CK_SLOT_ID_PTR pSlotList,
                     CK_ULONG_PTR pulCount)
 {
-    int i;
-    int cnt = 0;
+    int i, cnt = 0;
+    WP11_Slot* slot;
 
     if (!WP11_Library_IsInitialized())
         return CKR_CRYPTOKI_NOT_INITIALIZED;
@@ -30,7 +49,8 @@ CK_RV C_GetSlotList(CK_BBOOL tokenPresent, CK_SLOT_ID_PTR pSlotList,
         return CKR_ARGUMENTS_BAD;
 
     for (i = 0; i < WP11_SLOT_COUNT; i++) {
-        if (!tokenPresent || WP11_Slot_IsTokenPresent(i))
+        slot = WP11_Slot_Find(i);
+        if (slot != NULL && (!tokenPresent || WP11_Slot_IsTokenPresent(slot)))
             cnt++;
     }
 
@@ -41,8 +61,11 @@ CK_RV C_GetSlotList(CK_BBOOL tokenPresent, CK_SLOT_ID_PTR pSlotList,
     else {
         cnt = 0;
         for (i = 0; i < WP11_SLOT_COUNT; i++) {
-            if (!tokenPresent || WP11_Slot_IsTokenPresent(i))
+            slot = WP11_Slot_Find(i);
+            if (slot != NULL && (!tokenPresent ||
+                                         WP11_Slot_IsTokenPresent(slot))) {
                 pSlotList[cnt++] = i;
+            }
         }
         *pulCount = cnt;
     }
@@ -50,13 +73,11 @@ CK_RV C_GetSlotList(CK_BBOOL tokenPresent, CK_SLOT_ID_PTR pSlotList,
     return CKR_OK;
 }
 
-#define SLOT_ID_IDX(id)  ((int)(id))
-
 /**
  * Get information about a slot.
  *
  * @param  slotID  [in]   Id of slot to use.
- * @param  pInfo   [out]  Slot information copied into it.
+ * @param  pInfo   [out]  Information about slot.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SLOT_ID_INVALID when no slot with id can be found.
  *          CKR_ARGUMENTS_BAD when pInfo is NULL.
@@ -64,19 +85,22 @@ CK_RV C_GetSlotList(CK_BBOOL tokenPresent, CK_SLOT_ID_PTR pSlotList,
  */
 CK_RV C_GetSlotInfo(CK_SLOT_ID slotID, CK_SLOT_INFO_PTR pInfo)
 {
+    WP11_Slot* slot;
+
     if (!WP11_Library_IsInitialized())
         return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (!WP11_SlotIdValid(slotID))
+    if (WP11_Slot_Get(slotID, &slot) != 0)
         return CKR_SLOT_ID_INVALID;
     if (pInfo == NULL)
         return CKR_ARGUMENTS_BAD;
 
-    XMEMSET(pInfo, 0, sizeof(*pInfo));
-    XSTRNCPY((char*)pInfo->slotDescription, "wolfPKCS11 Slot",
+    XMEMCPY(pInfo->slotDescription, WP11_Slot_GetDescription(slot),
                                                  sizeof(pInfo->slotDescription));
-    XSTRNCPY((char*)pInfo->manufacturerID, "wolfSSL Inc.",
+    XMEMCPY(pInfo->manufacturerID, WP11_Slot_GetManufacturerID(slot),
                                                  sizeof(pInfo->manufacturerID));
-    pInfo->flags = CKF_TOKEN_PRESENT;
+    pInfo->flags = CKF_HW_SLOT;
+    if (WP11_Slot_IsTokenPresent(slot))
+        pInfo->flags |= CKF_TOKEN_PRESENT;
     pInfo->hardwareVersion.major = 0;
     pInfo->hardwareVersion.minor = 0;
     pInfo->firmwareVersion.major = 0;
@@ -89,41 +113,40 @@ CK_RV C_GetSlotInfo(CK_SLOT_ID slotID, CK_SLOT_INFO_PTR pInfo)
  * Get information about a token in a slot.
  *
  * @param  slotID  [in]   Id of slot to use.
- * @param  pInfo   [out]  Token information copied into it.
+ * @param  pInfo   [out]  Information about token.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SLOT_ID_INVALID when no slot with id can be found.
+ *          CKR_TOKEN_NOT_PRESENT when no token is in slot.
  *          CKR_ARGUMENTS_BAD when pInfo is NULL.
- *          CKR_TOKEN_NOT_PRESENT when no token is in the slot.
  *          CKR_OK on success.
  */
 CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
 {
     WP11_Slot* slot;
-    time_t now;
-    time_t expire;
-    int cnt;
 
     if (!WP11_Library_IsInitialized())
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     if (WP11_Slot_Get(slotID, &slot) != 0)
         return CKR_SLOT_ID_INVALID;
+    if (!WP11_Slot_IsTokenPresent(slot))
+        return CKR_TOKEN_NOT_PRESENT;
     if (pInfo == NULL)
         return CKR_ARGUMENTS_BAD;
-    if (!WP11_Slot_IsTokenPresent(SLOT_ID_IDX(slotID)))
-        return CKR_TOKEN_NOT_PRESENT;
 
-    XMEMSET(pInfo, 0, sizeof(*pInfo));
-    XSTRNCPY((char*)pInfo->label, WP11_Slot_GetTokenLabel(slot),
-                                                         sizeof(pInfo->label));
-    XSTRNCPY((char*)pInfo->manufacturerID, "wolfSSL Inc.",
+    XMEMCPY(pInfo->label, WP11_Slot_GetTokenLabel(slot), sizeof(pInfo->label));
+    XMEMCPY(pInfo->manufacturerID, WP11_Slot_GetManufacturerID(slot),
                                                  sizeof(pInfo->manufacturerID));
-    XSTRNCPY((char*)pInfo->model, "wolfPKCS11", sizeof(pInfo->model));
-    XSTRNCPY((char*)pInfo->serialNumber, "1", sizeof(pInfo->serialNumber));
-    pInfo->flags = CKF_RNG | CKF_LOGIN_REQUIRED;
-    pInfo->ulMaxSessionCount = CK_EFFECTIVELY_INFINITE;
-    pInfo->ulSessionCount = WP11_Slot_GetSessionCount(slot);
-    pInfo->ulMaxRwSessionCount = CK_EFFECTIVELY_INFINITE;
-    pInfo->ulRwSessionCount = WP11_Slot_GetRWSessionCount(slot);
+    XMEMCPY(pInfo->model, "wolfPKCS11", sizeof(pInfo->model));
+    XMEMCPY(pInfo->serialNumber, "1", sizeof(pInfo->serialNumber));
+    pInfo->flags = CKF_RNG | CKF_DUAL_CRYPTO_OPERATIONS;
+    if (WP11_Slot_IsTokenInitialized(slot))
+        pInfo->flags |= CKF_TOKEN_INITIALIZED;
+    if (WP11_Slot_HasSOPin(slot))
+        pInfo->flags |= CKF_USER_PIN_INITIALIZED;
+    pInfo->ulMaxSessionCount = CK_UNAVAILABLE_INFORMATION;
+    pInfo->ulSessionCount = CK_UNAVAILABLE_INFORMATION;
+    pInfo->ulMaxRwSessionCount = CK_UNAVAILABLE_INFORMATION;
+    pInfo->ulRwSessionCount = CK_UNAVAILABLE_INFORMATION;
     pInfo->ulMaxPinLen = WP11_MAX_PIN_LEN;
     pInfo->ulMinPinLen = WP11_MIN_PIN_LEN;
     pInfo->ulTotalPublicMemory = CK_UNAVAILABLE_INFORMATION;
@@ -134,39 +157,7 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
     pInfo->hardwareVersion.minor = 0;
     pInfo->firmwareVersion.major = 0;
     pInfo->firmwareVersion.minor = 0;
-    XSTRNCPY((char*)pInfo->utcTime, "0000000000000000",
-                                                        sizeof(pInfo->utcTime));
-
-    if (WP11_Slot_IsUserPinSet(slot))
-        pInfo->flags |= CKF_USER_PIN_INITIALIZED;
-
-#ifndef WOLFPKCS11_NO_TIME
-    now = time(NULL);
-    expire = WP11_Slot_TokenFailedLoginExpire(slot, WP11_LOGIN_SO);
-#endif
-
-    cnt = WP11_Slot_TokenFailedLogin(slot, WP11_LOGIN_SO);
-    if (cnt == WP11_MAX_LOGIN_FAILS_SO - 1)
-        pInfo->flags |= CKF_SO_PIN_FINAL_TRY;
-#ifndef WOLFPKCS11_NO_TIME
-    if (cnt == WP11_MAX_LOGIN_FAILS_SO && now < expire)
-        pInfo->flags |= CKF_SO_PIN_LOCKED;
-#endif /* WOLFPKCS11_NO_TIME */
-
-    cnt = WP11_Slot_TokenFailedLogin(slot, WP11_LOGIN_USER);
-#ifndef WOLFPKCS11_NO_TIME
-    expire = WP11_Slot_TokenFailedLoginExpire(slot, WP11_LOGIN_USER);
-#endif
-
-    if (cnt == WP11_MAX_LOGIN_FAILS_USER - 1)
-        pInfo->flags |= CKF_USER_PIN_FINAL_TRY;
-#ifndef WOLFPKCS11_NO_TIME
-    if (cnt == WP11_MAX_LOGIN_FAILS_USER && now < expire)
-        pInfo->flags |= CKF_USER_PIN_LOCKED;
-#endif /* WOLFPKCS11_NO_TIME */
-
-    if (WP11_Slot_IsTokenInitialized(slot))
-        pInfo->flags |= CKF_TOKEN_INITIALIZED;
+    XMEMCPY(pInfo->utcTime, "0000000000000000", sizeof(pInfo->utcTime));
 
     return CKR_OK;
 }
@@ -176,64 +167,64 @@ static CK_MECHANISM_TYPE mechanismList[] = {
 #ifndef NO_RSA
 #ifdef WOLFSSL_KEY_GEN
     CKM_RSA_PKCS_KEY_PAIR_GEN,
-#endif
+#endif /* WOLFSSL_KEY_GEN */
     CKM_RSA_X_509,
     CKM_RSA_PKCS,
 #ifndef WC_NO_RSA_OAEP
     CKM_RSA_PKCS_OAEP,
-#endif
+#endif /* WC_NO_RSA_OAEP */
 #ifdef WC_RSA_PSS
     CKM_RSA_PKCS_PSS,
-#endif
-#endif
+#endif /* WC_RSA_PSS */
+#endif /* NO_RSA */
 #ifdef HAVE_ECC
     CKM_EC_KEY_PAIR_GEN,
     CKM_ECDSA,
     CKM_ECDH1_DERIVE,
-#endif
+#endif /* HAVE_ECC */
 #ifndef NO_DH
     CKM_DH_PKCS_KEY_PAIR_GEN,
     CKM_DH_PKCS_DERIVE,
-#endif
+#endif /* NO_DH */
 #ifndef NO_AES
 #ifdef HAVE_AES_CBC
     CKM_AES_CBC,
     CKM_AES_CBC_PAD,
-#endif
+#endif /* HAVE_AES_CBC */
 #ifdef HAVE_AESGCM
     CKM_AES_GCM,
-#endif
+#endif /* HAVE_AESGCM */
 #ifdef HAVE_AESCCM
     CKM_AES_CCM,
-#endif
+#endif /* HAVE_AESCCM */
 #ifdef HAVE_AESECB
     CKM_AES_ECB,
-#endif
-#endif
+#endif /* HAVE_AESECB */
+#endif /* NO_AES */
 #ifndef NO_HMAC
 #ifndef NO_MD5
     CKM_MD5_HMAC,
-#endif
+#endif /* NO_MD5 */
 #ifndef NO_SHA
     CKM_SHA1_HMAC,
-#endif
+#endif /* NO_SHA */
 #ifdef WOLFSSL_SHA224
     CKM_SHA224_HMAC,
-#endif
+#endif /* WOLFSSL_SHA224 */
 #ifndef NO_SHA256
     CKM_SHA256_HMAC,
-#endif
+#endif /* NO_SHA256 */
 #ifdef WOLFSSL_SHA384
     CKM_SHA384_HMAC,
-#endif
+#endif /* WOLFSSL_SHA384 */
 #ifdef WOLFSSL_SHA512
     CKM_SHA512_HMAC,
-#endif
-#endif
+#endif /* WOLFSSL_SHA512 */
+#endif /* NO_HMAC */
 #ifdef WOLFSSL_HAVE_LMS
     CKM_HSS_KEY_PAIR_GEN,
     CKM_HSS,
-#endif
+#endif /* WOLFSSL_HAVE_LMS */
 };
 
 /* Count of mechanisms in list. */
@@ -474,7 +465,7 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
         case CKM_DH_PKCS_DERIVE:
             XMEMCPY(pInfo, &dhPkcsMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
-#endif
+#endif /* NO_DH */
 #ifndef NO_AES
 #ifdef HAVE_AES_CBC
         case CKM_AES_CBC_PAD:
@@ -496,40 +487,40 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
         case CKM_AES_ECB:
             XMEMCPY(pInfo, &aesEcbMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
-#endif
-#endif
+#endif /* HAVE_AESECB */
+#endif /* NO_AES */
 #ifndef NO_HMAC
 #ifndef NO_MD5
         case CKM_MD5_HMAC:
             XMEMCPY(pInfo, &hmacMd5MechInfo, sizeof(CK_MECHANISM_INFO));
             break;
-#endif
+#endif /* NO_MD5 */
 #ifndef NO_SHA
         case CKM_SHA1_HMAC:
             XMEMCPY(pInfo, &hmacSha1MechInfo, sizeof(CK_MECHANISM_INFO));
             break;
-#endif
+#endif /* NO_SHA */
 #ifdef WOLFSSL_SHA224
         case CKM_SHA224_HMAC:
             XMEMCPY(pInfo, &hmacSha224MechInfo, sizeof(CK_MECHANISM_INFO));
             break;
-#endif
+#endif /* WOLFSSL_SHA224 */
 #ifndef NO_SHA256
         case CKM_SHA256_HMAC:
             XMEMCPY(pInfo, &hmacSha256MechInfo, sizeof(CK_MECHANISM_INFO));
             break;
-#endif
+#endif /* NO_SHA256 */
 #ifdef WOLFSSL_SHA384
         case CKM_SHA384_HMAC:
             XMEMCPY(pInfo, &hmacSha384MechInfo, sizeof(CK_MECHANISM_INFO));
             break;
-#endif
+#endif /* WOLFSSL_SHA384 */
 #ifdef WOLFSSL_SHA512
         case CKM_SHA512_HMAC:
             XMEMCPY(pInfo, &hmacSha512MechInfo, sizeof(CK_MECHANISM_INFO));
             break;
-#endif
-#endif
+#endif /* WOLFSSL_SHA512 */
+#endif /* NO_HMAC */
 #ifdef WOLFSSL_HAVE_LMS
         case CKM_HSS_KEY_PAIR_GEN:
             XMEMCPY(pInfo, &hssKgMechInfo, sizeof(CK_MECHANISM_INFO));
@@ -537,7 +528,7 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
         case CKM_HSS:
             XMEMCPY(pInfo, &hssMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
-#endif
+#endif /* WOLFSSL_HAVE_LMS */
         default:
             return CKR_MECHANISM_INVALID;
     }
@@ -632,3 +623,4 @@ CK_RV C_InitPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pPin,
 
     return CKR_OK;
 }
+

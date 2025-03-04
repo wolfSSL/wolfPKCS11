@@ -24,13 +24,13 @@
 
 #ifdef WOLFPKCS11_USER_SETTINGS
     #include "user_settings.h"
-#endif
+#endif /* WOLFPKCS11_USER_SETTINGS */
 
 #include <wolfpkcs11/visibility.h>
 
 #ifdef __cplusplus
 extern "C" {
-#endif
+#endif /* __cplusplus */
 
 /* Helpers for setenv/getenv */
 #if !defined(WOLFPKCS11_USER_ENV) && !defined(WOLFPKCS11_NO_ENV)
@@ -41,7 +41,7 @@ extern "C" {
     #ifndef XGETENV
         #define XGETENV getenv
     #endif
-#endif
+#endif /* !defined(WOLFPKCS11_USER_ENV) && !defined(WOLFPKCS11_NO_ENV) */
 
 #ifndef NULL_PTR
 #define NULL_PTR        0
@@ -137,7 +137,7 @@ extern "C" {
 #define CKK_DES3                              0x00000015UL /* not supported */
 #ifdef WOLFSSL_HAVE_LMS
 #define CKK_HSS                               0x00000020UL
-#endif
+#endif /* WOLFSSL_HAVE_LMS */
 
 #define CKA_CLASS                             0x00000000UL
 #define CKA_TOKEN                             0x00000001UL
@@ -217,7 +217,7 @@ extern "C" {
 #define CKA_HSS_LMS_TYPES                     0x00000213UL
 #define CKA_HSS_LMOTS_TYPES                   0x00000214UL
 #define CKA_HSS_KEYS_REMAINING                0x00000215UL
-#endif
+#endif /* WOLFSSL_HAVE_LMS */
 
 #define CKM_RSA_PKCS_KEY_PAIR_GEN             0x00000000UL
 #define CKM_RSA_PKCS                          0x00000001UL
@@ -251,7 +251,7 @@ extern "C" {
 #ifdef WOLFSSL_HAVE_LMS
 #define CKM_HSS_KEY_PAIR_GEN                  0x00001090UL
 #define CKM_HSS                               0x00001091UL
-#endif
+#endif /* WOLFSSL_HAVE_LMS */
 
 #define CKR_OK                                0x00000000UL
 #define CKR_CANCEL                            0x00000001UL
@@ -579,7 +579,7 @@ typedef CK_RV (*CK_C_GetFunctionList)(CK_FUNCTION_LIST_PTR_PTR ppFunctionList);
 
 #ifdef __cplusplus
 extern "C" {
-#endif
+#endif /* __cplusplus */
 
 CK_RV C_Initialize(CK_VOID_PTR pInitArgs);
 CK_RV C_Finalize(CK_VOID_PTR pReserved);

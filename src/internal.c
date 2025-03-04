@@ -5636,7 +5636,7 @@ static int ecc_get_curve_id_from_oid(const byte* oid, word32 len)
             XMEMCMP(ecc_sets[curve_idx].oid, oid, len) == 0) {
             break;
         }
-#endif
+#endif /* WOLFSSL_ECC_CURVE_STATIC */
     }
     if (ecc_sets[curve_idx].size == 0) {
         return ECC_CURVE_INVALID;
@@ -5645,7 +5645,7 @@ static int ecc_get_curve_id_from_oid(const byte* oid, word32 len)
     return ecc_sets[curve_idx].id;
 }
 
-#endif
+#endif /* HAVE_ECC */
 /**
  * Set the EC Parameters based on the DER encoding of the OID.
  *
@@ -6824,30 +6824,31 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
         case CKA_PUBLIC_EXPONENT:
 #ifndef NO_RSA
             if (object->type != CKK_RSA) {
-#endif
                 ret = BAD_FUNC_ARG;
-#ifndef NO_RSA
             }
-#endif /* NO_RSA */
+#else
+            ret = BAD_FUNC_ARG;
+#endif
             break;
         case CKA_EC_PARAMS:
         case CKA_EC_POINT:
 #ifdef HAVE_ECC
             if (object->type != CKK_EC) {
-#endif
                 ret = BAD_FUNC_ARG;
-#ifdef HAVE_ECC
             }
-#endif /* HAVE_ECC */
+#else
+            ret = BAD_FUNC_ARG;
+#endif
             break;
         case CKA_PRIME:
         case CKA_BASE:
 #ifndef NO_DH
-            if (object->type != CKK_DH)
-#endif
-            {
+            if (object->type != CKK_DH) {
                 ret = BAD_FUNC_ARG;
             }
+#else
+            ret = BAD_FUNC_ARG;
+#endif
             break;
         case CKA_VALUE_LEN:
             switch (object->type) {

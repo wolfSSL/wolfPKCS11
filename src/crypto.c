@@ -2648,7 +2648,6 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
 
         return CKR_OK;
     }
-    else
 #endif
     if (ret != 0) {
         return CKR_OBJECT_HANDLE_INVALID;
