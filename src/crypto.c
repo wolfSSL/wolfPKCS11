@@ -2656,6 +2656,17 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
 
     type = WP11_Object_GetType(obj);
     switch (pMechanism->mechanism) {
+#ifdef WOLFSSL_HAVE_LMS
+        case CKM_HSS:
+            if (type != CKK_HSS)
+                return CKR_KEY_TYPE_INCONSISTENT;
+            if (pMechanism->pParameter != NULL ||
+                                              pMechanism->ulParameterLen != 0) {
+                return CKR_MECHANISM_PARAM_INVALID;
+            }
+            init = WP11_INIT_HSS_SIGN;
+            break;
+#endif
 #ifndef NO_RSA
         case CKM_RSA_X_509:
             if (type != CKK_RSA)
@@ -2794,6 +2805,25 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 
     mechanism = WP11_Session_GetMechanism(session);
     switch (mechanism) {
+#ifdef WOLFSSL_HAVE_LMS
+        case CKM_HSS:
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_HSS_SIGN)) {
+                return CKR_OPERATION_NOT_INITIALIZED;
+            }
+
+            sigLen = HSS_MAX_SIG_SIZE;
+            if (pSignature == NULL) {
+                *pulSignatureLen = sigLen;
+                return CKR_OK;
+            }
+            if (sigLen > (word32)*pulSignatureLen)
+                return CKR_BUFFER_TOO_SMALL;
+
+            ret = WP11_Hss_Sign(pData, (int)ulDataLen, pSignature, &sigLen, obj,
+                                                 WP11_Session_GetSlot(session));
+            *pulSignatureLen = sigLen;
+            break;
+#endif
 #ifndef NO_RSA
         case CKM_RSA_X_509:
             if (!WP11_Session_IsOpInitialized(session,
@@ -3186,6 +3216,17 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
 
     type = WP11_Object_GetType(obj);
     switch (pMechanism->mechanism) {
+#ifdef WOLFSSL_HAVE_LMS
+        case CKM_HSS:
+            if (type != CKK_HSS)
+                return CKR_KEY_TYPE_INCONSISTENT;
+            if (pMechanism->pParameter != NULL ||
+                                              pMechanism->ulParameterLen != 0) {
+                return CKR_MECHANISM_PARAM_INVALID;
+            }
+            init = WP11_INIT_HSS_VERIFY;
+            break;
+#endif
 #ifndef NO_RSA
         case CKM_RSA_X_509:
             if (type != CKK_RSA)
@@ -3321,6 +3362,16 @@ CK_RV C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 
     mechanism = WP11_Session_GetMechanism(session);
     switch (mechanism) {
+#ifdef WOLFSSL_HAVE_LMS
+        case CKM_HSS:
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_HSS_VERIFY)) {
+                return CKR_OPERATION_NOT_INITIALIZED;
+            }
+
+            ret = WP11_Hss_Verify(pSignature, (int)ulSignatureLen, pData,
+                                                    (int)ulDataLen, &stat, obj);
+            break;
+#endif
 #ifndef NO_RSA
         case CKM_RSA_X_509:
             if (!WP11_Session_IsOpInitialized(session,
@@ -3965,6 +4016,30 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
             }
             if (rv == CKR_OK) {
                 ret = WP11_Dh_GenerateKeyPair(pub, priv,
+                                                 WP11_Session_GetSlot(session));
+                if (ret != 0)
+                    rv = CKR_FUNCTION_FAILED;
+            }
+            break;
+#endif
+#ifdef WOLFSSL_HAVE_LMS
+        case CKM_HSS_KEY_PAIR_GEN:
+            if (pMechanism->pParameter != NULL ||
+                                              pMechanism->ulParameterLen != 0) {
+                return CKR_MECHANISM_PARAM_INVALID;
+            }
+
+            *phPublicKey = *phPrivateKey = CK_INVALID_HANDLE;
+
+            rv = NewObject(session, CKK_HSS, CKO_PUBLIC_KEY, pPublicKeyTemplate,
+                                               ulPublicKeyAttributeCount, &pub);
+            if (rv == CKR_OK) {
+                rv = NewObject(session, CKK_HSS, CKO_PRIVATE_KEY,
+                                pPrivateKeyTemplate, ulPrivateKeyAttributeCount,
+                                &priv);
+            }
+            if (rv == CKR_OK) {
+                ret = WP11_Hss_GenerateKeyPair(pub, priv,
                                                  WP11_Session_GetSlot(session));
                 if (ret != 0)
                     rv = CKR_FUNCTION_FAILED;

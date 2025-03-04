@@ -189,9 +189,9 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
     if (cnt == WP11_MAX_LOGIN_FAILS_SO - 1)
         pInfo->flags |= CKF_SO_PIN_FINAL_TRY;
 #ifndef WOLFPKCS11_NO_TIME
-    else if (cnt == WP11_MAX_LOGIN_FAILS_SO && now < expire)
+    if (cnt == WP11_MAX_LOGIN_FAILS_SO && now < expire)
         pInfo->flags |= CKF_SO_PIN_LOCKED;
-#endif
+#endif /* WOLFPKCS11_NO_TIME */
 
     cnt = WP11_Slot_TokenFailedLogin(slot, WP11_LOGIN_USER);
 #ifndef WOLFPKCS11_NO_TIME
@@ -202,9 +202,9 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
     if (cnt == WP11_MAX_LOGIN_FAILS_USER - 1)
         pInfo->flags |= CKF_USER_PIN_FINAL_TRY;
 #ifndef WOLFPKCS11_NO_TIME
-    else if (cnt == WP11_MAX_LOGIN_FAILS_USER && now < expire)
+    if (cnt == WP11_MAX_LOGIN_FAILS_USER && now < expire)
         pInfo->flags |= CKF_USER_PIN_LOCKED;
-#endif
+#endif /* WOLFPKCS11_NO_TIME */
 
     if (WP11_Slot_IsTokenInitialized(slot))
         pInfo->flags |= CKF_TOKEN_INITIALIZED;
@@ -272,6 +272,10 @@ static CK_MECHANISM_TYPE mechanismList[] = {
 #ifdef WOLFSSL_SHA512
     CKM_SHA512_HMAC,
 #endif
+#endif
+#ifdef WOLFSSL_HAVE_LMS
+    CKM_HSS_KEY_PAIR_GEN,
+    CKM_HSS,
 #endif
 };
 
@@ -438,6 +442,16 @@ static CK_MECHANISM_INFO hmacSha512MechInfo = {
 };
 #endif
 #endif
+#ifdef WOLFSSL_HAVE_LMS
+/* Info on HSS key generation mechanism. */
+static CK_MECHANISM_INFO hssKgMechInfo = {
+    5, 25, CKF_GENERATE_KEY_PAIR
+};
+/* Info on HSS mechanism. */
+static CK_MECHANISM_INFO hssMechInfo = {
+    5, 25, CKF_SIGN | CKF_VERIFY
+};
+#endif
 
 /**
  * Get information on a mechanism.
@@ -558,6 +572,14 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
             XMEMCPY(pInfo, &hmacSha512MechInfo, sizeof(CK_MECHANISM_INFO));
             break;
 #endif
+#endif
+#ifdef WOLFSSL_HAVE_LMS
+        case CKM_HSS_KEY_PAIR_GEN:
+            XMEMCPY(pInfo, &hssKgMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+        case CKM_HSS:
+            XMEMCPY(pInfo, &hssMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
 #endif
         default:
             return CKR_MECHANISM_INVALID;

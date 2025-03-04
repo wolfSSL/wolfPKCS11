@@ -135,6 +135,9 @@ extern "C" {
 #define CKK_GENERIC_SECRET                    0x00000010UL
 #define CKK_AES                               0x0000001FUL
 #define CKK_DES3                              0x00000015UL /* not supported */
+#ifdef WOLFSSL_HAVE_LMS
+#define CKK_HSS                               0x00000020UL
+#endif
 
 #define CKA_CLASS                             0x00000000UL
 #define CKA_TOKEN                             0x00000001UL
@@ -207,6 +210,14 @@ extern "C" {
 #define CKA_UNWRAP_TEMPLATE                   0x40000212UL
 #define CKA_DERIVE_TEMPLATE                   0x40000213UL
 #define CKA_ALLOWED_MECHANISMS                0x40000600UL
+#ifdef WOLFSSL_HAVE_LMS
+#define CKA_HSS_LEVELS                        0x00000210UL
+#define CKA_HSS_LMS_TYPE                      0x00000211UL
+#define CKA_HSS_LMOTS_TYPE                    0x00000212UL
+#define CKA_HSS_LMS_TYPES                     0x00000213UL
+#define CKA_HSS_LMOTS_TYPES                   0x00000214UL
+#define CKA_HSS_KEYS_REMAINING                0x00000215UL
+#endif
 
 #define CKM_RSA_PKCS_KEY_PAIR_GEN             0x00000000UL
 #define CKM_RSA_PKCS                          0x00000001UL
@@ -237,6 +248,10 @@ extern "C" {
 #define CKM_AES_GCM                           0x00001087UL
 #define CKM_AES_CCM                           0x00001088UL
 #define CKM_AES_ECB                           0x000001081L
+#ifdef WOLFSSL_HAVE_LMS
+#define CKM_HSS_KEY_PAIR_GEN                  0x00001090UL
+#define CKM_HSS                               0x00001091UL
+#endif
 
 #define CKR_OK                                0x00000000UL
 #define CKR_CANCEL                            0x00000001UL
@@ -562,6 +577,9 @@ typedef CK_FUNCTION_LIST_PTR* CK_FUNCTION_LIST_PTR_PTR;
 
 typedef CK_RV (*CK_C_GetFunctionList)(CK_FUNCTION_LIST_PTR_PTR ppFunctionList);
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 CK_RV C_Initialize(CK_VOID_PTR pInitArgs);
 CK_RV C_Finalize(CK_VOID_PTR pReserved);
@@ -741,6 +759,9 @@ CK_RV C_CancelFunction(CK_SESSION_HANDLE hSession);
 CK_RV C_WaitForSlotEvent(CK_FLAGS flags, CK_SLOT_ID_PTR pSlot,
                          CK_VOID_PTR pReserved);
 
+#ifdef __cplusplus
+}
+#endif /* __cplusplus */
 
 struct CK_FUNCTION_LIST {
     CK_VERSION version;
@@ -927,7 +948,7 @@ struct CK_FUNCTION_LIST {
 
 #ifdef __cplusplus
 }
-#endif
+#endif /* __cplusplus */
 
 #endif /* _PKCS11_H_ */
 

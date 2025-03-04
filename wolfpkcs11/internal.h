@@ -136,6 +136,8 @@ extern "C" {
 #define WP11_INIT_RSA_X_509_VERIFY     0x0035
 #define WP11_INIT_ECDSA_SIGN           0x0040
 #define WP11_INIT_ECDSA_VERIFY         0x0041
+#define WP11_INIT_HSS_SIGN             0x0050
+#define WP11_INIT_HSS_VERIFY           0x0051
 
 /* scrypt parameters when generating hash from PIN. */
 #ifndef WP11_HASH_PIN_COST
@@ -346,6 +348,15 @@ int WP11_Dh_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
                             WP11_Slot* slot);
 int WP11_Dh_Derive(unsigned char* pub, word32 pubLen, unsigned char* key,
                    word32* keyLen, WP11_Object* priv);
+
+#ifdef WOLFSSL_HAVE_LMS
+int WP11_Hss_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
+                             WP11_Slot* slot);
+int WP11_Hss_Sign(unsigned char* hash, word32 hashLen, unsigned char* sig,
+                  word32* sigLen, WP11_Object* priv, WP11_Slot* slot);
+int WP11_Hss_Verify(unsigned char* sig, word32 sigLen, unsigned char* hash,
+                    word32 hashLen, int* stat, WP11_Object* pub);
+#endif
 
 int WP11_AesGenerateKey(WP11_Object* secret, WP11_Slot* slot);
 

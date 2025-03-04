@@ -5625,14 +5625,18 @@ static int ecc_get_curve_id_from_oid(const byte* oid, word32 len)
         return BAD_FUNC_ARG;
 
     for (curve_idx = 0; ecc_sets[curve_idx].size != 0; curve_idx++) {
-        if (
-        #ifndef WOLFSSL_ECC_CURVE_STATIC
-            ecc_sets[curve_idx].oid &&
-        #endif
+#ifndef WOLFSSL_ECC_CURVE_STATIC
+        if (ecc_sets[curve_idx].oid &&
             ecc_sets[curve_idx].oidSz == len &&
-                              XMEMCMP(ecc_sets[curve_idx].oid, oid, len) == 0) {
+            XMEMCMP(ecc_sets[curve_idx].oid, oid, len) == 0) {
             break;
         }
+#else
+        if (ecc_sets[curve_idx].oidSz == len &&
+            XMEMCMP(ecc_sets[curve_idx].oid, oid, len) == 0) {
+            break;
+        }
+#endif
     }
     if (ecc_sets[curve_idx].size == 0) {
         return ECC_CURVE_INVALID;
@@ -6819,23 +6823,31 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
         case CKA_COEFFICIENT:
         case CKA_PUBLIC_EXPONENT:
 #ifndef NO_RSA
-            if (object->type != CKK_RSA)
+            if (object->type != CKK_RSA) {
 #endif
                 ret = BAD_FUNC_ARG;
+#ifndef NO_RSA
+            }
+#endif /* NO_RSA */
             break;
         case CKA_EC_PARAMS:
         case CKA_EC_POINT:
 #ifdef HAVE_ECC
-            if (object->type != CKK_EC)
+            if (object->type != CKK_EC) {
 #endif
                 ret = BAD_FUNC_ARG;
+#ifdef HAVE_ECC
+            }
+#endif /* HAVE_ECC */
             break;
         case CKA_PRIME:
         case CKA_BASE:
 #ifndef NO_DH
             if (object->type != CKK_DH)
 #endif
+            {
                 ret = BAD_FUNC_ARG;
+            }
             break;
         case CKA_VALUE_LEN:
             switch (object->type) {
@@ -7992,6 +8004,134 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
  * @return  -ve when key generation fails.
  *          0 on success.
  */
+#ifdef WOLFSSL_HAVE_LMS
+/**
+ * Generate a HSS/LMS key pair.
+ *
+ * @param  pub   [in]  Public key object.
+ * @param  priv  [in]  Private key object.
+ * @param  slot  [in]  Slot to use.
+ * @return  -ve when key generation fails.
+ *          0 on success.
+ */
+int WP11_Hss_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
+                             WP11_Slot* slot)
+{
+    int ret = 0;
+    WC_RNG rng;
+    LmsState state;
+    byte* priv_data = NULL;
+    word32 priv_data_len = 0;
+    word8 levels = 2;  /* Default: 2 levels */
+    word16 lmsType = LMS_SHA256_M32_H10;  /* Default: SHA-256, height 10 */
+    word16 lmOtsType = LMOTS_SHA256_N32_W4;  /* Default: SHA-256, width 4 */
+    byte levels_data[sizeof(CK_ULONG)];
+    byte lmsType_data[sizeof(CK_ULONG)];
+    byte lmOtsType_data[sizeof(CK_ULONG)];
+    CK_ULONG dataLen;
+
+    /* Check if HSS_LEVELS attribute is set in public key */
+    dataLen = sizeof(levels_data);
+    ret = WP11_Object_GetAttr(pub, CKA_HSS_LEVELS, levels_data, &dataLen);
+    if (ret == 0 && dataLen == sizeof(CK_ULONG)) {
+        levels = (word8)*(CK_ULONG*)levels_data;
+        if (levels < 1 || levels > LMS_MAX_LEVELS) {
+            return BAD_FUNC_ARG;
+        }
+    }
+
+    /* Check if LMS_TYPE attribute is set in public key */
+    dataLen = sizeof(lmsType_data);
+    ret = WP11_Object_GetAttr(pub, CKA_HSS_LMS_TYPE, lmsType_data, &dataLen);
+    if (ret == 0 && dataLen == sizeof(CK_ULONG)) {
+        lmsType = (word16)*(CK_ULONG*)lmsType_data;
+    }
+
+    /* Check if LMOTS_TYPE attribute is set in public key */
+    dataLen = sizeof(lmOtsType_data);
+    ret = WP11_Object_GetAttr(pub, CKA_HSS_LMOTS_TYPE, lmOtsType_data, &dataLen);
+    if (ret == 0 && dataLen == sizeof(CK_ULONG)) {
+        lmOtsType = (word16)*(CK_ULONG*)lmOtsType_data;
+    }
+
+    /* Initialize LMS state with parameters */
+    XMEMSET(&state, 0, sizeof(state));
+    ret = wc_LmsKey_Init(NULL, lmsType, lmOtsType);
+    if (ret != 0) {
+        return ret;
+    }
+
+    /* Allocate memory for private key data */
+    priv_data_len = LMS_PRIV_DATA_LEN(levels, 
+                                     (lmsType & LMS_H_W_MASK), 
+                                     (lmOtsType & LMS_H_W_MASK), 
+                                     LMS_ROOT_LEVELS, 
+                                     LMS_CACHE_BITS, 
+                                     WC_SHA256_DIGEST_SIZE);
+    priv_data = (byte*)XMALLOC(priv_data_len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    if (priv_data == NULL) {
+        return MEMORY_E;
+    }
+
+    /* Generate the HSS key pair */
+    ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
+    if (ret == 0) {
+        ret = wc_hss_make_key(&state, &rng, priv->data.hssKey.priv_raw, 
+                              &priv->data.hssKey.priv, priv_data, 
+                              pub->data.hssKey.pub);
+        Rng_Free(&rng);
+    }
+
+    if (ret == 0) {
+        /* Set attributes for public key */
+        ret = WP11_Object_SetAttr(pub, CKA_HSS_LEVELS, (byte*)&levels, sizeof(CK_ULONG));
+    }
+    if (ret == 0) {
+        ret = WP11_Object_SetAttr(pub, CKA_HSS_LMS_TYPE, (byte*)&lmsType, sizeof(CK_ULONG));
+    }
+    if (ret == 0) {
+        ret = WP11_Object_SetAttr(pub, CKA_HSS_LMOTS_TYPE, (byte*)&lmOtsType, sizeof(CK_ULONG));
+    }
+
+    /* Set attributes for private key */
+    if (ret == 0) {
+        ret = WP11_Object_SetAttr(priv, CKA_HSS_LEVELS, (byte*)&levels, sizeof(CK_ULONG));
+    }
+    if (ret == 0) {
+        ret = WP11_Object_SetAttr(priv, CKA_HSS_LMS_TYPES, (byte*)&lmsType, sizeof(CK_ULONG));
+    }
+    if (ret == 0) {
+        ret = WP11_Object_SetAttr(priv, CKA_HSS_LMOTS_TYPES, (byte*)&lmOtsType, sizeof(CK_ULONG));
+    }
+
+    /* Set required attributes for HSS private keys */
+    if (ret == 0) {
+        CK_BBOOL bTrue = CK_TRUE;
+        CK_BBOOL bFalse = CK_FALSE;
+        ret = WP11_Object_SetAttr(priv, CKA_SENSITIVE, (byte*)&bTrue, sizeof(bTrue));
+        if (ret == 0) {
+            ret = WP11_Object_SetAttr(priv, CKA_EXTRACTABLE, (byte*)&bFalse, sizeof(bFalse));
+        }
+        if (ret == 0) {
+            ret = WP11_Object_SetAttr(priv, CKA_COPYABLE, (byte*)&bFalse, sizeof(bFalse));
+        }
+    }
+
+    if (ret == 0) {
+        priv->local = 1;
+        pub->local = 1;
+        priv->keyGenMech = CKM_HSS_KEY_PAIR_GEN;
+        pub->keyGenMech = CKM_HSS_KEY_PAIR_GEN;
+    }
+
+    if (priv_data != NULL) {
+        XFREE(priv_data, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    }
+
+    return ret;
+}
+#endif /* WOLFSSL_HAVE_LMS */
+
 int WP11_Dh_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
                             WP11_Slot* slot)
 {
@@ -8034,6 +8174,73 @@ int WP11_Dh_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
  * @return  -ve when derivation fails.
  *          0 on success.
  */
+#ifdef WOLFSSL_HAVE_LMS
+/**
+ * Sign a message using a HSS/LMS private key.
+ *
+ * @param  hash    [in]      Hash of the message to sign.
+ * @param  hashLen [in]      Length of the hash in bytes.
+ * @param  sig     [in]      Buffer to hold signature.
+ * @param  sigLen  [in,out]  On in, length of buffer.
+ *                           On out, length of signature in bytes.
+ * @param  priv    [in]      HSS private key object.
+ * @param  slot    [in]      Slot to use.
+ * @return  -ve when signing fails.
+ *          0 on success.
+ */
+int WP11_Hss_Sign(unsigned char* hash, word32 hashLen, unsigned char* sig,
+                  word32* sigLen, WP11_Object* priv, WP11_Slot* slot)
+{
+    int ret;
+    WC_RNG rng;
+
+    /* Check if the signature buffer is large enough */
+    if (*sigLen < HSS_MAX_SIG_SIZE) {
+        *sigLen = HSS_MAX_SIG_SIZE;
+        return BUFFER_E;
+    }
+
+    /* Generate the HSS signature */
+    ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
+    if (ret == 0) {
+        ret = wc_hss_sign(hash, hashLen, sig, sigLen, &priv->data.hssKey.priv);
+        Rng_Free(&rng);
+    }
+
+    return ret;
+}
+
+/**
+ * Verify a signature using a HSS/LMS public key.
+ *
+ * @param  sig     [in]   Signature to verify.
+ * @param  sigLen  [in]   Length of signature in bytes.
+ * @param  hash    [in]   Hash of the message to verify.
+ * @param  hashLen [in]   Length of the hash in bytes.
+ * @param  stat    [out]  1 when signature verified, 0 otherwise.
+ * @param  pub     [in]   HSS public key object.
+ * @return  -ve when verification fails.
+ *          0 on success.
+ */
+int WP11_Hss_Verify(unsigned char* sig, word32 sigLen, unsigned char* hash,
+                    word32 hashLen, int* stat, WP11_Object* pub)
+{
+    int ret;
+
+    /* Verify the HSS signature */
+    ret = wc_hss_verify(hash, hashLen, sig, sigLen, pub->data.hssKey.pub);
+    if (ret == 0) {
+        *stat = 1;
+    }
+    else {
+        *stat = 0;
+        ret = 0;
+    }
+
+    return ret;
+}
+#endif /* WOLFSSL_HAVE_LMS */
+
 int WP11_Dh_Derive(unsigned char* pub, word32 pubLen, unsigned char* key,
                    word32* keyLen, WP11_Object* priv)
 {
