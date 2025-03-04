@@ -1,83 +1,62 @@
-/* slot.c
- *
- * Copyright (C) 2006-2023 wolfSSL Inc.
- *
- * This file is part of wolfPKCS11.
- *
- * wolfPKCS11 is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
- * (at your option) any later version.
- *
- * wolfPKCS11 is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
- */
-
-#ifdef HAVE_CONFIG_H
-    #include <wolfpkcs11/config.h>
-#endif
+#include "internal.h"
 
 #include <wolfpkcs11/pkcs11.h>
-#include <wolfpkcs11/internal.h>
-
 
 /**
- * Gets a list of slot identifiers for available slots.
+ * Get list of slots with a token attached.
  *
- * @param  tokenPresent  [in]      Require slot to have a token inserted.
- * @param  pSlotList     [in]      Array of slot ids to fill.
+ * @param  tokenPresent  [in]      Only return slots with token present when
+ *                                 true.
+ * @param  pSlotList     [in]      Array to hold slot ids.
  *                                 NULL indicates the length is required.
  * @param  pulCount      [in,out]  On in, the number of array entries in
  *                                 pSlotList.
- *                                 On out, the number of slot ids put in array.
+ *                                 On out, the number of slots put in array.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
- *          CKR_ARGUMENTS_BAD when pulCount is NULL or tokenPresent isn't
- *          a valid boolean value.
- *          CKR_BUFFER_TOO_SMALL when more slot ids match that entries in array.
+ *          CKR_ARGUMENTS_BAD when pulCount is NULL.
+ *          CKR_BUFFER_TOO_SMALL when there are more slots than entries in
+ *          array.
  *          CKR_OK on success.
  */
 CK_RV C_GetSlotList(CK_BBOOL tokenPresent, CK_SLOT_ID_PTR pSlotList,
                     CK_ULONG_PTR pulCount)
 {
-    int ret;
+    int i;
+    int cnt = 0;
 
     if (!WP11_Library_IsInitialized())
         return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (tokenPresent != CK_FALSE && tokenPresent != CK_TRUE)
-        return CKR_ARGUMENTS_BAD;
     if (pulCount == NULL)
         return CKR_ARGUMENTS_BAD;
 
-    ret = WP11_GetSlotList(tokenPresent, pSlotList, pulCount);
-    if (ret == BUFFER_E)
+    for (i = 0; i < WP11_SLOT_COUNT; i++) {
+        if (!tokenPresent || WP11_Slot_IsTokenPresent(i))
+            cnt++;
+    }
+
+    if (pSlotList == NULL)
+        *pulCount = cnt;
+    else if (*pulCount < (CK_ULONG)cnt)
         return CKR_BUFFER_TOO_SMALL;
+    else {
+        cnt = 0;
+        for (i = 0; i < WP11_SLOT_COUNT; i++) {
+            if (!tokenPresent || WP11_Slot_IsTokenPresent(i))
+                pSlotList[cnt++] = i;
+        }
+        *pulCount = cnt;
+    }
 
     return CKR_OK;
 }
 
-/* Index into slot id string to place number. */
-#define SLOT_ID_IDX     20
-
-/* Template for slot information. */
-static CK_SLOT_INFO slotInfoTemplate = {
-    "wolfSSL HSM slot ID xx",
-    "wolfpkcs11",
-    CKF_TOKEN_PRESENT,
-    { WOLFPKCS11_MAJOR_VERSION, WOLFPKCS11_MINOR_VERSION },
-    { WOLFPKCS11_MAJOR_VERSION, WOLFPKCS11_MINOR_VERSION }
-};
+#define SLOT_ID_IDX(id)  ((int)(id))
 
 /**
- * Get information on the slot.
+ * Get information about a slot.
  *
- * @param  slotID  [in]  Id of slot to query.
- * @param  pInfo   [in]  Slot information copied into it.
+ * @param  slotID  [in]   Id of slot to use.
+ * @param  pInfo   [out]  Slot information copied into it.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SLOT_ID_INVALID when no slot with id can be found.
  *          CKR_ARGUMENTS_BAD when pInfo is NULL.
@@ -92,53 +71,36 @@ CK_RV C_GetSlotInfo(CK_SLOT_ID slotID, CK_SLOT_INFO_PTR pInfo)
     if (pInfo == NULL)
         return CKR_ARGUMENTS_BAD;
 
-    XMEMCPY(pInfo, &slotInfoTemplate, sizeof(slotInfoTemplate));
-    /* Put in the slot id value as two decimal digits. */
-    pInfo->slotDescription[SLOT_ID_IDX + 0] = ((slotID / 10) % 10) + '0';
-    pInfo->slotDescription[SLOT_ID_IDX + 1] = ((slotID     ) % 10) + '0';
+    XMEMSET(pInfo, 0, sizeof(*pInfo));
+    XSTRNCPY((char*)pInfo->slotDescription, "wolfPKCS11 Slot",
+                                                 sizeof(pInfo->slotDescription));
+    XSTRNCPY((char*)pInfo->manufacturerID, "wolfSSL Inc.",
+                                                 sizeof(pInfo->manufacturerID));
+    pInfo->flags = CKF_TOKEN_PRESENT;
+    pInfo->hardwareVersion.major = 0;
+    pInfo->hardwareVersion.minor = 0;
+    pInfo->firmwareVersion.major = 0;
+    pInfo->firmwareVersion.minor = 0;
 
     return CKR_OK;
 }
 
-/* Template for token information. */
-static CK_TOKEN_INFO tokenInfoTemplate = {
-    "",
-    "wolfpkcs11",
-    "wolfpkcs11",
-    "0000000000000000", /* serialNumber */
-    CKF_RNG | CKF_CLOCK_ON_TOKEN | CKF_LOGIN_REQUIRED,
-    WP11_SESSION_CNT_MAX, /* ulMaxSessionCount */
-    CK_UNAVAILABLE_INFORMATION, /* ulSessionCount */
-    WP11_SESSION_CNT_MAX, /* ulMaxRwSessionCount */
-    CK_UNAVAILABLE_INFORMATION, /* ulRwSessionCount */
-    WP11_MAX_PIN_LEN, /* ulMaxPinLen */
-    WP11_MIN_PIN_LEN, /* ulMinPinLen */
-    CK_UNAVAILABLE_INFORMATION, /* ulTotalPublicMemory */
-    CK_UNAVAILABLE_INFORMATION, /* ulFreePublicMemory */
-    CK_UNAVAILABLE_INFORMATION, /* ulTotalPrivateMemory */
-    CK_UNAVAILABLE_INFORMATION, /* ulFreePrivateMemory */
-    { WOLFPKCS11_MAJOR_VERSION, WOLFPKCS11_MINOR_VERSION },
-    { WOLFPKCS11_MAJOR_VERSION, WOLFPKCS11_MINOR_VERSION },
-    "YYYYMMDDhhmmss00"
-};
-
 /**
- * Get information on the token.
+ * Get information about a token in a slot.
  *
- * @param  slotID  [in]  Id of slot to use.
- * @param  pInfo   [in]  Token information copied into it.
+ * @param  slotID  [in]   Id of slot to use.
+ * @param  pInfo   [out]  Token information copied into it.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SLOT_ID_INVALID when no slot with id can be found.
  *          CKR_ARGUMENTS_BAD when pInfo is NULL.
+ *          CKR_TOKEN_NOT_PRESENT when no token is in the slot.
  *          CKR_OK on success.
  */
 CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
 {
-#ifndef WOLFPKCS11_NO_TIME
-    time_t now, expire;
-    struct tm nowTM;
-#endif
     WP11_Slot* slot;
+    time_t now;
+    time_t expire;
     int cnt;
 
     if (!WP11_Library_IsInitialized())
@@ -147,45 +109,43 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
         return CKR_SLOT_ID_INVALID;
     if (pInfo == NULL)
         return CKR_ARGUMENTS_BAD;
+    if (!WP11_Slot_IsTokenPresent(SLOT_ID_IDX(slotID)))
+        return CKR_TOKEN_NOT_PRESENT;
 
-    XMEMCPY(pInfo, &tokenInfoTemplate, sizeof(tokenInfoTemplate));
-    WP11_Slot_GetTokenLabel(slot, (char*)pInfo->label);
-    pInfo->serialNumber[14] = ((slotID / 10) % 10) + '0';
-    pInfo->serialNumber[15] = ((slotID /  1) % 10) + '0';
+    XMEMSET(pInfo, 0, sizeof(*pInfo));
+    XSTRNCPY((char*)pInfo->label, WP11_Slot_GetTokenLabel(slot),
+                                                         sizeof(pInfo->label));
+    XSTRNCPY((char*)pInfo->manufacturerID, "wolfSSL Inc.",
+                                                 sizeof(pInfo->manufacturerID));
+    XSTRNCPY((char*)pInfo->model, "wolfPKCS11", sizeof(pInfo->model));
+    XSTRNCPY((char*)pInfo->serialNumber, "1", sizeof(pInfo->serialNumber));
+    pInfo->flags = CKF_RNG | CKF_LOGIN_REQUIRED;
+    pInfo->ulMaxSessionCount = CK_EFFECTIVELY_INFINITE;
+    pInfo->ulSessionCount = WP11_Slot_GetSessionCount(slot);
+    pInfo->ulMaxRwSessionCount = CK_EFFECTIVELY_INFINITE;
+    pInfo->ulRwSessionCount = WP11_Slot_GetRWSessionCount(slot);
+    pInfo->ulMaxPinLen = WP11_MAX_PIN_LEN;
+    pInfo->ulMinPinLen = WP11_MIN_PIN_LEN;
+    pInfo->ulTotalPublicMemory = CK_UNAVAILABLE_INFORMATION;
+    pInfo->ulFreePublicMemory = CK_UNAVAILABLE_INFORMATION;
+    pInfo->ulTotalPrivateMemory = CK_UNAVAILABLE_INFORMATION;
+    pInfo->ulFreePrivateMemory = CK_UNAVAILABLE_INFORMATION;
+    pInfo->hardwareVersion.major = 0;
+    pInfo->hardwareVersion.minor = 0;
+    pInfo->firmwareVersion.major = 0;
+    pInfo->firmwareVersion.minor = 0;
+    XSTRNCPY((char*)pInfo->utcTime, "0000000000000000",
+                                                        sizeof(pInfo->utcTime));
+
+    if (WP11_Slot_IsUserPinSet(slot))
+        pInfo->flags |= CKF_USER_PIN_INITIALIZED;
 
 #ifndef WOLFPKCS11_NO_TIME
-    now = XTIME(0);
-    XMEMSET(&nowTM, 0, sizeof(nowTM));
-    if (XGMTIME(&now, &nowTM) != NULL) {
-        pInfo->utcTime[ 0] = (((1900 + nowTM.tm_year) / 1000) % 10) + '0';
-        pInfo->utcTime[ 1] = (((1900 + nowTM.tm_year) /  100) % 10) + '0';
-        pInfo->utcTime[ 2] = (((1900 + nowTM.tm_year) /   10) % 10) + '0';
-        pInfo->utcTime[ 3] = (((1900 + nowTM.tm_year) /    1) % 10) + '0';
-        pInfo->utcTime[ 4] = (((1 + nowTM.tm_mon) / 10) % 10) + '0';
-        pInfo->utcTime[ 5] = (((1 + nowTM.tm_mon) /  1) % 10) + '0';
-        pInfo->utcTime[ 6] = ((nowTM.tm_mday / 10) % 10) + '0';
-        pInfo->utcTime[ 7] = ((nowTM.tm_mday /  1) % 10) + '0';
-        pInfo->utcTime[ 8] = ((nowTM.tm_hour / 10) % 10) + '0';
-        pInfo->utcTime[ 9] = ((nowTM.tm_hour /  1) % 10) + '0';
-        pInfo->utcTime[10] = ((nowTM.tm_min / 10) % 10) + '0';
-        pInfo->utcTime[11] = ((nowTM.tm_min /  1) % 10) + '0';
-        pInfo->utcTime[12] = ((nowTM.tm_sec / 10) % 10) + '0';
-        pInfo->utcTime[13] = ((nowTM.tm_sec /  1) % 10) + '0';
-    }
-    else {
-        /* Set date to all zeros. */
-        XMEMCPY(pInfo->utcTime, "00000000000000", 14);
-    }
-#else
-    XMEMCPY(pInfo->utcTime, "00000000000000", 14);
+    now = time(NULL);
+    expire = WP11_Slot_TokenFailedLoginExpire(slot, WP11_LOGIN_SO);
 #endif
 
     cnt = WP11_Slot_TokenFailedLogin(slot, WP11_LOGIN_SO);
-#ifndef WOLFPKCS11_NO_TIME
-    expire = WP11_Slot_TokenFailedExpire(slot, WP11_LOGIN_SO);
-#endif
-    if (cnt > 0)
-        pInfo->flags |= CKF_SO_PIN_COUNT_LOW;
     if (cnt == WP11_MAX_LOGIN_FAILS_SO - 1)
         pInfo->flags |= CKF_SO_PIN_FINAL_TRY;
 #ifndef WOLFPKCS11_NO_TIME
@@ -195,10 +155,9 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
 
     cnt = WP11_Slot_TokenFailedLogin(slot, WP11_LOGIN_USER);
 #ifndef WOLFPKCS11_NO_TIME
-    expire = WP11_Slot_TokenFailedExpire(slot, WP11_LOGIN_USER);
+    expire = WP11_Slot_TokenFailedLoginExpire(slot, WP11_LOGIN_USER);
 #endif
-    if (cnt > 0)
-        pInfo->flags |= CKF_USER_PIN_COUNT_LOW;
+
     if (cnt == WP11_MAX_LOGIN_FAILS_USER - 1)
         pInfo->flags |= CKF_USER_PIN_FINAL_TRY;
 #ifndef WOLFPKCS11_NO_TIME
@@ -208,8 +167,6 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
 
     if (WP11_Slot_IsTokenInitialized(slot))
         pInfo->flags |= CKF_TOKEN_INITIALIZED;
-    if (WP11_Slot_IsTokenUserPinInitialized(slot))
-        pInfo->flags |= CKF_USER_PIN_INITIALIZED;
 
     return CKR_OK;
 }
@@ -675,418 +632,3 @@ CK_RV C_InitPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pPin,
 
     return CKR_OK;
 }
-
-/**
- * Change the PIN of the currently logged in user.
- *
- * @param  hSession     [in]  Session handle.
- * @param  pOldPin      [in]  Old PIN of user.
- * @param  ulOldPinLen  [in]  Length of old PIN in bytes.
- * @param  pNewPin      [in]  New PIN to set for user.
- * @param  ulNewPinLen  [in]  Length of new PIN in bytes.
- * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
- *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_ARGUMENTS_BAD when pOldPin or pNewPin is NULL.
- *          CKR_PIN_INCORRECT when length of old or new PIN is not valid or
- *          old PIN does not verify.
- *          CKR_SESSION_READ_ONLY when session not read/write.
- *          CKR_USER_PIN_NOT_INITIALIZED when no previous PIN set for user.
- *          CKR_FUNCTION_FAILED when setting user PIN fails.
- *          CKR_OK on success.
- */
-CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
-               CK_ULONG ulOldLen, CK_UTF8CHAR_PTR pNewPin,
-               CK_ULONG ulNewLen)
-{
-    int ret;
-    int state;
-    WP11_Slot* slot;
-    WP11_Session* session;
-
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pOldPin == NULL || pNewPin == NULL)
-        return CKR_ARGUMENTS_BAD;
-    if (ulOldLen < WP11_MIN_PIN_LEN || ulOldLen > WP11_MAX_PIN_LEN)
-        return CKR_PIN_INCORRECT;
-    if (ulNewLen < WP11_MIN_PIN_LEN || ulNewLen > WP11_MAX_PIN_LEN)
-        return CKR_PIN_INCORRECT;
-
-    state = WP11_Session_GetState(session);
-    if (state != WP11_APP_STATE_RW_SO && state != WP11_APP_STATE_RW_USER &&
-                                            state != WP11_APP_STATE_RW_PUBLIC) {
-        return CKR_SESSION_READ_ONLY;
-    }
-
-    slot = WP11_Session_GetSlot(session);
-    if (state == WP11_APP_STATE_RW_SO) {
-        ret = WP11_Slot_CheckSOPin(slot, (char*)pOldPin, (int)ulOldLen);
-        if (ret == PIN_NOT_SET_E)
-            return CKR_USER_PIN_NOT_INITIALIZED;
-        if (ret != 0)
-            return CKR_PIN_INCORRECT;
-
-        ret = WP11_Slot_SetSOPin(slot, (char*)pNewPin, (int)ulNewLen);
-        if (ret != 0)
-            return CKR_FUNCTION_FAILED;
-    }
-    else {
-        ret = WP11_Slot_CheckUserPin(slot, (char*)pOldPin, (int)ulOldLen);
-        if (ret == PIN_NOT_SET_E)
-            return CKR_USER_PIN_NOT_INITIALIZED;
-        if (ret != 0)
-            return CKR_PIN_INCORRECT;
-
-        ret = WP11_Slot_SetUserPin(slot, (char*)pNewPin, (int)ulNewLen);
-        if (ret != 0)
-            return CKR_FUNCTION_FAILED;
-    }
-
-    return CKR_OK;
-}
-
-/**
- * Open session on the token.
- *
- * @param  slotID        [in]  Id of slot to use.
- * @param  flags         [in]  Flags to indicate type of session to open.
- *                             CKF_SERIAL_SESSION must be set.
- * @param  pApplication  [in]  Application data to pass to notify callback.
- *                             Ignored.
- * @param  Notify        [in]  Notification callback.
- *                             Ignored.
- * @param  phsession     [in]  Session handle of opened session.
- * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
- *          CKR_SLOT_ID_INVALID when no slot with id can be found.
- *          CKR_SESSION_PARALLEL_NOT_SUPPORTED when CKF_SERIAL_SESSION is not
- *          set in the flags.
- *          CKR_ARGUMENTS_BAD when phSession is NULL.
- *          CKR_SESSION_READ_WRITE_SO_EXISTS when there is an existing open
- *          Security Officer session.
- *          CKR_SESSION_COUNT when no more sessions can be opened on token.
- *          CKR_OK on success.
- */
-CK_RV C_OpenSession(CK_SLOT_ID slotID, CK_FLAGS flags,
-                    CK_VOID_PTR pApplication, CK_NOTIFY Notify,
-                    CK_SESSION_HANDLE_PTR phSession)
-{
-    WP11_Slot* slot;
-    int ret;
-
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Slot_Get(slotID, &slot) != 0)
-        return CKR_SLOT_ID_INVALID;
-    if ((flags & CKF_SERIAL_SESSION) == 0)
-        return CKR_SESSION_PARALLEL_NOT_SUPPORTED;
-    if (phSession == NULL)
-        return CKR_ARGUMENTS_BAD;
-
-    ret = WP11_Slot_OpenSession(slot, flags, pApplication, Notify, phSession);
-    if (ret == SESSION_EXISTS_E)
-        return CKR_SESSION_READ_WRITE_SO_EXISTS;
-    if (ret == SESSION_COUNT_E)
-        return CKR_SESSION_COUNT;
-
-    return CKR_OK;
-}
-
-/**
- * Close the session.
- *
- * @param  hSession  [in]  Session handle.
- * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
- *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_OK on success.
- */
-CK_RV C_CloseSession(CK_SESSION_HANDLE hSession)
-{
-    WP11_Slot* slot;
-    WP11_Session* session;
-
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-
-    slot = WP11_Session_GetSlot(session);
-    WP11_Slot_CloseSession(slot, session);
-
-    return CKR_OK;
-}
-
-/**
- * Close all open sessions on token in slot.
- *
- * @param  slotID        [in]  Id of slot to use.
- * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
- *          CKR_SLOT_ID_INVALID when no slot with id can be found.
- *          CKR_OK on success.
- */
-CK_RV C_CloseAllSessions(CK_SLOT_ID slotID)
-{
-    WP11_Slot* slot;
-
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Slot_Get(slotID, &slot) != 0)
-        return CKR_SLOT_ID_INVALID;
-    WP11_Slot_CloseSessions(slot);
-
-    return CKR_OK;
-}
-
-/**
- * Get the session info.
- *
- * @param  hSession  [in]  Session handle.
- * @param  pInfo     [in]  Session information copies into it.
- * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
- *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_ARGUMENTS_BAD when pInfo is NULL.
- *          CKR_OK on success.
- */
-CK_RV C_GetSessionInfo(CK_SESSION_HANDLE hSession,
-                       CK_SESSION_INFO_PTR pInfo)
-{
-    WP11_Session* session;
-
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pInfo == NULL)
-        return CKR_ARGUMENTS_BAD;
-
-    pInfo->state = WP11_Session_GetState(session);
-    pInfo->flags = CKF_SERIAL_SESSION;
-    if (WP11_Session_IsRW(session))
-        pInfo->flags |= CKF_RW_SESSION;
-    pInfo->ulDeviceError = 0;
-
-    return CKR_OK;
-}
-
-/**
- * Get the state of the current operation.
- * Not supported.
- *
- * @param  hSession            [in]      Session handle.
- * @param  pOperationState     [in]      Buffer to hold operation state.
- *                                       NULL indicates the length is required.
- * @param  pOperationStateLen  [in,out]  On in, length of buffer in bytes.
- *                                       On out, length of serialized state in
- *                                       bytes.
- * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
- *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_ARGUMENTS_BAD when pulOperationStateLen is NULL.
- *          CKR_STATE_UNSAVEABLE indicating function not supported.
- */
-CK_RV C_GetOperationState(CK_SESSION_HANDLE hSession,
-                          CK_BYTE_PTR pOperationState,
-                          CK_ULONG_PTR pulOperationStateLen)
-{
-    WP11_Session* session;
-
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pulOperationStateLen == NULL)
-        return CKR_ARGUMENTS_BAD;
-
-    (void)pOperationState;
-
-    return CKR_STATE_UNSAVEABLE;
-}
-
-/**
- * Get the state of the current operation.
- * Not supported.
- *
- * @param  hSession             [in]  Session handle.
- * @param  pOperationState      [in]  Serialized state.
- * @param  ulOperationStateLen  [in]  Length of serialized state in bytes.
- * @param  hEncryptionKey       [in]  Object handle for encryption key.
- * @param  hAuthenticationKey   [in]  Object handle for authentication key.
- * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
- *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_ARGUMENTS_BAD when pOperationState is NULL.
- *          CKR_SAVED_STATE_INVALID indicating function not supported.
- */
-CK_RV C_SetOperationState(CK_SESSION_HANDLE hSession,
-                          CK_BYTE_PTR pOperationState,
-                          CK_ULONG ulOperationStateLen,
-                          CK_OBJECT_HANDLE hEncryptionKey,
-                          CK_OBJECT_HANDLE hAuthenticationKey)
-{
-    WP11_Session* session;
-
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pOperationState == NULL)
-        return CKR_ARGUMENTS_BAD;
-
-    (void)ulOperationStateLen;
-    (void)hEncryptionKey;
-    (void)hAuthenticationKey;
-
-    return CKR_SAVED_STATE_INVALID;
-}
-
-/**
- * Log the specified user type into the session.
- *
- * @param  hSession  [in]  Session handle.
- * @param  userType  [in]  Type of user to login.
- * @param  pPin      [in]  PIN to use to login.
- * @param  ulPinLen  [in]  Length of PIN in bytes.
- * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
- *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_ARGUMENTS_BAD when pPin is NULL.
- *          CKR_USER_ALREADY_LOGGED_IN when already logged into session.
- *          CKR_SESSION_READ_ONLY_EXISTS when logging into read/write session
- *          and a read-only session is open.
- *          CKR_USER_PIN_NOT_INITIALIZED when PIN is not initialized for user
- *          type.
- *          CKR_PIN_INCORRECT when PIN is wrong length or does not verify.
- *          CKR_OPERATION_NOT_INITIALIZED when using user type
- *          CKU_CONTEXT_SPECIFIC - uesr type not supported.
- *          CKR_USER_TYPE_INVALID when other user type is specified.
- *          CKR_OK on success.
- */
-CK_RV C_Login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
-              CK_UTF8CHAR_PTR pPin, CK_ULONG ulPinLen)
-{
-    int ret;
-    WP11_Slot* slot;
-    WP11_Session* session;
-
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pPin == NULL)
-        return CKR_ARGUMENTS_BAD;
-
-    if (ulPinLen < WP11_MIN_PIN_LEN || ulPinLen > WP11_MAX_PIN_LEN)
-        return CKR_PIN_INCORRECT;
-
-    slot = WP11_Session_GetSlot(session);
-    if (userType == CKU_SO) {
-        ret = WP11_Slot_SOLogin(slot, (char*)pPin, (int)ulPinLen);
-        if (ret == LOGGED_IN_E)
-            return CKR_USER_ALREADY_LOGGED_IN;
-        if (ret == READ_ONLY_E)
-            return CKR_SESSION_READ_ONLY_EXISTS;
-        if (ret == PIN_NOT_SET_E)
-            return CKR_USER_PIN_NOT_INITIALIZED;
-        if (ret != 0)
-            return CKR_PIN_INCORRECT;
-
-    }
-    else if (userType == CKU_USER) {
-        ret = WP11_Slot_UserLogin(slot, (char*)pPin, (int)ulPinLen);
-        if (ret == LOGGED_IN_E)
-            return CKR_USER_ALREADY_LOGGED_IN;
-        if (ret == PIN_NOT_SET_E)
-            return CKR_USER_PIN_NOT_INITIALIZED;
-        if (ret != 0)
-            return CKR_PIN_INCORRECT;
-    }
-    else if (userType == CKU_CONTEXT_SPECIFIC)
-        return CKR_OPERATION_NOT_INITIALIZED;
-    else
-        return CKR_USER_TYPE_INVALID;
-
-    return CKR_OK;
-}
-
-/**
- * Log out the user from the session.
- *
- * @param  hSession  [in]  Session handle.
- * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
- *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_OK on success.
- */
-CK_RV C_Logout(CK_SESSION_HANDLE hSession)
-{
-    WP11_Slot* slot;
-    WP11_Session* session;
-
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-
-    slot = WP11_Session_GetSlot(session);
-    WP11_Slot_Logout(slot);
-
-    return CKR_OK;
-}
-
-/**
- * Get the status of the current cryptographic function.
- *
- * @param  hSession  [in]  Session handle.
- * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
- *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_FUNCTION_NOT_PARALLEL indicating function not supported.
- */
-CK_RV C_GetFunctionStatus(CK_SESSION_HANDLE hSession)
-{
-    WP11_Session* session;
-
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    return CKR_FUNCTION_NOT_PARALLEL;
-}
-
-/**
- * Cancel the current cryptographic function.
- *
- * @param  hSession  [in]  Session handle.
- * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
- *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_FUNCTION_NOT_PARALLEL indicating function not supported.
- */
-CK_RV C_CancelFunction(CK_SESSION_HANDLE hSession)
-{
-    WP11_Session* session;
-
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    return CKR_FUNCTION_NOT_PARALLEL;
-}
-
-/**
- * Wait for an event on any slot.
- *
- * @param  flags      [in]  Indicate whether to block.
- * @param  pSlot      [in]  Handle of slot that event occurred on.
- * @param  pReserved  [in]  Reserved for future use.
- * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
- *          CKR_FUNCTION_NOT_PARALLEL indicating function not supported.
- */
-CK_RV C_WaitForSlotEvent(CK_FLAGS flags, CK_SLOT_ID_PTR pSlot,
-                         CK_VOID_PTR pReserved)
-{
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-
-    (void)pSlot;
-    (void)flags;
-    (void)pReserved;
-
-    return CKR_FUNCTION_NOT_SUPPORTED;
-}
-
