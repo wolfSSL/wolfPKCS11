@@ -2795,6 +2795,7 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
     mechanism = WP11_Session_GetMechanism(session);
     switch (mechanism) {
 #ifndef NO_RSA
+    #ifdef WC_RSA_DIRECT
         case CKM_RSA_X_509:
             if (!WP11_Session_IsOpInitialized(session,
                                                     WP11_INIT_RSA_X_509_SIGN)) {
@@ -2813,6 +2814,7 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                                                  WP11_Session_GetSlot(session));
             *pulSignatureLen = sigLen;
             break;
+    #endif
         case CKM_RSA_PKCS:
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_RSA_PKCS_SIGN))
                 return CKR_OPERATION_NOT_INITIALIZED;
@@ -3322,6 +3324,7 @@ CK_RV C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
     mechanism = WP11_Session_GetMechanism(session);
     switch (mechanism) {
 #ifndef NO_RSA
+    #ifdef WC_RSA_DIRECT
         case CKM_RSA_X_509:
             if (!WP11_Session_IsOpInitialized(session,
                                                   WP11_INIT_RSA_X_509_VERIFY)) {
@@ -3331,6 +3334,7 @@ CK_RV C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             ret = WP11_Rsa_Verify(pSignature, (int)ulSignatureLen, pData,
                                                     (int)ulDataLen, &stat, obj);
             break;
+    #endif
         case CKM_RSA_PKCS:
             if (!WP11_Session_IsOpInitialized(session,
                                                    WP11_INIT_RSA_PKCS_VERIFY)) {
