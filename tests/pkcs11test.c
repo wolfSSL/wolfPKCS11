@@ -6843,6 +6843,318 @@ static CK_RV test_aes_cbc_pad_gen_key_id(void* args)
 }
 #endif
 
+#ifdef HAVE_AESCTR
+static CK_RV test_aes_ctr_encdec(CK_SESSION_HANDLE session,
+                                  unsigned char* exp, CK_OBJECT_HANDLE key)
+{
+    CK_RV ret;
+    byte plain[32], enc[sizeof(plain)], dec[32];
+    CK_ULONG plainSz, encSz, decSz;
+    CK_MECHANISM mech;
+    CK_AES_CTR_PARAMS ctrParams;
+
+    memset(plain, 9, sizeof(plain));
+    memset(ctrParams.cb, 0, sizeof(ctrParams.cb)); // Initialize counter to zero
+    plainSz = sizeof(plain);
+    encSz = sizeof(enc);
+    decSz = sizeof(dec);
+
+    mech.mechanism      = CKM_AES_CTR;
+    mech.pParameter     = &ctrParams;
+    mech.ulParameterLen = sizeof(ctrParams);
+    ctrParams.ulCounterBits = 128;
+
+    ret = funcList->C_EncryptInit(session, &mech, key);
+    CHECK_CKR(ret, "AES-CTR Encrypt Init");
+    if (ret == CKR_OK) {
+        encSz = 0;
+        ret = funcList->C_Encrypt(session, plain, plainSz, NULL, &encSz);
+        CHECK_CKR(ret, "AES-CTR Encrypt no enc");
+    }
+    if (ret == CKR_OK && encSz != plainSz) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-CTR Encrypt encrypted length");
+    }
+    if (ret == CKR_OK) {
+        encSz = sizeof(enc);
+        ret = funcList->C_Encrypt(session, plain, plainSz, enc, &encSz);
+        CHECK_CKR(ret, "AES-CTR Encrypt");
+    }
+    if (ret == CKR_OK && exp != NULL) {
+        if (XMEMCMP(enc, exp, encSz) != 0)
+            ret = -1;
+        CHECK_CKR(ret, "AES-CTR Encrypt Result not matching expected");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DecryptInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CTR Decrypt Init");
+    }
+    if (ret == CKR_OK) {
+        decSz = sizeof(dec);
+        ret = funcList->C_Decrypt(session, enc, encSz, dec, &decSz);
+        CHECK_CKR(ret, "AES-CTR Decrypt");
+    }
+    if (ret == CKR_OK) {
+        if (decSz != plainSz || XMEMCMP(plain, dec, decSz) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "AES-CTR Decrypted data match plain text");
+        }
+    }
+
+    return ret;
+}
+
+static CK_RV test_aes_ctr_update(CK_SESSION_HANDLE session,
+                                  unsigned char* exp, CK_OBJECT_HANDLE key,
+                                  CK_ULONG inc)
+{
+    CK_RV ret;
+    byte plain[32], enc[sizeof(plain)], dec[32];
+    byte* pIn;
+    byte* pOut = NULL;
+    CK_ULONG plainSz, encSz, decSz, remSz, cumSz, partSz, inRemSz;
+    CK_MECHANISM mech;
+    CK_AES_CTR_PARAMS ctrParams;
+
+    memset(plain, 9, sizeof(plain));
+    memset(ctrParams.cb, 0, sizeof(ctrParams.cb)); // Initialize counter to zero
+    memset(enc, 0, sizeof(enc));
+    memset(dec, 0, sizeof(dec));
+    plainSz = sizeof(plain);
+    encSz = sizeof(enc);
+    decSz = sizeof(dec);
+    remSz = encSz;
+    cumSz = 0;
+
+    mech.mechanism      = CKM_AES_CTR;
+    mech.pParameter     = &ctrParams;
+    mech.ulParameterLen = sizeof(ctrParams);
+    ctrParams.ulCounterBits = 128;
+
+    ret = funcList->C_EncryptInit(session, &mech, key);
+    CHECK_CKR(ret, "AES-CTR Encrypt Init");
+    if (ret == CKR_OK) {
+        encSz = 0;
+        ret = funcList->C_EncryptUpdate(session, plain, 16, NULL, &encSz);
+        CHECK_CKR(ret, "AES-CTR Encrypt Update");
+    }
+    if (ret == CKR_OK && encSz != 16) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-CTR Encrypt Update encrypted size");
+    }
+    if (ret == CKR_OK) {
+        encSz = sizeof(enc);
+        pIn = plain;
+        pOut = enc;
+        inRemSz = plainSz;
+        partSz = inc;
+        while (ret == CKR_OK && inRemSz > 0) {
+            if (inc > inRemSz)
+                partSz = inRemSz;
+            ret = funcList->C_EncryptUpdate(session, pIn, partSz, pOut, &encSz);
+            CHECK_CKR(ret, "AES-CTR Encrypt Update");
+            pIn += partSz;
+            inRemSz -= partSz;
+            pOut += encSz;
+            cumSz += encSz;
+            encSz = (remSz -= encSz);
+        }
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_EncryptFinal(session, pOut, &encSz);
+        CHECK_CKR(ret, "AES-CTR Encrypt Final");
+        encSz += cumSz;
+    }
+    if (ret == CKR_OK && exp != NULL) {
+        if (XMEMCMP(enc, exp, encSz) != 0)
+            ret = -1;
+        CHECK_CKR(ret,
+                     "AES-CTR Encrypt Update Result not matching expected");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DecryptInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CTR Decrypt Init");
+    }
+    if (ret == CKR_OK) {
+        decSz = sizeof(dec);
+        pIn = enc;
+        pOut = dec;
+        cumSz = 0;
+        remSz = decSz;
+        inRemSz = encSz;
+        partSz = inc;
+        while (ret == CKR_OK && inRemSz > 0) {
+            if (inc > inRemSz)
+                partSz = inRemSz;
+            ret = funcList->C_DecryptUpdate(session, pIn, partSz, pOut, &decSz);
+            CHECK_CKR(ret, "AES-CTR Decrypt Update");
+            pIn += partSz;
+            inRemSz -= partSz;
+            pOut += decSz;
+            cumSz += decSz;
+            decSz = (remSz -= decSz);
+        }
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DecryptFinal(session, pOut, &decSz);
+        CHECK_CKR(ret, "AES-CTR Decrypt Final");
+        decSz += cumSz;
+    }
+    if (ret == CKR_OK) {
+        if (decSz != plainSz || XMEMCMP(plain, dec, decSz) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "AES-CTR Decrypted data match plain text");
+        }
+    }
+
+    return ret;
+}
+
+static CK_RV test_aes_ctr(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE key,
+                          CK_ULONG len, CK_ULONG inc)
+{
+    CK_RV ret;
+    byte plain[32], enc[sizeof(plain)], dec[32];
+    byte* pIn;
+    byte* pOut = NULL;
+    CK_ULONG encSz, decSz, remSz, cumSz, partSz, inRemSz;
+    CK_MECHANISM mech;
+    CK_AES_CTR_PARAMS ctrParams;
+
+    memset(plain, 9, sizeof(plain));
+    memset(ctrParams.cb, 0, sizeof(ctrParams.cb)); // Initialize counter to zero
+    memset(enc, 0, sizeof(enc));
+    memset(dec, 0, sizeof(dec));
+    encSz = sizeof(enc);
+    decSz = sizeof(dec);
+    remSz = encSz;
+    cumSz = 0;
+
+    mech.mechanism      = CKM_AES_CTR;
+    mech.pParameter     = &ctrParams;
+    mech.ulParameterLen = sizeof(ctrParams);
+    ctrParams.ulCounterBits = 128;
+
+    ret = funcList->C_EncryptInit(session, &mech, key);
+    CHECK_CKR(ret, "AES-CTR Encrypt Init");
+    if (ret == CKR_OK) {
+        ret = funcList->C_Encrypt(session, plain, len, enc, &encSz);
+        CHECK_CKR(ret, "AES-CTR Encrypt no enc");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_DecryptInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CTR Decrypt Init");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Decrypt(session, enc, encSz, dec, &decSz);
+        CHECK_CKR(ret, "AES-CTR Decrypt");
+    }
+    if (ret == CKR_OK) {
+        if (decSz != len || XMEMCMP(plain, dec, decSz) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "AES-CTR Decrypted data match plain text");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_EncryptInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CTR Encrypt Init");
+    }
+    if (ret == CKR_OK) {
+        pIn = plain;
+        pOut = enc;
+        inRemSz = len;
+        partSz = inc;
+        while (ret == CKR_OK && inRemSz > 0) {
+            if (inc > inRemSz)
+                partSz = inRemSz;
+            ret = funcList->C_EncryptUpdate(session, pIn, partSz, pOut, &encSz);
+            CHECK_CKR(ret, "AES-CTR Encrypt Update");
+            pIn += partSz;
+            inRemSz -= partSz;
+            pOut += encSz;
+            cumSz += encSz;
+            encSz = (remSz -= encSz);
+        }
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_EncryptFinal(session, pOut, &encSz);
+        CHECK_CKR(ret, "AES-CTR Encrypt Final");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_DecryptInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CTR Decrypt Init");
+    }
+    if (ret == CKR_OK) {
+        encSz = sizeof(enc);
+        decSz = sizeof(dec);
+        remSz = encSz;
+        cumSz = 0;
+        pIn = enc;
+        pOut = dec;
+        inRemSz = len;
+        partSz = inc;
+        while (ret == CKR_OK && inRemSz > 0) {
+            if (inc > inRemSz)
+                partSz = inRemSz;
+            ret = funcList->C_DecryptUpdate(session, pIn, partSz, pOut, &decSz);
+            CHECK_CKR(ret, "AES-CTR Decrypt Update");
+            pIn += partSz;
+            inRemSz -= partSz;
+            pOut += decSz;
+            cumSz += decSz;
+            decSz = (remSz -= decSz);
+        }
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DecryptFinal(session, pOut, &decSz);
+        CHECK_CKR(ret, "AES-CTR Decrypt Final");
+        decSz += cumSz;
+    }
+    if (ret == CKR_OK) {
+        if (decSz != len || XMEMCMP(plain, dec, decSz) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "AES-CTR Decrypted data match plain text");
+        }
+    }
+
+    return ret;
+}
+
+static byte aes_128_ctr_exp[32] = {
+    0x09, 0x12, 0x74, 0x6f, 0x55, 0xd5, 0xb2, 0x8b, 0x10, 0x05, 0xed, 0x50,
+    0xf3, 0x0c, 0x47, 0x16, 0xf2, 0xec, 0x03, 0x0d, 0xa5, 0x8d, 0x41, 0x0b,
+    0xe7, 0x3a, 0x3c, 0xcd, 0x81, 0xb6, 0xf6, 0x18
+};
+
+static CK_RV test_aes_ctr_fixed_key(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE key;
+
+    ret = get_aes_128_key(session, NULL, 0, &key);
+    if (ret == CKR_OK)
+        ret = test_aes_ctr_encdec(session, aes_128_ctr_exp, key);
+    if (ret == CKR_OK)
+        ret = test_aes_ctr_update(session, aes_128_ctr_exp, key, 16);
+    if (ret == CKR_OK)
+        ret = test_aes_ctr_update(session, aes_128_ctr_exp, key, 1);
+    if (ret == CKR_OK)
+        ret = test_aes_ctr_update(session, aes_128_ctr_exp, key, 5);
+    if (ret == CKR_OK)
+        ret = test_aes_ctr_update(session, aes_128_ctr_exp, key, 18);
+    if (ret == CKR_OK)
+        ret = test_aes_ctr(session, key, 31, 1);
+    if (ret == CKR_OK)
+        ret = test_aes_ctr(session, key, 17, 4);
+
+    return ret;
+}
+#endif /* HAVE_AESCTR */
+
 #ifdef HAVE_AESGCM
 static CK_RV test_aes_gcm_encdec(CK_SESSION_HANDLE session, unsigned char* aad,
                                  int aadLen, int tagBits, unsigned char* exp,
@@ -7401,6 +7713,309 @@ static CK_RV test_aes_ccm_gen_key(void* args)
 }
 
 #endif /* HAVE_AESCCM */
+
+#ifdef HAVE_AESCTS
+static CK_RV test_aes_cts_encdec(CK_SESSION_HANDLE session, unsigned char* exp,
+                                 CK_OBJECT_HANDLE key)
+{
+    CK_RV ret;
+    byte plain[32], enc[32], dec[32], iv[16];
+    CK_ULONG plainSz, encSz, decSz, ivSz;
+    CK_MECHANISM mech;
+
+    memset(plain, 9, sizeof(plain));
+    memset(iv, 9, sizeof(iv));
+    plainSz = sizeof(plain);
+    encSz = sizeof(enc);
+    decSz = sizeof(dec);
+    ivSz = sizeof(iv);
+
+    mech.mechanism      = CKM_AES_CTS;
+    mech.ulParameterLen = ivSz;
+    mech.pParameter     = iv;
+
+    ret = funcList->C_EncryptInit(session, &mech, key);
+    CHECK_CKR(ret, "AES-CTS Encrypt Init");
+    if (ret == CKR_OK) {
+        encSz = 0;
+        ret = funcList->C_Encrypt(session, plain, plainSz, NULL, &encSz);
+        CHECK_CKR(ret, "AES-CTS Encrypt no enc");
+    }
+    if (ret == CKR_OK && encSz != plainSz) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-CTS Encrypt encrypted length");
+    }
+    if (ret == CKR_OK) {
+        encSz = 0;
+        ret = funcList->C_Encrypt(session, plain, plainSz, enc, &encSz);
+        CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
+                                               "AES-CTS Encrypt zero enc size");
+        encSz = sizeof(enc);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Encrypt(session, plain, plainSz, enc, &encSz);
+        CHECK_CKR(ret, "AES-CTS Encrypt");
+    }
+    if (ret == CKR_OK && exp != NULL) {
+        if (encSz != plainSz || XMEMCMP(enc, exp, encSz) != 0)
+            ret = -1;
+        CHECK_CKR(ret, "AES-CTS Encrypt Result not matching expected");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DecryptInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CTS Decrypt Init");
+    }
+    if (ret == CKR_OK) {
+        decSz = 0;
+        ret = funcList->C_Decrypt(session, enc, encSz, NULL, &decSz);
+        CHECK_CKR(ret, "AES-CTS Decrypt");
+    }
+    if (ret == CKR_OK && decSz != encSz) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-CTS Decrypt decrypted length");
+    }
+    if (ret == CKR_OK) {
+        decSz = 0;
+        ret = funcList->C_Decrypt(session, enc, encSz, dec, &decSz);
+        CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
+                                               "AES-CTS Decrypt zero dec size");
+        decSz = sizeof(dec);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Decrypt(session, enc, encSz, dec, &decSz);
+        CHECK_CKR(ret, "AES-CTS Decrypt");
+    }
+    if (ret == CKR_OK) {
+        if (decSz != plainSz || XMEMCMP(plain, dec, decSz) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "AES-CTS Decrypted data match plain text");
+        }
+    }
+
+
+    return ret;
+}
+
+static CK_RV test_aes_cts_update(CK_SESSION_HANDLE session, unsigned char* exp,
+                                 CK_OBJECT_HANDLE key, CK_ULONG inc)
+{
+    CK_RV ret;
+    byte plain[32], enc[32], dec[32], iv[16];
+    byte* pIn;
+    byte* pOut = NULL;
+    CK_ULONG plainSz, encSz, decSz, ivSz, remSz, cumSz, partSz, inRemSz;
+    CK_MECHANISM mech;
+
+    memset(plain, 9, sizeof(plain));
+    memset(iv, 9, sizeof(iv));
+    memset(enc, 0, sizeof(enc));
+    memset(dec, 0, sizeof(dec));
+    plainSz = sizeof(plain);
+    encSz = sizeof(enc);
+    decSz = sizeof(dec);
+    ivSz = sizeof(iv);
+    remSz = encSz;
+    cumSz = 0;
+
+    mech.mechanism      = CKM_AES_CTS;
+    mech.ulParameterLen = ivSz;
+    mech.pParameter     = iv;
+
+    ret = funcList->C_EncryptInit(session, &mech, key);
+    CHECK_CKR(ret, "AES-CTS Encrypt Init");
+    if (ret == CKR_OK) {
+        encSz = 1;
+        ret = funcList->C_EncryptUpdate(session, plain, 1, NULL, &encSz);
+        CHECK_CKR(ret, "AES-CTS Encrypt Update");
+    }
+    if (ret == CKR_OK && encSz != 33) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-CTS Encrypt Update encrypted size");
+    }
+    if (ret == CKR_OK) {
+        encSz = 0;
+        ret = funcList->C_EncryptUpdate(session, plain, 16, NULL, &encSz);
+        CHECK_CKR(ret, "AES-CTS Encrypt Update");
+    }
+    if (ret == CKR_OK && encSz != 48) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-CTS Encrypt Update encrypted size");
+    }
+    if (ret == CKR_OK) {
+        encSz = 0;
+        ret = funcList->C_EncryptUpdate(session, plain, 16, enc, &encSz);
+        CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
+                                        "AES-CTS Encrypt Update zero enc size");
+        encSz = sizeof(enc);
+    }
+    if (ret == CKR_OK) {
+        pIn = plain;
+        pOut = enc;
+        inRemSz = plainSz;
+        partSz = inc;
+        while (ret == CKR_OK && inRemSz > 0) {
+            if (inc > inRemSz)
+                partSz = inRemSz;
+            ret = funcList->C_EncryptUpdate(session, pIn, partSz, pOut, &encSz);
+            CHECK_CKR(ret, "AES-CTS Encrypt Update");
+            pIn += partSz;
+            inRemSz -= partSz;
+            pOut += encSz;
+            cumSz += encSz;
+            encSz = (remSz -= encSz);
+        }
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_EncryptFinal(session, pOut, &encSz);
+        CHECK_CKR(ret, "AES-CTS Encrypt Final");
+    }
+    if (ret == CKR_OK && encSz != 32) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-CTS Encrypt Final encrypted size");
+    }
+    if (ret == CKR_OK && exp != NULL) {
+        if (encSz != plainSz || XMEMCMP(enc, exp, encSz) != 0)
+            ret = -1;
+        CHECK_CKR(ret, "AES-CTS Encrypt Update Result not matching expected");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DecryptInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CTS Decrypt Init");
+    }
+    if (ret == CKR_OK) {
+        decSz = 1;
+        ret = funcList->C_DecryptUpdate(session, enc, 1, NULL, &decSz);
+        CHECK_CKR(ret, "AES-CTS Decrypt Update");
+    }
+    if (ret == CKR_OK && decSz != 33) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-CTS Decrypt Update encrypted size");
+    }
+    if (ret == CKR_OK) {
+        decSz = 0;
+        ret = funcList->C_DecryptUpdate(session, enc, 16, NULL, &decSz);
+        CHECK_CKR(ret, "AES-CTS Decrypt Update");
+    }
+    if (ret == CKR_OK && decSz != 48) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-CTS Decrypt Update encrypted size");
+    }
+    if (ret == CKR_OK) {
+        decSz = 0;
+        ret = funcList->C_DecryptUpdate(session, enc, 16, dec, &decSz);
+        CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
+                                        "AES-CTS Encrypt Update zero dec size");
+        decSz = sizeof(dec);
+    }
+    if (ret == CKR_OK) {
+        pIn = enc;
+        pOut = dec;
+        cumSz = 0;
+        remSz = decSz;
+        inRemSz = encSz;
+        partSz = inc;
+        while (ret == CKR_OK && inRemSz > 0) {
+            if (inc > inRemSz)
+                partSz = inRemSz;
+            ret = funcList->C_DecryptUpdate(session, pIn, partSz, pOut, &decSz);
+            CHECK_CKR(ret, "AES-CTS Decrypt Update");
+            pIn += partSz;
+            inRemSz -= partSz;
+            pOut += decSz;
+            cumSz += decSz;
+            decSz = (remSz -= decSz);
+        }
+    }
+    if (ret == CKR_OK) {
+        decSz = 1;
+        ret = funcList->C_DecryptFinal(session, NULL, &decSz);
+        CHECK_CKR(ret, "AES-CTS Decrypt Final");
+    }
+    if (ret == CKR_OK && decSz != 32) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-CTS Decrypt Final decrypted size");
+    }
+    if (ret == CKR_OK) {
+        decSz = remSz;
+        ret = funcList->C_DecryptFinal(session, pOut, &decSz);
+        CHECK_CKR(ret, "AES-CTS Decrypt Final");
+        decSz += cumSz;
+    }
+    if (ret == CKR_OK) {
+        if (decSz != plainSz) {
+            ret = -1;
+            CHECK_CKR(ret, "AES-CTS Decrypted data length match");
+        }
+        else if (XMEMCMP(plain, dec, decSz) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "AES-CTS Decrypted data match plain text");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_EncryptInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CTS Encrypt Init");
+    }
+    if (ret == CKR_OK) {
+        encSz = sizeof(enc);
+        ret = funcList->C_EncryptUpdate(session, plain, 1, enc, &encSz);
+        CHECK_CKR(ret, "AES-CTS Encrypt Update");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(encSz == 0, ret,
+                             "AES-CTS Encrypt Update less than block out size");
+    }
+    if (ret == CKR_OK) {
+        encSz = sizeof(enc);
+        ret = funcList->C_EncryptFinal(session, enc, &encSz);
+        CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED,
+                                  "AES-CTS Encrypt Final less than two blocks");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DecryptInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CTS Decrypt Init");
+    }
+    if (ret == CKR_OK) {
+        decSz = sizeof(dec);
+        ret = funcList->C_DecryptUpdate(session, enc, 1, dec, &decSz);
+        CHECK_CKR(ret, "AES-CTS Decrypt Update");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(decSz == 0, ret,
+                             "AES-CTS Decrypt Update less than block out size");
+    }
+    if (ret == CKR_OK) {
+        decSz = sizeof(dec);
+        ret = funcList->C_DecryptFinal(session, dec, &decSz);
+        CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED,
+                                  "AES-CTS Decrypt Final less than two blocks");
+    }
+
+    return ret;
+}
+
+static CK_RV test_aes_cts_fixed_key(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE key;
+
+    ret = get_aes_128_key(session, NULL, 0, &key);
+    if (ret == CKR_OK)
+        ret = test_aes_cts_encdec(session, aes_128_cts_exp, key);
+    if (ret == CKR_OK)
+        ret = test_aes_cts_update(session, aes_128_cts_exp, key, 16);
+    if (ret == CKR_OK)
+        ret = test_aes_cts_update(session, aes_128_cts_exp, key, 1);
+    if (ret == CKR_OK)
+        ret = test_aes_cts_update(session, aes_128_cts_exp, key, 5);
+    if (ret == CKR_OK)
+        ret = test_aes_cts_update(session, aes_128_cts_exp, key, 18);
+
+    return ret;
+}
+
+#endif /* HAVE_AESCTS */
 
 #ifdef HAVE_AESECB
 static CK_RV test_aes_ecb_encdec(CK_SESSION_HANDLE session,
@@ -8992,6 +9607,9 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_aes_cbc_pad_gen_key),
     PKCS11TEST_FUNC_SESS_DECL(test_aes_cbc_pad_gen_key_id),
 #endif
+#ifdef HAVE_AESCTR
+    PKCS11TEST_FUNC_SESS_DECL(test_aes_ctr_fixed_key),
+#endif
 #ifdef HAVE_AESGCM
     PKCS11TEST_FUNC_SESS_DECL(test_aes_gcm_fixed_key),
     PKCS11TEST_FUNC_SESS_DECL(test_aes_gcm_fail),
@@ -9000,6 +9618,9 @@ static TEST_FUNC testFunc[] = {
 #endif
 #ifdef HAVE_AESCCM
     PKCS11TEST_FUNC_SESS_DECL(test_aes_ccm_gen_key),
+#endif
+#ifdef HAVE_AESCTS
+    PKCS11TEST_FUNC_SESS_DECL(test_aes_cts_fixed_key),
 #endif
 #ifdef HAVE_AESECB
     PKCS11TEST_FUNC_SESS_DECL(test_aes_ecb_gen_key),
