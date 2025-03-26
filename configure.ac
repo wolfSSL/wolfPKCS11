@@ -262,6 +262,18 @@ else
     DISABLE_DEFS="$DISABLE_DEFS -DHAVE_AESECB"
 fi
 
+AC_ARG_ENABLE([aescts],
+    [AS_HELP_STRING([--enable-aescts],[Enable AES-CTS (default: disabled)])],
+    [ ENABLED_AESCTS=$enableval ],
+    [ ENABLED_AESCTS=no ]
+    )
+if test "$ENABLED_AES" = "yes" && test "$ENABLED_AESCTS" = "yes"
+then
+    AM_CFLAGS="$AM_CFLAGS -DHAVE_AESCTS"
+else
+    DISABLE_DEFS="$DISABLE_DEFS -DHAVE_AESCTS"
+fi
+
 AC_ARG_ENABLE([hmac],
     [AS_HELP_STRING([--enable-hmac],[Enable HMAC (default: enabled)])],
     [ ENABLED_HMAC=$enableval ],
@@ -527,6 +539,7 @@ echo "   * AES-CBC:                    $ENABLED_AESCBC"
 echo "   * AES-GCM:                    $ENABLED_AESGCM"
 echo "   * AES-CCM:                    $ENABLED_AESCCM"
 echo "   * AES-ECB:                    $ENABLED_AESECB"
+echo "   * AES-CTS:                    $ENABLED_AESCTS"
 echo "   * MD5:                        $ENABLED_MD5"
 echo "   * SHA:                        $ENABLED_SHA1"
 echo "   * SHA-224:                    $ENABLED_SHA224"
