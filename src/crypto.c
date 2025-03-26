@@ -2463,6 +2463,8 @@ CK_RV C_DecryptFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastPart,
 CK_RV C_DigestInit(CK_SESSION_HANDLE hSession,
                    CK_MECHANISM_PTR pMechanism)
 {
+    int ret;
+    int init;
     WP11_Session* session;
 
     if (!WP11_Library_IsInitialized())
@@ -2472,7 +2474,20 @@ CK_RV C_DigestInit(CK_SESSION_HANDLE hSession,
     if (pMechanism == NULL)
         return CKR_ARGUMENTS_BAD;
 
-    return CKR_MECHANISM_INVALID;
+    if (pMechanism->pParameter != NULL ||
+        pMechanism->ulParameterLen != 0) {
+
+        return CKR_MECHANISM_PARAM_INVALID;
+    }
+    init = WP11_INIT_DIGEST;
+    ret = WP11_Digest_Init(pMechanism->mechanism, session);
+
+    if (ret == 0) {
+        WP11_Session_SetMechanism(session, pMechanism->mechanism);
+        WP11_Session_SetOpInitialized(session, init);
+    }
+
+    return ret;
 }
 
 /**
@@ -2496,6 +2511,8 @@ CK_RV C_Digest(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                   CK_ULONG ulDataLen, CK_BYTE_PTR pDigest,
                   CK_ULONG_PTR pulDigestLen)
 {
+    word32 hashLen;
+    int ret;
     WP11_Session* session;
 
     if (!WP11_Library_IsInitialized())
@@ -2505,9 +2522,11 @@ CK_RV C_Digest(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
     if (pData == NULL || ulDataLen == 0 || pulDigestLen == NULL)
         return CKR_ARGUMENTS_BAD;
 
-    (void)pDigest;
+    hashLen = *pulDigestLen;
+    ret = WP11_Digest_Single(pData, ulDataLen, pDigest, &hashLen, session);
+    *pulDigestLen = hashLen;
 
-    return CKR_OPERATION_NOT_INITIALIZED;
+    return ret;
 }
 
 /**
@@ -2526,6 +2545,7 @@ CK_RV C_Digest(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 CK_RV C_DigestUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
                         CK_ULONG ulPartLen)
 {
+    int ret;
     WP11_Session* session;
 
     if (!WP11_Library_IsInitialized())
@@ -2534,12 +2554,17 @@ CK_RV C_DigestUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
         return CKR_SESSION_HANDLE_INVALID;
     if (pPart == NULL || ulPartLen == 0)
         return CKR_ARGUMENTS_BAD;
+    if (!WP11_Session_IsOpInitialized(session, WP11_INIT_DIGEST))
+        return CKR_OPERATION_NOT_INITIALIZED;
 
-    return CKR_OPERATION_NOT_INITIALIZED;
+
+    ret = WP11_Digest_Update(pPart, ulPartLen, session);
+
+    return ret;
 }
 
 /**
- * Finished digesting multi-part data and places digest value in the key.
+ * Continues digesting multi-part data by digesting the value in the key.
  * No digest mechanisms are supported.
  *
  * @param  hSession  [in]  Handle of session.
@@ -2565,7 +2590,9 @@ CK_RV C_DigestKey(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hKey)
     if (ret != 0)
         return CKR_OBJECT_HANDLE_INVALID;
 
-    return CKR_OPERATION_NOT_INITIALIZED;
+    ret = WP11_Digest_Key(obj, session);
+
+    return ret;
 }
 
 /**
@@ -2586,6 +2613,8 @@ CK_RV C_DigestKey(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hKey)
 CK_RV C_DigestFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pDigest,
                        CK_ULONG_PTR pulDigestLen)
 {
+    int ret;
+    word32 hashLen;
     WP11_Session* session;
 
     if (!WP11_Library_IsInitialized())
@@ -2594,10 +2623,13 @@ CK_RV C_DigestFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pDigest,
         return CKR_SESSION_HANDLE_INVALID;
     if (pulDigestLen == NULL)
         return CKR_ARGUMENTS_BAD;
+    if (!WP11_Session_IsOpInitialized(session, WP11_INIT_DIGEST))
+        return CKR_OPERATION_NOT_INITIALIZED;
+    hashLen = *pulDigestLen;
+    ret = WP11_Digest_Final(pDigest, &hashLen, session);
+    *pulDigestLen = hashLen;
 
-    (void)pDigest;
-
-    return CKR_OPERATION_NOT_INITIALIZED;
+    return ret;
 }
 
 /**

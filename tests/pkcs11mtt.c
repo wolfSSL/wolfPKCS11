@@ -1259,31 +1259,6 @@ static CK_RV test_digest(void* args)
         CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD, "Digest Final no hash size");
     }
 
-    if (ret == CKR_OK) {
-        ret = funcList->C_DigestInit(session, &mech);
-        CHECK_CKR_FAIL(ret, CKR_MECHANISM_INVALID, "Digest Init not supported");
-    }
-    if (ret == CKR_OK) {
-        ret = funcList->C_Digest(session, data, dataSz, hash, &hashSz);
-        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
-                                                      "Digest not initialized");
-    }
-    if (ret == CKR_OK) {
-        ret = funcList->C_DigestUpdate(session, data, dataSz);
-        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
-                                               "Digest Update not initialized");
-    }
-    if (ret == CKR_OK) {
-        ret = funcList->C_DigestKey(session, key);
-        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
-                                                  "Digest Key not initialized");
-    }
-    if (ret == CKR_OK) {
-        ret = funcList->C_DigestFinal(session, hash, &hashSz);
-        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
-                                                "Digest Final not initialized");
-    }
-
     funcList->C_DestroyObject(session, key);
 
     return ret;
