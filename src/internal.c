@@ -292,6 +292,11 @@ typedef struct WP11_Hmac {
 } WP11_Hmac;
 #endif
 
+typedef struct WP11_Digest {
+    wc_HashAlg hash;
+    enum wc_HashType hashType;
+} WP11_Digest;
+
 struct WP11_Session {
     unsigned char inUse;               /* Indicates session has been opened   */
     CK_SESSION_HANDLE handle;          /* CryptoKi API session handle value   */
@@ -326,6 +331,7 @@ struct WP11_Session {
 #ifndef NO_HMAC
         WP11_Hmac hmac;                /* HMAC parameters                     */
 #endif
+        WP11_Digest digest;            /* Digest parameters                   */
     } params;
 
     int devId;
@@ -9044,6 +9050,186 @@ int WP11_AesEcb_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
 #endif /* HAVE_AESECB */
 #endif /* !NO_AES */
 
+/**
+ * Convert the Digest mechanism to a wolfCrypt hash type.
+ *
+ * @param  digestMech  [in]   Digest mechanism.
+ * @param  hashType    [out]  Hash type.
+ * @return  BAD_FUNC_ARG when mechanism is not supported.
+ *          0 on success.
+ */
+static int wp11_digest_hash_type(CK_MECHANISM_TYPE digestMech, int* hashType)
+{
+    int ret = 0;
+
+    switch (digestMech) {
+        case CKM_MD5:
+            *hashType = WC_HASH_TYPE_MD5;
+            break;
+        case CKM_SHA1:
+            *hashType = WC_HASH_TYPE_SHA;
+            break;
+        case CKM_SHA224:
+            *hashType = WC_HASH_TYPE_SHA224;
+            break;
+        case CKM_SHA256:
+            *hashType = WC_HASH_TYPE_SHA256;
+            break;
+        case CKM_SHA384:
+            *hashType = WC_HASH_TYPE_SHA384;
+            break;
+        case CKM_SHA512:
+            *hashType = WC_HASH_TYPE_SHA512;
+            break;
+        default:
+            ret = CKR_MECHANISM_INVALID;
+            break;
+    }
+
+    return ret;
+}
+
+
+/**
+ * Initialize the Digest operation
+ *
+ * @param mechanism   [in] Digest mechanism.
+ * @param session     [in] Session object with the Digest object.
+ * @return CKR_MECHANISM_INVALID when the mechanism is not supported.
+ *         Other -ve value when initialization fails.
+ *         0 on success.
+ */
+int WP11_Digest_Init(CK_MECHANISM_TYPE mechanism, WP11_Session* session)
+{
+    int ret = 0;
+    int hashType = WC_HASH_TYPE_NONE;
+
+    WP11_Digest* digest = &session->params.digest;
+
+    ret = wp11_digest_hash_type(mechanism, &hashType);
+
+    if (ret == 0) {
+        digest->hashType = hashType;
+        ret = wc_HashInit(&digest->hash, hashType);
+    }
+
+    return ret;
+}
+
+/**
+* Update Digest operation with more data.
+*
+* @param  data     [in]  Data to be digested.
+* @param  dataLen  [in]  Length of data in bytes.
+* @param  session  [in]  Session object with the Digest object.
+* @return  -ve on failure.
+*          0 on success.
+*/
+int WP11_Digest_Update(unsigned char* data, word32 dataLen,
+                       WP11_Session* session)
+{
+    int ret;
+    WP11_Digest* digest = &session->params.digest;
+
+    ret = wc_HashUpdate(&digest->hash, digest->hashType, data, dataLen);
+
+    return ret;
+}
+
+/**
+* Update Digest operation with secret key data.
+*
+* @param  key      [in]  Key to be digested.
+* @param  session  [in]  Session object with the Digest object.
+* @return  -ve on failure.
+*          0 on success.
+*/
+int WP11_Digest_Key(WP11_Object* key, WP11_Session* session)
+{
+    int ret;
+#ifndef WOLFPKCS11_NO_STORE
+    WP11_Digest* digest = &session->params.digest;
+    ret = wc_HashUpdate(&digest->hash, digest->hashType, key->keyData,
+                        key->keyDataLen);
+#else
+    (void) session;
+    (void) key;
+    ret = CKR_FUNCTION_NOT_SUPPORTED;
+#endif
+    return ret;
+}
+
+/**
+ * Finalize the Digest operation and get output.
+ *
+ * @param  data     [in]       Output data.
+ * @param  dataLen  [in, out]  Length of data in bytes.
+ * @param  session  [in]       Session object witht he Digest object.
+ * @return  -ve on failure.
+ *          0 on success.
+ */
+int WP11_Digest_Final(unsigned char* data, word32* dataLen,
+                      WP11_Session* session)
+{
+    int ret;
+    int blockLen;
+    WP11_Digest* digest = &session->params.digest;
+
+    blockLen = wc_HashGetDigestSize(digest->hashType);
+
+    /* If a NULL is provided, callee wants the expected output length only */
+    if (data == NULL) {
+        *dataLen = blockLen;
+        return CKR_OK;
+    }
+
+    if (*dataLen < (word32)blockLen) {
+        return BUFFER_E;
+    }
+
+    ret = wc_HashFinal(&digest->hash, digest->hashType, data);
+    *dataLen = blockLen;
+    wc_HashFree(&digest->hash, digest->hashType);
+
+    return ret;
+}
+
+/**
+ * Single Digest operation.
+ *
+ * @param  data        [in]       Input data to be digested.
+ * @param  dataLen     [in]       Length of data in bytes.
+ * @param  dataOut     [in]       Output data.
+ * @param  dataOutLen  [in, out]  Lenget of dataOut in bytes.
+ * @param  session     [in]       Session object witht he Digest object.
+ * @return  -ve on failure.
+ *          0 on success.
+ */
+
+int WP11_Digest_Single(unsigned char* data, word32 dataLen,
+                       unsigned char* dataOut, word32* dataOutLen,
+                       WP11_Session* session)
+{
+    int ret;
+    int blockLen;
+    WP11_Digest* digest = &session->params.digest;
+
+    blockLen = wc_HashGetDigestSize(digest->hashType);
+
+    if (data == NULL) {
+        *dataOutLen = (word32)blockLen;
+        return CKR_OK;
+    }
+    if (*dataOutLen < (word32)blockLen) {
+        return BUFFER_E;
+    }
+    ret = wc_Hash(digest->hashType, data, dataLen, dataOut, *dataOutLen);
+
+    wc_HashFree(&digest->hash, digest->hashType);
+
+    return ret;
+}
+
 #ifndef NO_HMAC
 /**
  * Convert the HMAC mechanism to a wolfCrypt hash type.
@@ -9096,6 +9282,7 @@ int WP11_Hmac_SigLen(WP11_Session* session)
 
     return hmac->hmacSz;
 }
+
 
 /**
  * Initialize the HMAC operation.

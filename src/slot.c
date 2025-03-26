@@ -256,21 +256,27 @@ static CK_MECHANISM_TYPE mechanismList[] = {
 #ifndef NO_HMAC
 #ifndef NO_MD5
     CKM_MD5_HMAC,
+    CKM_MD5,
 #endif
 #ifndef NO_SHA
     CKM_SHA1_HMAC,
+    CKM_SHA1,
 #endif
 #ifdef WOLFSSL_SHA224
     CKM_SHA224_HMAC,
+    CKM_SHA224,
 #endif
 #ifndef NO_SHA256
     CKM_SHA256_HMAC,
+    CKM_SHA256,
 #endif
 #ifdef WOLFSSL_SHA384
     CKM_SHA384_HMAC,
+    CKM_SHA384,
 #endif
 #ifdef WOLFSSL_SHA512
     CKM_SHA512_HMAC,
+    CKM_SHA512
 #endif
 #endif
 };
@@ -406,11 +412,17 @@ static CK_MECHANISM_INFO aesEcbMechInfo = {
 static CK_MECHANISM_INFO hmacMd5MechInfo = {
     16, 512, CKF_SIGN | CKF_VERIFY
 };
+static CK_MECHANISM_INFO md5MechInfo = {
+    0, 0, CKF_DIGEST
+};
 #endif
 #ifndef NO_SHA
 /* Info on HMAC-SHA1 mechanism. */
 static CK_MECHANISM_INFO hmacSha1MechInfo = {
     20, 512, CKF_SIGN | CKF_VERIFY
+};
+static CK_MECHANISM_INFO sha1MechInfo = {
+    0, 0, CKF_DIGEST
 };
 #endif
 #ifdef WOLFSSL_SHA224
@@ -418,11 +430,17 @@ static CK_MECHANISM_INFO hmacSha1MechInfo = {
 static CK_MECHANISM_INFO hmacSha224MechInfo = {
     28, 512, CKF_SIGN | CKF_VERIFY
 };
+static CK_MECHANISM_INFO sha224MechInfo = {
+    0, 0, CKF_DIGEST
+};
 #endif
 #ifndef NO_SHA256
 /* Info on HMAC-SHA256 mechanism. */
 static CK_MECHANISM_INFO hmacSha256MechInfo = {
     32, 512, CKF_SIGN | CKF_VERIFY
+};
+static CK_MECHANISM_INFO sha256MechInfo = {
+    0, 0, CKF_DIGEST
 };
 #endif
 #ifdef WOLFSSL_SHA384
@@ -430,11 +448,17 @@ static CK_MECHANISM_INFO hmacSha256MechInfo = {
 static CK_MECHANISM_INFO hmacSha384MechInfo = {
     48, 512, CKF_SIGN | CKF_VERIFY
 };
+static CK_MECHANISM_INFO sha384MechInfo = {
+    0, 0, CKF_DIGEST
+};
 #endif
 #ifdef WOLFSSL_SHA512
 /* Info on HMAC-SHA512 mechanism. */
 static CK_MECHANISM_INFO hmacSha512MechInfo = {
     64, 512, CKF_SIGN | CKF_VERIFY
+};
+static CK_MECHANISM_INFO sha512MechInfo = {
+    0, 0, CKF_DIGEST
 };
 #endif
 #endif
@@ -532,30 +556,48 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
         case CKM_MD5_HMAC:
             XMEMCPY(pInfo, &hmacMd5MechInfo, sizeof(CK_MECHANISM_INFO));
             break;
+        case CKM_MD5:
+            XMEMCPY(pInfo, &md5MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
 #endif
 #ifndef NO_SHA
         case CKM_SHA1_HMAC:
             XMEMCPY(pInfo, &hmacSha1MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+        case CKM_SHA1:
+            XMEMCPY(pInfo, &sha1MechInfo, sizeof(CK_MECHANISM_INFO));
             break;
 #endif
 #ifdef WOLFSSL_SHA224
         case CKM_SHA224_HMAC:
             XMEMCPY(pInfo, &hmacSha224MechInfo, sizeof(CK_MECHANISM_INFO));
             break;
+        case CKM_SHA224:
+            XMEMCPY(pInfo, &sha224MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
 #endif
 #ifndef NO_SHA256
         case CKM_SHA256_HMAC:
             XMEMCPY(pInfo, &hmacSha256MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+        case CKM_SHA256:
+            XMEMCPY(pInfo, &sha256MechInfo, sizeof(CK_MECHANISM_INFO));
             break;
 #endif
 #ifdef WOLFSSL_SHA384
         case CKM_SHA384_HMAC:
             XMEMCPY(pInfo, &hmacSha384MechInfo, sizeof(CK_MECHANISM_INFO));
             break;
+        case CKM_SHA384:
+            XMEMCPY(pInfo, &sha384MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
 #endif
 #ifdef WOLFSSL_SHA512
         case CKM_SHA512_HMAC:
             XMEMCPY(pInfo, &hmacSha512MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+        case CKM_SHA512:
+            XMEMCPY(pInfo, &sha512MechInfo, sizeof(CK_MECHANISM_INFO));
             break;
 #endif
 #endif

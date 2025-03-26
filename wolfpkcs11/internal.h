@@ -122,6 +122,7 @@ extern "C" {
 #define WP11_INIT_AES_ECB_DEC          0x000A
 #define WP11_INIT_HMAC_SIGN            0x0010
 #define WP11_INIT_HMAC_VERIFY          0x0011
+#define WP11_INIT_DIGEST               0x0012
 #define WP11_INIT_RSA_X_509_ENC        0x0020
 #define WP11_INIT_RSA_X_509_DEC        0x0021
 #define WP11_INIT_RSA_PKCS_ENC         0x0022
@@ -425,6 +426,16 @@ int WP11_Hmac_SignFinal(unsigned char* sig, word32* sigLen,
                         WP11_Session* session);
 int WP11_Hmac_VerifyFinal(unsigned char* sig, word32 sigLen, int* stat,
                           WP11_Session* session);
+
+int WP11_Digest_Init(CK_MECHANISM_TYPE mechanism, WP11_Session* session);
+int WP11_Digest_Update(unsigned char* data, word32 dataLen,
+                       WP11_Session* session);
+int WP11_Digest_Final(unsigned char* data, word32* dataLen,
+                      WP11_Session* session);
+int WP11_Digest_Single(unsigned char* data, word32 dataLen,
+                       unsigned char* dataOut, word32* dataOutLen,
+                       WP11_Session* session);
+int WP11_Digest_Key(WP11_Object* key, WP11_Session* session);
 
 int WP11_Slot_SeedRandom(WP11_Slot* slot, unsigned char* seed, int seedLen);
 int WP11_Slot_GenerateRandom(WP11_Slot* slot, unsigned char* data, int len);
