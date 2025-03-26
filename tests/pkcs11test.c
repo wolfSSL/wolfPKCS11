@@ -2088,7 +2088,100 @@ static CK_RV test_encrypt_decrypt(void* args)
     return ret;
 }
 
+#ifndef NO_SHA256
 static CK_RV test_digest(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_MECHANISM mech;
+    byte data[32], hash[32];
+    CK_ULONG dataSz, hashSz;
+    const unsigned char sha256_exp[] = {
+        0x9f, 0x86, 0xd0, 0x81, 0x88, 0x4c, 0x7d, 0x65,
+        0x9a, 0x2f, 0xea, 0xa0, 0xc5, 0x5a, 0xd0, 0x15,
+        0xa3, 0xbf, 0x4f, 0x1b, 0x2b, 0x0b, 0x82, 0x2c,
+        0xd1, 0x5d, 0x6c, 0x15, 0xb0, 0xf0, 0x0a, 0x08
+    };
+
+    const unsigned char sha256_exp2[] = {
+        0x37, 0x26, 0x83, 0x35, 0xdd, 0x69, 0x31, 0x04,
+        0x5b, 0xdc, 0xdf, 0x92, 0x62, 0x3f, 0xf8, 0x19,
+        0xa6, 0x42, 0x44, 0xb5, 0x3d, 0x0e, 0x74, 0x6d,
+        0x43, 0x87, 0x97, 0x34, 0x9d, 0x4d, 0xa5, 0x78
+    };
+
+    XMEMSET(data, 0, sizeof(data));
+    XMEMCPY(data, "test", 4);
+    dataSz = 4;
+    hashSz = sizeof(hash);
+
+    mech.mechanism = CKM_SHA256;
+    mech.ulParameterLen = 0;
+    mech.pParameter = NULL;
+
+    ret = funcList->C_DigestInit(session , &mech);
+    CHECK_CKR(ret, "Could not init digest");
+    if (ret == CKR_OK) {
+        ret = funcList->C_Digest(session, data, dataSz, hash, &hashSz);
+        CHECK_CKR(ret, "Error running digest");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(XMEMCMP(hash, sha256_exp, 32) == 0, ret,
+                   "SHA does not match");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_DigestInit(session , &mech);
+        CHECK_CKR(ret, "Could not init digest");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_DigestUpdate(session, data, dataSz);
+        CHECK_CKR(ret, "Could not update digest");
+    }
+
+    if (ret == CKR_OK) {
+        hashSz = sizeof(hash);
+        ret = funcList->C_DigestFinal(session, hash, &hashSz);
+        CHECK_CKR(ret, "Error running digest final");
+    }
+
+    if (ret == CKR_OK) {
+        CHECK_COND(XMEMCMP(hash, sha256_exp, 32) == 0, ret,
+                   "SHA does not match");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_DigestInit(session , &mech);
+        CHECK_CKR(ret, "Could not init digest");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_DigestUpdate(session, data, dataSz);
+        CHECK_CKR(ret, "Could not update digest");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_DigestUpdate(session, data, dataSz);
+        CHECK_CKR(ret, "Could not update digest");
+    }
+
+    if (ret == CKR_OK) {
+        hashSz = sizeof(hash);
+        ret = funcList->C_DigestFinal(session, hash, &hashSz);
+        CHECK_CKR(ret, "Error running digest final");
+    }
+
+    if (ret == CKR_OK) {
+        CHECK_COND(XMEMCMP(hash, sha256_exp2, 32) == 0, ret,
+                   "SHA does not match");
+    }
+
+    return ret;
+}
+#endif
+
+static CK_RV test_digest_fail(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_RV ret;
@@ -2165,31 +2258,6 @@ static CK_RV test_digest(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_DigestFinal(session, hash, NULL);
         CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD, "Digest Final no hash size");
-    }
-
-    if (ret == CKR_OK) {
-        ret = funcList->C_DigestInit(session, &mech);
-        CHECK_CKR_FAIL(ret, CKR_MECHANISM_INVALID, "Digest Init not supported");
-    }
-    if (ret == CKR_OK) {
-        ret = funcList->C_Digest(session, data, dataSz, hash, &hashSz);
-        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
-                                                      "Digest not initialized");
-    }
-    if (ret == CKR_OK) {
-        ret = funcList->C_DigestUpdate(session, data, dataSz);
-        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
-                                               "Digest Update not initialized");
-    }
-    if (ret == CKR_OK) {
-        ret = funcList->C_DigestKey(session, key);
-        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
-                                                  "Digest Key not initialized");
-    }
-    if (ret == CKR_OK) {
-        ret = funcList->C_DigestFinal(session, hash, &hashSz);
-        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
-                                                "Digest Final not initialized");
     }
 
     return ret;
@@ -8231,7 +8299,7 @@ static TEST_FUNC testFunc[] = {
 #endif
     PKCS11TEST_FUNC_SESS_DECL(test_find_objects),
     PKCS11TEST_FUNC_SESS_DECL(test_encrypt_decrypt),
-    PKCS11TEST_FUNC_SESS_DECL(test_digest),
+    PKCS11TEST_FUNC_SESS_DECL(test_digest_fail),
     PKCS11TEST_FUNC_SESS_DECL(test_sign_verify),
     PKCS11TEST_FUNC_SESS_DECL(test_recover),
     PKCS11TEST_FUNC_SESS_DECL(test_encdec_digest),
@@ -8304,6 +8372,9 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_aes_ecb_gen_key),
 #endif
 #endif /* !NO_AES */
+#ifndef NOSHA256
+    PKCS11TEST_FUNC_SESS_DECL(test_digest),
+#endif
 #ifndef NO_HMAC
 #ifndef NO_MD5
     PKCS11TEST_FUNC_SESS_DECL(test_hmac_md5),
