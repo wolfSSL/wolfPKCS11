@@ -1327,6 +1327,24 @@ CK_RV C_EncryptInit(CK_SESSION_HANDLE hSession,
             break;
         }
     #endif
+
+    #ifdef HAVE_AESCTS
+        case CKM_AES_CTS:
+            if (type != CKK_AES)
+                return CKR_KEY_TYPE_INCONSISTENT;
+            if (pMechanism->pParameter == NULL)
+                return CKR_MECHANISM_PARAM_INVALID;
+            if (pMechanism->ulParameterLen != AES_IV_SIZE)
+                return CKR_MECHANISM_PARAM_INVALID;
+            ret = WP11_Session_SetCtsParams(session,
+                (unsigned char*)pMechanism->pParameter, 1, obj);
+            if (ret == MEMORY_E)
+                return CKR_DEVICE_MEMORY;
+            if (ret != 0)
+                return CKR_FUNCTION_FAILED;
+            init = WP11_INIT_AES_CTS_ENC;
+            break;
+    #endif
 #endif
         default:
             (void)type;
@@ -1551,6 +1569,26 @@ CK_RV C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             *pulEncryptedDataLen = encDataLen;
             break;
     #endif
+    #ifdef HAVE_AESCTS
+        case CKM_AES_CTS:
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CTS_ENC))
+                return CKR_OPERATION_NOT_INITIALIZED;
+
+            encDataLen = (word32)*pulEncryptedDataLen;
+            if (pEncryptedData == NULL) {
+                *pulEncryptedDataLen = ulDataLen;
+                return CKR_OK;
+            }
+            if (ulDataLen > *pulEncryptedDataLen)
+                return CKR_BUFFER_TOO_SMALL;
+
+            ret = WP11_AesCts_Encrypt(pData, (int)ulDataLen, pEncryptedData,
+                                                          &encDataLen, session);
+            if (ret < 0)
+                return CKR_FUNCTION_FAILED;
+            *pulEncryptedDataLen = encDataLen;
+            break;
+    #endif
 #endif
         default:
             (void)ret;
@@ -1673,6 +1711,26 @@ CK_RV C_EncryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
             *pulEncryptedPartLen = encPartLen;
             break;
     #endif
+    #ifdef HAVE_AESCTS
+        case CKM_AES_CTS:
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CTS_ENC))
+                return CKR_OPERATION_NOT_INITIALIZED;
+
+            if (pEncryptedPart == NULL) {
+                *pulEncryptedPartLen = ulPartLen + WC_AES_BLOCK_SIZE * 2;
+                return CKR_OK;
+            }
+
+            encPartLen = (word32)*pulEncryptedPartLen;
+            ret = WP11_AesCts_EncryptUpdate(pPart, (word32)ulPartLen,
+                                          pEncryptedPart, &encPartLen, session);
+            if (ret == BUFFER_E)
+                return CKR_BUFFER_TOO_SMALL;
+            if (ret < 0)
+                return CKR_FUNCTION_FAILED;
+            *pulEncryptedPartLen = encPartLen;
+            break;
+    #endif
 #endif
         default:
             (void)encPartLen;
@@ -1781,6 +1839,26 @@ CK_RV C_EncryptFinal(CK_SESSION_HANDLE hSession,
 
             ret = WP11_AesGcm_EncryptFinal(pLastEncryptedPart, &encPartLen,
                                                                        session);
+            if (ret < 0)
+                return CKR_FUNCTION_FAILED;
+            *pulLastEncryptedPartLen = encPartLen;
+            break;
+    #endif
+    #ifdef HAVE_AESCTS
+        case CKM_AES_CTS:
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CTS_ENC))
+                return CKR_OPERATION_NOT_INITIALIZED;
+
+            if (pLastEncryptedPart == NULL) {
+                *pulLastEncryptedPartLen = WC_AES_BLOCK_SIZE * 2;
+                return CKR_OK;
+            }
+
+            encPartLen = (word32)*pulLastEncryptedPartLen;
+            ret = WP11_AesCts_EncryptFinal(pLastEncryptedPart, &encPartLen,
+                                           session);
+            if (ret == BUFFER_E)
+                return CKR_BUFFER_TOO_SMALL;
             if (ret < 0)
                 return CKR_FUNCTION_FAILED;
             *pulLastEncryptedPartLen = encPartLen;
@@ -1973,6 +2051,24 @@ CK_RV C_DecryptInit(CK_SESSION_HANDLE hSession,
             init = WP11_INIT_AES_ECB_DEC;
             break;
         }
+    #endif
+
+    #ifdef HAVE_AESCTS
+        case CKM_AES_CTS:
+            if (type != CKK_AES)
+                return CKR_KEY_TYPE_INCONSISTENT;
+            if (pMechanism->pParameter == NULL)
+                return CKR_MECHANISM_PARAM_INVALID;
+            if (pMechanism->ulParameterLen != AES_IV_SIZE)
+                return CKR_MECHANISM_PARAM_INVALID;
+            ret = WP11_Session_SetCtsParams(session,
+                (unsigned char*)pMechanism->pParameter, 0, obj);
+            if (ret == MEMORY_E)
+                return CKR_DEVICE_MEMORY;
+            if (ret != 0)
+                return CKR_FUNCTION_FAILED;
+            init = WP11_INIT_AES_CTS_DEC;
+            break;
     #endif
 #endif
         default:
@@ -2199,6 +2295,28 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
             *pulDataLen = decDataLen;
             break;
     #endif
+    #ifdef HAVE_AESCTS
+        case CKM_AES_CTS:
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CTS_DEC))
+                return CKR_OPERATION_NOT_INITIALIZED;
+
+            decDataLen = (word32)*pulDataLen;
+            if (pData == NULL) {
+                *pulDataLen = ulEncryptedDataLen;
+                return CKR_OK;
+            }
+            if (ulEncryptedDataLen > *pulDataLen)
+                return CKR_BUFFER_TOO_SMALL;
+
+            ret = WP11_AesCts_Decrypt(pEncryptedData, (int)ulEncryptedDataLen,
+                                              pData, &decDataLen, session);
+            if (ret == BUFFER_E)
+                return CKR_BUFFER_TOO_SMALL;
+            if (ret < 0)
+                return CKR_FUNCTION_FAILED;
+            *pulDataLen = decDataLen;
+            break;
+    #endif
 #endif
         default:
             (void)decDataLen;
@@ -2323,6 +2441,26 @@ CK_RV C_DecryptUpdate(CK_SESSION_HANDLE hSession,
                 return CKR_FUNCTION_FAILED;
             break;
     #endif
+    #ifdef HAVE_AESCTS
+        case CKM_AES_CTS:
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CTS_DEC))
+                return CKR_OPERATION_NOT_INITIALIZED;
+
+            if (pPart == NULL) {
+                *pulPartLen = ulEncryptedPartLen + WC_AES_BLOCK_SIZE * 2;
+                return CKR_OK;
+            }
+
+            decPartLen = (word32)*pulPartLen;
+            ret = WP11_AesCts_DecryptUpdate(pEncryptedPart,
+                    (word32)ulEncryptedPartLen, pPart, &decPartLen, session);
+            if (ret == BUFFER_E)
+                return CKR_BUFFER_TOO_SMALL;
+            if (ret < 0)
+                return CKR_FUNCTION_FAILED;
+            *pulPartLen = decPartLen;
+            break;
+    #endif
 #endif
         default:
             (void)decPartLen;
@@ -2432,6 +2570,25 @@ CK_RV C_DecryptFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastPart,
 
             ret = WP11_AesGcm_DecryptFinal(pLastPart, &decPartLen, obj,
                                                                        session);
+            if (ret < 0)
+                return CKR_FUNCTION_FAILED;
+            *pulLastPartLen = decPartLen;
+            break;
+    #endif
+    #ifdef HAVE_AESCTS
+        case CKM_AES_CTS:
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CTS_DEC))
+                return CKR_OPERATION_NOT_INITIALIZED;
+
+            if (pLastPart == NULL) {
+                *pulLastPartLen = WC_AES_BLOCK_SIZE * 2;
+                return CKR_OK;
+            }
+
+            decPartLen = (word32)*pulLastPartLen;
+            ret = WP11_AesCts_DecryptFinal(pLastPart, &decPartLen, session);
+            if (ret == BUFFER_E)
+                return CKR_BUFFER_TOO_SMALL;
             if (ret < 0)
                 return CKR_FUNCTION_FAILED;
             *pulLastPartLen = decPartLen;
