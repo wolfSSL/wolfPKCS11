@@ -233,11 +233,12 @@ extern "C" {
 #define CKM_ECDH1_DERIVE                      0x00001050UL
 #define CKM_ECDH1_COFACTOR_DERIVE             0x00001051UL
 #define CKM_AES_KEY_GEN                       0x00001080UL
+#define CKM_AES_ECB                           0x00001081UL
 #define CKM_AES_CBC                           0x00001082UL
 #define CKM_AES_CBC_PAD                       0x00001085UL
 #define CKM_AES_GCM                           0x00001087UL
 #define CKM_AES_CCM                           0x00001088UL
-#define CKM_AES_ECB                           0x000001081L
+#define CKM_AES_CTS                           0x00001089UL
 
 #define CKR_OK                                0x00000000UL
 #define CKR_CANCEL                            0x00000001UL
