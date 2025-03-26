@@ -2093,20 +2093,29 @@ static int wp11_Object_Encode_RsaKey(WP11_Object* object)
     int ret;
 
     if (object->objClass == CKO_PRIVATE_KEY) {
+    #if defined(WOLFSSL_KEY_GEN) || defined(OPENSSL_EXTRA)
         /* Get length of encoded private key. */
         ret = wc_RsaKeyToDer(&object->data.rsaKey, NULL, 0);
         if (ret >= 0) {
             object->keyDataLen = ret + AES_BLOCK_SIZE;
             ret = 0;
         }
+    #else
+        ret = NOT_COMPILED_IN;
+    #endif
     }
     else {
+    #if defined(WOLFSSL_KEY_GEN) || defined(OPENSSL_EXTRA) || \
+        defined(WOLFSSL_CERT_GEN)
         /* Get length of encoded public key. */
         ret = wc_RsaKeyToPublicDer(&object->data.rsaKey, NULL, 0);
         if (ret >= 0) {
             object->keyDataLen = ret;
             ret = 0;
         }
+    #else
+        ret = NOT_COMPILED_IN;
+    #endif
     }
 
     if (ret == 0) {
@@ -2119,6 +2128,7 @@ static int wp11_Object_Encode_RsaKey(WP11_Object* object)
     }
 
     if (ret == 0 && object->objClass == CKO_PRIVATE_KEY) {
+    #if defined(WOLFSSL_KEY_GEN) || defined(OPENSSL_EXTRA)
         /* Encode private key. */
         ret = wc_RsaKeyToDer(&object->data.rsaKey, object->keyData,
                                                             object->keyDataLen);
@@ -2128,6 +2138,9 @@ static int wp11_Object_Encode_RsaKey(WP11_Object* object)
                                     sizeof(object->slot->token.key), object->iv,
                                     sizeof(object->iv));
         }
+    #else
+        ret = NOT_COMPILED_IN;
+    #endif
     }
     else if (ret == 0 && object->objClass == CKO_PUBLIC_KEY) {
         /* Encode public key. */
@@ -2161,7 +2174,7 @@ static int wp11_Object_Encode_RsaKey(WP11_Object* object)
 int WP11_Rsa_SerializeKey(WP11_Object* object, byte* output, word32* poutsz)
 {
     int ret;
-    word32 insz, outsz;
+    word32 insz, outsz = 0;
 
     if (object == NULL || poutsz == NULL)
         return PARAM_E;
@@ -2172,21 +2185,32 @@ int WP11_Rsa_SerializeKey(WP11_Object* object, byte* output, word32* poutsz)
         return OBJ_TYPE_E;
 
     if (object->objClass == CKO_PRIVATE_KEY) {
+    #if defined(WOLFSSL_KEY_GEN) || defined(OPENSSL_EXTRA)
         /* Get length of encoded private key. */
         ret = wc_RsaKeyToDer(&object->data.rsaKey, output, insz);
         if (ret >= 0) {
             outsz = ret;
             ret = 0;
         }
+    #else
+        ret = NOT_COMPILED_IN;
+    #endif
     }
     else {
+    #if defined(WOLFSSL_KEY_GEN) || defined(OPENSSL_EXTRA) || \
+        defined(WOLFSSL_CERT_GEN)
         /* Get length of encoded public key. */
         ret = wc_RsaKeyToPublicDer(&object->data.rsaKey, output, insz);
         if (ret >= 0) {
             outsz = ret;
             ret = 0;
         }
+    #else
+        ret = NOT_COMPILED_IN;
+    #endif
     }
+    (void)output;
+    (void)insz;
 
     if (ret == 0)
         *poutsz = outsz;
@@ -6969,6 +6993,8 @@ int WP11_Rsa_ParsePrivKey(byte* data, word32 dataLen, WP11_Object* privKey)
     return ret;
 }
 
+#if defined(WOLFSSL_KEY_GEN) || defined(OPENSSL_EXTRA) || \
+    defined(WOLFSSL_CERT_GEN)
 /**
  * Transfer public parts to RSA public key.
  *
@@ -6999,6 +7025,7 @@ int WP11_Rsa_PrivKey2PubKey(WP11_Object* privKey, WP11_Object* pubKey,
 
     return ret;
 }
+#endif
 
 #ifdef WOLFSSL_KEY_GEN
 /**
@@ -7354,6 +7381,7 @@ int WP11_RsaOaep_PrivateDecrypt(unsigned char* in, word32 inLen,
 }
 #endif /* !WC_NO_RSA_OAEP */
 
+#ifdef WC_RSA_DIRECT
 /**
  * RSA sign data with private key.
  *
@@ -7452,6 +7480,7 @@ int WP11_Rsa_Verify(unsigned char* sig, word32 sigLen, unsigned char* in,
 
     return ret;
 }
+#endif /* WC_RSA_DIRECT */
 
 /**
  * PKCS#1.5 sign encoded hash with private key.
