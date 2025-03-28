@@ -6229,22 +6229,30 @@ static int RsaObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
  * @param  len   [in,out]  On in, the length of the buffer in bytes.
  *                         On out, the length of the data in bytes.
  * @return  BUFFER_E when buffer is too small for data.
+ *          BAD_FUNC_ARG when OID is not known.
+ *          BAD_MUTEX_E when ecc_oid_cache_lock can't be locked.
+ *          NOT_COMPILED_IN when curve is not compiled in.
  *          0 on success.
  */
 static int GetEcParams(ecc_key* key, byte* data, CK_ULONG* len)
 {
     int ret = 0;
-    CK_ULONG dataLen = key->dp->oidSz + 2;
+    const byte* oid = NULL;
+    word32 oidSz = 0;
 
-    if (data == NULL)
-        *len = dataLen;
-    else if (*len < dataLen)
-        ret = BUFFER_E;
-    else {
-        *len = dataLen;
-        data[0] = ASN_OBJECT_ID;
-        data[1] = (byte)(dataLen - 2);
-        XMEMCPY(data + 2, key->dp->oid, data[1]);
+    ret = wc_ecc_get_oid(key->dp->oidSum, &oid, &oidSz);
+    if (ret > 0) {
+        ret = 0;
+        if (data == NULL)
+            *len = (CK_ULONG)oidSz + 2;
+        else if (*len < (CK_ULONG)oidSz + 2)
+            ret = BUFFER_E;
+        else {
+            *len = (CK_ULONG)oidSz + 2;
+            data[0] = ASN_OBJECT_ID;
+            data[1] = (byte)(oidSz);
+            XMEMCPY(data + 2, oid, oidSz);
+        }
     }
 
     return ret;
