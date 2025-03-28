@@ -129,6 +129,8 @@ extern "C" {
 #define WP11_INIT_AES_ECB_DEC          0x000A
 #define WP11_INIT_AES_CTS_ENC          0x000B
 #define WP11_INIT_AES_CTS_DEC          0x000C
+#define WP11_INIT_AES_CTR_ENC          0x000D
+#define WP11_INIT_AES_CTR_DEC          0x000E
 #define WP11_INIT_HMAC_SIGN            0x0010
 #define WP11_INIT_HMAC_VERIFY          0x0011
 #define WP11_INIT_DIGEST               0x0012
@@ -246,6 +248,8 @@ int WP11_Session_SetOaepParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
                                CK_MECHANISM_TYPE mgf, byte* label, int labelSz);
 int WP11_Session_SetCbcParams(WP11_Session* session, unsigned char* iv, int enc,
                               WP11_Object* object);
+int WP11_Session_SetCtrParams(WP11_Session* session, CK_ULONG ulCounterBits,
+                              CK_BYTE* cb, WP11_Object* object);
 int WP11_Session_SetGcmParams(WP11_Session* session, unsigned char* iv,
                               int ivSz, unsigned char* aad, int aadLen,
                               int tagBits);
@@ -390,6 +394,13 @@ int WP11_AesCbcPad_DecryptUpdate(unsigned char* enc, word32 encSz,
                                  WP11_Session* session);
 int WP11_AesCbcPad_DecryptFinal(unsigned char* dec, word32* decSz,
                                 WP11_Session* session);
+
+
+int WP11_AesCtr_Do(unsigned char* in, word32 inSz, unsigned char* out,
+        word32* outSz, WP11_Session* session);
+int WP11_AesCtr_Update(unsigned char* in, word32 inSz, unsigned char* out,
+        word32* outSz, WP11_Session* session);
+int WP11_AesCtr_Final(WP11_Session* session);
 
 int WP11_AesGcm_GetTagBits(WP11_Session* session);
 int WP11_AesGcm_EncDataLen(WP11_Session* session);
