@@ -257,6 +257,12 @@ typedef struct WP11_CbcParams {
 } WP11_CbcParams;
 #endif
 
+#ifdef HAVE_AESCTR
+typedef struct WP11_CtrParams {
+    Aes aes;                           /* AES object from wolfCrypt           */
+} WP11_CtrParams;
+#endif
+
 #ifdef HAVE_AESGCM
 typedef struct WP11_GcmParams {
     unsigned char iv[WP11_MAX_GCM_NONCE_SZ];
@@ -327,6 +333,9 @@ struct WP11_Session {
 #ifndef NO_AES
     #ifdef HAVE_AES_CBC
         WP11_CbcParams cbc;            /* AES-CBC parameters                  */
+    #endif
+    #ifdef HAVE_AESCTR
+        WP11_CtrParams ctr;            /* AES-CTR parameters                  */
     #endif
     #ifdef HAVE_AESGCM
         WP11_GcmParams gcm;            /* AES-GCM parameters                  */
@@ -651,6 +660,12 @@ static void wp11_Session_Final(WP11_Session* session)
     if ((session->mechanism == CKM_AES_CBC ||
                       session->mechanism == CKM_AES_CBC_PAD) && session->init) {
         wc_AesFree(&session->params.cbc.aes);
+        session->init = 0;
+    }
+#endif
+#ifdef HAVE_AESCTR
+    if (session->mechanism == CKM_AES_CTR && session->init) {
+        wc_AesFree(&session->params.ctr.aes);
         session->init = 0;
     }
 #endif
@@ -5081,6 +5096,43 @@ int WP11_Session_SetCbcParams(WP11_Session* session, unsigned char* iv,
 }
 #endif /* HAVE_AES_CBC */
 
+#ifdef HAVE_AESCTR
+/**
+ * Set the parameters to use for an AES-CTR operation.
+ *
+ * @param session       [in]  Session object.
+ * @param ulCounterBits [in]  Number of bits of the counter block. wolfCrypt
+ *                            does not have a way of setting the counter bits.
+ * @param cb            [in]  Counter block.
+ * @param enc           [in]  Whether operation is encryption.
+ * @param object        [in]  AES key object.
+ * @return -ve on failure.
+ *           0 on success.
+ */
+int WP11_Session_SetCtrParams(WP11_Session* session, CK_ULONG ulCounterBits,
+                              CK_BYTE* cb, WP11_Object* object)
+{
+    int ret = 0;
+    WP11_CtrParams* ctr = &session->params.ctr;
+    WP11_Data* key;
+
+    if (ulCounterBits > 128 || ulCounterBits == 0)
+        return BAD_FUNC_ARG;
+
+    ret = wc_AesInit(&ctr->aes, NULL, session->devId);
+    if (ret == 0) {
+        if (object->onToken)
+            WP11_Lock_LockRO(object->lock);
+        key = &object->data.symmKey;
+        ret = wc_AesSetKey(&ctr->aes, key->data, key->len, cb, AES_ENCRYPTION);
+        if (object->onToken)
+            WP11_Lock_UnlockRO(object->lock);
+    }
+
+    return ret;
+}
+#endif /* HAVE_AESCTR */
+
 #ifdef HAVE_AESGCM
 /**
  * Set the parameters to use for an AES-GCM operation.
@@ -8605,6 +8657,79 @@ int WP11_AesCbcPad_DecryptFinal(unsigned char* dec, word32* decSz,
     return ret;
 }
 #endif /* HAVE_AES_CBC */
+
+#ifdef HAVE_AESCTR
+/**
+ * Encrypt or decrypt data with AES-CTR.
+ * Output buffer must be large enough to hold all data.
+ *
+ * @param  in     [in]      Input data (plain text for encryption, encrypted
+ *                          text for decryption).
+ * @param  inSz   [in]      Length of input data in bytes.
+ * @param  out    [out]     Buffer to hold output data (encrypted or decrypted).
+ * @param  outSz  [in,out]  On in, length of buffer in bytes. On out, length of
+ *                          output data in bytes.
+ * @param  session[in]      Session object holding CTR parameters.
+ * @return  -ve on encryption/decryption failure.
+ *          0 on success.
+ */
+int WP11_AesCtr_Do(unsigned char* in, word32 inSz, unsigned char* out,
+        word32* outSz, WP11_Session* session)
+{
+    int ret = 0;
+    WP11_CtrParams* ctr = &session->params.ctr;
+
+    ret = WP11_AesCtr_Update(in, inSz, out, outSz, session);
+
+    wc_AesFree(&ctr->aes);
+    session->init = 0;
+    return ret;
+}
+
+/**
+ * Encrypt or decrypt more data with AES-CTR.
+ *
+ * @param  in     [in]      Input data (plain text for encryption, encrypted
+ *                          text for decryption).
+ * @param  inSz   [in]      Length of input data in bytes.
+ * @param  out    [out]     Buffer to hold output data (encrypted or decrypted).
+ * @param  outSz  [in,out]  On in, length of buffer in bytes. On out, length of
+ *                          output data in bytes.
+ * @param  session[in]      Session object holding CTR parameters.
+ * @return  BUFFER_E when out buffer is too small.
+ *          0 on success.
+ */
+int WP11_AesCtr_Update(unsigned char* in, word32 inSz, unsigned char* out,
+        word32* outSz, WP11_Session* session)
+{
+    int ret = 0;
+    WP11_CtrParams* ctr = &session->params.ctr;
+
+    if (*outSz < inSz)
+        return BUFFER_E;
+    ret = wc_AesCtrEncrypt(&ctr->aes, out, in, inSz);
+    if (ret == 0)
+        *outSz = inSz;
+
+    return ret;
+}
+
+/**
+ * Finalize encryption or decryption with AES-CTR.
+ *
+ * @param  session[in]      Session object holding CTR parameters.
+ * @return  0 on success.
+ */
+int WP11_AesCtr_Final(WP11_Session* session)
+{
+    WP11_CtrParams* ctr = &session->params.ctr;
+
+    wc_AesFree(&ctr->aes);
+    session->init = 0;
+
+    return 0;
+}
+#endif /* HAVE_AESCTR */
 
 #ifdef HAVE_AESGCM
 /**

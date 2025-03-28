@@ -236,6 +236,7 @@ extern "C" {
 #define CKM_AES_ECB                           0x00001081UL
 #define CKM_AES_CBC                           0x00001082UL
 #define CKM_AES_CBC_PAD                       0x00001085UL
+#define CKM_AES_CTR                           0x00001086UL
 #define CKM_AES_GCM                           0x00001087UL
 #define CKM_AES_CCM                           0x00001088UL
 #define CKM_AES_CTS                           0x00001089UL
@@ -534,6 +535,11 @@ typedef struct CK_ECDH1_DERIVE_PARAMS {
 } CK_ECDH1_DERIVE_PARAMS;
 typedef CK_ECDH1_DERIVE_PARAMS* CK_ECDH1_DERIVE_PARAMS_PTR;
 
+typedef struct CK_AES_CTR_PARAMS {
+    CK_ULONG ulCounterBits;
+    CK_BYTE cb[16];
+} CK_AES_CTR_PARAMS;
+typedef CK_AES_CTR_PARAMS* CK_AES_CTR_PARAMS_PTR;
 
 typedef struct CK_GCM_PARAMS {
     CK_BYTE_PTR       pIv;
