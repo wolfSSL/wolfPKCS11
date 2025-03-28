@@ -252,6 +252,9 @@ static CK_MECHANISM_TYPE mechanismList[] = {
     CKM_AES_CBC,
     CKM_AES_CBC_PAD,
 #endif
+#ifdef HAVE_AESCTR
+    CKM_AES_CTR,
+#endif
 #ifdef HAVE_AESGCM
     CKM_AES_GCM,
 #endif
@@ -396,6 +399,12 @@ static CK_MECHANISM_INFO dhPkcsMechInfo = {
 #ifdef HAVE_AES_CBC
 /* Info on AES-CBC mechanism. */
 static CK_MECHANISM_INFO aesCbcMechInfo = {
+    16, 32, CKF_ENCRYPT | CKF_DECRYPT
+};
+#endif
+#ifdef HAVE_AESCTR
+/* Info on AES-CTR mechanism. */
+static CK_MECHANISM_INFO aesCtrMechInfo = {
     16, 32, CKF_ENCRYPT | CKF_DECRYPT
 };
 #endif
@@ -551,6 +560,11 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
         case CKM_AES_CBC_PAD:
         case CKM_AES_CBC:
             XMEMCPY(pInfo, &aesCbcMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifdef HAVE_AESCTR
+        case CKM_AES_CTR:
+            XMEMCPY(pInfo, &aesCtrMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
 #endif
 #ifdef HAVE_AESGCM
