@@ -4879,8 +4879,6 @@ void WP11_Session_SetMechanism(WP11_Session* session,
     session->mechanism = mechanism;
 }
 
-#ifndef NO_RSA
-#if !defined(WC_NO_RSA_OAEP) || defined(WC_RSA_PSS)
 /**
  * Convert the digest mechanism to a hash type for wolfCrypt.
  *
@@ -4895,19 +4893,30 @@ static int wp11_hash_type(CK_MECHANISM_TYPE hashMech,
     int ret = 0;
 
     switch (hashMech) {
+        case CKM_MD5:
+            *hashType = WC_HASH_TYPE_MD5;
+            break;
         case CKM_SHA1:
             *hashType = WC_HASH_TYPE_SHA;
             break;
         case CKM_SHA224:
+        case CKM_SHA224_RSA_PKCS:
+        case CKM_SHA224_RSA_PKCS_PSS:
             *hashType = WC_HASH_TYPE_SHA224;
             break;
         case CKM_SHA256:
+        case CKM_SHA256_RSA_PKCS:
+        case CKM_SHA256_RSA_PKCS_PSS:
             *hashType = WC_HASH_TYPE_SHA256;
             break;
         case CKM_SHA384:
+        case CKM_SHA384_RSA_PKCS:
+        case CKM_SHA384_RSA_PKCS_PSS:
             *hashType = WC_HASH_TYPE_SHA384;
             break;
         case CKM_SHA512:
+        case CKM_SHA512_RSA_PKCS:
+        case CKM_SHA512_RSA_PKCS_PSS:
             *hashType = WC_HASH_TYPE_SHA512;
             break;
         default:
@@ -4917,6 +4926,9 @@ static int wp11_hash_type(CK_MECHANISM_TYPE hashMech,
 
     return ret;
 }
+
+#ifndef NO_RSA
+#if !defined(WC_NO_RSA_OAEP) || defined(WC_RSA_PSS)
 
 /**
  * Convert the mask generation function id to a wolfCrypt MGF id.
@@ -7534,6 +7546,61 @@ int WP11_RsaPkcs15_Sign(unsigned char* encHash, word32 encHashLen,
     return ret;
 }
 
+
+/**
+ * SHA, PKCS#1.5 and sign encoded hash with private key.
+ *
+ * @param  encHash     [in]      Encoded hash to sign.
+ * @param  encHashLen  [in]      Length of encoded hash.
+ * @param  sig         [in]      Buffer to hold signature data.
+ * @param  sigLen      [in,out]  On in, length of buffer.
+ *                               On out, length data in buffer.
+ * @param  priv        [in]      Private key object.
+ * @param  slot        [in]      Slot operation is performed on.
+ * @param  mechanism   [in]      The mechanism to use.
+ * @return  RSA_BUFFER_E or BUFFER_E when sigLen is too small.
+ *          Other -ve when signing fails.
+ *          0 on success.
+ */
+int WP11_Sha_RsaPkcs15_Sign(unsigned char* encHash, word32 encHashLen,
+    unsigned char* sig, word32* sigLen, WP11_Object* priv,
+    WP11_Slot* slot, CK_MECHANISM_TYPE mechanism)
+{
+    enum wc_HashType hashType;
+    int ret;
+    unsigned char outHash[WC_MAX_DIGEST_SIZE];
+    word32 outHashLen = WC_MAX_DIGEST_SIZE;
+    WC_RNG rng;
+
+    ret = wp11_hash_type(mechanism, &hashType);
+    if (ret != 0) {
+        return CKR_MECHANISM_INVALID;
+    }
+
+    outHashLen = wc_HashGetDigestSize(hashType);
+
+    ret = wc_Hash(hashType, encHash, encHashLen, outHash, outHashLen);
+
+    if (priv->onToken)
+        WP11_Lock_LockRO(priv->lock);
+    if (ret == 0) {
+        ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
+    }
+    if (ret == 0) {
+        ret = wc_RsaSSL_Sign(outHash, outHashLen, sig, *sigLen,
+                                    &priv->data.rsaKey, &rng);
+        Rng_Free(&rng);
+    }
+    if (priv->onToken)
+    WP11_Lock_UnlockRO(priv->lock);
+
+    if (ret > 0)
+    *sigLen = ret;
+
+    return ret;
+}
+
+
 /**
  * PKCS#1.5 verify encoded hash with public key.
  *
@@ -7569,6 +7636,62 @@ int WP11_RsaPkcs15_Verify(unsigned char* sig, word32 sigLen,
     if (ret == 0) {
         *stat = encHashLen == decSigLen &&
                                        XMEMCMP(encHash, decSig, decSigLen) == 0;
+    }
+
+    return ret;
+}
+
+
+/**
+ * PKCS#1.5 verify encoded and SHA hashed message with public key.
+ *
+ * @param  sig         [in]   Signature data.
+ * @param  sigLen      [in]   Length of buffer.
+ * @param  encHash     [in]   Encoded hash to verify.
+ * @param  encHashLen  [in]   Length of encoded hash.
+ * @param  stat        [out]  Status of verification. 1 on success, otherwise 0.
+ * @param  pub         [in]   Public key object.
+ * @param  mechanism   [in]   The mechanism to use
+ * @return  -ve when verifying fails.
+ *          0 on success.
+ */
+int WP11_Sha_RsaPkcs15_Verify(unsigned char* sig, word32 sigLen,
+    unsigned char* encHash, word32 encHashLen, int* stat,
+    WP11_Object* pub, CK_MECHANISM_TYPE mechanism)
+{
+    byte decSig[RSA_MAX_SIZE / 8];
+    word32 decSigLen = 0;
+    enum wc_HashType hashType;
+    int ret;
+    unsigned char outHash[WC_MAX_DIGEST_SIZE];
+    word32 outHashLen = WC_MAX_DIGEST_SIZE;
+
+    *stat = 0;
+
+    ret = wp11_hash_type(mechanism, &hashType);
+    if (ret != 0) {
+        return CKR_MECHANISM_INVALID;
+    }
+
+    outHashLen = wc_HashGetDigestSize(hashType);
+
+    ret = wc_Hash(hashType, encHash, encHashLen, outHash, outHashLen);
+
+    if (ret == 0) {
+        if (pub->onToken)
+            WP11_Lock_LockRO(pub->lock);
+        decSigLen = ret = wc_RsaSSL_Verify(sig, sigLen, decSig,
+                                            sizeof(decSig), &pub->data.rsaKey);
+        if (pub->onToken)
+            WP11_Lock_UnlockRO(pub->lock);
+    }
+
+    if (ret > 0)
+    ret = 0;
+
+    if (ret == 0) {
+    *stat = outHashLen == decSigLen &&
+                    XMEMCMP(outHash, decSig, decSigLen) == 0;
     }
 
     return ret;
@@ -7615,6 +7738,61 @@ int WP11_RsaPKCSPSS_Sign(unsigned char* hash, word32 hashLen,
 
     return ret;
 }
+
+/**
+ * PKCS#1 PSS sign SHA'd data with private key.
+ *
+ * @param  hash       [in]      Hash to sign.
+ * @param  hashLen    [in]      Length of hash.
+ * @param  sig        [in]      Buffer to hold signature data.
+ * @param  sigLen     [in]      Length of buffer.
+ * @param  sigLen     [in,out]  On in, length of buffer.
+ *                              On out, length data in buffer.
+ * @param  priv       [in]      Private key object.
+ * @param  session    [in]      Session object holding PSS parameters.
+ * @param  mechanism  [in]      The mechanism to sign
+ * @return  RSA_BUFFER_E or BUFFER_E when sigLen is too small.
+ *          Other -ve when signing fails.
+ *          0 on success.
+ */
+int WP11_Sha_RsaPKCSPSS_Sign(unsigned char* hash, word32 hashLen,
+    unsigned char* sig, word32* sigLen,
+    WP11_Object* priv, WP11_Session* session, CK_MECHANISM_TYPE mechanism)
+{
+    enum wc_HashType hashType;
+    int ret;
+    unsigned char outHash[WC_MAX_DIGEST_SIZE];
+    word32 outHashLen = WC_MAX_DIGEST_SIZE;
+    WP11_PssParams* pss = &session->params.pss;
+    WP11_Slot* slot = WP11_Session_GetSlot(session);
+    WC_RNG rng;
+
+    ret = wp11_hash_type(mechanism, &hashType);
+    if (ret != 0) {
+        return CKR_MECHANISM_INVALID;
+    }
+
+    outHashLen = wc_HashGetDigestSize(hashType);
+
+    ret = wc_Hash(hashType, hash, hashLen, outHash, outHashLen);
+
+    if (priv->onToken)
+        WP11_Lock_LockRO(priv->lock);
+    ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
+    if (ret == 0) {
+        ret = wc_RsaPSS_Sign_ex(outHash, outHashLen, sig, *sigLen,
+                    pss->hashType, pss->mgf, pss->saltLen, &priv->data.rsaKey,
+                    &rng);
+        Rng_Free(&rng);
+    }
+    if (priv->onToken)
+        WP11_Lock_UnlockRO(priv->lock);
+    if (ret > 0)
+        *sigLen = ret;
+
+    return ret;
+}
+
 
 /**
  * PKCS#1 PSS verify encoded hash with public key.
@@ -7666,6 +7844,73 @@ int WP11_RsaPKCSPSS_Verify(unsigned char* sig, word32 sigLen,
 
     return ret;
 }
+
+/**
+ * PKCS#1 PSS verify encoded and SHA hashed message with public key.
+ *
+ * @param  sig        [in]   Signature data.
+ * @param  sigLen     [in]   Length of buffer.
+ * @param  hash       [in]   Encoded hash to verify.
+ * @param  hashLen    [in]   Length of encoded hash.
+ * @param  stat       [out]  Status of verification. 1 on success, otherwise 0.
+ * @param  pub        [in]   Public key object.
+ * @param  session    [in]   Session object holding PSS parameters.
+ * @param  mechanism  [in]   The mechanism to use
+ * @return  -ve when verifying fails.
+ *          0 on success.
+ */
+int WP11_Sha_RsaPKCSPSS_Verify(unsigned char* sig, word32 sigLen,
+    unsigned char* hash, word32 hashLen, int* stat,
+    WP11_Object* pub, WP11_Session* session, CK_MECHANISM_TYPE mechanism)
+{
+    byte decSig[RSA_MAX_SIZE / 8];
+    int decSz = 0;
+    enum wc_HashType hashType;
+    int ret;
+    unsigned char outHash[WC_MAX_DIGEST_SIZE];
+    word32 outHashLen = WC_MAX_DIGEST_SIZE;
+    WP11_PssParams* pss = &session->params.pss;
+
+    *stat = 1;
+
+    ret = wp11_hash_type(mechanism, &hashType);
+    if (ret != 0) {
+        return CKR_MECHANISM_INVALID;
+    }
+
+    outHashLen = wc_HashGetDigestSize(hashType);
+
+    ret = wc_Hash(hashType, hash, hashLen, outHash, outHashLen);
+
+    if (ret == 0) {
+        if (pub->onToken)
+        WP11_Lock_LockRO(pub->lock);
+        decSz = ret = wc_RsaPSS_Verify_ex(sig, sigLen, decSig,
+                sizeof(decSig), pss->hashType, pss->mgf, pss->saltLen,
+                &pub->data.rsaKey);
+        if (pub->onToken)
+        WP11_Lock_UnlockRO(pub->lock);
+    }
+
+    if (ret >= 0)
+    ret = 0;
+    else if (ret == BAD_PADDING_E) {
+    *stat = 0;
+    ret = 0;
+    }
+
+    if (ret == 0) {
+    ret = wc_RsaPSS_CheckPadding_ex(outHash, outHashLen, decSig, decSz,
+                    pss->hashType, pss->saltLen, 0);
+    if (ret == BAD_PADDING_E) {
+    *stat = 0;
+    ret = 0;
+    }
+    }
+
+    return ret;
+}
+
 #endif /* WC_RSA_PSS */
 #endif /* !NO_RSA */
 
@@ -9088,46 +9333,6 @@ int WP11_AesEcb_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
 #endif /* !NO_AES */
 
 /**
- * Convert the Digest mechanism to a wolfCrypt hash type.
- *
- * @param  digestMech  [in]   Digest mechanism.
- * @param  hashType    [out]  Hash type.
- * @return  BAD_FUNC_ARG when mechanism is not supported.
- *          0 on success.
- */
-static int wp11_digest_hash_type(CK_MECHANISM_TYPE digestMech, int* hashType)
-{
-    int ret = 0;
-
-    switch (digestMech) {
-        case CKM_MD5:
-            *hashType = WC_HASH_TYPE_MD5;
-            break;
-        case CKM_SHA1:
-            *hashType = WC_HASH_TYPE_SHA;
-            break;
-        case CKM_SHA224:
-            *hashType = WC_HASH_TYPE_SHA224;
-            break;
-        case CKM_SHA256:
-            *hashType = WC_HASH_TYPE_SHA256;
-            break;
-        case CKM_SHA384:
-            *hashType = WC_HASH_TYPE_SHA384;
-            break;
-        case CKM_SHA512:
-            *hashType = WC_HASH_TYPE_SHA512;
-            break;
-        default:
-            ret = CKR_MECHANISM_INVALID;
-            break;
-    }
-
-    return ret;
-}
-
-
-/**
  * Initialize the Digest operation
  *
  * @param mechanism   [in] Digest mechanism.
@@ -9139,11 +9344,19 @@ static int wp11_digest_hash_type(CK_MECHANISM_TYPE digestMech, int* hashType)
 int WP11_Digest_Init(CK_MECHANISM_TYPE mechanism, WP11_Session* session)
 {
     int ret = 0;
-    int hashType = WC_HASH_TYPE_NONE;
+    enum wc_HashType hashType = WC_HASH_TYPE_NONE;
 
     WP11_Digest* digest = &session->params.digest;
 
-    ret = wp11_digest_hash_type(mechanism, &hashType);
+#ifndef NO_SHA256
+    ret = wp11_hash_type(mechanism, &hashType);
+    if (ret == BAD_FUNC_ARG) {
+        ret = CKR_MECHANISM_INVALID;
+    }
+#else
+    (void) mechanism;
+    ret = CKR_MECHANISM_INVALID;
+#endif
 
     if (ret == 0) {
         digest->hashType = hashType;

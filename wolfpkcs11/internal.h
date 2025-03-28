@@ -340,6 +340,23 @@ int WP11_RsaPKCSPSS_Verify(unsigned char* sig, word32 sigLen,
                            unsigned char* hash, word32 hashLen, int* stat,
                            WP11_Object* pub, WP11_Session* session);
 
+int WP11_Sha_RsaPkcs15_Verify(unsigned char* sig, word32 sigLen,
+                              unsigned char* encHash, word32 encHashLen,
+                              int* stat, WP11_Object* pub,
+                              CK_MECHANISM_TYPE mechanism);
+int WP11_Sha_RsaPKCSPSS_Verify(unsigned char* sig, word32 sigLen,
+                               unsigned char* hash, word32 hashLen, int* stat,
+                               WP11_Object* pub, WP11_Session* session,
+                               CK_MECHANISM_TYPE mechanism);
+int WP11_Sha_RsaPkcs15_Sign(unsigned char* encHash, word32 encHashLen,
+                            unsigned char* sig, word32* sigLen,
+                            WP11_Object* priv, WP11_Slot* slot,
+                            CK_MECHANISM_TYPE mechanism);
+int WP11_Sha_RsaPKCSPSS_Sign(unsigned char* hash, word32 hashLen,
+                             unsigned char* sig, word32* sigLen,
+                             WP11_Object* priv, WP11_Session* session,
+                             CK_MECHANISM_TYPE mechanism);
+
 int WP11_Ec_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
                             WP11_Slot* slot);
 int WP11_Ec_SigLen(WP11_Object* key);

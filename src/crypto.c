@@ -2707,6 +2707,26 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
             }
             init = WP11_INIT_RSA_PKCS_SIGN;
             break;
+    #ifndef NO_SHA256
+        case CKM_SHA256_RSA_PKCS:
+    #endif
+    #ifdef WOLFSSL_SHA224
+        case CKM_SHA224_RSA_PKCS:
+    #endif
+    #ifdef WOLFSSL_SHA384
+        case CKM_SHA384_RSA_PKCS:
+    #endif
+    #ifdef WOLFSSL_SHA512
+        case CKM_SHA512_RSA_PKCS:
+    #endif
+            if (type != CKK_RSA)
+                return CKR_KEY_TYPE_INCONSISTENT;
+            if (pMechanism->pParameter != NULL ||
+                pMechanism->ulParameterLen != 0) {
+                    return CKR_MECHANISM_PARAM_INVALID;
+            }
+            init = WP11_INIT_RSA_PKCS_SIGN;
+            break;
     #ifdef WC_RSA_PSS
         case CKM_RSA_PKCS_PSS: {
             CK_RSA_PKCS_PSS_PARAMS* params;
@@ -2726,6 +2746,34 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
             init = WP11_INIT_RSA_PKCS_PSS_SIGN;
             break;
         }
+        #ifndef NO_SHA256
+        case CKM_SHA256_RSA_PKCS_PSS:
+        #endif
+        #ifdef WOLFSSL_SHA224
+        case CKM_SHA224_RSA_PKCS_PSS:
+        #endif
+        #ifdef WOLFSSL_SHA384
+        case CKM_SHA384_RSA_PKCS_PSS:
+        #endif
+        #ifdef WOLFSSL_SHA512
+        case CKM_SHA512_RSA_PKCS_PSS:
+        #endif
+            CK_RSA_PKCS_PSS_PARAMS* params;
+
+            if (type != CKK_RSA)
+                return CKR_KEY_TYPE_INCONSISTENT;
+            if (pMechanism->pParameter == NULL)
+                return CKR_MECHANISM_PARAM_INVALID;
+            if (pMechanism->ulParameterLen != sizeof(CK_RSA_PKCS_PSS_PARAMS))
+                return CKR_MECHANISM_PARAM_INVALID;
+
+            params = (CK_RSA_PKCS_PSS_PARAMS*)pMechanism->pParameter;
+            ret = WP11_Session_SetPssParams(session, params->hashAlg,
+                                                params->mgf, (int)params->sLen);
+            if (ret != 0)
+                return CKR_MECHANISM_PARAM_INVALID;
+            init = WP11_INIT_RSA_PKCS_PSS_SIGN;
+            break;
     #endif
 #endif
 #ifdef HAVE_ECC
@@ -2864,6 +2912,35 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                                                  WP11_Session_GetSlot(session));
             *pulSignatureLen = sigLen;
             break;
+    #ifndef NO_SHA256
+        case CKM_SHA256_RSA_PKCS:
+    #endif
+    #ifdef WOLFSSL_SHA224
+        case CKM_SHA224_RSA_PKCS:
+    #endif
+    #ifdef WOLFSSL_SHA384
+        case CKM_SHA384_RSA_PKCS:
+    #endif
+    #ifdef WOLFSSL_SHA512
+        case CKM_SHA512_RSA_PKCS:
+    #endif
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_RSA_PKCS_SIGN))
+                return CKR_OPERATION_NOT_INITIALIZED;
+
+            sigLen = WP11_Rsa_KeyLen(obj);
+            if (pSignature == NULL) {
+                *pulSignatureLen = sigLen;
+                return CKR_OK;
+            }
+            if (sigLen > (word32)*pulSignatureLen)
+                return CKR_BUFFER_TOO_SMALL;
+
+            ret = WP11_Sha_RsaPkcs15_Sign(pData, (int)ulDataLen, pSignature,
+                                          &sigLen, obj,
+                                          WP11_Session_GetSlot(session),
+                                          mechanism);
+            *pulSignatureLen = sigLen;
+            break;
     #ifdef WC_RSA_PSS
         case CKM_RSA_PKCS_PSS:
             if (!WP11_Session_IsOpInitialized(session,
@@ -2881,6 +2958,35 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 
             ret = WP11_RsaPKCSPSS_Sign(pData, (int)ulDataLen, pSignature,
                                                          &sigLen, obj, session);
+            *pulSignatureLen = sigLen;
+            break;
+        #ifndef NO_SHA256
+        case CKM_SHA256_RSA_PKCS_PSS:
+        #endif
+        #ifdef WOLFSSL_SHA224
+        case CKM_SHA224_RSA_PKCS_PSS:
+        #endif
+        #ifdef WOLFSSL_SHA384
+        case CKM_SHA384_RSA_PKCS_PSS:
+        #endif
+        #ifdef WOLFSSL_SHA512
+        case CKM_SHA512_RSA_PKCS_PSS:
+        #endif
+            if (!WP11_Session_IsOpInitialized(session,
+                WP11_INIT_RSA_PKCS_PSS_SIGN)) {
+                return CKR_OPERATION_NOT_INITIALIZED;
+            }
+
+            sigLen = WP11_Rsa_KeyLen(obj);
+            if (pSignature == NULL) {
+                *pulSignatureLen = sigLen;
+                return CKR_OK;
+            }
+            if (sigLen > (word32)*pulSignatureLen)
+                return CKR_BUFFER_TOO_SMALL;
+
+            ret = WP11_Sha_RsaPKCSPSS_Sign(pData, (int)ulDataLen, pSignature,
+                                &sigLen, obj, session, mechanism);
             *pulSignatureLen = sigLen;
             break;
     #endif
@@ -3239,6 +3345,26 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
             }
             init = WP11_INIT_RSA_PKCS_VERIFY;
             break;
+    #ifndef NO_SHA256
+        case CKM_SHA256_RSA_PKCS:
+    #endif
+    #ifdef WOLFSSL_SHA224
+        case CKM_SHA224_RSA_PKCS:
+    #endif
+    #ifdef WOLFSSL_SHA384
+        case CKM_SHA384_RSA_PKCS:
+    #endif
+    #ifdef WOLFSSL_SHA512
+        case CKM_SHA512_RSA_PKCS:
+    #endif
+            if (type != CKK_RSA)
+                return CKR_KEY_TYPE_INCONSISTENT;
+            if (pMechanism->pParameter != NULL ||
+                pMechanism->ulParameterLen != 0) {
+                return CKR_MECHANISM_PARAM_INVALID;
+            }
+            init = WP11_INIT_RSA_PKCS_VERIFY;
+            break;
     #ifdef WC_RSA_PSS
         case CKM_RSA_PKCS_PSS: {
             CK_RSA_PKCS_PSS_PARAMS* params;
@@ -3258,6 +3384,34 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
             init = WP11_INIT_RSA_PKCS_PSS_VERIFY;
             break;
         }
+        #ifndef NO_SHA256
+        case CKM_SHA256_RSA_PKCS_PSS:
+        #endif
+        #ifdef WOLFSSL_SHA224
+        case CKM_SHA224_RSA_PKCS_PSS:
+        #endif
+        #ifdef WOLFSSL_SHA384
+        case CKM_SHA384_RSA_PKCS_PSS:
+        #endif
+        #ifdef WOLFSSL_SHA512
+        case CKM_SHA512_RSA_PKCS_PSS:
+        #endif
+            CK_RSA_PKCS_PSS_PARAMS* params;
+
+            if (type != CKK_RSA)
+                return CKR_KEY_TYPE_INCONSISTENT;
+            if (pMechanism->pParameter == NULL)
+                return CKR_MECHANISM_PARAM_INVALID;
+            if (pMechanism->ulParameterLen != sizeof(CK_RSA_PKCS_PSS_PARAMS))
+                return CKR_MECHANISM_PARAM_INVALID;
+
+            params = (CK_RSA_PKCS_PSS_PARAMS*)pMechanism->pParameter;
+            ret = WP11_Session_SetPssParams(session, params->hashAlg,
+                                                params->mgf, (int)params->sLen);
+            if (ret != 0)
+                return CKR_MECHANISM_PARAM_INVALID;
+            init = WP11_INIT_RSA_PKCS_PSS_VERIFY;
+            break;
     #endif
 #endif
 #ifdef HAVE_ECC
@@ -3376,6 +3530,26 @@ CK_RV C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             ret = WP11_RsaPkcs15_Verify(pSignature, (int)ulSignatureLen, pData,
                                                     (int)ulDataLen, &stat, obj);
             break;
+    #ifndef NO_SHA256
+        case CKM_SHA256_RSA_PKCS:
+    #endif
+    #ifdef WOLFSSL_SHA224
+        case CKM_SHA224_RSA_PKCS:
+    #endif
+    #ifdef WOLFSSL_SHA384
+        case CKM_SHA384_RSA_PKCS:
+    #endif
+    #ifdef WOLFSSL_SHA512
+        case CKM_SHA512_RSA_PKCS:
+    #endif
+            if (!WP11_Session_IsOpInitialized(session,
+                WP11_INIT_RSA_PKCS_VERIFY)) {
+                return CKR_OPERATION_NOT_INITIALIZED;
+            }
+
+            ret = WP11_Sha_RsaPkcs15_Verify(pSignature, (int)ulSignatureLen,
+                pData, (int)ulDataLen, &stat, obj, mechanism);
+            break;
     #ifdef WC_RSA_PSS
         case CKM_RSA_PKCS_PSS:
             if (!WP11_Session_IsOpInitialized(session,
@@ -3385,6 +3559,26 @@ CK_RV C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 
             ret = WP11_RsaPKCSPSS_Verify(pSignature, (int)ulSignatureLen, pData,
                                            (int)ulDataLen, &stat, obj, session);
+            break;
+        #ifndef NO_SHA256
+        case CKM_SHA256_RSA_PKCS_PSS:
+        #endif
+        #ifdef WOLFSSL_SHA224
+        case CKM_SHA224_RSA_PKCS_PSS:
+        #endif
+        #ifdef WOLFSSL_SHA384
+        case CKM_SHA384_RSA_PKCS_PSS:
+        #endif
+        #ifdef WOLFSSL_SHA512
+        case CKM_SHA512_RSA_PKCS_PSS:
+        #endif
+            if (!WP11_Session_IsOpInitialized(session,
+                WP11_INIT_RSA_PKCS_PSS_VERIFY)) {
+                return CKR_OPERATION_NOT_INITIALIZED;
+            }
+
+            ret = WP11_Sha_RsaPKCSPSS_Verify(pSignature, (int)ulSignatureLen,
+                pData, (int)ulDataLen, &stat, obj, session, mechanism);
             break;
     #endif
 #endif
