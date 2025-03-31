@@ -43,7 +43,8 @@
 
 #define CHECK_KEYTYPE(kt) \
    (kt == CKK_RSA || kt == CKK_EC || kt == CKK_DH || \
-    kt == CKK_AES || kt == CKK_GENERIC_SECRET) ? CKR_OK : CKR_ATTRIBUTE_VALUE_INVALID
+    kt == CKK_AES || kt == CKK_HKDF || kt == CKK_GENERIC_SECRET) ? \
+    CKR_OK : CKR_ATTRIBUTE_VALUE_INVALID
 
 #define CHECK_KEYCLASS(kc) \
     (kc == CKO_PRIVATE_KEY || kc == CKO_PUBLIC_KEY || kc == CKO_SECRET_KEY)? CKR_OK : CKR_ATTRIBUTE_VALUE_INVALID
@@ -368,6 +369,9 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
                 cnt = DH_KEY_PARAMS_CNT;
                 break;
         #endif
+        #ifdef WOLFPKCS11_HKDF
+            case CKK_HKDF:
+        #endif
         #ifndef NO_AES
             case CKK_AES:
         #endif
@@ -398,8 +402,8 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
     }
     else {
         /* Set the value and length of key specific attributes
-         * Old key data is cleared.
-         */
+        * Old key data is cleared.
+        */
         switch (type) {
     #ifndef NO_RSA
             case CKK_RSA:
@@ -415,6 +419,9 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
             case CKK_DH:
                 ret = WP11_Object_SetDhKey(obj, data, len);
                 break;
+    #endif
+    #ifdef WOLFPKCS11_HKDF
+            case CKK_HKDF:
     #endif
     #ifndef NO_AES
             case CKK_AES:
@@ -698,6 +705,12 @@ static CK_RV CreateObject(WP11_Session* session, CK_ATTRIBUTE_PTR pTemplate,
             return CKR_ATTRIBUTE_VALUE_INVALID;
         }
     }
+    else if (objectClass == CKO_DATA) {
+        FindAttributeType(pTemplate, ulCount, CKA_VALUE, &attr);
+        if (attr == NULL)
+            return CKR_TEMPLATE_INCOMPLETE;
+        objType = CKK_HKDF;
+    }
     else {
         FindAttributeType(pTemplate, ulCount, CKA_KEY_TYPE, &attr);
         if (attr == NULL)
@@ -709,7 +722,8 @@ static CK_RV CreateObject(WP11_Session* session, CK_ATTRIBUTE_PTR pTemplate,
         objType = *(CK_ULONG*)attr->pValue;
 
         if (objType != CKK_RSA && objType != CKK_EC && objType != CKK_DH &&
-            objType != CKK_AES && objType != CKK_GENERIC_SECRET) {
+            objType != CKK_AES && objType != CKK_HKDF &&
+            objType != CKK_GENERIC_SECRET) {
             return CKR_ATTRIBUTE_VALUE_INVALID;
         }
     }
@@ -5522,6 +5536,7 @@ static int SymmKeyLen(WP11_Object* obj, word32 len, word32* symmKeyLen)
 
     switch (WP11_Object_GetType(obj)) {
         case CKK_AES:
+        case CKK_HKDF:
         case CKK_GENERIC_SECRET:
         default:
             if (valueLen > 0 && valueLen <= len)
@@ -5568,7 +5583,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
     CK_RV rv = CKR_OK;
     WP11_Session* session;
     WP11_Object* obj = NULL;
-#if defined(HAVE_ECC) || !defined(NO_DH)
+#if defined(HAVE_ECC) || !defined(NO_DH) || defined(WOLFPKCS11_HKDF)
     byte* derivedKey = NULL;
     word32 keyLen;
     word32 symmKeyLen;
@@ -5616,6 +5631,41 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
                 rv = CKR_FUNCTION_FAILED;
             break;
         }
+#endif
+#ifdef WOLFPKCS11_HKDF
+        case CKM_HKDF_DERIVE:
+        case CKM_HKDF_DATA:
+            CK_HKDF_PARAMS_PTR kdfParams;
+            CK_ATTRIBUTE *lenAttr = NULL;
+
+            if (pMechanism->pParameter == NULL)
+                return CKR_MECHANISM_PARAM_INVALID;
+            if (pMechanism->ulParameterLen != sizeof(CK_HKDF_PARAMS))
+                return CKR_MECHANISM_PARAM_INVALID;
+            kdfParams = (CK_HKDF_PARAMS_PTR)pMechanism->pParameter;
+            if (!kdfParams->bExpand && !kdfParams->bExtract)
+                return CKR_MECHANISM_PARAM_INVALID;
+
+            FindAttributeType(pTemplate, ulAttributeCount, CKA_VALUE_LEN,
+                &lenAttr);
+            if (kdfParams->bExpand) {
+                if (!lenAttr) {
+                    return CKR_MECHANISM_PARAM_INVALID;
+                }
+                keyLen = *(CK_ULONG*)lenAttr->pValue;
+            }
+            else {
+                keyLen = WC_MAX_DIGEST_SIZE;
+            }
+            derivedKey = (byte*)XMALLOC(keyLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            if (derivedKey == NULL)
+                return CKR_DEVICE_MEMORY;
+
+            ret = WP11_KDF_Derive(session, kdfParams, derivedKey, &keyLen, obj);
+
+            if (ret != 0)
+                rv = CKR_FUNCTION_FAILED;
+            break;
 #endif
 #ifndef NO_DH
         case CKM_DH_PKCS_DERIVE:
@@ -5668,7 +5718,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
             return CKR_MECHANISM_INVALID;
     }
 
-#if defined(HAVE_ECC) || !defined(NO_DH) || \
+#if defined(HAVE_ECC) || !defined(NO_DH) || defined(WOLFPKCS11_HKDF) || \
     (!defined(NO_AES) && defined(HAVE_AES_CBC))
     if (ret == 0) {
         rv = CreateObject(session, pTemplate, ulAttributeCount, &obj);
