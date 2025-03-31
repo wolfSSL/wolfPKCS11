@@ -10826,6 +10826,589 @@ static CK_RV test_x509_find_by_type(void* args)
 }
 
 
+#ifdef WOLFPKCS11_HKDF
+static CK_RV test_hkdf_derive_extract_then_expand_salt_data(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE hDerivedKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hExpandKey = CK_INVALID_HANDLE;
+
+    CK_BYTE salt_bytes[] = {
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0a, 0x0b, 0x0c
+    };
+    CK_BYTE expected_prk[] = {
+        0x07, 0x77, 0x09, 0x36, 0x2c, 0x2e, 0x32, 0xdf,
+        0x0d, 0xdc, 0x3f, 0x0d, 0xc4, 0x7b, 0xba, 0x63,
+        0x90, 0xb6, 0xc7, 0x3b, 0xb5, 0x0f, 0x9c, 0x31,
+        0x22, 0xec, 0x84, 0x4a, 0xd7, 0xc2, 0xb3, 0xe5
+    };
+    CK_BYTE ikm_tc1_hex[] = {
+        0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b,
+        0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b,
+        0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b
+    };
+    CK_BYTE expected_okm[] = {
+        0x3c, 0xb2, 0x5f, 0x25, 0xfa, 0xac, 0xd5, 0x7a,
+        0x90, 0x43, 0x4f, 0x64, 0xd0, 0x36, 0x2f, 0x2a,
+        0x2d, 0x2d, 0x0a, 0x90, 0xcf, 0x1a, 0x5a, 0x4c,
+        0x5d, 0xb0, 0x2d, 0x56, 0xec, 0xc4, 0xc5, 0xbf,
+        0x34, 0x00, 0x72, 0x08, 0xd5, 0xb8, 0x87, 0x18,
+        0x58, 0x65
+    };
+    CK_BYTE info_bytes[] = {
+        0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7,
+        0xf8, 0xf9
+    };
+    CK_ULONG ikm_len = sizeof(ikm_tc1_hex);
+    CK_BYTE derived_value[32];
+    CK_BYTE derived_value2[42];
+    CK_ULONG derived_len = sizeof(derived_value);
+    CK_ULONG derived_len2 = sizeof(derived_value2);
+    CK_OBJECT_HANDLE hBaseKey1 = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE templateB = {CKA_VALUE, NULL_PTR, 0};
+
+    CK_HKDF_PARAMS params = {
+        CK_TRUE,
+        CK_FALSE,
+        CKM_SHA256_HMAC,
+        CKF_HKDF_SALT_DATA,
+        salt_bytes,
+        sizeof(salt_bytes),
+        CK_INVALID_HANDLE,
+        NULL_PTR,
+        0
+    };
+
+    CK_MECHANISM mechanism = { CKM_HKDF_DERIVE, &params, sizeof(params) };
+
+    /* Template for the derived key (PRK) */
+    CK_ATTRIBUTE template[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
+        {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
+        {CKA_VALUE_LEN, &derived_len, sizeof(derived_len)}
+    };
+    CK_ULONG template_count = sizeof(template) / sizeof(template[0]);
+
+    CK_ATTRIBUTE templateExpand[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
+        {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
+        {CKA_VALUE_LEN, &derived_len2, sizeof(derived_len2)}
+    };
+    CK_ULONG templateExpand_count =
+        sizeof(templateExpand) / sizeof(templateExpand[0]);
+
+    CK_HKDF_PARAMS paramsExpand = {
+        CK_FALSE,
+        CK_TRUE,
+        CKM_SHA256_HMAC,
+        CKF_HKDF_SALT_NULL,
+        NULL_PTR,
+        0,
+        CK_INVALID_HANDLE,
+        info_bytes,
+        sizeof(info_bytes)
+    };
+
+    CK_MECHANISM mechanismExpand =
+        { CKM_HKDF_DERIVE, &paramsExpand, sizeof(paramsExpand) };
+
+    CK_ATTRIBUTE templateSecret[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_TOKEN, &ckFalse, sizeof(ckFalse)},
+        {CKA_PRIVATE, &ckTrue, sizeof(ckTrue)},
+        {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
+        {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
+        {CKA_VALUE, ikm_tc1_hex, ikm_len},
+        {CKA_VALUE_LEN, &ikm_len, sizeof(ikm_len)},
+        {CKA_DERIVE, &ckTrue, sizeof(ckTrue)}
+    };
+    CK_ULONG templateSecretCount =
+        sizeof(templateSecret) / sizeof(templateSecret[0]);
+
+    ret = funcList->C_CreateObject(session, templateSecret, templateSecretCount,
+        &hBaseKey1);
+    CHECK_CKR(ret, "Create object failed");
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mechanism, hBaseKey1, template,
+            template_count, &hDerivedKey);
+        CHECK_CKR(ret, "C_DeriveKey failed");
+    }
+
+    /* Verify the derived key value */
+    if (ret == CKR_OK) {
+        templateB.ulValueLen = 0;
+        templateB.pValue = NULL_PTR;
+        ret = funcList->C_GetAttributeValue(session, hDerivedKey, &templateB,
+            1);
+        if (ret == CKR_BUFFER_TOO_SMALL)
+            ret = CKR_OK;
+        CHECK_CKR(ret, "Derived key length");
+    }
+    if (ret == CKR_OK) {
+        if (derived_len < templateB.ulValueLen) {
+            ret = CKR_BUFFER_TOO_SMALL;
+        }
+        CHECK_CKR(ret, "Buffer length");
+    }
+    if (ret == CKR_OK) {
+        templateB.pValue = derived_value;
+        ret = funcList->C_GetAttributeValue(session, hDerivedKey, &templateB,
+            1);
+        CHECK_CKR(ret, "Get value");
+    }
+
+    if (ret == CKR_OK) {
+        if (sizeof(expected_prk) != templateB.ulValueLen) {
+            ret = CKR_DATA_LEN_RANGE;
+            CHECK_CKR(ret, "Output length");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (XMEMCMP(expected_prk, derived_value, sizeof(expected_prk))) {
+            ret = CKR_DATA_INVALID;
+            CHECK_CKR(ret, "Derived PRK doesn't match");
+        }
+    }
+
+    /* Test Expand */
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mechanismExpand, hDerivedKey,
+            templateExpand, templateExpand_count, &hExpandKey);
+        CHECK_CKR(ret, "Expand derive");
+    }
+
+    /* Verify the derived key value */
+    if (ret == CKR_OK) {
+        templateB.ulValueLen = 0;
+        templateB.pValue = NULL_PTR;
+        ret = funcList->C_GetAttributeValue(session, hExpandKey, &templateB,
+            1);
+        if (ret == CKR_BUFFER_TOO_SMALL)
+            ret = CKR_OK;
+        CHECK_CKR(ret, "Derived key length");
+    }
+    if (ret == CKR_OK) {
+        if (derived_len2 < templateB.ulValueLen) {
+            ret = CKR_BUFFER_TOO_SMALL;
+        }
+        CHECK_CKR(ret, "Buffer length");
+    }
+    if (ret == CKR_OK) {
+        templateB.pValue = derived_value2;
+        ret = funcList->C_GetAttributeValue(session, hExpandKey, &templateB,
+            1);
+        CHECK_CKR(ret, "Get value");
+    }
+    if (ret == CKR_OK) {
+        if (sizeof(expected_okm) != templateB.ulValueLen) {
+            ret = CKR_DATA_LEN_RANGE;
+            CHECK_CKR(ret, "Output length");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (XMEMCMP(expected_okm, derived_value2, sizeof(expected_prk))) {
+            ret = CKR_DATA_INVALID;
+            CHECK_CKR(ret, "Derived PRK doesn't match");
+        }
+    }
+
+    return ret;
+}
+
+static CK_RV test_hkdf_derive_extract_with_expand_salt_data(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE hDerivedKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hBaseKey1 = CK_INVALID_HANDLE;
+
+    CK_BYTE salt_bytes[] = {
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0a, 0x0b, 0x0c
+    };
+    CK_BYTE expected_okm[] = {
+        0x3c, 0xb2, 0x5f, 0x25, 0xfa, 0xac, 0xd5, 0x7a,
+        0x90, 0x43, 0x4f, 0x64, 0xd0, 0x36, 0x2f, 0x2a,
+        0x2d, 0x2d, 0x0a, 0x90, 0xcf, 0x1a, 0x5a, 0x4c,
+        0x5d, 0xb0, 0x2d, 0x56, 0xec, 0xc4, 0xc5, 0xbf,
+        0x34, 0x00, 0x72, 0x08, 0xd5, 0xb8, 0x87, 0x18,
+        0x58, 0x65
+    };
+    CK_BYTE info_bytes[] = {
+        0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7,
+        0xf8, 0xf9
+    };
+    CK_BYTE ikm_tc1_hex[] = {
+        0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b,
+        0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b,
+        0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b
+    };
+    CK_ULONG ikm_len = sizeof(ikm_tc1_hex);
+
+    CK_BYTE derived_value[42];
+    CK_ULONG derived_len = sizeof(derived_value);
+
+    CK_HKDF_PARAMS params = {
+        CK_TRUE,
+        CK_TRUE,
+        CKM_SHA256_HMAC,
+        CKF_HKDF_SALT_DATA,
+        salt_bytes,
+        sizeof(salt_bytes),
+        CK_INVALID_HANDLE,
+        info_bytes,
+        sizeof(info_bytes)
+    };
+
+    CK_MECHANISM mechanism = { CKM_HKDF_DERIVE, &params, sizeof(params) };
+
+    // Template for the derived key (OKM)
+    CK_ATTRIBUTE template[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
+        {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
+        {CKA_VALUE_LEN, &derived_len, sizeof(derived_len)} // Expecting 42 bytes OKM
+    };
+    CK_ULONG template_count = sizeof(template) / sizeof(template[0]);
+
+    CK_ATTRIBUTE templateSecret[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_TOKEN, &ckFalse, sizeof(ckFalse)},
+        {CKA_PRIVATE, &ckTrue, sizeof(ckTrue)},
+        {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
+        {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
+        {CKA_VALUE, ikm_tc1_hex, ikm_len},
+        {CKA_VALUE_LEN, &ikm_len, sizeof(ikm_len)},
+        {CKA_DERIVE, &ckTrue, sizeof(ckTrue)}
+    };
+    CK_ULONG templateSecretCount =
+        sizeof(templateSecret) / sizeof(templateSecret[0]);
+
+
+    CK_ATTRIBUTE templateB = {CKA_VALUE, NULL_PTR, 0};
+
+    ret = funcList->C_CreateObject(session, templateSecret, templateSecretCount,
+        &hBaseKey1);
+    CHECK_CKR(ret, "Create object failed");
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mechanism, hBaseKey1, template,
+            template_count, &hDerivedKey);
+        CHECK_CKR(ret, "Derive key");
+    }
+
+    if (ret == CKR_OK) {
+        templateB.ulValueLen = 0;
+        templateB.pValue = NULL_PTR;
+        ret = funcList->C_GetAttributeValue(session, hDerivedKey, &templateB,
+            1);
+        if (ret == CKR_BUFFER_TOO_SMALL)
+            ret = CKR_OK;
+        CHECK_CKR(ret, "Derived key length");
+    }
+    if (ret == CKR_OK) {
+        if (derived_len < templateB.ulValueLen) {
+            ret = CKR_BUFFER_TOO_SMALL;
+        }
+        CHECK_CKR(ret, "Buffer length");
+    }
+    if (ret == CKR_OK) {
+        templateB.pValue = derived_value;
+        ret = funcList->C_GetAttributeValue(session, hDerivedKey, &templateB,
+            1);
+        CHECK_CKR(ret, "Get value");
+    }
+
+    if (ret == CKR_OK) {
+        if (sizeof(expected_okm) != templateB.ulValueLen) {
+            ret = CKR_DATA_LEN_RANGE;
+            CHECK_CKR(ret, "Output length");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (XMEMCMP(expected_okm, derived_value, sizeof(expected_okm))) {
+            ret = CKR_DATA_INVALID;
+            CHECK_CKR(ret, "Derived PRK doesn't match");
+        }
+    }
+
+    return ret;
+}
+
+/* Extract-and-Expand with NULL Salt */
+static CK_RV test_hkdf_derive_expand_with_extract_null_salt(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE hDerivedKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hBaseKey1 = CK_INVALID_HANDLE;
+
+    CK_BYTE expected_okm[] = {
+        0x8d, 0xa4, 0xe7, 0x75, 0xa5, 0x63, 0xc1, 0x8f,
+        0x71, 0x5f, 0x80, 0x2a, 0x06, 0x3c, 0x5a, 0x31,
+        0xb8, 0xa1, 0x1f, 0x5c, 0x5e, 0xe1, 0x87, 0x9e,
+        0xc3, 0x45, 0x4e, 0x5f, 0x3c, 0x73, 0x8d, 0x2d,
+        0x9d, 0x20, 0x13, 0x95, 0xfa, 0xa4, 0xb6, 0x1a,
+        0x96, 0xc8
+    };
+    CK_BYTE derived_value[42];
+    CK_ULONG derived_len = sizeof(derived_value);
+
+    CK_BYTE ikm_tc1_hex[] = {
+        0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b,
+        0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b,
+        0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b
+    };
+    CK_ULONG ikm_len = sizeof(ikm_tc1_hex);
+
+    CK_HKDF_PARAMS params = {
+        CK_TRUE,
+        CK_TRUE,
+        CKM_SHA256_HMAC,
+        CKF_HKDF_SALT_NULL,
+        NULL_PTR,
+        0,
+        CK_INVALID_HANDLE,
+        NULL_PTR,
+        0
+    };
+
+    CK_MECHANISM mechanism = { CKM_HKDF_DERIVE, &params, sizeof(params) };
+
+    CK_ATTRIBUTE template[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
+        {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
+        {CKA_VALUE_LEN, &derived_len, sizeof(derived_len)}
+    };
+    CK_ULONG template_count = sizeof(template) / sizeof(template[0]);
+
+    CK_ATTRIBUTE templateSecret[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_TOKEN, &ckFalse, sizeof(ckFalse)},
+        {CKA_PRIVATE, &ckTrue, sizeof(ckTrue)},
+        {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
+        {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
+        {CKA_VALUE, ikm_tc1_hex, ikm_len},
+        {CKA_VALUE_LEN, &ikm_len, sizeof(ikm_len)},
+        {CKA_DERIVE, &ckTrue, sizeof(ckTrue)}
+    };
+    CK_ULONG templateSecretCount =
+        sizeof(templateSecret) / sizeof(templateSecret[0]);
+
+    CK_ATTRIBUTE templateB = {CKA_VALUE, NULL_PTR, 0};
+
+    ret = funcList->C_CreateObject(session, templateSecret, templateSecretCount,
+        &hBaseKey1);
+    CHECK_CKR(ret, "Create object failed");
+
+    if (ret == CKR_OK) {
+        ret= funcList->C_DeriveKey(session, &mechanism, hBaseKey1, template,
+            template_count, &hDerivedKey);
+        CHECK_CKR(ret, "Derive key");
+    }
+
+    if (ret == CKR_OK) {
+        templateB.ulValueLen = 0;
+        templateB.pValue = NULL_PTR;
+        ret = funcList->C_GetAttributeValue(session, hDerivedKey, &templateB,
+            1);
+        if (ret == CKR_BUFFER_TOO_SMALL)
+            ret = CKR_OK;
+        CHECK_CKR(ret, "Derived key length");
+    }
+    if (ret == CKR_OK) {
+        if (derived_len < templateB.ulValueLen) {
+            ret = CKR_BUFFER_TOO_SMALL;
+        }
+        CHECK_CKR(ret, "Buffer length");
+    }
+    if (ret == CKR_OK) {
+        templateB.pValue = derived_value;
+        ret = funcList->C_GetAttributeValue(session, hDerivedKey, &templateB,
+            1);
+        CHECK_CKR(ret, "Get value");
+    }
+
+    if (ret == CKR_OK) {
+        if (sizeof(expected_okm) != templateB.ulValueLen) {
+            ret = CKR_DATA_LEN_RANGE;
+            CHECK_CKR(ret, "Output length");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (XMEMCMP(expected_okm, derived_value, sizeof(expected_okm))) {
+            ret = CKR_DATA_INVALID;
+            CHECK_CKR(ret, "Derived PRK doesn't match");
+        }
+    }
+
+    return ret;
+}
+
+
+static CK_RV test_hkdf_derive_extract_with_expand_salt_key(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE hDerivedKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hBaseKey1 = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hSaltKey1 = CK_INVALID_HANDLE;
+
+    CK_BYTE salt_bytes[] = {
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0a, 0x0b, 0x0c
+    };
+    CK_ULONG salt_bytes_len = sizeof(salt_bytes);
+    CK_BYTE expected_okm[] = {
+        0x3c, 0xb2, 0x5f, 0x25, 0xfa, 0xac, 0xd5, 0x7a,
+        0x90, 0x43, 0x4f, 0x64, 0xd0, 0x36, 0x2f, 0x2a,
+        0x2d, 0x2d, 0x0a, 0x90, 0xcf, 0x1a, 0x5a, 0x4c,
+        0x5d, 0xb0, 0x2d, 0x56, 0xec, 0xc4, 0xc5, 0xbf,
+        0x34, 0x00, 0x72, 0x08, 0xd5, 0xb8, 0x87, 0x18,
+        0x58, 0x65
+    };
+    CK_BYTE info_bytes[] = {
+        0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7,
+        0xf8, 0xf9
+    };
+    CK_BYTE ikm_tc1_hex[] = {
+        0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b,
+        0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b,
+        0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b
+    };
+    CK_ULONG ikm_len = sizeof(ikm_tc1_hex);
+
+    CK_BYTE derived_value[42];
+    CK_ULONG derived_len = sizeof(derived_value);
+
+    // Template for the derived key (OKM)
+    CK_ATTRIBUTE template[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
+        {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
+        {CKA_VALUE_LEN, &derived_len, sizeof(derived_len)} // Expecting 42 bytes OKM
+    };
+    CK_ULONG template_count = sizeof(template) / sizeof(template[0]);
+
+    CK_ATTRIBUTE templateSecret[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_TOKEN, &ckFalse, sizeof(ckFalse)},
+        {CKA_PRIVATE, &ckTrue, sizeof(ckTrue)},
+        {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
+        {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
+        {CKA_VALUE, ikm_tc1_hex, ikm_len},
+        {CKA_VALUE_LEN, &ikm_len, sizeof(ikm_len)},
+        {CKA_DERIVE, &ckTrue, sizeof(ckTrue)}
+    };
+    CK_ULONG templateSecretCount =
+        sizeof(templateSecret) / sizeof(templateSecret[0]);
+
+    CK_ATTRIBUTE templateSalt[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_TOKEN, &ckFalse, sizeof(ckFalse)},
+        {CKA_PRIVATE, &ckTrue, sizeof(ckTrue)},
+        {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
+        {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
+        {CKA_VALUE, salt_bytes, salt_bytes_len},
+        {CKA_VALUE_LEN, &salt_bytes_len, sizeof(salt_bytes_len)},
+        {CKA_DERIVE, &ckTrue, sizeof(ckTrue)}
+    };
+    CK_ULONG templateSaltCount =
+        sizeof(templateSalt) / sizeof(templateSalt[0]);
+
+
+    CK_ATTRIBUTE templateB = {CKA_VALUE, NULL_PTR, 0};
+
+    ret = funcList->C_CreateObject(session, templateSecret, templateSecretCount,
+        &hBaseKey1);
+    CHECK_CKR(ret, "Create object failed");
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, templateSalt, templateSaltCount,
+            &hSaltKey1);
+        CHECK_CKR(ret, "Create object failed");
+    }
+
+    if (ret == CKR_OK) {
+        CK_HKDF_PARAMS params = {
+            CK_TRUE,
+            CK_TRUE,
+            CKM_SHA256_HMAC,
+            CKF_HKDF_SALT_KEY,
+            NULL_PTR,
+            0,
+            hSaltKey1,
+            info_bytes,
+            sizeof(info_bytes)
+        };
+
+        CK_MECHANISM mechanism = { CKM_HKDF_DERIVE, &params, sizeof(params) };
+        ret = funcList->C_DeriveKey(session, &mechanism, hBaseKey1, template,
+            template_count, &hDerivedKey);
+        CHECK_CKR(ret, "Derive key");
+    }
+
+    if (ret == CKR_OK) {
+        templateB.ulValueLen = 0;
+        templateB.pValue = NULL_PTR;
+        ret = funcList->C_GetAttributeValue(session, hDerivedKey, &templateB,
+            1);
+        if (ret == CKR_BUFFER_TOO_SMALL)
+            ret = CKR_OK;
+        CHECK_CKR(ret, "Derived key length");
+    }
+    if (ret == CKR_OK) {
+        if (derived_len < templateB.ulValueLen) {
+            ret = CKR_BUFFER_TOO_SMALL;
+        }
+        CHECK_CKR(ret, "Buffer length");
+    }
+    if (ret == CKR_OK) {
+        templateB.pValue = derived_value;
+        ret = funcList->C_GetAttributeValue(session, hDerivedKey, &templateB,
+            1);
+        CHECK_CKR(ret, "Get value");
+    }
+
+    if (ret == CKR_OK) {
+        if (sizeof(expected_okm) != templateB.ulValueLen) {
+            ret = CKR_DATA_LEN_RANGE;
+            CHECK_CKR(ret, "Output length");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (XMEMCMP(expected_okm, derived_value, sizeof(expected_okm))) {
+            ret = CKR_DATA_INVALID;
+            CHECK_CKR(ret, "Derived PRK doesn't match");
+        }
+    }
+
+    return ret;
+}
+
+#endif
+
 static CK_RV test_random(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -11175,6 +11758,12 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_hmac_sha3_512),
     PKCS11TEST_FUNC_SESS_DECL(test_hmac_sha3_512_fail),
 #endif
+#endif
+#ifdef WOLFPKCS11_HKDF
+    PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_extract_then_expand_salt_data),
+    PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_extract_with_expand_salt_data),
+    PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_expand_with_extract_null_salt),
+    PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_extract_with_expand_salt_key),
 #endif
     PKCS11TEST_FUNC_SESS_DECL(test_random),
     PKCS11TEST_FUNC_SESS_DECL(test_x509),

@@ -5188,8 +5188,8 @@ void WP11_Session_SetMechanism(WP11_Session* session,
     session->mechanism = mechanism;
 }
 
-#ifndef NO_RSA
-#if !defined(WC_NO_RSA_OAEP) || defined(WC_RSA_PSS)
+#if !defined(NO_RSA) || !defined(WC_NO_RSA_OAEP) || defined(WC_RSA_PSS) || \
+    defined(WOLFPKCS11_HKDF)
 /**
  * Convert the digest mechanism to a hash type for wolfCrypt.
  *
@@ -5205,18 +5205,23 @@ static int wp11_hash_type(CK_MECHANISM_TYPE hashMech,
 
     switch (hashMech) {
         case CKM_SHA1:
+        case CKM_SHA1_HMAC:
             *hashType = WC_HASH_TYPE_SHA;
             break;
         case CKM_SHA224:
+        case CKM_SHA224_HMAC:
             *hashType = WC_HASH_TYPE_SHA224;
             break;
         case CKM_SHA256:
+        case CKM_SHA256_HMAC:
             *hashType = WC_HASH_TYPE_SHA256;
             break;
         case CKM_SHA384:
+        case CKM_SHA384_HMAC:
             *hashType = WC_HASH_TYPE_SHA384;
             break;
         case CKM_SHA512:
+        case CKM_SHA512_HMAC:
             *hashType = WC_HASH_TYPE_SHA512;
             break;
         case CKM_SHA3_224:
@@ -5238,7 +5243,10 @@ static int wp11_hash_type(CK_MECHANISM_TYPE hashMech,
 
     return ret;
 }
+#endif
 
+#if !defined(NO_RSA)
+#if !defined(WC_NO_RSA_OAEP) || defined(WC_RSA_PSS)
 /**
  * Convert the mask generation function id to a wolfCrypt MGF id.
  *
@@ -7087,6 +7095,9 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
         #ifndef NO_AES
                         case CKK_AES:
         #endif
+        #ifdef WOLFPKCS11_HKDF
+                        case CKK_HKDF:
+        #endif
                         case CKK_GENERIC_SECRET:
                             ret = SecretObject_GetAttr(object, type, data, len);
                             break;
@@ -7363,6 +7374,9 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
 #ifndef NO_AES
                 case CKK_AES:
 #endif
+#ifdef WOLFPKCS11_HKDF
+                case CKK_HKDF:
+#endif
                 case CKK_GENERIC_SECRET:
                     break;
                 default:
@@ -7383,6 +7397,9 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
 #endif
 #ifndef NO_AES
                 case CKK_AES:
+#endif
+#ifdef WOLFPKCS11_HKDF
+                case CKK_HKDF:
 #endif
                 case CKK_GENERIC_SECRET:
                    break;
@@ -8497,6 +8514,85 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
     return ret;
 }
 #endif /* HAVE_ECC */
+
+#ifdef WOLFPKCS11_HKDF
+
+/**
+ * Derive the secret from the private key with HKDF.
+ *
+ * @param  params     [in]  The salt and info parameters.
+ * @param  key        [in]  Buffer to hold the secret key.
+ * @param  keyLen     [in]  Buffer length in bytes.
+ * @param  priv       [in]  The private key.
+ * @return  -ve when derivation fails.
+ *          0 on success
+ */
+
+int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
+                    unsigned char* key, word32* keyLen, WP11_Object* priv)
+{
+    int ret = 0;
+    byte* salt = NULL;
+    unsigned long saltLen = 0;
+    WP11_Object* saltKey = NULL;
+    enum wc_HashType hashType;
+    word32 hashLen;
+
+    ret = wp11_hash_type(params->prfHashMechanism, &hashType);
+
+    if (ret != 0) {
+        return CKR_MECHANISM_PARAM_INVALID;
+    }
+
+    hashLen = wc_HashGetDigestSize(hashType);
+
+    if (params->bExtract) {
+        switch (params->ulSaltType) {
+            case CKF_HKDF_SALT_NULL:
+                break;
+
+            case CKF_HKDF_SALT_DATA:
+                salt = params->pSalt;
+                saltLen = params->ulSaltLen;
+                break;
+
+            case CKF_HKDF_SALT_KEY:
+                ret = WP11_Object_Find(session, params->hSaltKey, &saltKey);
+                if (ret != 0)
+                    return CKR_OBJECT_HANDLE_INVALID;
+                salt = saltKey->data.symmKey.data;
+                saltLen = saltKey->data.symmKey.len;
+                break;
+
+            default:
+                return CKR_MECHANISM_PARAM_INVALID;
+                break;
+        }
+    }
+
+    if (params->bExtract && !params->bExpand) {
+        ret = wc_HKDF_Extract(hashType, salt, saltLen, priv->data.symmKey.data,
+            priv->data.symmKey.len, key);
+
+        if (!ret)
+            *keyLen = hashLen;
+    }
+    else if (!params->bExtract && params->bExpand) {
+        ret = wc_HKDF_Expand(hashType, priv->data.symmKey.data,
+            priv->data.symmKey.len, params->pInfo, params->ulInfoLen, key,
+            *keyLen);
+    }
+    else {
+        /* Both */
+        ret = wc_HKDF(hashType, priv->data.symmKey.data,priv->data.symmKey.len,
+            salt, saltLen, params->pInfo, params->ulInfoLen, key, *keyLen);
+    }
+
+
+    return ret;
+}
+
+#endif
 
 #ifndef NO_DH
 /**
