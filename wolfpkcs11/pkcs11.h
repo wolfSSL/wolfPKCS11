@@ -215,6 +215,14 @@ extern "C" {
 #define CKM_RSA_PKCS_PSS                      0x0000000DUL
 #define CKM_DH_PKCS_KEY_PAIR_GEN              0x00000020UL
 #define CKM_DH_PKCS_DERIVE                    0x00000021UL
+#define CKM_SHA256_RSA_PKCS                   0x00000040UL
+#define CKM_SHA384_RSA_PKCS                   0x00000041UL
+#define CKM_SHA512_RSA_PKCS                   0x00000042UL
+#define CKM_SHA256_RSA_PKCS_PSS               0x00000043UL
+#define CKM_SHA384_RSA_PKCS_PSS               0x00000044UL
+#define CKM_SHA512_RSA_PKCS_PSS               0x00000045UL
+#define CKM_SHA224_RSA_PKCS                   0x00000046UL
+#define CKM_SHA224_RSA_PKCS_PSS               0x00000047UL
 #define CKM_MD5                               0x00000210UL
 #define CKM_MD5_HMAC                          0x00000211UL
 #define CKM_SHA1                              0x00000220UL
@@ -230,6 +238,11 @@ extern "C" {
 #define CKM_GENERIC_SECRET_KEY_GEN            0x00000350UL
 #define CKM_EC_KEY_PAIR_GEN                   0x00001040UL
 #define CKM_ECDSA                             0x00001041UL
+#define CKM_ECDSA_SHA1                        0x00001042UL
+#define CKM_ECDSA_SHA224                      0x00001043UL
+#define CKM_ECDSA_SHA256                      0x00001044UL
+#define CKM_ECDSA_SHA384                      0x00001045UL
+#define CKM_ECDSA_SHA512                      0x00001046UL
 #define CKM_ECDH1_DERIVE                      0x00001050UL
 #define CKM_ECDH1_COFACTOR_DERIVE             0x00001051UL
 #define CKM_AES_KEY_GEN                       0x00001080UL

@@ -241,7 +241,7 @@ fi
 AC_ARG_ENABLE([aesctr],
     [AS_HELP_STRING([--enable-aesctr],[Enable AES-CTR (default: disabled)])],
     [ ENABLED_AESCTR=$enableval ],
-    [ ENABLED_AESCTR=yes ]
+    [ ENABLED_AESCTR=no ]
     )
 if test "$ENABLED_AES" = "yes" && test "$ENABLED_AESCTR" = "yes"
 then

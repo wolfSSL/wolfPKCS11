@@ -3821,6 +3821,63 @@ static CK_RV rsa_pkcs15_sig_test(CK_SESSION_HANDLE session,
     return ret;
 }
 
+#ifndef NO_SHA256
+static CK_RV sha256_rsa_pkcs15_sig_test(CK_SESSION_HANDLE session,
+    CK_OBJECT_HANDLE priv, CK_OBJECT_HANDLE pub,
+    int hashSz)
+{
+    CK_RV  ret = CKR_OK;
+    byte   hash[64], badHash[32], out[2048/8];
+    CK_ULONG outSz;
+    CK_MECHANISM mech;
+
+    memset(hash, 9, sizeof(hash));
+    memset(badHash, 7, sizeof(badHash));
+    outSz = sizeof(out);
+
+    mech.mechanism      = CKM_SHA256_RSA_PKCS;
+    mech.ulParameterLen = 0;
+    mech.pParameter     = NULL;
+
+    ret = funcList->C_SignInit(session, &mech, priv);
+    CHECK_CKR(ret, "RSA PKCS#1.5 Sign Init");
+    if (ret == CKR_OK) {
+        outSz = 0;
+        ret = funcList->C_Sign(session, hash, hashSz, NULL, &outSz);
+        CHECK_CKR(ret, "RSA PKCS#1.5 Sign no out");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(outSz == sizeof(out), ret, "RSA PKCS#1.5 Sign out size");
+    }
+    if (ret == CKR_OK) {
+        outSz = 0;
+        ret = funcList->C_Sign(session, hash, hashSz, out, &outSz);
+        CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
+                                             "RSA PKCS#1.5 Sign zero out size");
+        outSz = sizeof(out);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Sign(session, hash, hashSz, out, &outSz);
+        CHECK_CKR(ret, "RSA PKCS#1.5 Sign");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, pub);
+        CHECK_CKR(ret, "RSA PKCS#1.5 Verify Init");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Verify(session, hash, hashSz, out, outSz);
+        CHECK_CKR(ret, "RSA PKCS#1.5 Verify");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Verify(session, badHash, sizeof(badHash), out, outSz);
+        CHECK_CKR_FAIL(ret, CKR_SIGNATURE_INVALID,
+                                                "RSA PKCS#1.5 Verify bad hash");
+    }
+
+    return ret;
+}
+#endif
+
 #ifdef WC_RSA_PSS
 static CK_RV rsa_pss_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE priv,
                         CK_OBJECT_HANDLE pub, int hashAlg, int mgf, int hashSz)
@@ -3891,6 +3948,79 @@ static CK_RV rsa_pss_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE priv,
 
     return ret;
 }
+
+#ifndef NO_SHA256
+static CK_RV sha256_rsa_pss_test(CK_SESSION_HANDLE session,
+    CK_OBJECT_HANDLE priv, CK_OBJECT_HANDLE pub, int hashAlg, int mgf,
+    int hashSz)
+{
+    CK_RV  ret = CKR_OK;
+    byte   hash[64], badHash[64], out[2048/8];
+    CK_ULONG outSz;
+    CK_MECHANISM mech;
+    CK_RSA_PKCS_PSS_PARAMS params;
+
+    memset(hash, 9, sizeof(hash));
+    memset(badHash, 7, sizeof(badHash));
+    outSz = sizeof(out);
+
+    params.hashAlg = hashAlg;
+    params.mgf = mgf;
+    params.sLen = hashSz <= 62 ? hashSz : 62;
+
+    mech.mechanism      = CKM_SHA256_RSA_PKCS_PSS;
+    mech.ulParameterLen = sizeof(params);
+    mech.pParameter     = &params;
+
+    ret = funcList->C_SignInit(session, &mech, priv);
+    CHECK_CKR(ret, "RSA PKCS#1 PSS Sign Init");
+    if (ret == CKR_OK) {
+        outSz = 0;
+        ret = funcList->C_Sign(session, hash, hashSz, NULL, &outSz);
+        CHECK_CKR(ret, "RSA PKCS#1.5 PSS Sign no out");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(outSz == sizeof(out), ret, "RSA PKCS#1 PSS Sign out size");
+    }
+    if (ret == CKR_OK) {
+        outSz = 0;
+        ret = funcList->C_Sign(session, hash, hashSz, out, &outSz);
+        CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
+                            "RSA PKCS#1 PSS Sign zero out size");
+        outSz = sizeof(out);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Sign(session, hash, hashSz, out, &outSz);
+        CHECK_CKR(ret, "RSA PKCS#1 PSS Sign");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, pub);
+        CHECK_CKR(ret, "RSA PKCS#1 PSS Verify Init");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Verify(session, hash, hashSz, out, outSz);
+        CHECK_CKR(ret, "RSA PKCS#1 PSS Verify");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Verify(session, badHash, hashSz, out, outSz);
+        CHECK_CKR_FAIL(ret, CKR_SIGNATURE_INVALID,
+                                "RSA PKCS#1 PSS Verify bad hash");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_SignInit(session, &mech, priv);
+        CHECK_CKR(ret, "RSA PKCS#1 PSS Sign Init");
+    }
+    if (ret == CKR_OK) {
+        outSz = 0;
+        ret = funcList->C_Sign(session, hash, hashSz, out, &outSz);
+        CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
+                        "RSA PKCS#1 PSS Sign out size too small");
+        outSz = sizeof(out);
+    }
+
+    return ret;
+}
+#endif
 #endif
 
 static CK_RV test_rsa_no_modulus(void* args)
@@ -4127,6 +4257,23 @@ static CK_RV test_rsa_fixed_keys_pkcs15_sig(void* args)
         CHECK_CKR(ret, "RSA PKCS#1.5 - 64 byte hash");
     }
 
+    if (ret == CKR_OK) {
+        ret = sha256_rsa_pkcs15_sig_test(session, priv, pub, 32);
+        CHECK_CKR(ret, "RSA PKCS#1.5 - 32 byte hash");
+    }
+    if (ret == CKR_OK) {
+        ret = sha256_rsa_pkcs15_sig_test(session, priv, pub, 28);
+        CHECK_CKR(ret, "RSA PKCS#1.5 - 28 byte hash");
+    }
+    if (ret == CKR_OK) {
+        ret = sha256_rsa_pkcs15_sig_test(session, priv, pub, 48);
+        CHECK_CKR(ret, "RSA PKCS#1.5 - 48 byte hash");
+    }
+    if (ret == CKR_OK) {
+        ret = sha256_rsa_pkcs15_sig_test(session, priv, pub, 64);
+        CHECK_CKR(ret, "RSA PKCS#1.5 - 64 byte hash");
+    }
+
     return ret;
 }
 
@@ -4162,6 +4309,12 @@ static CK_RV test_rsa_fixed_keys_pss(void* args)
     if (ret == CKR_OK) {
         ret = rsa_pss_test(session, priv, pub, CKM_SHA512, CKG_MGF1_SHA512, 64);
         CHECK_CKR(ret, "RSA PKCS#1 PSS - SHA512");
+    }
+
+    if (ret == CKR_OK) {
+        ret = sha256_rsa_pss_test(session, priv, pub, CKM_SHA256,
+            CKG_MGF1_SHA256, 32);
+        CHECK_CKR(ret, "RSA PKCS#1 PSS - SHA256");
     }
 
     return ret;
@@ -5043,6 +5196,28 @@ static CK_RV ecdsa_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE privKey,
     byte   hash[32], out[64];
     CK_ULONG hashSz, outSz;
     CK_MECHANISM mech;
+    unsigned long i;
+    CK_MECHANISM_TYPE digestTypes[] = {
+#ifndef WOLFPKCS11_TPM
+        /* the ibmswtpm2 backend we use for testing appears to not support
+         * these hash sizes for ecdsa */
+#ifndef NO_SHA
+        CKM_ECDSA_SHA1,
+#endif
+#ifdef WOLFSSL_SHA224
+        CKM_ECDSA_SHA224,
+#endif
+#endif
+#ifndef NO_SHA256
+        CKM_ECDSA_SHA256,
+#endif
+#ifdef WOLFSSL_SHA384
+        CKM_ECDSA_SHA384,
+#endif
+#ifdef WOLFSSL_SHA512
+        CKM_ECDSA_SHA512,
+#endif
+    };
 
     memset(hash, 9, sizeof(hash));
     hashSz = sizeof(hash);
@@ -5094,6 +5269,65 @@ static CK_RV ecdsa_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE privKey,
         outSz = 1;
         ret = funcList->C_Verify(session, hash, hashSz, out, outSz);
         CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED, "ECDSA Verify bad sig");
+    }
+
+    /* Test digests */
+    for (i = 0; ret == CKR_OK && i < (sizeof(digestTypes)/sizeof(*digestTypes));
+            i++) {
+        byte   data[256];
+        CK_ULONG dataSz;
+
+        memset(data, 9, sizeof(data));
+        dataSz = sizeof(data);
+        outSz = sizeof(out);
+
+        mech.mechanism      = digestTypes[i];
+        mech.ulParameterLen = 0;
+        mech.pParameter     = NULL;
+
+        ret = funcList->C_SignInit(session, &mech, privKey);
+        CHECK_CKR(ret, "ECDSA Sign Init");
+        if (ret == CKR_OK) {
+            outSz = 0;
+            ret = funcList->C_Sign(session, data, dataSz, NULL, &outSz);
+            CHECK_CKR(ret, "ECDSA Sign out size no out");
+        }
+        if (ret == CKR_OK) {
+            CHECK_COND(outSz == sizeof(out), ret, "ECDSA Sign out size");
+        }
+        if (ret == CKR_OK) {
+            outSz = 0;
+            ret = funcList->C_Sign(session, data, dataSz, out, &outSz);
+            CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
+                                                   "ECDSA Sign out size too small");
+            outSz = sizeof(out);
+        }
+        if (ret == CKR_OK) {
+            ret = funcList->C_Sign(session, data, dataSz, out, &outSz);
+            CHECK_CKR(ret, "ECDSA Sign");
+        }
+        if (ret == CKR_OK) {
+            ret = funcList->C_VerifyInit(session, &mech, pubKey);
+            CHECK_CKR(ret, "ECDSA Verify Init");
+        }
+#ifndef WOLFSSL_MAXQ10XX_CRYPTO
+        /* In the case of MAXQ1065 it will be signed by the pre-provisioned
+         * private key so verify operation will fail as this is NOT the
+         * corresponding public key. */
+        if (ret == CKR_OK) {
+            ret = funcList->C_Verify(session, data, dataSz, out, outSz);
+            CHECK_CKR(ret, "ECDSA Verify");
+        }
+#endif
+        if (ret == CKR_OK) {
+            ret = funcList->C_Verify(session, data, dataSz - 1, out, outSz);
+            CHECK_CKR_FAIL(ret, CKR_SIGNATURE_INVALID, "ECDSA Verify bad hash");
+        }
+        if (ret == CKR_OK) {
+            outSz = 1;
+            ret = funcList->C_Verify(session, data, dataSz, out, outSz);
+            CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED, "ECDSA Verify bad sig");
+        }
     }
 
     return ret;
