@@ -151,6 +151,15 @@ extern "C" {
 #define WP11_INIT_RSA_X_509_VERIFY     0x0035
 #define WP11_INIT_ECDSA_SIGN           0x0040
 #define WP11_INIT_ECDSA_VERIFY         0x0041
+/* Some operations can have an additional hashing step before the sign/verify */
+#define WP11_INIT_DIGEST_SHIFT         12
+#define WP11_INIT_DIGEST_MASK          (0xF << WP11_INIT_DIGEST_SHIFT)
+#define WP11_INIT_SHA1                 (0x1 << WP11_INIT_DIGEST_SHIFT)
+#define WP11_INIT_SHA224               (0x2 << WP11_INIT_DIGEST_SHIFT)
+#define WP11_INIT_SHA256               (0x3 << WP11_INIT_DIGEST_SHIFT)
+#define WP11_INIT_SHA384               (0x4 << WP11_INIT_DIGEST_SHIFT)
+#define WP11_INIT_SHA512               (0x5 << WP11_INIT_DIGEST_SHIFT)
+
 
 /* scrypt parameters when generating hash from PIN. */
 #ifndef WP11_HASH_PIN_COST
@@ -240,6 +249,9 @@ int WP11_Session_Get(CK_SESSION_HANDLE sessionHandle, WP11_Session** session);
 int WP11_Session_GetState(WP11_Session* session);
 int WP11_Session_IsRW(WP11_Session* session);
 int WP11_Session_IsOpInitialized(WP11_Session* session, int init);
+int WP11_Session_IsHashOpInitialized(WP11_Session* session, int mechanism,
+                                     int mechinismBase);
+enum wc_HashType WP11_Session_ToHashType(WP11_Session* session);
 void WP11_Session_SetOpInitialized(WP11_Session* session, int init);
 WP11_Slot* WP11_Session_GetSlot(WP11_Session* session);
 CK_MECHANISM_TYPE WP11_Session_GetMechanism(WP11_Session* session);

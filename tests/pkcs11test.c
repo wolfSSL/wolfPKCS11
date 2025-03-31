@@ -5043,6 +5043,24 @@ static CK_RV ecdsa_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE privKey,
     byte   hash[32], out[64];
     CK_ULONG hashSz, outSz;
     CK_MECHANISM mech;
+    unsigned long i;
+    CK_MECHANISM_TYPE digestTypes[] = {
+#ifndef NO_SHA
+        CKM_ECDSA_SHA1,
+#endif
+#ifdef WOLFSSL_SHA224
+        CKM_ECDSA_SHA224,
+#endif
+#ifndef NO_SHA256
+        CKM_ECDSA_SHA256,
+#endif
+#ifdef WOLFSSL_SHA384
+        CKM_ECDSA_SHA384,
+#endif
+#ifdef WOLFSSL_SHA512
+        CKM_ECDSA_SHA512,
+#endif
+    };
 
     memset(hash, 9, sizeof(hash));
     hashSz = sizeof(hash);
@@ -5094,6 +5112,65 @@ static CK_RV ecdsa_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE privKey,
         outSz = 1;
         ret = funcList->C_Verify(session, hash, hashSz, out, outSz);
         CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED, "ECDSA Verify bad sig");
+    }
+
+    /* Test digests */
+    for (i = 0; ret == CKR_OK && i < (sizeof(digestTypes)/sizeof(*digestTypes));
+            i++) {
+        byte   data[256];
+        CK_ULONG dataSz;
+
+        memset(data, 9, sizeof(data));
+        dataSz = sizeof(data);
+        outSz = sizeof(out);
+
+        mech.mechanism      = digestTypes[i];
+        mech.ulParameterLen = 0;
+        mech.pParameter     = NULL;
+
+        ret = funcList->C_SignInit(session, &mech, privKey);
+        CHECK_CKR(ret, "ECDSA Sign Init");
+        if (ret == CKR_OK) {
+            outSz = 0;
+            ret = funcList->C_Sign(session, data, dataSz, NULL, &outSz);
+            CHECK_CKR(ret, "ECDSA Sign out size no out");
+        }
+        if (ret == CKR_OK) {
+            CHECK_COND(outSz == sizeof(out), ret, "ECDSA Sign out size");
+        }
+        if (ret == CKR_OK) {
+            outSz = 0;
+            ret = funcList->C_Sign(session, data, dataSz, out, &outSz);
+            CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
+                                                   "ECDSA Sign out size too small");
+            outSz = sizeof(out);
+        }
+        if (ret == CKR_OK) {
+            ret = funcList->C_Sign(session, data, dataSz, out, &outSz);
+            CHECK_CKR(ret, "ECDSA Sign");
+        }
+        if (ret == CKR_OK) {
+            ret = funcList->C_VerifyInit(session, &mech, pubKey);
+            CHECK_CKR(ret, "ECDSA Verify Init");
+        }
+#ifndef WOLFSSL_MAXQ10XX_CRYPTO
+        /* In the case of MAXQ1065 it will be signed by the pre-provisioned
+         * private key so verify operation will fail as this is NOT the
+         * corresponding public key. */
+        if (ret == CKR_OK) {
+            ret = funcList->C_Verify(session, data, dataSz, out, outSz);
+            CHECK_CKR(ret, "ECDSA Verify");
+        }
+#endif
+        if (ret == CKR_OK) {
+            ret = funcList->C_Verify(session, data, dataSz - 1, out, outSz);
+            CHECK_CKR_FAIL(ret, CKR_SIGNATURE_INVALID, "ECDSA Verify bad hash");
+        }
+        if (ret == CKR_OK) {
+            outSz = 1;
+            ret = funcList->C_Verify(session, data, dataSz, out, outSz);
+            CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED, "ECDSA Verify bad sig");
+        }
     }
 
     return ret;
