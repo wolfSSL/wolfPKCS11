@@ -230,6 +230,11 @@ extern "C" {
 #define CKM_GENERIC_SECRET_KEY_GEN            0x00000350UL
 #define CKM_EC_KEY_PAIR_GEN                   0x00001040UL
 #define CKM_ECDSA                             0x00001041UL
+#define CKM_ECDSA_SHA1                        0x00001042UL
+#define CKM_ECDSA_SHA224                      0x00001043UL
+#define CKM_ECDSA_SHA256                      0x00001044UL
+#define CKM_ECDSA_SHA384                      0x00001045UL
+#define CKM_ECDSA_SHA512                      0x00001046UL
 #define CKM_ECDH1_DERIVE                      0x00001050UL
 #define CKM_ECDH1_COFACTOR_DERIVE             0x00001051UL
 #define CKM_AES_KEY_GEN                       0x00001080UL

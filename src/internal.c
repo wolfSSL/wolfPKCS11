@@ -4864,7 +4864,51 @@ int WP11_Session_IsRW(WP11_Session* session)
  */
 int WP11_Session_IsOpInitialized(WP11_Session* session, int init)
 {
-    return session->init == init;
+    return (session->init & ~WP11_INIT_DIGEST_MASK) == init;
+}
+
+/**
+ * Return whether this session has been initialized for the hash operation.
+ *
+ * @param  session   [in]  Session object.
+ * @param  mechanism [in]  Mechanism to check against.
+ * @param  mechinismBase [in] Base value of the mechanism type.
+ * @return  1 when session is in used.
+ *          0 when session is not in used.
+ */
+int WP11_Session_IsHashOpInitialized(WP11_Session* session, int mechanism,
+                                     int mechinismBase)
+{
+    return (session->init & WP11_INIT_DIGEST_MASK) ==
+            ((mechanism - mechinismBase) << WP11_INIT_DIGEST_SHIFT);
+}
+
+enum wc_HashType WP11_Session_ToHashType(WP11_Session* session)
+{
+    switch (session->init & WP11_INIT_DIGEST_MASK) {
+#ifndef NO_SHA
+        case WP11_INIT_SHA1:
+            return WC_HASH_TYPE_SHA;
+#endif
+#ifdef WOLFSSL_SHA224
+        case WP11_INIT_SHA224:
+            return WC_HASH_TYPE_SHA224;
+#endif
+#ifndef NO_SHA256
+        case WP11_INIT_SHA256:
+            return WC_HASH_TYPE_SHA256;
+#endif
+#ifdef WOLFSSL_SHA384
+        case WP11_INIT_SHA384:
+            return WC_HASH_TYPE_SHA384;
+#endif
+#ifdef WOLFSSL_SHA512
+        case WP11_INIT_SHA512:
+            return WC_HASH_TYPE_SHA512;
+#endif
+        default:
+            return WC_HASH_TYPE_NONE;
+    }
 }
 
 /**

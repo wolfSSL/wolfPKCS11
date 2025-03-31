@@ -232,6 +232,21 @@ static CK_MECHANISM_TYPE mechanismList[] = {
 #ifdef HAVE_ECC
     CKM_EC_KEY_PAIR_GEN,
     CKM_ECDSA,
+#ifndef NO_SHA
+    CKM_ECDSA_SHA1,
+#endif
+#ifdef WOLFSSL_SHA224
+    CKM_ECDSA_SHA224,
+#endif
+#ifndef NO_SHA256
+    CKM_ECDSA_SHA256,
+#endif
+#ifdef WOLFSSL_SHA384
+    CKM_ECDSA_SHA384,
+#endif
+#ifdef WOLFSSL_SHA512
+    CKM_ECDSA_SHA512,
+#endif
     CKM_ECDH1_DERIVE,
 #endif
 #ifndef NO_DH
@@ -371,6 +386,31 @@ static CK_MECHANISM_INFO ecKgMechInfo = {
 static CK_MECHANISM_INFO ecdsaMechInfo = {
     256, 521, CKF_SIGN | CKF_VERIFY
 };
+#ifndef NO_SHA
+static CK_MECHANISM_INFO ecdsaSha1MechInfo = {
+    256, 521, CKF_SIGN | CKF_VERIFY
+};
+#endif
+#ifdef WOLFSSL_SHA224
+static CK_MECHANISM_INFO ecdsaSha224MechInfo = {
+    256, 521, CKF_SIGN | CKF_VERIFY
+};
+#endif
+#ifndef NO_SHA256
+static CK_MECHANISM_INFO ecdsaSha256MechInfo = {
+    256, 521, CKF_SIGN | CKF_VERIFY
+};
+#endif
+#ifdef WOLFSSL_SHA384
+static CK_MECHANISM_INFO ecdsaSha384MechInfo = {
+    256, 521, CKF_SIGN | CKF_VERIFY
+};
+#endif
+#ifdef WOLFSSL_SHA512
+static CK_MECHANISM_INFO ecdsaSha512MechInfo = {
+    256, 521, CKF_SIGN | CKF_VERIFY
+};
+#endif
 /* Info on ECDH mechanism. */
 static CK_MECHANISM_INFO ecdhMechInfo = {
     256, 521, CKF_DERIVE
@@ -534,6 +574,31 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
         case CKM_ECDSA:
             XMEMCPY(pInfo, &ecdsaMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
+#ifndef NO_SHA
+        case CKM_ECDSA_SHA1:
+            XMEMCPY(pInfo, &ecdsaSha1MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifdef WOLFSSL_SHA224
+        case CKM_ECDSA_SHA224:
+            XMEMCPY(pInfo, &ecdsaSha224MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifndef NO_SHA256
+        case CKM_ECDSA_SHA256:
+            XMEMCPY(pInfo, &ecdsaSha256MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifdef WOLFSSL_SHA384
+        case CKM_ECDSA_SHA384:
+            XMEMCPY(pInfo, &ecdsaSha384MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifdef WOLFSSL_SHA512
+        case CKM_ECDSA_SHA512:
+            XMEMCPY(pInfo, &ecdsaSha512MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
         case CKM_ECDH1_DERIVE:
             XMEMCPY(pInfo, &ecdhMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
