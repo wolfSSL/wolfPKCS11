@@ -109,7 +109,10 @@ static CK_TOKEN_INFO tokenInfoTemplate = {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
     }, /* serialNumber */
-    CKF_RNG | CKF_CLOCK_ON_TOKEN | CKF_LOGIN_REQUIRED,
+#ifndef WOLFPKCS11_NO_LOGIN
+    CKF_LOGIN_REQUIRED |
+#endif
+    CKF_RNG | CKF_CLOCK_ON_TOKEN,
     WP11_SESSION_CNT_MAX, /* ulMaxSessionCount */
     CK_UNAVAILABLE_INFORMATION, /* ulSessionCount */
     WP11_SESSION_CNT_MAX, /* ulMaxRwSessionCount */
