@@ -161,16 +161,6 @@ static CK_RV test_op_state(void* args)
                                              "Get Operation State - no length");
     }
     if (ret == CKR_OK) {
-        ret = funcList->C_GetOperationState(session, NULL, &len);
-        CHECK_CKR_FAIL(ret, CKR_STATE_UNSAVEABLE,
-                                         "Get Operation State - not available");
-    }
-    if (ret == CKR_OK) {
-        ret = funcList->C_GetOperationState(session, NULL, &len);
-        CHECK_CKR_FAIL(ret, CKR_STATE_UNSAVEABLE,
-                                         "Get Operation State - not available");
-    }
-    if (ret == CKR_OK) {
         ret = funcList->C_SetOperationState(CK_INVALID_HANDLE, &data, len, 0,
                                                                              0);
         CHECK_CKR_FAIL(ret, CKR_SESSION_HANDLE_INVALID,

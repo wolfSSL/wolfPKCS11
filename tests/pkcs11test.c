@@ -1019,7 +1019,93 @@ static CK_RV test_session(void* args)
     return ret;
 }
 
-static CK_RV test_op_state(void* args)
+#ifndef NO_SHA256
+/* This test:
+*  1. Starts a digest
+*  2. Saves the state
+*  3. Updates the digest
+*  4. Tests the result
+*  5. Restores the state (before the update)
+*  6. Tests the result
+*/
+static CK_RV test_op_state_success(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    byte* data = NULL;
+    CK_ULONG len = 0;
+    CK_MECHANISM mech;
+    byte shaData[32], hash[32];
+    CK_ULONG dataSz, hashSz;
+    const unsigned char sha256_exp[] = {
+        0x9f, 0x86, 0xd0, 0x81, 0x88, 0x4c, 0x7d, 0x65,
+        0x9a, 0x2f, 0xea, 0xa0, 0xc5, 0x5a, 0xd0, 0x15,
+        0xa3, 0xbf, 0x4f, 0x1b, 0x2b, 0x0b, 0x82, 0x2c,
+        0xd1, 0x5d, 0x6c, 0x15, 0xb0, 0xf0, 0x0a, 0x08
+    };
+
+    const unsigned char sha256_exp2[] = {
+        0x37, 0x26, 0x83, 0x35, 0xdd, 0x69, 0x31, 0x04,
+        0x5b, 0xdc, 0xdf, 0x92, 0x62, 0x3f, 0xf8, 0x19,
+        0xa6, 0x42, 0x44, 0xb5, 0x3d, 0x0e, 0x74, 0x6d,
+        0x43, 0x87, 0x97, 0x34, 0x9d, 0x4d, 0xa5, 0x78
+    };
+
+    XMEMSET(shaData, 0, sizeof(shaData));
+    XMEMCPY(shaData, "test", 4);
+    dataSz = 4;
+    hashSz = sizeof(hash);
+
+    mech.mechanism = CKM_SHA256;
+    mech.ulParameterLen = 0;
+    mech.pParameter = NULL;
+
+    ret = funcList->C_DigestInit(session, &mech);
+    CHECK_CKR(ret, "Could not init digest");
+    if (ret == CKR_OK) {
+        ret = funcList->C_DigestUpdate(session, shaData, dataSz);
+        CHECK_CKR(ret, "Could not update digest");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetOperationState(session, shaData, &len);
+        CHECK_COND(ret == CKR_BUFFER_TOO_SMALL, ret,
+            "Could not get operation state length");
+        CHECK_COND(len > 0, ret, "Bad state length");
+        ret = CKR_OK;
+    }
+    if (ret == CKR_OK) {
+        data = XMALLOC(len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        ret = funcList->C_GetOperationState(session, data, &len);
+        CHECK_CKR(ret, "Could not get operation state");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DigestUpdate(session, shaData, dataSz);
+        CHECK_CKR(ret, "Could not update digest");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DigestFinal(session, hash, &hashSz);
+        CHECK_CKR(ret, "Error running digest final");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(XMEMCMP(hash, sha256_exp2, 32) == 0, ret,
+                   "SHA does not match");
+        ret = funcList->C_SetOperationState(session, data, len, 0, 0);
+        CHECK_CKR(ret, "Could not set operation state");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DigestFinal(session, hash, &hashSz);
+        CHECK_CKR(ret, "Error running digest final");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(XMEMCMP(hash, sha256_exp, 32) == 0, ret,
+                   "SHA does not match");
+    }
+    XFREE(data, 0, DYNAMIC_TYPE_TMP_BUFFER);
+    return ret;
+}
+#endif
+
+static CK_RV test_op_state_fail(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_RV ret;
@@ -1034,16 +1120,7 @@ static CK_RV test_op_state(void* args)
         CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD,
                                              "Get Operation State - no length");
     }
-    if (ret == CKR_OK) {
-        ret = funcList->C_GetOperationState(session, NULL, &len);
-        CHECK_CKR_FAIL(ret, CKR_STATE_UNSAVEABLE,
-                                         "Get Operation State - not available");
-    }
-    if (ret == CKR_OK) {
-        ret = funcList->C_GetOperationState(session, NULL, &len);
-        CHECK_CKR_FAIL(ret, CKR_STATE_UNSAVEABLE,
-                                         "Get Operation State - not available");
-    }
+
     if (ret == CKR_OK) {
         ret = funcList->C_SetOperationState(CK_INVALID_HANDLE, &data, len, 0,
                                                                              0);
@@ -8282,7 +8359,10 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_login_logout),
     PKCS11TEST_FUNC_SESS_DECL(test_pin),
     PKCS11TEST_FUNC_SESS_DECL(test_session),
-    PKCS11TEST_FUNC_SESS_DECL(test_op_state),
+#ifndef NO_SHA256
+    PKCS11TEST_FUNC_SESS_DECL(test_op_state_success),
+#endif
+    PKCS11TEST_FUNC_SESS_DECL(test_op_state_fail),
     PKCS11TEST_FUNC_SESS_DECL(test_object),
     PKCS11TEST_FUNC_SESS_DECL(test_attribute),
     PKCS11TEST_FUNC_SESS_DECL(test_attribute_types),
