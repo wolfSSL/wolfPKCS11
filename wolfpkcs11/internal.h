@@ -450,6 +450,12 @@ int WP11_Digest_Key(WP11_Object* key, WP11_Session* session);
 int WP11_Slot_SeedRandom(WP11_Slot* slot, unsigned char* seed, int seedLen);
 int WP11_Slot_GenerateRandom(WP11_Slot* slot, unsigned char* data, int len);
 
+int WP11_GetOperationState(WP11_Session* session, unsigned char* stateData,
+                           unsigned long* stateDataLen);
+
+int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
+                           unsigned long stateDataLen);
+
 #ifdef __cplusplus
 }
 #endif
