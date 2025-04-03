@@ -4951,20 +4951,74 @@ int WP11_Session_IsOpInitialized(WP11_Session* session, int init)
     return (session->init & ~WP11_INIT_DIGEST_MASK) == init;
 }
 
+static int MechanismToHash(int mechanism)
+{
+    switch (mechanism) {
+#ifdef HAVE_ECC
+#ifndef NO_SHA
+        case CKM_ECDSA_SHA1:
+            return WP11_INIT_SHA1;
+#endif
+#ifdef WOLFSSL_SHA224
+        case CKM_ECDSA_SHA224:
+            return WP11_INIT_SHA224;
+#endif
+#ifndef NO_SHA256
+        case CKM_ECDSA_SHA256:
+            return WP11_INIT_SHA256;
+#endif
+#ifdef WOLFSSL_SHA384
+        case CKM_ECDSA_SHA384:
+            return WP11_INIT_SHA384;
+#endif
+#ifdef WOLFSSL_SHA512
+        case CKM_ECDSA_SHA512:
+            return WP11_INIT_SHA512;
+#endif
+#endif
+#ifndef NO_RSA
+#ifdef WOLFSSL_SHA224
+        case CKM_SHA224_RSA_PKCS:
+            return WP11_INIT_SHA224;
+        case CKM_SHA224_RSA_PKCS_PSS:
+            return WP11_INIT_SHA224;
+#endif
+#ifndef NO_SHA256
+        case CKM_SHA256_RSA_PKCS:
+            return WP11_INIT_SHA256;
+        case CKM_SHA256_RSA_PKCS_PSS:
+            return WP11_INIT_SHA256;
+#endif
+#ifdef WOLFSSL_SHA384
+        case CKM_SHA384_RSA_PKCS:
+            return WP11_INIT_SHA384;
+        case CKM_SHA384_RSA_PKCS_PSS:
+            return WP11_INIT_SHA384;
+#endif
+#ifdef WOLFSSL_SHA512
+        case CKM_SHA512_RSA_PKCS:
+            return WP11_INIT_SHA512;
+        case CKM_SHA512_RSA_PKCS_PSS:
+            return WP11_INIT_SHA512;
+#endif
+#endif
+        default:
+            return 0;
+    }
+}
+
 /**
  * Return whether this session has been initialized for the hash operation.
  *
  * @param  session   [in]  Session object.
  * @param  mechanism [in]  Mechanism to check against.
- * @param  mechinismBase [in] Base value of the mechanism type.
  * @return  1 when session is in used.
  *          0 when session is not in used.
  */
-int WP11_Session_IsHashOpInitialized(WP11_Session* session, int mechanism,
-                                     int mechinismBase)
+int WP11_Session_IsHashOpInitialized(WP11_Session* session, int mechanism)
 {
     return (session->init & WP11_INIT_DIGEST_MASK) ==
-            ((mechanism - mechinismBase) << WP11_INIT_DIGEST_SHIFT);
+            MechanismToHash(mechanism);
 }
 
 enum wc_HashType WP11_Session_ToHashType(WP11_Session* session)
