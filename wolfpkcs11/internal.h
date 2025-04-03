@@ -246,8 +246,7 @@ int WP11_Session_Get(CK_SESSION_HANDLE sessionHandle, WP11_Session** session);
 int WP11_Session_GetState(WP11_Session* session);
 int WP11_Session_IsRW(WP11_Session* session);
 int WP11_Session_IsOpInitialized(WP11_Session* session, int init);
-int WP11_Session_IsHashOpInitialized(WP11_Session* session, int mechanism,
-                                     int mechinismBase);
+int WP11_Session_IsHashOpInitialized(WP11_Session* session, int mechanism);
 enum wc_HashType WP11_Session_ToHashType(WP11_Session* session);
 void WP11_Session_SetOpInitialized(WP11_Session* session, int init);
 WP11_Slot* WP11_Session_GetSlot(WP11_Session* session);
