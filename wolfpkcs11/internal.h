@@ -159,6 +159,11 @@ extern "C" {
 #define WP11_INIT_SHA256               (0x3 << WP11_INIT_DIGEST_SHIFT)
 #define WP11_INIT_SHA384               (0x4 << WP11_INIT_DIGEST_SHIFT)
 #define WP11_INIT_SHA512               (0x5 << WP11_INIT_DIGEST_SHIFT)
+#define WP11_INIT_SHA3_224             (0x6 << WP11_INIT_DIGEST_SHIFT)
+#define WP11_INIT_SHA3_256             (0x7 << WP11_INIT_DIGEST_SHIFT)
+#define WP11_INIT_SHA3_384             (0x8 << WP11_INIT_DIGEST_SHIFT)
+#define WP11_INIT_SHA3_512             (0x9 << WP11_INIT_DIGEST_SHIFT)
+#define WP11_INIT_MD5                  (0xA << WP11_INIT_DIGEST_SHIFT)
 
 
 /* scrypt parameters when generating hash from PIN. */
