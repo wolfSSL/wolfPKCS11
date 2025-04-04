@@ -4918,6 +4918,58 @@ static int MechanismToHash(int mechanism)
             return WP11_INIT_SHA512;
 #endif
 #endif
+#ifndef NO_MD5
+        case CKM_MD5:
+        case CKM_MD5_HMAC:
+            return WP11_INIT_MD5;
+#endif
+#ifndef NO_SHA
+        case CKM_SHA1:
+        case CKM_SHA1_HMAC:
+            return WP11_INIT_SHA1;
+#endif
+#ifdef WOLFSSL_SHA224
+        case CKM_SHA224:
+        case CKM_SHA224_HMAC:
+            return WP11_INIT_SHA224;
+#endif
+#ifndef NO_SHA256
+        case CKM_SHA256:
+        case CKM_SHA256_HMAC:
+            return WP11_INIT_SHA256;
+#endif
+#ifdef WOLFSSL_SHA384
+        case CKM_SHA384:
+        case CKM_SHA384_HMAC:
+            return WP11_INIT_SHA384;
+#endif
+#ifdef WOLFSSL_SHA512
+        case CKM_SHA512:
+        case CKM_SHA512_HMAC:
+            return WP11_INIT_SHA512;
+#endif
+#ifdef WOLFSSL_SHA3
+#ifndef WOLFSSL_NOSHA3_224
+        case CKM_SHA3_224:
+        case CKM_SHA3_224_HMAC:
+            return WP11_INIT_SHA3_224;
+#endif
+#ifndef WOLFSSL_NOSHA3_256
+        case CKM_SHA3_256:
+        case CKM_SHA3_256_HMAC:
+            return WP11_INIT_SHA3_256;
+#endif
+#ifndef WOLFSSL_NOSHA3_384
+        case CKM_SHA3_384:
+        case CKM_SHA3_384_HMAC:
+            return WP11_INIT_SHA3_384;
+#endif
+#ifndef WOLFSSL_NOSHA3_512
+        case CKM_SHA3_512:
+        case CKM_SHA3_512_HMAC:
+            return WP11_INIT_SHA3_512;
+#endif
+#endif
         default:
             return 0;
     }
@@ -5039,6 +5091,18 @@ static int wp11_hash_type(CK_MECHANISM_TYPE hashMech,
             break;
         case CKM_SHA512:
             *hashType = WC_HASH_TYPE_SHA512;
+            break;
+        case CKM_SHA3_224:
+            *hashType = WC_HASH_TYPE_SHA3_224;
+            break;
+        case CKM_SHA3_256:
+            *hashType = WC_HASH_TYPE_SHA3_256;
+            break;
+        case CKM_SHA3_384:
+            *hashType = WC_HASH_TYPE_SHA3_384;
+            break;
+        case CKM_SHA3_512:
+            *hashType = WC_HASH_TYPE_SHA3_512;
             break;
         default:
             ret = BAD_FUNC_ARG;
@@ -9563,6 +9627,18 @@ static int wp11_digest_hash_type(CK_MECHANISM_TYPE digestMech, int* hashType)
         case CKM_SHA512:
             *hashType = WC_HASH_TYPE_SHA512;
             break;
+        case CKM_SHA3_224:
+            *hashType = WC_HASH_TYPE_SHA3_224;
+            break;
+        case CKM_SHA3_256:
+            *hashType = WC_HASH_TYPE_SHA3_256;
+            break;
+        case CKM_SHA3_384:
+            *hashType = WC_HASH_TYPE_SHA3_384;
+            break;
+        case CKM_SHA3_512:
+            *hashType = WC_HASH_TYPE_SHA3_512;
+            break;
         default:
             ret = CKR_MECHANISM_INVALID;
             break;
@@ -9743,6 +9819,18 @@ static int wp11_hmac_hash_type(CK_MECHANISM_TYPE hmacMech, int* hashType)
             break;
         case CKM_SHA512_HMAC:
             *hashType = WC_SHA512;
+            break;
+        case CKM_SHA3_224_HMAC:
+            *hashType = WC_SHA3_224;
+            break;
+        case CKM_SHA3_256_HMAC:
+            *hashType = WC_SHA3_256;
+            break;
+        case CKM_SHA3_384_HMAC:
+            *hashType = WC_SHA3_384;
+            break;
+        case CKM_SHA3_512_HMAC:
+            *hashType = WC_SHA3_512;
             break;
         default:
             ret = BAD_FUNC_ARG;
