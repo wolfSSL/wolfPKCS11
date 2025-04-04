@@ -4679,9 +4679,10 @@ void WP11_Slot_GetTokenLabel(WP11_Slot* slot, char* label)
     WP11_Lock_LockRO(&slot->lock);
     tokenLabel = slot->token.label;
     /* An unset label is all zeros - label is padded with ' ' and no NUL. */
-    if (tokenLabel[0] == '\0')
+    if (tokenLabel[0] == '\0') {
         XMEMSET(label, ' ', LABEL_SZ);
-    else
+        XMEMCPY(label, "wolfPKCS11", 10);
+    } else
         XMEMCPY(label, tokenLabel, LABEL_SZ);
     WP11_Lock_UnlockRO(&slot->lock);
 }
@@ -9526,4 +9527,178 @@ int WP11_Slot_GenerateRandom(WP11_Slot* slot, unsigned char* data, int len)
     WP11_Lock_UnlockRW(&slot->token.rngLock);
 
     return ret;
+}
+
+int WP11_GetOperationState(WP11_Session* session, unsigned char* stateData,
+                           unsigned long* stateDataLen)
+{
+    unsigned long bufferAvailable = *stateDataLen;
+    unsigned long mechSize = 0;
+
+    *stateDataLen = sizeof(session->mechanism);
+
+    switch (session->mechanism) {
+#ifndef NO_SHA
+        case CKM_SHA1:
+            mechSize = sizeof(wc_Sha);
+            break;
+#endif
+#ifdef WOLFSSL_SHA224
+        case CKM_SHA224:
+            mechSize = sizeof(wc_Sha224);
+            break;
+#endif
+#ifndef NO_SHA256
+        case CKM_SHA256:
+            mechSize = sizeof(wc_Sha256);
+            break;
+#endif
+#ifdef WOLFSSL_SHA384
+        case CKM_SHA384:
+            mechSize = sizeof(wc_Sha384);
+            break;
+#endif
+#ifdef WOLFSSL_SHA512
+        case CKM_SHA512:
+            mechSize = sizeof(wc_Sha512);
+            break;
+#endif
+        default:
+            return CKR_STATE_UNSAVEABLE;
+    }
+    *stateDataLen += mechSize;
+
+    if (bufferAvailable < *stateDataLen)
+        return CKR_BUFFER_TOO_SMALL;
+
+    if (stateData == NULL)
+        return CKR_OK;
+
+    XMEMCPY(stateData, &session->mechanism, sizeof(session->mechanism));
+    stateData += sizeof(session->mechanism);
+
+    switch (session->mechanism) {
+#ifndef NO_SHA
+        case CKM_SHA1:
+            wc_ShaCopy(&session->params.digest.hash.alg.sha,
+                (wc_Sha*)stateData);
+            break;
+#endif
+#ifdef WOLFSSL_SHA224
+        case CKM_SHA224:
+            wc_Sha224Copy(&session->params.digest.hash.alg.sha224,
+                (wc_Sha224*)stateData);
+            break;
+#endif
+#ifndef NO_SHA256
+        case CKM_SHA256:
+            wc_Sha256Copy(&session->params.digest.hash.alg.sha256,
+                (wc_Sha256*)stateData);
+            break;
+#endif
+#ifdef WOLFSSL_SHA384
+        case CKM_SHA384:
+            wc_Sha384Copy(&session->params.digest.hash.alg.sha384,
+                (wc_Sha384*)stateData);
+            break;
+#endif
+#ifdef WOLFSSL_SHA512
+        case CKM_SHA512:
+            wc_Sha512Copy(&session->params.digest.hash.alg.sha512,
+                (wc_Sha512*)stateData);
+            break;
+#endif
+    }
+
+    return CKR_OK;
+}
+
+int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
+                           unsigned long stateDataLen)
+{
+    unsigned long mechSize = 0;
+    int hashType = WC_HASH_TYPE_NONE;
+    int ret;
+
+    if (stateDataLen < sizeof(session->mechanism))
+        return CKR_SAVED_STATE_INVALID;
+
+    XMEMCPY(&session->mechanism, stateData, sizeof(session->mechanism));
+    switch (session->mechanism) {
+#ifndef NO_SHA
+        case CKM_SHA1:
+            mechSize = sizeof(wc_Sha);
+            break;
+#endif
+#ifdef WOLFSSL_SHA224
+        case CKM_SHA224:
+            mechSize = sizeof(wc_Sha224);
+            break;
+#endif
+#ifndef NO_SHA256
+        case CKM_SHA256:
+            mechSize = sizeof(wc_Sha256);
+            break;
+#endif
+#ifdef WOLFSSL_SHA384
+        case CKM_SHA384:
+            mechSize = sizeof(wc_Sha384);
+            break;
+#endif
+#ifdef WOLFSSL_SHA512
+        case CKM_SHA512:
+            mechSize = sizeof(wc_Sha512);
+            break;
+#endif
+        default:
+            return CKR_SAVED_STATE_INVALID;
+    }
+
+    if (stateDataLen < (sizeof(session->mechanism) + mechSize))
+        return CKR_SAVED_STATE_INVALID;
+
+    stateData += sizeof(session->mechanism);
+
+    ret = wp11_digest_hash_type(session->mechanism, &hashType);
+
+    session->params.digest.hashType = hashType;
+    ret = wc_HashInit(&session->params.digest.hash, hashType);
+
+    if (ret != CKR_OK)
+        return ret;
+
+    switch (session->mechanism) {
+#ifndef NO_SHA
+        case CKM_SHA1:
+            wc_ShaCopy((wc_Sha*)stateData,
+                &session->params.digest.hash.alg.sha);
+            break;
+#endif
+#ifdef WOLFSSL_SHA224
+        case CKM_SHA224:
+            wc_Sha224Copy((wc_Sha224*)stateData,
+                &session->params.digest.hash.alg.sha224);
+            break;
+#endif
+#ifndef NO_SHA256
+        case CKM_SHA256:
+            wc_Sha256Copy((wc_Sha256*)stateData,
+                &session->params.digest.hash.alg.sha256);
+            break;
+#endif
+#ifdef WOLFSSL_SHA384
+        case CKM_SHA384:
+            wc_Sha384Copy((wc_Sha384*)stateData,
+                &session->params.digest.hash.alg.sha384);
+            break;
+#endif
+#ifdef WOLFSSL_SHA512
+        case CKM_SHA512:
+            wc_Sha512Copy((wc_Sha512*)stateData,
+                &session->params.digest.hash.alg.sha512);
+            break;
+#endif
+    }
+
+    return CKR_OK;
 }
