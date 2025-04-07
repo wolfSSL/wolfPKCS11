@@ -326,10 +326,10 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
     CK_KEY_TYPE type;
     CK_OBJECT_CLASS objClass;
 
+    (void) session;
+
     if (pTemplate == NULL)
         return CKR_ARGUMENTS_BAD;
-    if (!WP11_Session_IsRW(session))
-        return CKR_SESSION_READ_ONLY;
 
     rv = CheckAttributes(pTemplate, ulCount, 1);
     if (rv != CKR_OK)
@@ -678,6 +678,10 @@ static CK_RV CreateObject(WP11_Session* session, CK_ATTRIBUTE_PTR pTemplate,
         objectClass = *(CK_OBJECT_CLASS*)attr->pValue;
     }
 
+    if (((objectClass == CKO_PRIVATE_KEY) || (objectClass == CKO_SECRET_KEY)) &&
+        !WP11_Session_IsRW(session))
+        return CKR_SESSION_READ_ONLY;
+
     if (objectClass == CKO_CERTIFICATE) {
         FindAttributeType(pTemplate, ulCount, CKA_CERTIFICATE_TYPE, &attr);
         if (attr == NULL)
@@ -744,8 +748,6 @@ CK_RV C_CreateObject(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate,
         return CKR_SESSION_HANDLE_INVALID;
     if (pTemplate == NULL || phObject == NULL)
         return CKR_ARGUMENTS_BAD;
-    if (!WP11_Session_IsRW(session))
-        return CKR_SESSION_READ_ONLY;
 
     rv = CreateObject(session, pTemplate, ulCount, &object);
     if (rv != CKR_OK)
