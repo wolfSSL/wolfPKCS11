@@ -1541,8 +1541,8 @@ CK_RV C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 return CKR_BUFFER_TOO_SMALL;
 
             encDataLen = (word32)*pulEncryptedDataLen;
-            ret = WP11_AesCtr_Do(pData, ulDataLen, pEncryptedData, &encDataLen,
-                                 session);
+            ret = WP11_AesCtr_Do(pData, (word32)ulDataLen, pEncryptedData,
+                                 &encDataLen, session);
             if (ret != 0)
                 return CKR_FUNCTION_FAILED;
             *pulEncryptedDataLen = encDataLen;
@@ -2555,8 +2555,8 @@ CK_RV C_DecryptUpdate(CK_SESSION_HANDLE hSession,
                 return CKR_BUFFER_TOO_SMALL;
 
             decPartLen = (word32)*pulPartLen;
-            ret = WP11_AesCtr_Update(pEncryptedPart, ulEncryptedPartLen, pPart,
-                                     &decPartLen, session);
+            ret = WP11_AesCtr_Update(pEncryptedPart, (word32)ulEncryptedPartLen,
+                                     pPart, &decPartLen, session);
             if (ret < 0)
                 return CKR_FUNCTION_FAILED;
             *pulPartLen = decPartLen;
@@ -2831,8 +2831,9 @@ CK_RV C_Digest(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
     if (pData == NULL || ulDataLen == 0 || pulDigestLen == NULL)
         return CKR_ARGUMENTS_BAD;
 
-    hashLen = *pulDigestLen;
-    ret = WP11_Digest_Single(pData, ulDataLen, pDigest, &hashLen, session);
+    hashLen = (word32)*pulDigestLen;
+    ret = WP11_Digest_Single(pData, (word32)ulDataLen, pDigest, &hashLen,
+                             session);
     *pulDigestLen = hashLen;
 
     return ret;
@@ -2866,8 +2867,7 @@ CK_RV C_DigestUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
     if (!WP11_Session_IsOpInitialized(session, WP11_INIT_DIGEST))
         return CKR_OPERATION_NOT_INITIALIZED;
 
-
-    ret = WP11_Digest_Update(pPart, ulPartLen, session);
+    ret = WP11_Digest_Update(pPart, (word32)ulPartLen, session);
 
     return ret;
 }
@@ -2934,7 +2934,7 @@ CK_RV C_DigestFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pDigest,
         return CKR_ARGUMENTS_BAD;
     if (!WP11_Session_IsOpInitialized(session, WP11_INIT_DIGEST))
         return CKR_OPERATION_NOT_INITIALIZED;
-    hashLen = *pulDigestLen;
+    hashLen = (word32)*pulDigestLen;
     ret = WP11_Digest_Final(pDigest, &hashLen, session);
     *pulDigestLen = hashLen;
 
@@ -3109,8 +3109,8 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
                                               pMechanism->ulParameterLen != 0) {
                 return CKR_MECHANISM_PARAM_INVALID;
             }
-            init = WP11_INIT_ECDSA_SIGN | ((pMechanism->mechanism - CKM_ECDSA)
-                                                    << WP11_INIT_DIGEST_SHIFT);
+            init = (int)(WP11_INIT_ECDSA_SIGN |
+               ((pMechanism->mechanism - CKM_ECDSA) << WP11_INIT_DIGEST_SHIFT));
             break;
 #endif
 #ifndef NO_HMAC
@@ -3241,7 +3241,7 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_RSA_PKCS_SIGN))
                 return CKR_OPERATION_NOT_INITIALIZED;
-            if (!WP11_Session_IsHashOpInitialized(session, mechanism))
+            if (!WP11_Session_IsHashOpInitialized(session, (int)mechanism))
                 return CKR_OPERATION_NOT_INITIALIZED;
 
             sigLen = WP11_Rsa_KeyLen(obj);
@@ -3253,8 +3253,9 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 return CKR_BUFFER_TOO_SMALL;
 
             if (hash_type != WC_HASH_TYPE_NONE) {
-                if (wc_Hash(hash_type, pData, ulDataLen, digest, sizeof(digest))
-                     != 0 || (dataSz = wc_HashGetDigestSize(hash_type)) < 0) {
+                if (wc_Hash(hash_type, pData, (word32)ulDataLen,
+                            digest, sizeof(digest)) != 0 ||
+                        (dataSz = wc_HashGetDigestSize(hash_type)) < 0) {
                     return CKR_FUNCTION_FAILED;
                 }
                 data = digest;
@@ -3289,7 +3290,7 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                                                  WP11_INIT_RSA_PKCS_PSS_SIGN)) {
                 return CKR_OPERATION_NOT_INITIALIZED;
             }
-            if (!WP11_Session_IsHashOpInitialized(session, mechanism))
+            if (!WP11_Session_IsHashOpInitialized(session, (int)mechanism))
                 return CKR_OPERATION_NOT_INITIALIZED;
 
             sigLen = WP11_Rsa_KeyLen(obj);
@@ -3301,8 +3302,9 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 return CKR_BUFFER_TOO_SMALL;
 
             if (hash_type != WC_HASH_TYPE_NONE) {
-                if (wc_Hash(hash_type, pData, ulDataLen, digest, sizeof(digest))
-                     != 0 || (dataSz = wc_HashGetDigestSize(hash_type)) < 0) {
+                if (wc_Hash(hash_type, pData, (word32)ulDataLen,
+                        digest, sizeof(digest)) != 0 ||
+                        (dataSz = wc_HashGetDigestSize(hash_type)) < 0) {
                     return CKR_FUNCTION_FAILED;
                 }
                 data = digest;
@@ -3339,7 +3341,7 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_ECDSA_SIGN))
                 return CKR_OPERATION_NOT_INITIALIZED;
-            if (!WP11_Session_IsHashOpInitialized(session, mechanism))
+            if (!WP11_Session_IsHashOpInitialized(session, (int)mechanism))
                 return CKR_OPERATION_NOT_INITIALIZED;
 
             sigLen = WP11_Ec_SigLen(obj);
@@ -3351,8 +3353,9 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 return CKR_BUFFER_TOO_SMALL;
 
             if (hash_type != WC_HASH_TYPE_NONE) {
-                if (wc_Hash(hash_type, pData, ulDataLen, digest, sizeof(digest))
-                     != 0 || (dataSz = wc_HashGetDigestSize(hash_type)) < 0) {
+                if (wc_Hash(hash_type, pData, (word32)ulDataLen, digest,
+                        sizeof(digest)) != 0 ||
+                        (dataSz = wc_HashGetDigestSize(hash_type)) < 0) {
                     return CKR_FUNCTION_FAILED;
                 }
                 data = digest;
@@ -3792,8 +3795,8 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
                                               pMechanism->ulParameterLen != 0) {
                 return CKR_MECHANISM_PARAM_INVALID;
             }
-            init = WP11_INIT_ECDSA_VERIFY | ((pMechanism->mechanism - CKM_ECDSA)
-                                                    << WP11_INIT_DIGEST_SHIFT);
+            init = (int)(WP11_INIT_ECDSA_VERIFY |
+               ((pMechanism->mechanism - CKM_ECDSA) << WP11_INIT_DIGEST_SHIFT));
             break;
 #endif
 #ifndef NO_HMAC
@@ -3914,12 +3917,13 @@ CK_RV C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                                                    WP11_INIT_RSA_PKCS_VERIFY)) {
                 return CKR_OPERATION_NOT_INITIALIZED;
             }
-            if (!WP11_Session_IsHashOpInitialized(session, mechanism))
+            if (!WP11_Session_IsHashOpInitialized(session, (int)mechanism))
                 return CKR_OPERATION_NOT_INITIALIZED;
 
             if (hash_type != WC_HASH_TYPE_NONE) {
-                if (wc_Hash(hash_type, pData, ulDataLen, digest, sizeof(digest))
-                     != 0 || (dataSz = wc_HashGetDigestSize(hash_type)) < 0) {
+                if (wc_Hash(hash_type, pData, (word32)ulDataLen, digest,
+                        sizeof(digest)) != 0 ||
+                        (dataSz = wc_HashGetDigestSize(hash_type)) < 0) {
                     return CKR_FUNCTION_FAILED;
                 }
                 data = digest;
@@ -3952,12 +3956,13 @@ CK_RV C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                                                WP11_INIT_RSA_PKCS_PSS_VERIFY)) {
                 return CKR_OPERATION_NOT_INITIALIZED;
             }
-            if (!WP11_Session_IsHashOpInitialized(session, mechanism))
+            if (!WP11_Session_IsHashOpInitialized(session, (int)mechanism))
                 return CKR_OPERATION_NOT_INITIALIZED;
 
             if (hash_type != WC_HASH_TYPE_NONE) {
-                if (wc_Hash(hash_type, pData, ulDataLen, digest, sizeof(digest))
-                     != 0 || (dataSz = wc_HashGetDigestSize(hash_type)) < 0) {
+                if (wc_Hash(hash_type, pData, (word32)ulDataLen, digest,
+                        sizeof(digest)) != 0 ||
+                        (dataSz = wc_HashGetDigestSize(hash_type)) < 0) {
                     return CKR_FUNCTION_FAILED;
                 }
                 data = digest;
@@ -3993,12 +3998,13 @@ CK_RV C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_ECDSA_VERIFY))
                 return CKR_OPERATION_NOT_INITIALIZED;
-            if (!WP11_Session_IsHashOpInitialized(session, mechanism))
+            if (!WP11_Session_IsHashOpInitialized(session, (int)mechanism))
                 return CKR_OPERATION_NOT_INITIALIZED;
 
             if (hash_type != WC_HASH_TYPE_NONE) {
-                if (wc_Hash(hash_type, pData, ulDataLen, digest, sizeof(digest))
-                     != 0 || (dataSz = wc_HashGetDigestSize(hash_type)) < 0) {
+                if (wc_Hash(hash_type, pData, (word32)ulDataLen, digest,
+                        sizeof(digest)) != 0 ||
+                        (dataSz = wc_HashGetDigestSize(hash_type)) < 0) {
                     return CKR_FUNCTION_FAILED;
                 }
                 data = digest;
