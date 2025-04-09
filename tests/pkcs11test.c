@@ -5089,11 +5089,15 @@ static CK_RV ecdsa_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE privKey,
     CK_MECHANISM mech;
     unsigned long i;
     CK_MECHANISM_TYPE digestTypes[] = {
+#ifndef WOLFPKCS11_TPM
+        /* the ibmswtpm2 backend we use for testing appears to not support
+         * these hash sizes for ecdsa */
 #ifndef NO_SHA
         CKM_ECDSA_SHA1,
 #endif
 #ifdef WOLFSSL_SHA224
         CKM_ECDSA_SHA224,
+#endif
 #endif
 #ifndef NO_SHA256
         CKM_ECDSA_SHA256,
