@@ -8089,7 +8089,7 @@ static int Pkcs11ECDSASig_Decode(const byte* in, word32 inSz, byte* sig,
  */
 int WP11_Ec_SigLen(WP11_Object* key)
 {
-    return key->data.ecKey.dp->size * 2;
+    return wc_ecc_size(&key->data.ecKey) * 2;
 }
 
 /**
