@@ -127,6 +127,10 @@ extern "C" {
 #define WP11_INIT_AES_CCM_DEC          0x0008
 #define WP11_INIT_AES_ECB_ENC          0x0009
 #define WP11_INIT_AES_ECB_DEC          0x000A
+#define WP11_INIT_AES_CTS_ENC          0x000B
+#define WP11_INIT_AES_CTS_DEC          0x000C
+#define WP11_INIT_AES_CTR_ENC          0x000D
+#define WP11_INIT_AES_CTR_DEC          0x000E
 #define WP11_INIT_HMAC_SIGN            0x0010
 #define WP11_INIT_HMAC_VERIFY          0x0011
 #define WP11_INIT_DIGEST               0x0012
@@ -144,6 +148,15 @@ extern "C" {
 #define WP11_INIT_RSA_X_509_VERIFY     0x0035
 #define WP11_INIT_ECDSA_SIGN           0x0040
 #define WP11_INIT_ECDSA_VERIFY         0x0041
+/* Some operations can have an additional hashing step before the sign/verify */
+#define WP11_INIT_DIGEST_SHIFT         12
+#define WP11_INIT_DIGEST_MASK          (0xF << WP11_INIT_DIGEST_SHIFT)
+#define WP11_INIT_SHA1                 (0x1 << WP11_INIT_DIGEST_SHIFT)
+#define WP11_INIT_SHA224               (0x2 << WP11_INIT_DIGEST_SHIFT)
+#define WP11_INIT_SHA256               (0x3 << WP11_INIT_DIGEST_SHIFT)
+#define WP11_INIT_SHA384               (0x4 << WP11_INIT_DIGEST_SHIFT)
+#define WP11_INIT_SHA512               (0x5 << WP11_INIT_DIGEST_SHIFT)
+
 
 /* scrypt parameters when generating hash from PIN. */
 #ifndef WP11_HASH_PIN_COST
@@ -233,6 +246,8 @@ int WP11_Session_Get(CK_SESSION_HANDLE sessionHandle, WP11_Session** session);
 int WP11_Session_GetState(WP11_Session* session);
 int WP11_Session_IsRW(WP11_Session* session);
 int WP11_Session_IsOpInitialized(WP11_Session* session, int init);
+int WP11_Session_IsHashOpInitialized(WP11_Session* session, int mechanism);
+enum wc_HashType WP11_Session_ToHashType(WP11_Session* session);
 void WP11_Session_SetOpInitialized(WP11_Session* session, int init);
 WP11_Slot* WP11_Session_GetSlot(WP11_Session* session);
 CK_MECHANISM_TYPE WP11_Session_GetMechanism(WP11_Session* session);
@@ -244,6 +259,8 @@ int WP11_Session_SetOaepParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
                                CK_MECHANISM_TYPE mgf, byte* label, int labelSz);
 int WP11_Session_SetCbcParams(WP11_Session* session, unsigned char* iv, int enc,
                               WP11_Object* object);
+int WP11_Session_SetCtrParams(WP11_Session* session, CK_ULONG ulCounterBits,
+                              CK_BYTE* cb, WP11_Object* object);
 int WP11_Session_SetGcmParams(WP11_Session* session, unsigned char* iv,
                               int ivSz, unsigned char* aad, int aadLen,
                               int tagBits);
@@ -251,6 +268,8 @@ int WP11_Session_SetCcmParams(WP11_Session* session, int dataSz,
                               unsigned char* iv, int ivSz,
                               unsigned char* aad, int aadSz,
                               int macSz);
+int WP11_Session_SetCtsParams(WP11_Session* session, unsigned char* iv,
+                              int enc, WP11_Object* object);
 int WP11_Session_AddObject(WP11_Session* session, int onToken,
                            WP11_Object* object);
 void WP11_Session_RemoveObject(WP11_Session* session, WP11_Object* object);
@@ -387,6 +406,13 @@ int WP11_AesCbcPad_DecryptUpdate(unsigned char* enc, word32 encSz,
 int WP11_AesCbcPad_DecryptFinal(unsigned char* dec, word32* decSz,
                                 WP11_Session* session);
 
+
+int WP11_AesCtr_Do(unsigned char* in, word32 inSz, unsigned char* out,
+        word32* outSz, WP11_Session* session);
+int WP11_AesCtr_Update(unsigned char* in, word32 inSz, unsigned char* out,
+        word32* outSz, WP11_Session* session);
+int WP11_AesCtr_Final(WP11_Session* session);
+
 int WP11_AesGcm_GetTagBits(WP11_Session* session);
 int WP11_AesGcm_EncDataLen(WP11_Session* session);
 int WP11_AesGcm_Encrypt(unsigned char* plain, word32 plainSz,
@@ -419,6 +445,22 @@ int WP11_AesEcb_Encrypt(unsigned char* plain, word32 plainSz,
 int WP11_AesEcb_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
                         word32* decSz, WP11_Object* secret,
                         WP11_Session* session);
+
+int WP11_AesCts_Encrypt(unsigned char* plain, word32 plainSz,
+                        unsigned char* enc, word32* encSz,
+                        WP11_Session* session);
+int WP11_AesCts_EncryptUpdate(unsigned char* plain, word32 plainSz,
+                              unsigned char* enc, word32* encSz,
+                              WP11_Session* session);
+int WP11_AesCts_EncryptFinal(unsigned char* enc, word32* encSz,
+                             WP11_Session* session);
+int WP11_AesCts_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
+                        word32* decSz, WP11_Session* session);
+int WP11_AesCts_DecryptUpdate(unsigned char* enc, word32 encSz,
+                              unsigned char* dec, word32* decSz,
+                              WP11_Session* session);
+int WP11_AesCts_DecryptFinal(unsigned char* dec, word32* decSz,
+                             WP11_Session* session);
 
 int WP11_Hmac_SigLen(WP11_Session* session);
 int WP11_Hmac_Init(CK_MECHANISM_TYPE mechanism, WP11_Object* secret,

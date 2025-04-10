@@ -215,6 +215,14 @@ extern "C" {
 #define CKM_RSA_PKCS_PSS                      0x0000000DUL
 #define CKM_DH_PKCS_KEY_PAIR_GEN              0x00000020UL
 #define CKM_DH_PKCS_DERIVE                    0x00000021UL
+#define CKM_SHA256_RSA_PKCS                   0x00000040UL
+#define CKM_SHA384_RSA_PKCS                   0x00000041UL
+#define CKM_SHA512_RSA_PKCS                   0x00000042UL
+#define CKM_SHA256_RSA_PKCS_PSS               0x00000043UL
+#define CKM_SHA384_RSA_PKCS_PSS               0x00000044UL
+#define CKM_SHA512_RSA_PKCS_PSS               0x00000045UL
+#define CKM_SHA224_RSA_PKCS                   0x00000046UL
+#define CKM_SHA224_RSA_PKCS_PSS               0x00000047UL
 #define CKM_MD5                               0x00000210UL
 #define CKM_MD5_HMAC                          0x00000211UL
 #define CKM_SHA1                              0x00000220UL
@@ -230,14 +238,21 @@ extern "C" {
 #define CKM_GENERIC_SECRET_KEY_GEN            0x00000350UL
 #define CKM_EC_KEY_PAIR_GEN                   0x00001040UL
 #define CKM_ECDSA                             0x00001041UL
+#define CKM_ECDSA_SHA1                        0x00001042UL
+#define CKM_ECDSA_SHA224                      0x00001043UL
+#define CKM_ECDSA_SHA256                      0x00001044UL
+#define CKM_ECDSA_SHA384                      0x00001045UL
+#define CKM_ECDSA_SHA512                      0x00001046UL
 #define CKM_ECDH1_DERIVE                      0x00001050UL
 #define CKM_ECDH1_COFACTOR_DERIVE             0x00001051UL
 #define CKM_AES_KEY_GEN                       0x00001080UL
+#define CKM_AES_ECB                           0x00001081UL
 #define CKM_AES_CBC                           0x00001082UL
 #define CKM_AES_CBC_PAD                       0x00001085UL
+#define CKM_AES_CTR                           0x00001086UL
 #define CKM_AES_GCM                           0x00001087UL
 #define CKM_AES_CCM                           0x00001088UL
-#define CKM_AES_ECB                           0x000001081L
+#define CKM_AES_CTS                           0x00001089UL
 
 #define CKR_OK                                0x00000000UL
 #define CKR_CANCEL                            0x00000001UL
@@ -533,6 +548,11 @@ typedef struct CK_ECDH1_DERIVE_PARAMS {
 } CK_ECDH1_DERIVE_PARAMS;
 typedef CK_ECDH1_DERIVE_PARAMS* CK_ECDH1_DERIVE_PARAMS_PTR;
 
+typedef struct CK_AES_CTR_PARAMS {
+    CK_ULONG ulCounterBits;
+    CK_BYTE cb[16];
+} CK_AES_CTR_PARAMS;
+typedef CK_AES_CTR_PARAMS* CK_AES_CTR_PARAMS_PTR;
 
 typedef struct CK_GCM_PARAMS {
     CK_BYTE_PTR       pIv;

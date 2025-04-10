@@ -225,16 +225,55 @@ static CK_MECHANISM_TYPE mechanismList[] = {
 #endif
     CKM_RSA_X_509,
     CKM_RSA_PKCS,
+#ifdef WOLFSSL_SHA224
+    CKM_SHA224_RSA_PKCS,
+#endif
+#ifndef NO_SHA256
+    CKM_SHA256_RSA_PKCS,
+#endif
+#ifdef WOLFSSL_SHA384
+    CKM_SHA384_RSA_PKCS,
+#endif
+#ifdef WOLFSSL_SHA512
+    CKM_SHA512_RSA_PKCS,
+#endif
 #ifndef WC_NO_RSA_OAEP
     CKM_RSA_PKCS_OAEP,
 #endif
 #ifdef WC_RSA_PSS
     CKM_RSA_PKCS_PSS,
+#ifdef WOLFSSL_SHA224
+    CKM_SHA224_RSA_PKCS_PSS,
+#endif
+#ifndef NO_SHA256
+    CKM_SHA256_RSA_PKCS_PSS,
+#endif
+#ifdef WOLFSSL_SHA384
+    CKM_SHA384_RSA_PKCS_PSS,
+#endif
+#ifdef WOLFSSL_SHA512
+    CKM_SHA512_RSA_PKCS_PSS,
+#endif
 #endif
 #endif
 #ifdef HAVE_ECC
     CKM_EC_KEY_PAIR_GEN,
     CKM_ECDSA,
+#ifndef NO_SHA
+    CKM_ECDSA_SHA1,
+#endif
+#ifdef WOLFSSL_SHA224
+    CKM_ECDSA_SHA224,
+#endif
+#ifndef NO_SHA256
+    CKM_ECDSA_SHA256,
+#endif
+#ifdef WOLFSSL_SHA384
+    CKM_ECDSA_SHA384,
+#endif
+#ifdef WOLFSSL_SHA512
+    CKM_ECDSA_SHA512,
+#endif
     CKM_ECDH1_DERIVE,
 #endif
 #ifndef NO_DH
@@ -246,6 +285,9 @@ static CK_MECHANISM_TYPE mechanismList[] = {
     CKM_AES_CBC,
     CKM_AES_CBC_PAD,
 #endif
+#ifdef HAVE_AESCTR
+    CKM_AES_CTR,
+#endif
 #ifdef HAVE_AESGCM
     CKM_AES_GCM,
 #endif
@@ -254,6 +296,9 @@ static CK_MECHANISM_TYPE mechanismList[] = {
 #endif
 #ifdef HAVE_AESECB
     CKM_AES_ECB,
+#endif
+#ifdef HAVE_AESCTS
+    CKM_AES_CTS,
 #endif
 #endif
 #ifndef NO_HMAC
@@ -358,6 +403,11 @@ static CK_MECHANISM_INFO rsaPssMechInfo = {
     256, 521, CKF_SIGN | CKF_VERIFY
 };
 #endif
+#ifndef NO_SHA256
+static CK_MECHANISM_INFO shaRsaPkcsMechInfo = {
+    1024, 4096, CKF_SIGN | CKF_VERIFY
+};
+#endif
 #endif
 #ifdef HAVE_ECC
 /* Info on EC key generation mechanism. */
@@ -368,6 +418,31 @@ static CK_MECHANISM_INFO ecKgMechInfo = {
 static CK_MECHANISM_INFO ecdsaMechInfo = {
     256, 521, CKF_SIGN | CKF_VERIFY
 };
+#ifndef NO_SHA
+static CK_MECHANISM_INFO ecdsaSha1MechInfo = {
+    256, 521, CKF_SIGN | CKF_VERIFY
+};
+#endif
+#ifdef WOLFSSL_SHA224
+static CK_MECHANISM_INFO ecdsaSha224MechInfo = {
+    256, 521, CKF_SIGN | CKF_VERIFY
+};
+#endif
+#ifndef NO_SHA256
+static CK_MECHANISM_INFO ecdsaSha256MechInfo = {
+    256, 521, CKF_SIGN | CKF_VERIFY
+};
+#endif
+#ifdef WOLFSSL_SHA384
+static CK_MECHANISM_INFO ecdsaSha384MechInfo = {
+    256, 521, CKF_SIGN | CKF_VERIFY
+};
+#endif
+#ifdef WOLFSSL_SHA512
+static CK_MECHANISM_INFO ecdsaSha512MechInfo = {
+    256, 521, CKF_SIGN | CKF_VERIFY
+};
+#endif
 /* Info on ECDH mechanism. */
 static CK_MECHANISM_INFO ecdhMechInfo = {
     256, 521, CKF_DERIVE
@@ -390,6 +465,12 @@ static CK_MECHANISM_INFO aesCbcMechInfo = {
     16, 32, CKF_ENCRYPT | CKF_DECRYPT
 };
 #endif
+#ifdef HAVE_AESCTR
+/* Info on AES-CTR mechanism. */
+static CK_MECHANISM_INFO aesCtrMechInfo = {
+    16, 32, CKF_ENCRYPT | CKF_DECRYPT
+};
+#endif
 #ifdef HAVE_AESGCM
 /* Info on AES-GCM mechanism. */
 static CK_MECHANISM_INFO aesGcmMechInfo = {
@@ -405,6 +486,12 @@ static CK_MECHANISM_INFO aesCcmMechInfo = {
 #ifdef HAVE_AESECB
 /* Info on AES-ECB mechanism. */
 static CK_MECHANISM_INFO aesEcbMechInfo = {
+    16, 32, CKF_ENCRYPT | CKF_DECRYPT
+};
+#endif
+#ifdef HAVE_AESCTS
+/* Info on AES-CTS mechanism. */
+static CK_MECHANISM_INFO aesCtsMechInfo = {
     16, 32, CKF_ENCRYPT | CKF_DECRYPT
 };
 #endif
@@ -506,10 +593,50 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
             XMEMCPY(pInfo, &rsaOaepMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
     #endif
+    #ifndef NO_SHA256
+        case CKM_SHA256_RSA_PKCS:
+            XMEMCPY(pInfo, &shaRsaPkcsMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+    #endif
+    #ifdef WOLFSSL_SHA224
+        case CKM_SHA224_RSA_PKCS:
+            XMEMCPY(pInfo, &shaRsaPkcsMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+    #endif
+    #ifdef WOLFSSL_SHA384
+        case CKM_SHA384_RSA_PKCS:
+            XMEMCPY(pInfo, &shaRsaPkcsMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+    #endif
+    #ifdef WOLFSSL_SHA512
+        case CKM_SHA512_RSA_PKCS:
+            XMEMCPY(pInfo, &shaRsaPkcsMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+    #endif
     #ifdef WC_RSA_PSS
         case CKM_RSA_PKCS_PSS:
             XMEMCPY(pInfo, &rsaPssMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
+        #ifndef NO_SHA256
+        case CKM_SHA256_RSA_PKCS_PSS:
+            XMEMCPY(pInfo, &shaRsaPkcsMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+        #endif
+        #ifdef WOLFSSL_SHA224
+        case CKM_SHA224_RSA_PKCS_PSS:
+            XMEMCPY(pInfo, &shaRsaPkcsMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+        #endif
+        #ifdef WOLFSSL_SHA384
+        case CKM_SHA384_RSA_PKCS_PSS:
+            XMEMCPY(pInfo, &shaRsaPkcsMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+        #endif
+        #ifdef WOLFSSL_SHA512
+        case CKM_SHA512_RSA_PKCS_PSS:
+            XMEMCPY(pInfo, &shaRsaPkcsMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+        #endif
     #endif
 #endif
 #ifdef HAVE_ECC
@@ -519,6 +646,31 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
         case CKM_ECDSA:
             XMEMCPY(pInfo, &ecdsaMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
+#ifndef NO_SHA
+        case CKM_ECDSA_SHA1:
+            XMEMCPY(pInfo, &ecdsaSha1MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifdef WOLFSSL_SHA224
+        case CKM_ECDSA_SHA224:
+            XMEMCPY(pInfo, &ecdsaSha224MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifndef NO_SHA256
+        case CKM_ECDSA_SHA256:
+            XMEMCPY(pInfo, &ecdsaSha256MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifdef WOLFSSL_SHA384
+        case CKM_ECDSA_SHA384:
+            XMEMCPY(pInfo, &ecdsaSha384MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifdef WOLFSSL_SHA512
+        case CKM_ECDSA_SHA512:
+            XMEMCPY(pInfo, &ecdsaSha512MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
         case CKM_ECDH1_DERIVE:
             XMEMCPY(pInfo, &ecdhMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
@@ -538,6 +690,11 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
             XMEMCPY(pInfo, &aesCbcMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
 #endif
+#ifdef HAVE_AESCTR
+        case CKM_AES_CTR:
+            XMEMCPY(pInfo, &aesCtrMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
 #ifdef HAVE_AESGCM
         case CKM_AES_GCM:
             XMEMCPY(pInfo, &aesGcmMechInfo, sizeof(CK_MECHANISM_INFO));
@@ -551,6 +708,11 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
 #ifdef HAVE_AESECB
         case CKM_AES_ECB:
             XMEMCPY(pInfo, &aesEcbMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifdef HAVE_AESCTS
+        case CKM_AES_CTS:
+            XMEMCPY(pInfo, &aesCtsMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
 #endif
 #endif

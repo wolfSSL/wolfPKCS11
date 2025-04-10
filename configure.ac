@@ -238,6 +238,18 @@ else
     DISABLE_DEFS="$DISABLE_DEFS -DHAVE_AESGCM"
 fi
 
+AC_ARG_ENABLE([aesctr],
+    [AS_HELP_STRING([--enable-aesctr],[Enable AES-CTR (default: disabled)])],
+    [ ENABLED_AESCTR=$enableval ],
+    [ ENABLED_AESCTR=no ]
+    )
+if test "$ENABLED_AES" = "yes" && test "$ENABLED_AESCTR" = "yes"
+then
+    AM_CFLAGS="$AM_CFLAGS -DHAVE_AESCTR"
+else
+    DISABLE_DEFS="$DISABLE_DEFS -DHAVE_AESCTR"
+fi
+
 AC_ARG_ENABLE([aesccm],
     [AS_HELP_STRING([--enable-aesccm],[Enable AES-CCM (default: disabled)])],
     [ ENABLED_AESCCM=$enableval ],
@@ -260,6 +272,18 @@ then
     AM_CFLAGS="$AM_CFLAGS -DHAVE_AESECB"
 else
     DISABLE_DEFS="$DISABLE_DEFS -DHAVE_AESECB"
+fi
+
+AC_ARG_ENABLE([aescts],
+    [AS_HELP_STRING([--enable-aescts],[Enable AES-CTS (default: disabled)])],
+    [ ENABLED_AESCTS=$enableval ],
+    [ ENABLED_AESCTS=no ]
+    )
+if test "$ENABLED_AES" = "yes" && test "$ENABLED_AESCTS" = "yes"
+then
+    AM_CFLAGS="$AM_CFLAGS -DHAVE_AESCTS"
+else
+    DISABLE_DEFS="$DISABLE_DEFS -DHAVE_AESCTS"
 fi
 
 AC_ARG_ENABLE([hmac],
@@ -525,8 +549,10 @@ echo "   * Single threaded:            $ENABLED_SINGLETHREADED"
 echo "   * AES:                        $ENABLED_AES"
 echo "   * AES-CBC:                    $ENABLED_AESCBC"
 echo "   * AES-GCM:                    $ENABLED_AESGCM"
+echo "   * AES-CTR:                    $ENABLED_AESCTR"
 echo "   * AES-CCM:                    $ENABLED_AESCCM"
 echo "   * AES-ECB:                    $ENABLED_AESECB"
+echo "   * AES-CTS:                    $ENABLED_AESCTS"
 echo "   * MD5:                        $ENABLED_MD5"
 echo "   * SHA:                        $ENABLED_SHA1"
 echo "   * SHA-224:                    $ENABLED_SHA224"
