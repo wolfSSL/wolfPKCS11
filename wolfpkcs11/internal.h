@@ -286,7 +286,7 @@ int WP11_Object_SetClass(WP11_Object* object, CK_OBJECT_CLASS objClass);
 CK_OBJECT_CLASS WP11_Object_GetClass(WP11_Object* object);
 
 int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
-                     WP11_Object** object);
+                     WP11_Object** object, byte allSessions);
 int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                         CK_ULONG* len);
 int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,

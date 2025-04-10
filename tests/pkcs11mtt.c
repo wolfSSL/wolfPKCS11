@@ -150,7 +150,7 @@ static CK_RV test_op_state(void* args)
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_RV ret;
     byte data;
-    CK_ULONG len;
+    CK_ULONG len = 0;
 
     ret = funcList->C_GetOperationState(CK_INVALID_HANDLE, NULL, &len);
     CHECK_CKR_FAIL(ret, CKR_SESSION_HANDLE_INVALID,

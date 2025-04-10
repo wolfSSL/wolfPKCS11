@@ -808,7 +808,7 @@ CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
      * object. Get the object type from original object and where to store
      * new object from template.
      */
-    ret = WP11_Object_Find(session, hObject, &obj);
+    ret = WP11_Object_Find(session, hObject, &obj, 1);
     if (ret != 0)
         return CKR_OBJECT_HANDLE_INVALID;
     keyType = WP11_Object_GetType(obj);
@@ -876,7 +876,7 @@ CK_RV C_DestroyObject(CK_SESSION_HANDLE hSession,
     if (!WP11_Session_IsRW(session))
         return CKR_SESSION_READ_ONLY;
 
-    ret = WP11_Object_Find(session, hObject, &obj);
+    ret = WP11_Object_Find(session, hObject, &obj, 0);
     if (ret != 0)
         return CKR_OBJECT_HANDLE_INVALID;
 
@@ -915,7 +915,7 @@ CK_RV C_GetObjectSize(CK_SESSION_HANDLE hSession,
     if (pulSize == NULL)
         return CKR_ARGUMENTS_BAD;
 
-    ret = WP11_Object_Find(session, hObject, &obj);
+    ret = WP11_Object_Find(session, hObject, &obj, 1);
     if (ret != 0)
         return CKR_OBJECT_HANDLE_INVALID;
 
@@ -961,7 +961,7 @@ CK_RV C_GetAttributeValue(CK_SESSION_HANDLE hSession,
     if (pTemplate == NULL)
         return CKR_ARGUMENTS_BAD;
 
-    ret = WP11_Object_Find(session, hObject, &obj);
+    ret = WP11_Object_Find(session, hObject, &obj, 1);
     if (ret != 0)
         return CKR_OBJECT_HANDLE_INVALID;
 
@@ -1026,7 +1026,7 @@ CK_RV C_SetAttributeValue(CK_SESSION_HANDLE hSession,
     if (!WP11_Session_IsRW(session))
         return CKR_SESSION_READ_ONLY;
 
-    ret = WP11_Object_Find(session, hObject, &obj);
+    ret = WP11_Object_Find(session, hObject, &obj, 0);
     if (ret != 0)
         return CKR_OBJECT_HANDLE_INVALID;
 
@@ -1180,7 +1180,7 @@ CK_RV C_EncryptInit(CK_SESSION_HANDLE hSession,
     if (pMechanism == NULL)
         return CKR_ARGUMENTS_BAD;
 
-    ret = WP11_Object_Find(session, hKey, &obj);
+    ret = WP11_Object_Find(session, hKey, &obj, 1);
     if (ret != 0)
         return CKR_OBJECT_HANDLE_INVALID;
 
@@ -1834,7 +1834,7 @@ CK_RV C_DecryptInit(CK_SESSION_HANDLE hSession,
     if (pMechanism == NULL)
         return CKR_ARGUMENTS_BAD;
 
-    ret = WP11_Object_Find(session, hKey, &obj);
+    ret = WP11_Object_Find(session, hKey, &obj, 1);
     if (ret != 0)
         return CKR_OBJECT_HANDLE_INVALID;
 
@@ -2587,7 +2587,7 @@ CK_RV C_DigestKey(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hKey)
     if (WP11_Session_Get(hSession, &session) != 0)
         return CKR_SESSION_HANDLE_INVALID;
 
-    ret = WP11_Object_Find(session, hKey, &obj);
+    ret = WP11_Object_Find(session, hKey, &obj, 1);
     if (ret != 0)
         return CKR_OBJECT_HANDLE_INVALID;
 
@@ -2668,7 +2668,7 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
     if (pMechanism == NULL)
         return CKR_ARGUMENTS_BAD;
 
-    ret = WP11_Object_Find(session, hKey, &obj);
+    ret = WP11_Object_Find(session, hKey, &obj, 1);
 #ifdef WOLFSSL_MAXQ10XX_CRYPTO
     if ((ret != 0) && (hKey == 0) && (pMechanism->mechanism == CKM_ECDSA)) {
         if (pMechanism->pParameter != NULL || pMechanism->ulParameterLen != 0) {
@@ -3139,7 +3139,7 @@ CK_RV C_SignRecoverInit(CK_SESSION_HANDLE hSession,
     if (pMechanism == NULL)
         return CKR_ARGUMENTS_BAD;
 
-    ret = WP11_Object_Find(session, hKey, &obj);
+    ret = WP11_Object_Find(session, hKey, &obj, 1);
     if (ret != 0)
         return CKR_OBJECT_HANDLE_INVALID;
 
@@ -3216,7 +3216,7 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
     if (pMechanism == NULL)
         return CKR_ARGUMENTS_BAD;
 
-    ret = WP11_Object_Find(session, hKey, &obj);
+    ret = WP11_Object_Find(session, hKey, &obj, 1);
     if (ret != 0)
         return CKR_OBJECT_HANDLE_INVALID;
 
@@ -3614,7 +3614,7 @@ CK_RV C_VerifyRecoverInit(CK_SESSION_HANDLE hSession,
     if (pMechanism == NULL)
         return CKR_ARGUMENTS_BAD;
 
-    ret = WP11_Object_Find(session, hKey, &obj);
+    ret = WP11_Object_Find(session, hKey, &obj, 1);
     if (ret != 0)
         return CKR_OBJECT_HANDLE_INVALID;
 
@@ -3921,7 +3921,7 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
                         CK_OBJECT_HANDLE_PTR phPrivateKey)
 {
     int ret;
-    CK_RV rv;
+    CK_RV rv = CKR_OK;
     WP11_Session* session = NULL;
     WP11_Object* pub = NULL;
     WP11_Object* priv = NULL;
@@ -4096,11 +4096,11 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
     if (! WP11_Session_IsRW(session))
         return CKR_SESSION_READ_ONLY;
 
-    ret = WP11_Object_Find(session, hKey, &key);
+    ret = WP11_Object_Find(session, hKey, &key, 1);
     if (ret != 0)
         return CKR_OBJECT_HANDLE_INVALID;
 
-    ret = WP11_Object_Find(session, hWrappingKey, &wrappingKey);
+    ret = WP11_Object_Find(session, hWrappingKey, &wrappingKey, 1);
     if (ret != 0)
         return CKR_WRAPPING_KEY_HANDLE_INVALID;
 
@@ -4228,7 +4228,7 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
 
     *phKey = CK_INVALID_HANDLE;
 
-    ret = WP11_Object_Find(session, hUnwrappingKey, &unwrappingKey);
+    ret = WP11_Object_Find(session, hUnwrappingKey, &unwrappingKey, 1);
     if (ret != 0)
         return CKR_UNWRAPPING_KEY_HANDLE_INVALID;
 
@@ -4378,7 +4378,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
                   CK_OBJECT_HANDLE_PTR phKey)
 {
     int ret;
-    CK_RV rv;
+    CK_RV rv = CKR_OK;
     WP11_Session* session;
     WP11_Object* obj = NULL;
 #if defined(HAVE_ECC) || !defined(NO_DH)
@@ -4396,7 +4396,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
     if (pMechanism == NULL || pTemplate == NULL || phKey == NULL)
         return CKR_ARGUMENTS_BAD;
 
-    ret = WP11_Object_Find(session, hBaseKey, &obj);
+    ret = WP11_Object_Find(session, hBaseKey, &obj, 1);
     if (ret != 0)
         return CKR_OBJECT_HANDLE_INVALID;
 
