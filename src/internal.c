@@ -8518,6 +8518,30 @@ int WP11_AesCbc_PartLen(WP11_Session* session)
     return cbc->partialSz;
 }
 
+
+int WP11_AesCbc_DeriveKey(unsigned char* plain, word32 plainSz,
+                        unsigned char* enc, byte* iv,
+                        WP11_Object* key)
+{
+    Aes aes;
+    int ret = 0;
+
+    if (key->type != CKK_AES && key->type != CKK_GENERIC_SECRET)
+        return BAD_FUNC_ARG;
+
+    XMEMSET(&aes, 0, sizeof(aes));
+    ret = wc_AesInit(&aes, NULL, key->slot->devId);
+    if (ret == 0) {
+        ret = wc_AesSetKey(&aes, key->data.symmKey.data, key->data.symmKey.len,
+                iv, AES_ENCRYPTION);
+    }
+    if (ret == 0)
+        ret = wc_AesCbcEncrypt(&aes, enc, plain, plainSz);
+    wc_AesFree(&aes);
+
+    return ret;
+}
+
 /**
  * Encrypt plain text with AES-CBC.
  * Output buffer must be large enough to hold all data.

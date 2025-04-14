@@ -6413,6 +6413,65 @@ static CK_RV find_aes_key(CK_SESSION_HANDLE session, unsigned char* id,
 }
 
 #ifdef HAVE_AES_CBC
+static CK_RV aes_cbc_encrypt_data_test(CK_SESSION_HANDLE session,
+        CK_OBJECT_HANDLE privKey, int check)
+{
+    CK_RV  ret;
+    byte   out[32];
+    word32 outSz = sizeof(out);
+    CK_OBJECT_HANDLE secret;
+    CK_KEY_TYPE      keyType = CKK_GENERIC_SECRET;
+    CK_ULONG         secSz = outSz;
+    CK_BYTE          data[16] = { 0 };
+    CK_AES_CBC_ENCRYPT_DATA_PARAMS aesParams = {
+        { 0 }, data, sizeof(data)
+    };
+    CK_ATTRIBUTE     tmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &keyType,        sizeof(keyType)        },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckFalse,        sizeof(ckFalse)        },
+        { CKA_EXTRACTABLE, &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VALUE_LEN,   &secSz,          sizeof(secSz)          }
+    };
+    CK_ULONG         tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
+    CK_MECHANISM     mech = {
+        CKM_AES_CBC_ENCRYPT_DATA, &aesParams, sizeof(aesParams)
+    };
+
+    ret = funcList->C_DeriveKey(session, &mech, privKey, tmpl, tmplCnt,
+                                                                       &secret);
+    CHECK_CKR(ret, "AES CBC Encrypt Derive Key");
+    if (ret == CKR_OK)
+        ret = extract_secret(session, secret, out, &outSz);
+    if (ret == CKR_OK && check) {
+        if (outSz != sizeof(aes_128_cbc_encrypt_exp) ||
+                             memcmp(out, aes_128_cbc_encrypt_exp, outSz) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Secret compare with exepcted");
+        }
+    }
+    if (ret == CKR_OK) {
+        mech.pParameter = NULL;
+        ret = funcList->C_DeriveKey(session, &mech, privKey, tmpl, tmplCnt,
+                                                                       &secret);
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
+                                     "AES CBC Encrypt Derive Key no parameter");
+        mech.pParameter = &aesParams;
+    }
+    if (ret == CKR_OK) {
+        mech.ulParameterLen = 0;
+        ret = funcList->C_DeriveKey(session, &mech, privKey, tmpl, tmplCnt,
+                                                                       &secret);
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
+                            "AES CBC Encrypt Derive Key zero parameter length");
+        mech.ulParameterLen = sizeof(aesParams);
+    }
+
+    return ret;
+}
+
+
 static CK_RV test_aes_cbc_encdec(CK_SESSION_HANDLE session, unsigned char* exp,
                                  CK_OBJECT_HANDLE key)
 {
@@ -6716,6 +6775,8 @@ static CK_RV test_aes_cbc_fixed_key(void* args)
         ret = test_aes_cbc_update(session, aes_128_cbc_exp, key, 5);
     if (ret == CKR_OK)
         ret = test_aes_cbc_update(session, aes_128_cbc_exp, key, 18);
+    if (ret == CKR_OK)
+        ret = aes_cbc_encrypt_data_test(session, key, 1);
 
     return ret;
 }
@@ -6853,6 +6914,8 @@ static CK_RV test_aes_cbc_gen_key(void* args)
         ret = test_aes_cbc_encdec(session, NULL, key);
     if (ret == CKR_OK)
         ret = test_aes_cbc_update(session, NULL, key, 32);
+    if (ret == CKR_OK)
+        ret = aes_cbc_encrypt_data_test(session, key, 0);
 
     return ret;
 }
@@ -6872,6 +6935,8 @@ static CK_RV test_aes_cbc_gen_key_id(void* args)
         ret = test_aes_cbc_encdec(session, NULL, key);
     if (ret == CKR_OK)
         ret = test_aes_cbc_update(session, NULL, key, 32);
+    if (ret == CKR_OK)
+        ret = aes_cbc_encrypt_data_test(session, key, 0);
 
     return ret;
 }

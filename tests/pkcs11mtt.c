@@ -4851,6 +4851,7 @@ static CK_RV test_aes_cbc_fixed_key(void* args)
     CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
 
     (void)aes_128_cbc_pad_exp;
+    (void)aes_128_cbc_encrypt_exp;
 
     ret = get_aes_128_key(session, NULL, 0, &key);
     if (ret == CKR_OK)

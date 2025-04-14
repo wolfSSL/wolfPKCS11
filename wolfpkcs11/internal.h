@@ -384,6 +384,9 @@ int WP11_Dh_Derive(unsigned char* pub, word32 pubLen, unsigned char* key,
 
 int WP11_AesGenerateKey(WP11_Object* secret, WP11_Slot* slot);
 
+int WP11_AesCbc_DeriveKey(unsigned char* plain, word32 plainSz,
+                        unsigned char* enc, byte* iv,
+                        WP11_Object* key);
 int WP11_AesCbc_PartLen(WP11_Session* session);
 int WP11_AesCbc_Encrypt(unsigned char* plain, word32 plainSz,
                         unsigned char* enc, word32* encSz,
