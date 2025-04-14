@@ -3143,6 +3143,97 @@ static CK_RV test_generate_key_pair(void* args)
 }
 #endif
 
+#ifdef HAVE_AES_KEYWRAP
+static CK_RV test_aes_wrap_unwrap_key(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_MECHANISM mech = { CKM_AES_KEY_WRAP, NULL, 0 };
+    CK_OBJECT_HANDLE wrappingKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    byte wrappedKey[40], keyData[32];
+    CK_ULONG wrappedKeyLen;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)},
+        { CKA_KEY_TYPE,          &aesKeyType,       sizeof(aesKeyType)    },
+    };
+    CK_ULONG     tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
+
+    memset(keyData, 7, sizeof(keyData));
+    wrappedKeyLen = sizeof(wrappedKey);
+
+    ret = get_aes_128_key(session, NULL, 0, &wrappingKey);
+    if (ret == CKR_OK) {
+        ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE,
+                                                                          &key);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_WrapKey(session, &mech, wrappingKey, key, wrappedKey,
+                                                                &wrappedKeyLen);
+        CHECK_CKR(ret, "AES Wrap Key mechanism");
+    }
+
+    /* done with key, destroy now, since uwrap returns new handle */
+    funcList->C_DestroyObject(session, key);
+    key = CK_INVALID_HANDLE;
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_UnwrapKey(session, &mech, wrappingKey, wrappedKey,
+                                            wrappedKeyLen, tmpl, tmplCnt, &key);
+        CHECK_CKR(ret, "AES UnWrap Key mechanism");
+    }
+
+    funcList->C_DestroyObject(session, wrappingKey);
+    funcList->C_DestroyObject(session, key);
+
+    return ret;
+}
+static CK_RV test_aes_wrap_unwrap_pad_key(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_MECHANISM mech = { CKM_AES_KEY_WRAP_PAD, NULL, 0 };
+    CK_OBJECT_HANDLE wrappingKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    byte wrappedKey[48], keyData[35];
+    CK_ULONG wrappedKeyLen;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)},
+        { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)},
+    };
+    CK_ULONG     tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
+
+    memset(keyData, 7, sizeof(keyData));
+    wrappedKeyLen = sizeof(wrappedKey);
+
+    ret = get_aes_128_key(session, NULL, 0, &wrappingKey);
+    if (ret == CKR_OK) {
+        ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE,
+                                                                          &key);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_WrapKey(session, &mech, wrappingKey, key, wrappedKey,
+                                                                &wrappedKeyLen);
+        CHECK_CKR(ret, "AES Wrap Key mechanism");
+    }
+
+    /* done with key, destroy now, since uwrap returns new handle */
+    funcList->C_DestroyObject(session, key);
+    key = CK_INVALID_HANDLE;
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_UnwrapKey(session, &mech, wrappingKey, wrappedKey,
+                                            wrappedKeyLen, tmpl, tmplCnt, &key);
+        CHECK_CKR(ret, "AES UnWrap Key mechanism");
+    }
+
+    funcList->C_DestroyObject(session, wrappingKey);
+    funcList->C_DestroyObject(session, key);
+
+    return ret;
+}
+#endif /* HAVE_AES_KEYWRAP */
+
 static CK_RV test_wrap_unwrap_key(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -3152,8 +3243,11 @@ static CK_RV test_wrap_unwrap_key(void* args)
     CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
     byte wrappedKey[32], wrappingKeyData[32], keyData[32];
     CK_ULONG wrappedKeyLen;
+    CK_KEY_TYPE  keyType = CKK_GENERIC_SECRET;
     CK_ATTRIBUTE tmpl[] = {
-      {CKA_VALUE, CK_NULL_PTR, 0}
+      {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+      {CKA_KEY_TYPE, &keyType, sizeof(keyType)},
+      {CKA_VALUE, CK_NULL_PTR, 0},
     };
     CK_ULONG     tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
 
@@ -3199,8 +3293,13 @@ static CK_RV test_wrap_unwrap_key(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_WrapKey(session, &mech, wrappingKey, key, wrappedKey,
                                                                 &wrappedKeyLen);
+#ifndef WOLFPKCS11_NO_STORE
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_INVALID,
+                                            "Wrap Key mechanism not supported");
+#else
         CHECK_CKR_FAIL(ret, CKR_KEY_NOT_WRAPPABLE,
                                             "Wrap Key mechanism not supported");
+#endif
     }
 
     /* done with key, destroy now, since uwrap returns new handle */
@@ -6413,6 +6512,65 @@ static CK_RV find_aes_key(CK_SESSION_HANDLE session, unsigned char* id,
 }
 
 #ifdef HAVE_AES_CBC
+static CK_RV aes_cbc_encrypt_data_test(CK_SESSION_HANDLE session,
+        CK_OBJECT_HANDLE privKey, int check)
+{
+    CK_RV  ret;
+    byte   out[32];
+    word32 outSz = sizeof(out);
+    CK_OBJECT_HANDLE secret;
+    CK_KEY_TYPE      keyType = CKK_GENERIC_SECRET;
+    CK_ULONG         secSz = outSz;
+    CK_BYTE          data[16] = { 0 };
+    CK_AES_CBC_ENCRYPT_DATA_PARAMS aesParams = {
+        { 0 }, data, sizeof(data)
+    };
+    CK_ATTRIBUTE     tmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &keyType,        sizeof(keyType)        },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckFalse,        sizeof(ckFalse)        },
+        { CKA_EXTRACTABLE, &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VALUE_LEN,   &secSz,          sizeof(secSz)          }
+    };
+    CK_ULONG         tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
+    CK_MECHANISM     mech = {
+        CKM_AES_CBC_ENCRYPT_DATA, &aesParams, sizeof(aesParams)
+    };
+
+    ret = funcList->C_DeriveKey(session, &mech, privKey, tmpl, tmplCnt,
+                                                                       &secret);
+    CHECK_CKR(ret, "AES CBC Encrypt Derive Key");
+    if (ret == CKR_OK)
+        ret = extract_secret(session, secret, out, &outSz);
+    if (ret == CKR_OK && check) {
+        if (outSz != sizeof(aes_128_cbc_encrypt_exp) ||
+                             memcmp(out, aes_128_cbc_encrypt_exp, outSz) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Secret compare with exepcted");
+        }
+    }
+    if (ret == CKR_OK) {
+        mech.pParameter = NULL;
+        ret = funcList->C_DeriveKey(session, &mech, privKey, tmpl, tmplCnt,
+                                                                       &secret);
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
+                                     "AES CBC Encrypt Derive Key no parameter");
+        mech.pParameter = &aesParams;
+    }
+    if (ret == CKR_OK) {
+        mech.ulParameterLen = 0;
+        ret = funcList->C_DeriveKey(session, &mech, privKey, tmpl, tmplCnt,
+                                                                       &secret);
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
+                            "AES CBC Encrypt Derive Key zero parameter length");
+        mech.ulParameterLen = sizeof(aesParams);
+    }
+
+    return ret;
+}
+
+
 static CK_RV test_aes_cbc_encdec(CK_SESSION_HANDLE session, unsigned char* exp,
                                  CK_OBJECT_HANDLE key)
 {
@@ -6716,6 +6874,8 @@ static CK_RV test_aes_cbc_fixed_key(void* args)
         ret = test_aes_cbc_update(session, aes_128_cbc_exp, key, 5);
     if (ret == CKR_OK)
         ret = test_aes_cbc_update(session, aes_128_cbc_exp, key, 18);
+    if (ret == CKR_OK)
+        ret = aes_cbc_encrypt_data_test(session, key, 1);
 
     return ret;
 }
@@ -6853,6 +7013,8 @@ static CK_RV test_aes_cbc_gen_key(void* args)
         ret = test_aes_cbc_encdec(session, NULL, key);
     if (ret == CKR_OK)
         ret = test_aes_cbc_update(session, NULL, key, 32);
+    if (ret == CKR_OK)
+        ret = aes_cbc_encrypt_data_test(session, key, 0);
 
     return ret;
 }
@@ -6872,6 +7034,8 @@ static CK_RV test_aes_cbc_gen_key_id(void* args)
         ret = test_aes_cbc_encdec(session, NULL, key);
     if (ret == CKR_OK)
         ret = test_aes_cbc_update(session, NULL, key, 32);
+    if (ret == CKR_OK)
+        ret = aes_cbc_encrypt_data_test(session, key, 0);
 
     return ret;
 }
@@ -8685,6 +8849,359 @@ static CK_RV test_aes_ecb_gen_key(void* args)
 }
 
 #endif /* HAVE_AESECB */
+
+
+#ifdef HAVE_AESCMAC
+
+static CK_RV test_aes_cmac_one_shot(CK_SESSION_HANDLE session,
+        unsigned char* exp, int expLen, CK_OBJECT_HANDLE key)
+{
+    CK_RV  ret = CKR_OK;
+    byte   data[72], out[8];
+    CK_ULONG dataSz, outSz;
+    CK_MECHANISM mech;
+
+    memset(data, 9, sizeof(data));
+    dataSz = sizeof(data);
+    outSz = sizeof(out);
+
+    mech.mechanism      = CKM_AES_CMAC;
+    mech.ulParameterLen = 0;
+    mech.pParameter     = NULL;
+
+    ret = funcList->C_SignInit(session, &mech, key);
+    CHECK_CKR(ret, "AES-CMAC Sign Init");
+    if (ret == CKR_OK) {
+        outSz = 0;
+        ret = funcList->C_Sign(session, data, dataSz, NULL, &outSz);
+        CHECK_CKR(ret, "AES-CMAC Sign no out");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(outSz == 8, ret, "AES-CMAC Sign out size");
+    }
+    if (ret == CKR_OK) {
+        outSz = 0;
+        ret = funcList->C_Sign(session, data, dataSz, out, &outSz);
+        CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
+                                                "AES-CMAC Sign out size too small");
+        outSz = sizeof(out);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Sign(session, data, dataSz, out, &outSz);
+        CHECK_CKR(ret, "AES-CMAC Sign");
+    }
+    if (ret == CKR_OK && exp != NULL) {
+        if (expLen != (int)outSz) {
+            ret = -1;
+            CHECK_CKR(ret, "AES-CMAC Sign Result expected length");
+        }
+        if (ret == CKR_OK && XMEMCMP(out, exp, expLen) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "AES-CMAC Sign Result not matching expected");
+        }
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CMAC Verify Init");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Verify(session, data, dataSz, out, outSz);
+        CHECK_CKR(ret, "AES-CMAC Verify");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CMAC Verify Init");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Verify(session, data, dataSz - 1, out, outSz);
+        CHECK_CKR_FAIL(ret, CKR_SIGNATURE_INVALID, "AES-CMAC Verify bad hash");
+    }
+
+    return ret;
+}
+
+
+static CK_RV test_aes_cmac_update(CK_SESSION_HANDLE session, unsigned char* exp,
+        int expLen, CK_OBJECT_HANDLE key)
+{
+    CK_RV  ret = CKR_OK;
+    byte   data[72], out[8];
+    CK_ULONG dataSz, outSz;
+    CK_MECHANISM mech;
+    int i;
+
+    memset(data, 9, sizeof(data));
+    dataSz = sizeof(data);
+    outSz = sizeof(out);
+
+    mech.mechanism      = CKM_AES_CMAC;
+    mech.ulParameterLen = 0;
+    mech.pParameter     = NULL;
+
+    ret = funcList->C_SignInit(session, &mech, key);
+    CHECK_CKR(ret, "AES-CMAC Sign Init");
+    if (ret == CKR_OK) {
+        for (i = 0; ret == CKR_OK && i < (int)dataSz; i++) {
+            ret = funcList->C_SignUpdate(session, data + i, 1);
+            CHECK_CKR(ret, "AES-CMAC Sign Update");
+        }
+    }
+    if (ret == CKR_OK) {
+        outSz = 0;
+        ret = funcList->C_SignFinal(session, NULL, &outSz);
+        CHECK_CKR(ret, "AES-CMAC Sign Final no out");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(outSz == 8, ret, "AES-CMAC Sign Final out size");
+    }
+    if (ret == CKR_OK) {
+        outSz = sizeof(out);
+        ret = funcList->C_SignFinal(session, out, &outSz);
+        CHECK_CKR(ret, "AES-CMAC Sign Final");
+    }
+    if (ret == CKR_OK && exp != NULL) {
+        if (expLen != (int)outSz) {
+            ret = -1;
+            CHECK_CKR(ret, "AES-CMAC Sign Result expected length");
+        }
+        if (ret == CKR_OK && XMEMCMP(out, exp, expLen) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "AES-CMAC Sign Result not matching expected");
+        }
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CMAC Verify Init");
+    }
+    if (ret == CKR_OK) {
+        for (i = 0; ret == CKR_OK && i < (int)dataSz; i++) {
+            ret = funcList->C_VerifyUpdate(session, data + i, 1);
+            CHECK_CKR(ret, "AES-CMAC Verify Update");
+        }
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyFinal(session, out, outSz);
+        CHECK_CKR(ret, "AES-CMAC Verify Final");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CMAC Verify Init");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyFinal(session, out, outSz);
+        CHECK_CKR_FAIL(ret, CKR_SIGNATURE_INVALID, "AES-CMAC Verify bad data");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_SignInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CMAC Sign Init");
+    }
+    if (ret == CKR_OK) {
+        outSz = 0;
+        ret = funcList->C_SignFinal(session, out, &outSz);
+        CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
+                                          "AES-CMAC Sign Final out size too small");
+        outSz = sizeof(out);
+    }
+
+    return ret;
+}
+
+static CK_RV test_aes_cmac(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE key;
+    static unsigned char exp[] = {
+        0x81, 0x4f, 0x6c, 0xe5, 0x04, 0x97, 0xf9, 0x26
+    };
+
+    ret = get_aes_128_key(session, NULL, 0, &key);
+    if (ret == CKR_OK)
+        ret = test_aes_cmac_one_shot(session, exp, sizeof(exp), key);
+    if (ret == CKR_OK)
+        ret = test_aes_cmac_update(session, exp, sizeof(exp), key);
+
+    return ret;
+}
+static CK_RV test_aes_cmac_general_one_shot(CK_SESSION_HANDLE session,
+        unsigned char* exp, int expLen, CK_OBJECT_HANDLE key)
+{
+    CK_RV  ret = CKR_OK;
+    byte   data[72], out[16];
+    CK_ULONG dataSz, outSz;
+    CK_MECHANISM mech;
+    CK_MAC_GENERAL_PARAMS macParams = (CK_MAC_GENERAL_PARAMS)expLen;
+
+    memset(data, 9, sizeof(data));
+    dataSz = sizeof(data);
+    outSz = sizeof(out);
+
+    mech.mechanism      = CKM_AES_CMAC_GENERAL;
+    mech.ulParameterLen = sizeof(macParams);
+    mech.pParameter     = &macParams;
+
+    ret = funcList->C_SignInit(session, &mech, key);
+    CHECK_CKR(ret, "AES-CMAC Sign Init");
+    if (ret == CKR_OK) {
+        outSz = 0;
+        ret = funcList->C_Sign(session, data, dataSz, NULL, &outSz);
+        CHECK_CKR(ret, "AES-CMAC Sign no out");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND((int)outSz == expLen, ret, "AES-CMAC Sign out size");
+    }
+    if (ret == CKR_OK) {
+        outSz = 0;
+        ret = funcList->C_Sign(session, data, dataSz, out, &outSz);
+        CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
+                                                "AES-CMAC Sign out size too small");
+        outSz = sizeof(out);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Sign(session, data, dataSz, out, &outSz);
+        CHECK_CKR(ret, "AES-CMAC Sign");
+    }
+    if (ret == CKR_OK && exp != NULL) {
+        if (expLen != (int)outSz) {
+            ret = -1;
+            CHECK_CKR(ret, "AES-CMAC Sign Result expected length");
+        }
+        if (ret == CKR_OK && XMEMCMP(out, exp, expLen) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "AES-CMAC Sign Result not matching expected");
+        }
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CMAC Verify Init");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Verify(session, data, dataSz, out, outSz);
+        CHECK_CKR(ret, "AES-CMAC Verify");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CMAC Verify Init");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Verify(session, data, dataSz - 1, out, outSz);
+        CHECK_CKR_FAIL(ret, CKR_SIGNATURE_INVALID, "AES-CMAC Verify bad hash");
+    }
+
+    return ret;
+}
+
+
+static CK_RV test_aes_cmac_general_update(CK_SESSION_HANDLE session,
+        unsigned char* exp, int expLen, CK_OBJECT_HANDLE key)
+{
+    CK_RV  ret = CKR_OK;
+    byte   data[72], out[16];
+    CK_ULONG dataSz, outSz;
+    CK_MECHANISM mech;
+    int i;
+    CK_MAC_GENERAL_PARAMS macParams = (CK_MAC_GENERAL_PARAMS)expLen;
+
+    memset(data, 9, sizeof(data));
+    dataSz = sizeof(data);
+    outSz = sizeof(out);
+
+    mech.mechanism      = CKM_AES_CMAC_GENERAL;
+    mech.ulParameterLen = sizeof(macParams);
+    mech.pParameter     = &macParams;
+
+    ret = funcList->C_SignInit(session, &mech, key);
+    CHECK_CKR(ret, "AES-CMAC Sign Init");
+    if (ret == CKR_OK) {
+        for (i = 0; ret == CKR_OK && i < (int)dataSz; i++) {
+            ret = funcList->C_SignUpdate(session, data + i, 1);
+            CHECK_CKR(ret, "AES-CMAC Sign Update");
+        }
+    }
+    if (ret == CKR_OK) {
+        outSz = 0;
+        ret = funcList->C_SignFinal(session, NULL, &outSz);
+        CHECK_CKR(ret, "AES-CMAC Sign Final no out");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND((int)outSz == expLen, ret, "AES-CMAC Sign Final out size");
+    }
+    if (ret == CKR_OK) {
+        outSz = sizeof(out);
+        ret = funcList->C_SignFinal(session, out, &outSz);
+        CHECK_CKR(ret, "AES-CMAC Sign Final");
+    }
+    if (ret == CKR_OK && exp != NULL) {
+        if (expLen != (int)outSz) {
+            ret = -1;
+            CHECK_CKR(ret, "AES-CMAC Sign Result expected length");
+        }
+        if (ret == CKR_OK && XMEMCMP(out, exp, expLen) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "AES-CMAC Sign Result not matching expected");
+        }
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CMAC Verify Init");
+    }
+    if (ret == CKR_OK) {
+        for (i = 0; ret == CKR_OK && i < (int)dataSz; i++) {
+            ret = funcList->C_VerifyUpdate(session, data + i, 1);
+            CHECK_CKR(ret, "AES-CMAC Verify Update");
+        }
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyFinal(session, out, outSz);
+        CHECK_CKR(ret, "AES-CMAC Verify Final");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CMAC Verify Init");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyFinal(session, out, outSz);
+        CHECK_CKR_FAIL(ret, CKR_SIGNATURE_INVALID, "AES-CMAC Verify bad data");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_SignInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CMAC Sign Init");
+    }
+    if (ret == CKR_OK) {
+        outSz = 0;
+        ret = funcList->C_SignFinal(session, out, &outSz);
+        CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
+                                          "AES-CMAC Sign Final out size too small");
+        outSz = sizeof(out);
+    }
+
+    return ret;
+}
+
+static CK_RV test_aes_cmac_general(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE key;
+    static unsigned char exp[] = {
+        0x81, 0x4f, 0x6c, 0xe5, 0x04, 0x97, 0xf9, 0x26,
+        0x9b, 0x5b, 0xa0, 0x87, 0xe4, 0x64, 0xf4, 0xf9
+    };
+    int i;
+
+    ret = get_aes_128_key(session, NULL, 0, &key);
+
+    for (i = 4; i < 16 && ret == CKR_OK; i++)
+        ret = test_aes_cmac_general_one_shot(session, exp, i, key);
+    for (i = 4; i < 16 && ret == CKR_OK; i++)
+        ret = test_aes_cmac_general_update(session, exp, i, key);
+
+    return ret;
+}
+
+
+#endif /* HAVE_AESCMAC */
+
 #endif
 
 #ifndef NO_HMAC
@@ -10344,6 +10861,10 @@ static TEST_FUNC testFunc[] = {
 #if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN)
     PKCS11TEST_FUNC_SESS_DECL(test_generate_key_pair),
 #endif
+#ifdef HAVE_AES_KEYWRAP
+    PKCS11TEST_FUNC_SESS_DECL(test_aes_wrap_unwrap_key),
+    PKCS11TEST_FUNC_SESS_DECL(test_aes_wrap_unwrap_pad_key),
+#endif
     PKCS11TEST_FUNC_SESS_DECL(test_wrap_unwrap_key),
     PKCS11TEST_FUNC_SESS_DECL(test_derive_key),
 #ifndef NO_RSA
@@ -10419,6 +10940,10 @@ static TEST_FUNC testFunc[] = {
 #endif
 #ifdef HAVE_AESECB
     PKCS11TEST_FUNC_SESS_DECL(test_aes_ecb_gen_key),
+#endif
+#ifdef HAVE_AESCMAC
+    PKCS11TEST_FUNC_SESS_DECL(test_aes_cmac),
+    PKCS11TEST_FUNC_SESS_DECL(test_aes_cmac_general),
 #endif
 #endif /* !NO_AES */
 #ifndef NOSHA256
