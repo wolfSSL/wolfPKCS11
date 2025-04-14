@@ -759,6 +759,7 @@ static CK_RV pkcs11_test(int slotId, int setPin, int closeDl)
     #endif
             (void)aes_128_cbc_pad_exp;
             (void)aes_128_cbc_exp;
+            (void)aes_128_cbc_encrypt_exp;
     #ifdef HAVE_AESCTS
             (void)aes_128_cts_exp;
     #endif

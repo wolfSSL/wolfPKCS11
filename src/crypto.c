@@ -5285,12 +5285,40 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
                 rv = CKR_FUNCTION_FAILED;
             break;
 #endif
+#ifndef NO_AES
+#ifdef HAVE_AES_CBC
+        case CKM_AES_CBC_ENCRYPT_DATA: {
+            CK_AES_CBC_ENCRYPT_DATA_PARAMS* params;
+
+            if (pMechanism->pParameter == NULL)
+                return CKR_MECHANISM_PARAM_INVALID;
+            if (pMechanism->ulParameterLen !=
+                    sizeof(CK_AES_CBC_ENCRYPT_DATA_PARAMS))
+                return CKR_MECHANISM_PARAM_INVALID;
+            params = (CK_AES_CBC_ENCRYPT_DATA_PARAMS*)pMechanism->pParameter;
+            if (params->length % 16)
+                return CKR_MECHANISM_PARAM_INVALID;
+
+            keyLen = (word32)params->length;
+            derivedKey = (byte*)XMALLOC(keyLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            if (derivedKey == NULL)
+                return CKR_DEVICE_MEMORY;
+
+            ret = WP11_AesCbc_DeriveKey(params->pData, (word32)params->length,
+                    derivedKey, params->iv, obj);
+            if (ret != 0)
+                rv = CKR_FUNCTION_FAILED;
+            break;
+        }
+#endif
+#endif
         default:
             (void)ulAttributeCount;
             return CKR_MECHANISM_INVALID;
     }
 
-#if defined(HAVE_ECC) || !defined(NO_DH)
+#if defined(HAVE_ECC) || !defined(NO_DH) || \
+    (!defined(NO_AES) && defined(HAVE_AES_CBC))
     if (ret == 0) {
         rv = CreateObject(session, pTemplate, ulAttributeCount, &obj);
         if (rv == CKR_OK) {
