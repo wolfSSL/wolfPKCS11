@@ -476,7 +476,10 @@ int WP11_AesCts_DecryptUpdate(unsigned char* enc, word32 encSz,
 int WP11_AesCts_DecryptFinal(unsigned char* dec, word32* decSz,
                              WP11_Session* session);
 
-int WP11_Aes_Cmac_Init(WP11_Object* secret, WP11_Session* session);
+int WP11_Aes_Cmac_Init(WP11_Object* secret, WP11_Session* session,
+        word32 sigLen);
+int WP11_Aes_Cmac_Check_Len(CK_BYTE_PTR pSignature,
+        CK_ULONG_PTR pulSignatureLen, WP11_Session* session);
 int WP11_Aes_Cmac_Sign(unsigned char* data, word32 dataLen, unsigned char* sig,
         word32* sigLen, WP11_Session* session);
 int WP11_Aes_Cmac_Sign_Update(unsigned char* data, word32 dataLen,
