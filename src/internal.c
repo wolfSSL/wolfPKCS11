@@ -313,6 +313,7 @@ typedef struct WP11_Digest {
 
 typedef struct WP11_Cmac {
     Cmac cmac;
+    byte sigLen;
 } WP11_Cmac;
 
 struct WP11_Session {
@@ -9660,12 +9661,16 @@ int WP11_AesCts_DecryptFinal(unsigned char* dec, word32* decSz,
 #endif /* HAVE_AESCTS */
 
 #ifdef HAVE_AESCMAC
-int WP11_Aes_Cmac_Init(WP11_Object* secret, WP11_Session* session)
+int WP11_Aes_Cmac_Init(WP11_Object* secret, WP11_Session* session,
+        word32 sigLen)
 {
     int ret;
     WP11_Cmac* cmac = &session->params.cmac;
     WP11_Data* key;
 
+    if (sigLen > WC_CMAC_TAG_MAX_SZ || sigLen < WC_CMAC_TAG_MIN_SZ)
+        return BAD_FUNC_ARG;
+    cmac->sigLen = (byte)sigLen;
     if (secret->onToken)
         WP11_Lock_LockRO(secret->lock);
     key = &secret->data.symmKey;
@@ -9677,6 +9682,21 @@ int WP11_Aes_Cmac_Init(WP11_Object* secret, WP11_Session* session)
     return ret;
 }
 
+int WP11_Aes_Cmac_Check_Len(CK_BYTE_PTR pSignature,
+        CK_ULONG_PTR pulSignatureLen, WP11_Session* session)
+{
+    WP11_Cmac* cmac = &session->params.cmac;
+
+    if (pSignature == NULL) {
+        *pulSignatureLen = cmac->sigLen;
+        return CKR_OK;
+    }
+    if (*pulSignatureLen < cmac->sigLen)
+        return CKR_BUFFER_TOO_SMALL;
+
+    return CKR_OK;
+}
+
 int WP11_Aes_Cmac_Sign(unsigned char* data, word32 dataLen, unsigned char* sig,
         word32* sigLen, WP11_Session* session)
 {
@@ -9684,6 +9704,9 @@ int WP11_Aes_Cmac_Sign(unsigned char* data, word32 dataLen, unsigned char* sig,
     WP11_Cmac* cmac = &session->params.cmac;
     int doFree = 1;
 
+    if (*sigLen < cmac->sigLen)
+        return BAD_FUNC_ARG;
+    *sigLen = (word32)cmac->sigLen;
     ret = wc_CmacUpdate(&cmac->cmac, data, dataLen);
     if (ret == 0) {
         ret = wc_CmacFinal(&cmac->cmac, sig, sigLen);
@@ -9710,6 +9733,9 @@ int WP11_Aes_Cmac_Sign_Final(unsigned char* sig, word32* sigLen,
     int ret = 0;
     WP11_Cmac* cmac = &session->params.cmac;
 
+    if (*sigLen < cmac->sigLen)
+        return BAD_FUNC_ARG;
+    *sigLen = (word32)cmac->sigLen;
     ret = wc_CmacFinal(&cmac->cmac, sig, sigLen);
     session->init = 0;
 
@@ -9722,8 +9748,9 @@ int WP11_Aes_Cmac_Verify(unsigned char* data, word32 dataLen,
     byte resSig[WC_CMAC_TAG_MAX_SZ];
     word32 resSigLen = sigLen;
     int ret = 0;
+    WP11_Cmac* cmac = &session->params.cmac;
 
-    if (sigLen > WC_CMAC_TAG_MAX_SZ)
+    if (sigLen != (word32)cmac->sigLen || sigLen > sizeof(resSig))
         ret = BUFFER_E;
     if (ret == 0)
         ret = WP11_Aes_Cmac_Sign(data, dataLen, resSig, &resSigLen, session);
@@ -9739,8 +9766,9 @@ int WP11_Aes_Cmac_Verify_Final(unsigned char* sig, word32 sigLen, int* stat,
     int ret = 0;
     byte resSig[WC_CMAC_TAG_MAX_SZ];
     word32 resSigLen = sigLen;
+    WP11_Cmac* cmac = &session->params.cmac;
 
-    if (sigLen > WC_CMAC_TAG_MAX_SZ)
+    if (sigLen != (word32)cmac->sigLen || sigLen > sizeof(resSig))
         ret = BUFFER_E;
     if (ret == 0)
         ret = WP11_Aes_Cmac_Sign_Final(resSig, &resSigLen, session);
