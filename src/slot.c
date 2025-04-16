@@ -307,6 +307,10 @@ static CK_MECHANISM_TYPE mechanismList[] = {
 #ifdef HAVE_AESCTS
     CKM_AES_CTS,
 #endif
+#ifdef HAVE_AESCMAC
+    CKM_AES_CMAC,
+    CKM_AES_CMAC_GENERAL,
+#endif
 #endif
 #ifndef NO_HMAC
 #ifndef NO_MD5
@@ -521,6 +525,11 @@ static CK_MECHANISM_INFO aesEcbMechInfo = {
 /* Info on AES-CTS mechanism. */
 static CK_MECHANISM_INFO aesCtsMechInfo = {
     16, 32, CKF_ENCRYPT | CKF_DECRYPT
+};
+#endif
+#ifdef HAVE_AESCMAC
+static CK_MECHANISM_INFO aesCbcSigVerMechInfo = {
+    16, 32, CKF_SIGN | CKF_VERIFY
 };
 #endif
 #endif
@@ -770,6 +779,12 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
 #ifdef HAVE_AESCTS
         case CKM_AES_CTS:
             XMEMCPY(pInfo, &aesCtsMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifdef HAVE_AESCMAC
+        case CKM_AES_CMAC:
+        case CKM_AES_CMAC_GENERAL:
+            XMEMCPY(pInfo, &aesCbcSigVerMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
 #endif
 #endif
