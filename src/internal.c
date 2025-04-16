@@ -39,6 +39,7 @@
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/asn_public.h>
 #include <wolfssl/wolfcrypt/aes.h>
+#include <wolfssl/wolfcrypt/cmac.h>
 
 #include <wolfpkcs11/internal.h>
 #include <wolfpkcs11/store.h>
@@ -310,6 +311,10 @@ typedef struct WP11_Digest {
     enum wc_HashType hashType;
 } WP11_Digest;
 
+typedef struct WP11_Cmac {
+    Cmac cmac;
+} WP11_Cmac;
+
 struct WP11_Session {
     unsigned char inUse;               /* Indicates session has been opened   */
     CK_SESSION_HANDLE handle;          /* CryptoKi API session handle value   */
@@ -351,6 +356,7 @@ struct WP11_Session {
         WP11_Hmac hmac;                /* HMAC parameters                     */
 #endif
         WP11_Digest digest;            /* Digest parameters                   */
+        WP11_Cmac cmac;                /* CMAC parameters                     */
     } params;
 
     int devId;
@@ -1602,6 +1608,19 @@ static int wp11_storage_write_string(void* storage, char* str, int max)
     return wp11_storage_write(storage, (unsigned char *)str, max);
 }
 #endif /* !WOLFPKCS11_NO_STORE */
+
+/* check all length bytes for equality, return 1 on success and 0 on failure */
+int WP11_ConstantCompare(const byte* a, const byte* b, int length)
+{
+    int i;
+    int compareSum = 0;
+
+    for (i = 0; i < length; i++) {
+        compareSum |= a[i] ^ b[i];
+    }
+
+    return compareSum == 0 ? 1 : 0;
+}
 
 /**
  * Create a new Object object.
@@ -9631,6 +9650,98 @@ int WP11_AesCts_DecryptFinal(unsigned char* dec, word32* decSz,
     return ret;
 }
 #endif /* HAVE_AESCTS */
+
+#ifdef HAVE_AESCMAC
+int WP11_Aes_Cmac_Init(WP11_Object* secret, WP11_Session* session)
+{
+    int ret;
+    WP11_Cmac* cmac = &session->params.cmac;
+    WP11_Data* key;
+
+    if (secret->onToken)
+        WP11_Lock_LockRO(secret->lock);
+    key = &secret->data.symmKey;
+    ret = wc_InitCmac_ex(&cmac->cmac, key->data, key->len, WC_CMAC_AES, NULL,
+            NULL, secret->slot->devId);
+    if (secret->onToken)
+        WP11_Lock_UnlockRO(secret->lock);
+
+    return ret;
+}
+
+int WP11_Aes_Cmac_Sign(unsigned char* data, word32 dataLen, unsigned char* sig,
+        word32* sigLen, WP11_Session* session)
+{
+    int ret = 0;
+    WP11_Cmac* cmac = &session->params.cmac;
+    int doFree = 1;
+
+    ret = wc_CmacUpdate(&cmac->cmac, data, dataLen);
+    if (ret == 0) {
+        ret = wc_CmacFinal(&cmac->cmac, sig, sigLen);
+        doFree = 0;
+    }
+    if (doFree)
+        (void)wc_CmacFree(&cmac->cmac);
+    session->init = 0;
+
+    return ret;
+}
+
+int WP11_Aes_Cmac_Sign_Update(unsigned char* data, word32 dataLen,
+        WP11_Session* session)
+{
+    WP11_Cmac* cmac = &session->params.cmac;
+
+    return wc_CmacUpdate(&cmac->cmac, data, dataLen);
+}
+
+int WP11_Aes_Cmac_Sign_Final(unsigned char* sig, word32* sigLen,
+        WP11_Session* session)
+{
+    int ret = 0;
+    WP11_Cmac* cmac = &session->params.cmac;
+
+    ret = wc_CmacFinal(&cmac->cmac, sig, sigLen);
+    session->init = 0;
+
+    return ret;
+}
+
+int WP11_Aes_Cmac_Verify(unsigned char* data, word32 dataLen,
+        unsigned char* sig, word32 sigLen, int* stat, WP11_Session* session)
+{
+    byte resSig[WC_CMAC_TAG_MAX_SZ];
+    word32 resSigLen = sigLen;
+    int ret = 0;
+
+    if (sigLen > WC_CMAC_TAG_MAX_SZ)
+        ret = BUFFER_E;
+    if (ret == 0)
+        ret = WP11_Aes_Cmac_Sign(data, dataLen, resSig, &resSigLen, session);
+    if (ret == 0)
+        *stat = resSigLen == sigLen && WP11_ConstantCompare(resSig, sig, sigLen);
+
+    return ret;
+}
+
+int WP11_Aes_Cmac_Verify_Final(unsigned char* sig, word32 sigLen, int* stat,
+        WP11_Session* session)
+{
+    int ret = 0;
+    byte resSig[WC_CMAC_TAG_MAX_SZ];
+    word32 resSigLen = sigLen;
+
+    if (sigLen > WC_CMAC_TAG_MAX_SZ)
+        ret = BUFFER_E;
+    if (ret == 0)
+        ret = WP11_Aes_Cmac_Sign_Final(resSig, &resSigLen, session);
+    if (ret == 0)
+        *stat = resSigLen == sigLen && WP11_ConstantCompare(resSig, sig, sigLen);
+
+    return ret;
+}
+#endif /* HAVE_AESCMAC */
 #endif /* !NO_AES */
 
 /**
