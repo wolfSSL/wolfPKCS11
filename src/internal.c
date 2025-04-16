@@ -4358,7 +4358,7 @@ int WP11_Slot_CheckSOPin(WP11_Slot* slot, char* pin, int pinLen)
 
         WP11_Lock_LockRO(&slot->lock);
     }
-    if (ret == 0 && XMEMCMP(hash, token->soPin, token->soPinLen) != 0)
+    if (ret == 0 && !WP11_ConstantCompare(hash, token->soPin, token->soPinLen))
         ret = PIN_INVALID_E;
     WP11_Lock_UnlockRO(&slot->lock);
 
@@ -4396,7 +4396,8 @@ int WP11_Slot_CheckUserPin(WP11_Slot* slot, char* pin, int pinLen)
 
         WP11_Lock_LockRO(&slot->lock);
     }
-    if (ret == 0 && XMEMCMP(hash, token->userPin, token->userPinLen) != 0)
+    if (ret == 0 &&
+            !WP11_ConstantCompare(hash, token->userPin, token->userPinLen))
         ret = PIN_INVALID_E;
     WP11_Lock_UnlockRO(&slot->lock);
 
@@ -7293,14 +7294,14 @@ int WP11_Object_MatchAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
     /* Get the attribute data into the stack buffer if big enough. */
     if (len <= (int)sizeof(attrData)) {
         if (WP11_Object_GetAttr(object, type, attrData, &attrLen) == 0)
-            ret = (attrLen == len) && (XMEMCMP(attrData, data, len) == 0);
+            ret = (attrLen == len) && WP11_ConstantCompare(attrData, data, len);
     }
     else {
         /* Allocate a buffer to hold data and then compare. */
         ptr = (byte*)XMALLOC(len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         if (ptr != NULL) {
             if (WP11_Object_GetAttr(object, type, ptr, &attrLen) == 0)
-                ret = (attrLen == len) && (XMEMCMP(ptr, data, len) == 0);
+                ret = (attrLen == len) && WP11_ConstantCompare(ptr, data, len);
             XFREE(ptr, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         }
     }
@@ -7786,15 +7787,14 @@ int WP11_Rsa_Verify(unsigned char* sig, word32 sigLen, unsigned char* in,
     byte decSig[RSA_MAX_SIZE / 8];
     word32 decSigLen;
     int ret = 0;
-    byte bits;
-    word32 i;
-    word32 j;
 
     *stat = 0;
 
     if (pub->onToken)
         WP11_Lock_LockRO(pub->lock);
     decSigLen = wc_RsaEncryptSize(&pub->data.rsaKey);
+    if (inLen > decSigLen)
+        return BUFFER_E;
     ret = wc_RsaDirect(sig, sigLen, decSig, &decSigLen, &pub->data.rsaKey,
                        RSA_PUBLIC_DECRYPT, NULL);
     if (pub->onToken)
@@ -7803,18 +7803,8 @@ int WP11_Rsa_Verify(unsigned char* sig, word32 sigLen, unsigned char* in,
     if (ret > 0)
         ret = 0;
 
-    if (ret == 0) {
-        bits = 0;
-        if (inLen < decSigLen) {
-            for (i = 0; (bits == 0) && (i < decSigLen - inLen); i++) {
-                bits |= decSigLen;
-            }
-        }
-        for (j=0,i=decSigLen - inLen; (bits == 0) && (i < decSigLen); i++,j++) {
-            bits |= (in[j] ^ decSig[i]);
-        }
-        *stat = (bits == 0);
-    }
+    if (ret == 0)
+        *stat = WP11_ConstantCompare(in, decSig + (decSigLen - inLen), inLen);
 
     return ret;
 }
@@ -7892,7 +7882,7 @@ int WP11_RsaPkcs15_Verify(unsigned char* sig, word32 sigLen,
 
     if (ret == 0) {
         *stat = encHashLen == decSigLen &&
-                                       XMEMCMP(encHash, decSig, decSigLen) == 0;
+                WP11_ConstantCompare(encHash, decSig, decSigLen);
     }
 
     return ret;
@@ -10109,7 +10099,7 @@ int WP11_Hmac_Verify(unsigned char* sig, word32 sigLen, unsigned char* data,
     if (ret == 0)
         ret = WP11_Hmac_Sign(data, dataLen, genSig, &genSigLen, session);
     if (ret == 0)
-        *stat = genSigLen == sigLen && XMEMCMP(sig, genSig, sigLen) == 0;
+        *stat = genSigLen == sigLen && WP11_ConstantCompare(sig, genSig, sigLen);
 
     return ret;
 }
@@ -10180,7 +10170,7 @@ int WP11_Hmac_VerifyFinal(unsigned char* sig, word32 sigLen, int* stat,
 
     ret = WP11_Hmac_SignFinal(genSig, &genSigLen, session);
     if (ret == 0)
-        *stat = genSigLen == sigLen && XMEMCMP(sig, genSig, sigLen) == 0;
+        *stat = genSigLen == sigLen && WP11_ConstantCompare(sig, genSig, sigLen);
 
     return ret;
 }
