@@ -3188,6 +3188,24 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
             init |= WP11_INIT_HMAC_SIGN;
             break;
 #endif
+#ifndef NO_AES
+#ifdef HAVE_AESCMAC
+        case CKM_AES_CMAC_GENERAL:
+            return CKR_MECHANISM_PARAM_INVALID;
+        case CKM_AES_CMAC:
+            if (type != CKK_AES)
+                return CKR_KEY_TYPE_INCONSISTENT;
+            if (pMechanism->pParameter != NULL ||
+                                              pMechanism->ulParameterLen != 0) {
+                return CKR_MECHANISM_PARAM_INVALID;
+            }
+            ret = WP11_Aes_Cmac_Init(obj, session);
+            if (ret != 0)
+                return CKR_FUNCTION_FAILED;
+            init = WP11_INIT_AES_CMAC_SIGN;
+            break;
+#endif
+#endif
         default:
             (void)type;
             return CKR_MECHANISM_INVALID;
@@ -3479,6 +3497,29 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             *pulSignatureLen = sigLen;
             break;
 #endif
+#ifndef NO_AES
+#ifdef HAVE_AESCMAC
+        case CKM_AES_CMAC_GENERAL:
+            return CKR_MECHANISM_PARAM_INVALID;
+        case CKM_AES_CMAC:
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CMAC_SIGN))
+                return CKR_OPERATION_NOT_INITIALIZED;
+
+            if (pSignature == NULL) {
+                *pulSignatureLen = WC_CMAC_TAG_MIN_SZ;
+                return CKR_OK;
+            }
+            if (*pulSignatureLen < WC_CMAC_TAG_MIN_SZ)
+                return CKR_BUFFER_TOO_SMALL;
+
+            sigLen = *pulSignatureLen;
+            ret = WP11_Aes_Cmac_Sign(pData, (word32)ulDataLen, pSignature,
+                    &sigLen, session);
+            /* sigLen shouldn't change but let's write it out just in case */
+            *pulSignatureLen = sigLen;
+            break;
+#endif
+#endif
         default:
             (void)sigLen;
             (void)ulDataLen;
@@ -3568,6 +3609,18 @@ CK_RV C_SignUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
 
             ret = WP11_Hmac_Update(pPart, (int)ulPartLen, session);
             break;
+#endif
+#ifndef NO_AES
+#ifdef HAVE_AESCMAC
+        case CKM_AES_CMAC_GENERAL:
+            return CKR_MECHANISM_PARAM_INVALID;
+        case CKM_AES_CMAC:
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CMAC_SIGN))
+                return CKR_OPERATION_NOT_INITIALIZED;
+
+            ret = WP11_Aes_Cmac_Sign_Update(pPart, (word32)ulPartLen, session);
+            break;
+#endif
 #endif
         default:
             (void)ulPartLen;
@@ -3671,6 +3724,28 @@ CK_RV C_SignFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature,
             ret = WP11_Hmac_SignFinal(pSignature, &sigLen, session);
             *pulSignatureLen = sigLen;
             break;
+#endif
+#ifndef NO_AES
+#ifdef HAVE_AESCMAC
+        case CKM_AES_CMAC_GENERAL:
+            return CKR_MECHANISM_PARAM_INVALID;
+        case CKM_AES_CMAC:
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CMAC_SIGN))
+                return CKR_OPERATION_NOT_INITIALIZED;
+
+            if (pSignature == NULL) {
+                *pulSignatureLen = WC_CMAC_TAG_MIN_SZ;
+                return CKR_OK;
+            }
+            if (*pulSignatureLen < WC_CMAC_TAG_MIN_SZ)
+                return CKR_BUFFER_TOO_SMALL;
+
+            sigLen = *pulSignatureLen;
+            ret = WP11_Aes_Cmac_Sign_Final(pSignature, &sigLen, session);
+            /* sigLen shouldn't change but let's write it out just in case */
+            *pulSignatureLen = sigLen;
+            break;
+#endif
 #endif
         default:
             (void)sigLen;
@@ -3984,6 +4059,24 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
             init |= WP11_INIT_HMAC_VERIFY;
             break;
 #endif
+#ifndef NO_AES
+#ifdef HAVE_AESCMAC
+        case CKM_AES_CMAC_GENERAL:
+            return CKR_MECHANISM_PARAM_INVALID;
+        case CKM_AES_CMAC:
+            if (type != CKK_AES)
+                return CKR_KEY_TYPE_INCONSISTENT;
+            if (pMechanism->pParameter != NULL ||
+                                              pMechanism->ulParameterLen != 0) {
+                return CKR_MECHANISM_PARAM_INVALID;
+            }
+            ret = WP11_Aes_Cmac_Init(obj, session);
+            if (ret != 0)
+                return CKR_FUNCTION_FAILED;
+            init = WP11_INIT_AES_CMAC_VERIFY;
+            break;
+#endif
+#endif
         default:
             (void)type;
             return CKR_MECHANISM_INVALID;
@@ -4228,6 +4321,19 @@ CK_RV C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                                                 (int)ulDataLen, &stat, session);
             break;
 #endif
+#ifndef NO_AES
+#ifdef HAVE_AESCMAC
+        case CKM_AES_CMAC_GENERAL:
+            return CKR_MECHANISM_PARAM_INVALID;
+        case CKM_AES_CMAC:
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CMAC_VERIFY))
+                return CKR_OPERATION_NOT_INITIALIZED;
+
+            ret = WP11_Aes_Cmac_Verify(pData, (word32)ulDataLen, pSignature,
+                    (word32)ulSignatureLen, &stat, session);
+            break;
+#endif
+#endif
         default:
             (void)ulDataLen;
             (void)ulSignatureLen;
@@ -4319,6 +4425,18 @@ CK_RV C_VerifyUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
             ret = WP11_Hmac_Update(pPart, (int)ulPartLen, session);
             break;
 #endif
+#ifndef NO_AES
+#ifdef HAVE_AESCMAC
+        case CKM_AES_CMAC_GENERAL:
+            return CKR_MECHANISM_PARAM_INVALID;
+        case CKM_AES_CMAC:
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CMAC_VERIFY))
+                return CKR_OPERATION_NOT_INITIALIZED;
+
+            ret = WP11_Aes_Cmac_Sign_Update(pPart, (word32)ulPartLen, session);
+            break;
+#endif
+#endif
         default:
             (void)ulPartLen;
             return CKR_MECHANISM_INVALID;
@@ -4409,6 +4527,19 @@ CK_RV C_VerifyFinal(CK_SESSION_HANDLE hSession,
             ret = WP11_Hmac_VerifyFinal(pSignature, (int)ulSignatureLen, &stat,
                                                                        session);
             break;
+#endif
+#ifndef NO_AES
+#ifdef HAVE_AESCMAC
+        case CKM_AES_CMAC_GENERAL:
+            return CKR_MECHANISM_PARAM_INVALID;
+        case CKM_AES_CMAC:
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CMAC_VERIFY))
+                return CKR_OPERATION_NOT_INITIALIZED;
+
+            ret = WP11_Aes_Cmac_Verify_Final(pSignature, (word32)ulSignatureLen,
+                    &stat, session);
+            break;
+#endif
 #endif
         default:
             (void)ulSignatureLen;
