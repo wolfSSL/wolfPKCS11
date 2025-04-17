@@ -49,7 +49,12 @@
     (kc == CKO_PRIVATE_KEY || kc == CKO_PUBLIC_KEY || kc == CKO_SECRET_KEY)? CKR_OK : CKR_ATTRIBUTE_VALUE_INVALID
 
 #define CHECK_WRAPPABLE(kc, kt) \
-    (kc == CKO_PRIVATE_KEY && kt == CKK_RSA) ? CKR_OK: CKR_KEY_NOT_WRAPPABLE
+    ( \
+            (kc == CKO_PRIVATE_KEY && kt == CKK_RSA) || \
+            (kc == CKO_SECRET_KEY && kt == CKK_AES) || \
+            (kc == CKO_SECRET_KEY && kt == CKK_GENERIC_SECRET) \
+    ) \
+    ? CKR_OK: CKR_KEY_NOT_WRAPPABLE
 
 #ifndef NO_RSA
 /* RSA key data attributes. */
@@ -1289,6 +1294,31 @@ CK_RV C_EncryptInit(CK_SESSION_HANDLE hSession,
         }
     #endif
 
+    #ifdef HAVE_AES_KEYWRAP
+        case CKM_AES_KEY_WRAP: {
+            byte* iv = NULL;
+            word32 ivLen = 0;
+
+            if (type != CKK_AES)
+                return CKR_KEY_TYPE_INCONSISTENT;
+            if (pMechanism->pParameter != NULL) {
+                if (pMechanism->ulParameterLen != 8)
+                    return CKR_MECHANISM_PARAM_INVALID;
+                iv = (byte*)pMechanism->pParameter;
+                ivLen = 8;
+            }
+            else if (pMechanism->ulParameterLen != 0) {
+                return CKR_MECHANISM_PARAM_INVALID;
+            }
+
+            ret = WP11_Session_SetAesWrapParams(session, iv, ivLen, obj, 1);
+            if (ret != 0)
+                return CKR_MECHANISM_PARAM_INVALID;
+            init = WP11_INIT_AES_KEYWRAP_ENC;
+            break;
+        }
+    #endif
+
     #ifdef HAVE_AESGCM
         case CKM_AES_GCM: {
              CK_GCM_PARAMS* params;
@@ -1627,6 +1657,27 @@ CK_RV C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             ret = WP11_AesCts_Encrypt(pData, (int)ulDataLen, pEncryptedData,
                                                           &encDataLen, session);
             if (ret < 0)
+                return CKR_FUNCTION_FAILED;
+            *pulEncryptedDataLen = encDataLen;
+            break;
+    #endif
+    #ifdef HAVE_AES_KEYWRAP
+        case CKM_AES_KEY_WRAP:
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_KEYWRAP_ENC))
+                return CKR_OPERATION_NOT_INITIALIZED;
+
+            /* AES Key Wrap adds 8 bytes for the integrity check value */
+            encDataLen = ulDataLen + KEYWRAP_BLOCK_SIZE;
+            if (pEncryptedData == NULL) {
+                *pulEncryptedDataLen = encDataLen;
+                return CKR_OK;
+            }
+            if (encDataLen > (word32)*pulEncryptedDataLen)
+                return CKR_BUFFER_TOO_SMALL;
+
+            ret = WP11_AesKeyWrap_Encrypt(pData, (word32)ulDataLen,
+                                          pEncryptedData, &encDataLen, session);
+            if (ret != 0)
                 return CKR_FUNCTION_FAILED;
             *pulEncryptedDataLen = encDataLen;
             break;
@@ -2167,6 +2218,32 @@ CK_RV C_DecryptInit(CK_SESSION_HANDLE hSession,
             init = WP11_INIT_AES_CTS_DEC;
             break;
     #endif
+
+    #ifdef HAVE_AES_KEYWRAP
+        case CKM_AES_KEY_WRAP: {
+            byte* iv = NULL;
+            word32 ivLen = 0;
+
+            if (type != CKK_AES)
+                return CKR_KEY_TYPE_INCONSISTENT;
+            if (pMechanism->pParameter != NULL) {
+                if (pMechanism->ulParameterLen != 8)
+                    return CKR_MECHANISM_PARAM_INVALID;
+                iv = (byte*)pMechanism->pParameter;
+                ivLen = 8;
+            }
+            else if (pMechanism->ulParameterLen != 0) {
+                return CKR_MECHANISM_PARAM_INVALID;
+            }
+
+            ret = WP11_Session_SetAesWrapParams(session, iv, ivLen, obj, 0);
+            if (ret != 0)
+                return CKR_MECHANISM_PARAM_INVALID;
+            init = WP11_INIT_AES_KEYWRAP_DEC;
+            break;
+        }
+    #endif
+
 #endif
         default:
             (void)type;
@@ -2430,6 +2507,27 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
             if (ret == BUFFER_E)
                 return CKR_BUFFER_TOO_SMALL;
             if (ret < 0)
+                return CKR_FUNCTION_FAILED;
+            *pulDataLen = decDataLen;
+            break;
+    #endif
+    #ifdef HAVE_AES_KEYWRAP
+        case CKM_AES_KEY_WRAP:
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_KEYWRAP_DEC))
+                return CKR_OPERATION_NOT_INITIALIZED;
+
+            /* AES Key Wrap unwrapping reduces the size by 8 bytes (the integrity check value) */
+            decDataLen = ulEncryptedDataLen - KEYWRAP_BLOCK_SIZE;
+            if (pData == NULL) {
+                *pulDataLen = decDataLen;
+                return CKR_OK;
+            }
+            if (decDataLen > (word32)*pulDataLen)
+                return CKR_BUFFER_TOO_SMALL;
+
+            ret = WP11_AesKeyWrap_Decrypt(pEncryptedData,
+                    (word32)ulEncryptedDataLen, pData, &decDataLen, session);
+            if (ret != 0)
                 return CKR_FUNCTION_FAILED;
             *pulDataLen = decDataLen;
             break;
@@ -5095,7 +5193,8 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
         return rv;
 
     switch (keyType) {
-#if !defined(NO_RSA) && !defined(WOLFPKCS11_NO_STORE)
+#ifndef WOLFPKCS11_NO_STORE
+#ifndef NO_RSA
         case CKK_RSA:
             ret = WP11_Rsa_SerializeKeyPTPKC8(key, NULL, &serialSize);
             if (ret != 0)
@@ -5113,6 +5212,23 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
             }
             break;
 #endif
+#ifndef NO_AES
+        case CKK_AES:
+#endif
+        case CKK_GENERIC_SECRET:
+            serialSize = AES_MAX_KEY_SIZE/8;
+            serialBuff = (byte*)XMALLOC(serialSize, NULL,
+                    DYNAMIC_TYPE_TMP_BUFFER);
+            if (serialBuff == NULL)
+                return CKR_HOST_MEMORY;
+
+            ret = WP11_Generic_SerializeKey(key, serialBuff, &serialSize);
+            if (ret != 0) {
+                rv = CKR_FUNCTION_FAILED;
+                goto err_out;
+            }
+            break;
+#endif
         default:
             rv = CKR_KEY_NOT_WRAPPABLE;
             goto err_out;
@@ -5121,6 +5237,9 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
     switch (pMechanism->mechanism) {
 #ifndef NO_AES
         /* These unwrap mechanisms can be supported with high level C_Encrypt */
+#ifdef HAVE_AES_KEYWRAP
+        case CKM_AES_KEY_WRAP:
+#endif
         case CKM_AES_CBC_PAD:
             if (wrapkeyType != CKK_AES) {
                 rv = CKR_WRAPPING_KEY_TYPE_INCONSISTENT;
@@ -5191,7 +5310,7 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
     CK_OBJECT_CLASS   keyClass = CKO_PRIVATE_KEY;
     CK_ATTRIBUTE*     attr = NULL;
     byte* workBuffer = NULL;
-    CK_ULONG ulUnwrappedLen = 0;
+    CK_ULONG ulUnwrappedLen = ulWrappedKeyLen;
 
     if (!WP11_Library_IsInitialized())
         return CKR_CRYPTOKI_NOT_INITIALIZED;
@@ -5212,7 +5331,8 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
     if (ret != 0)
         return CKR_UNWRAPPING_KEY_HANDLE_INVALID;
 
-    if (pMechanism->mechanism != CKM_AES_CBC_PAD) {
+    if (pMechanism->mechanism != CKM_AES_CBC_PAD &&
+            pMechanism->mechanism != CKM_AES_KEY_WRAP) {
         return CKR_MECHANISM_INVALID;
     }
 
@@ -5244,6 +5364,9 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
 
     switch (pMechanism->mechanism) {
         /* These unwrap mechanisms can be supported with high level C_Decrypt */
+#ifdef HAVE_AES_KEYWRAP
+        case CKM_AES_KEY_WRAP:
+#endif
         case CKM_AES_CBC_PAD:
 
             if (wrapkeyType != CKK_AES)
@@ -5276,6 +5399,38 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
                 workBuffer, ulUnwrappedLen, phKey);
             break;
 #endif
+#ifndef NO_AES
+        case CKK_AES:
+#endif
+        case CKK_GENERIC_SECRET: {
+            WP11_Object* keyObj = NULL;
+            unsigned char* keyData[2] = {
+                (unsigned char*)&ulUnwrappedLen,
+                workBuffer
+            };
+            CK_ULONG keyDataLens[2] = { sizeof(CK_ULONG), ulUnwrappedLen };
+
+            *phKey = CK_INVALID_HANDLE;
+            rv = CreateObject(session, pTemplate, ulAttributeCount, &keyObj);
+            if (rv == CKR_OK) {
+                if (WP11_Object_SetSecretKey(keyObj, keyData, keyDataLens) != 0)
+                    rv = CKR_FUNCTION_FAILED;
+            }
+            if (rv == CKR_OK) {
+                rv = AddObject(session, keyObj, pTemplate, ulAttributeCount,
+                               phKey);
+            }
+            if (rv != CKR_OK) {
+                if (*phKey != CK_INVALID_HANDLE) {
+                    WP11_Session_RemoveObject(session, keyObj);
+                    *phKey = CK_INVALID_HANDLE;
+                }
+                if (keyObj != NULL) {
+                    WP11_Object_Free(keyObj);
+                }
+            }
+            break;
+        }
         default:
             rv = CKR_KEY_NOT_WRAPPABLE;
             goto err_out;

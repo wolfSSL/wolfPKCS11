@@ -3143,6 +3143,51 @@ static CK_RV test_generate_key_pair(void* args)
 }
 #endif
 
+static CK_RV test_aes_wrap_unwrap_key(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_MECHANISM mech = { CKM_AES_KEY_WRAP, NULL, 0 };
+    CK_OBJECT_HANDLE wrappingKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    byte wrappedKey[40], keyData[32];
+    CK_ULONG wrappedKeyLen;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)},
+        { CKA_KEY_TYPE,          &aesKeyType,       sizeof(aesKeyType)    },
+    };
+    CK_ULONG     tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
+
+    memset(keyData, 7, sizeof(keyData));
+    wrappedKeyLen = sizeof(wrappedKey);
+
+    ret = get_aes_128_key(session, NULL, 0, &wrappingKey);
+    if (ret == CKR_OK) {
+        ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE,
+                                                                          &key);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_WrapKey(session, &mech, wrappingKey, key, wrappedKey,
+                                                                &wrappedKeyLen);
+        CHECK_CKR(ret, "AES Wrap Key mechanism");
+    }
+
+    /* done with key, destroy now, since uwrap returns new handle */
+    funcList->C_DestroyObject(session, key);
+    key = CK_INVALID_HANDLE;
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_UnwrapKey(session, &mech, wrappingKey, wrappedKey,
+                                            wrappedKeyLen, tmpl, tmplCnt, &key);
+        CHECK_CKR(ret, "AES UnWrap Key mechanism");
+    }
+
+    funcList->C_DestroyObject(session, wrappingKey);
+    funcList->C_DestroyObject(session, key);
+
+    return ret;
+}
+
 static CK_RV test_wrap_unwrap_key(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -3199,7 +3244,7 @@ static CK_RV test_wrap_unwrap_key(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_WrapKey(session, &mech, wrappingKey, key, wrappedKey,
                                                                 &wrappedKeyLen);
-        CHECK_CKR_FAIL(ret, CKR_KEY_NOT_WRAPPABLE,
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_INVALID,
                                             "Wrap Key mechanism not supported");
     }
 
@@ -10762,6 +10807,7 @@ static TEST_FUNC testFunc[] = {
 #if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN)
     PKCS11TEST_FUNC_SESS_DECL(test_generate_key_pair),
 #endif
+    PKCS11TEST_FUNC_SESS_DECL(test_aes_wrap_unwrap_key),
     PKCS11TEST_FUNC_SESS_DECL(test_wrap_unwrap_key),
     PKCS11TEST_FUNC_SESS_DECL(test_derive_key),
 #ifndef NO_RSA

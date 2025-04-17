@@ -214,6 +214,18 @@ else
     DISABLE_DEFS="$DISABLE_DEFS -DNO_AES"
 fi
 
+AC_ARG_ENABLE([aeskeywrap],
+    [AS_HELP_STRING([--enable-aeskeywrap],[Enable AES key wrap (default: disabled)])],
+    [ ENABLED_AESKEYWRAP=$enableval ],
+    [ ENABLED_AESKEYWRAP=no ]
+    )
+if test "$ENABLED_AESKEYWRAP" = "yes"
+then
+    AM_CFLAGS="$AM_CFLAGS -DHAVE_AES_KEY_WRAP"
+else
+    DISABLE_DEFS="$DISABLE_DEFS -DHAVE_AES_KEY_WRAP"
+fi
+
 AC_ARG_ENABLE([aescbc],
     [AS_HELP_STRING([--enable-aescbc],[Enable AES-CBC (default: enabled)])],
     [ ENABLED_AESCBC=$enableval ],

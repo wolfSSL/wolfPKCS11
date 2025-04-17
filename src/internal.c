@@ -291,6 +291,14 @@ typedef struct WP11_CcmParams {
 } WP11_CcmParams;
 #endif
 
+#ifdef HAVE_AES_KEYWRAP
+typedef struct WP11_KeyWrapParams {
+    Aes aes;                           /* AES object from wolfCrypt           */
+    unsigned char iv[8];               /* IV/nonce data                       */
+    word32 ivSz;                       /* IV/nonce size in bytes              */
+} WP11_KeyWrapParams;
+#endif
+
 #ifdef HAVE_AESCTS
 typedef struct WP11_CtsParams {
     unsigned char iv[WP11_MAX_IV_SZ];  /* IV of CBC operation                 */
@@ -351,6 +359,9 @@ struct WP11_Session {
     #endif
     #ifdef HAVE_AESCTS
         WP11_CtsParams cts;            /* AES-CTS parameters                  */
+    #endif
+    #ifdef HAVE_AES_KEYWRAP
+        WP11_KeyWrapParams kw;         /* AES-KW parameters                   */
     #endif
 #endif
 #ifndef NO_HMAC
@@ -5407,6 +5418,34 @@ int WP11_Session_SetCtrParams(WP11_Session* session, CK_ULONG ulCounterBits,
 }
 #endif /* HAVE_AESCTR */
 
+#ifdef HAVE_AES_KEYWRAP
+int WP11_Session_SetAesWrapParams(WP11_Session* session, byte* iv, word32 ivLen,
+        WP11_Object* object, int enc)
+{
+    int ret = 0;
+    WP11_KeyWrapParams *wrap = &session->params.kw;
+    WP11_Data *key;
+
+    XMEMSET(wrap, 0, sizeof(*wrap));
+    ret = wc_AesInit(&wrap->aes, NULL, session->devId);
+    if (ret == 0) {
+        if (object->onToken)
+            WP11_Lock_LockRO(object->lock);
+        key = &object->data.symmKey;
+        ret = wc_AesSetKey(&wrap->aes, key->data, key->len, NULL,
+                enc ? AES_ENCRYPTION : AES_DECRYPTION);
+        if (object->onToken)
+            WP11_Lock_UnlockRO(object->lock);
+    }
+    if (ret == 0) {
+        XMEMCPY(wrap->iv, iv, ivLen);
+        wrap->ivSz = ivLen;
+    }
+
+    return ret;
+}
+#endif
+
 #ifdef HAVE_AESGCM
 /**
  * Set the parameters to use for an AES-GCM operation.
@@ -6804,6 +6843,26 @@ static int DhObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
     return ret;
 }
 #endif /* !NO_DH */
+
+int WP11_Generic_SerializeKey(WP11_Object* object, byte* output, word32* poutsz)
+{
+    if (object == NULL || poutsz == NULL)
+        return PARAM_E;
+
+    if (object->type != CKK_AES && object->type != CKK_GENERIC_SECRET)
+        return OBJ_TYPE_E;
+
+    if (object->objClass != CKO_SECRET_KEY)
+        return OBJ_TYPE_E;
+
+    if (*poutsz < object->data.symmKey.len)
+        return PARAM_E;
+
+    XMEMCPY(output, object->data.symmKey.data, object->data.symmKey.len);
+    *poutsz = object->data.symmKey.len;
+
+    return 0;
+}
 
 /**
  * Get a secret object's data as an attribute.
@@ -9582,6 +9641,38 @@ int WP11_AesEcb_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
     return ret;
 }
 #endif /* HAVE_AESECB */
+
+#ifdef HAVE_AES_KEYWRAP
+int WP11_AesKeyWrap_Encrypt(unsigned char* plain, word32 plainSz,
+        unsigned char* enc, word32* encSz, WP11_Session* session)
+{
+    int ret = 0;
+    WP11_KeyWrapParams *wrap = &session->params.kw;
+
+    ret = wc_AesKeyWrap_ex(&wrap->aes, plain, plainSz, enc, *encSz,
+            wrap->ivSz != 0 ? wrap->iv : NULL);
+    session->init = 0;
+    if (ret < 0)
+        return ret;
+    *encSz = ret;
+    return 0;
+}
+
+int WP11_AesKeyWrap_Decrypt(unsigned char* enc, word32 encSz,
+        unsigned char* dec, word32* decSz, WP11_Session* session)
+{
+    int ret = 0;
+    WP11_KeyWrapParams *wrap = &session->params.kw;
+
+    ret = wc_AesKeyUnWrap_ex(&wrap->aes, enc, encSz, dec, *decSz,
+            wrap->ivSz != 0 ? wrap->iv : NULL);
+    session->init = 0;
+    if (ret < 0)
+        return ret;
+    *decSz = ret;
+    return 0;
+}
+#endif /* HAVE_AES_KEYWRAP */
 
 #ifdef HAVE_AESCTS
 /**
