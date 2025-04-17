@@ -281,6 +281,7 @@ static CK_MECHANISM_TYPE mechanismList[] = {
     CKM_DH_PKCS_DERIVE,
 #endif
 #ifndef NO_AES
+    CKM_AES_KEY_GEN,
 #ifdef HAVE_AES_CBC
     CKM_AES_CBC,
     CKM_AES_CBC_PAD,
@@ -482,6 +483,9 @@ static CK_MECHANISM_INFO dhPkcsMechInfo = {
 };
 #endif
 #ifndef NO_AES
+static CK_MECHANISM_INFO aesKeyGenMechInfo = {
+    16, 32, CKF_GENERATE
+};
 #ifdef HAVE_AES_CBC
 /* Info on AES-CBC mechanism. */
 static CK_MECHANISM_INFO aesCbcMechInfo = {
@@ -740,6 +744,9 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
             break;
 #endif
 #ifndef NO_AES
+        case CKM_AES_KEY_GEN:
+            XMEMCPY(pInfo, &aesKeyGenMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
 #ifdef HAVE_AES_CBC
         case CKM_AES_CBC_PAD:
         case CKM_AES_CBC:
