@@ -282,6 +282,9 @@ static CK_MECHANISM_TYPE mechanismList[] = {
 #endif
 #ifndef NO_AES
     CKM_AES_KEY_GEN,
+#ifdef HAVE_AES_KEY_WRAP
+    CKM_AES_KEY_WRAP,
+#endif
 #ifdef HAVE_AES_CBC
     CKM_AES_CBC,
     CKM_AES_CBC_PAD,
@@ -486,6 +489,11 @@ static CK_MECHANISM_INFO dhPkcsMechInfo = {
 static CK_MECHANISM_INFO aesKeyGenMechInfo = {
     16, 32, CKF_GENERATE
 };
+#ifdef HAVE_AES_KEY_WRAP
+static CK_MECHANISM_INFO aesKeyWrapMechInfo = {
+    16, 32, CKF_ENCRYPT | CKF_DECRYPT | CKF_WRAP | CKF_UNWRAP
+};
+#endif
 #ifdef HAVE_AES_CBC
 /* Info on AES-CBC mechanism. */
 static CK_MECHANISM_INFO aesCbcMechInfo = {
@@ -747,6 +755,11 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
         case CKM_AES_KEY_GEN:
             XMEMCPY(pInfo, &aesKeyGenMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
+#ifdef HAVE_AES_KEY_WRAP
+        case CKM_AES_KEY_WRAP:
+            XMEMCPY(pInfo, &aesKeyWrapMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
 #ifdef HAVE_AES_CBC
         case CKM_AES_CBC_PAD:
         case CKM_AES_CBC:
