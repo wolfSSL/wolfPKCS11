@@ -1294,7 +1294,8 @@ CK_RV C_EncryptInit(CK_SESSION_HANDLE hSession,
     #endif
 
     #ifdef HAVE_AES_KEYWRAP
-        case CKM_AES_KEY_WRAP: {
+        case CKM_AES_KEY_WRAP:
+        case CKM_AES_KEY_WRAP_PAD: {
             byte* iv = NULL;
             word32 ivLen = 0;
 
@@ -1680,6 +1681,38 @@ CK_RV C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 return CKR_FUNCTION_FAILED;
             *pulEncryptedDataLen = encDataLen;
             break;
+        case CKM_AES_KEY_WRAP_PAD: {
+            byte* paddedData = NULL;
+            byte padding = KEYWRAP_BLOCK_SIZE - (ulDataLen % KEYWRAP_BLOCK_SIZE);
+
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_KEYWRAP_ENC))
+                return CKR_OPERATION_NOT_INITIALIZED;
+
+            /* AES Key Wrap Pad adds up to 16 bytes for the integrity check
+             * value and padding */
+            encDataLen = ulDataLen + KEYWRAP_BLOCK_SIZE + padding;
+            if (pEncryptedData == NULL) {
+                *pulEncryptedDataLen = encDataLen;
+                return CKR_OK;
+            }
+            if (encDataLen > (word32)*pulEncryptedDataLen)
+                return CKR_BUFFER_TOO_SMALL;
+            paddedData = (byte*)XMALLOC(ulDataLen + padding, NULL,
+                                        DYNAMIC_TYPE_TMP_BUFFER);
+            if (paddedData == NULL)
+                return CKR_DEVICE_MEMORY;
+            XMEMCPY(paddedData, pData, ulDataLen);
+            XMEMSET(paddedData + ulDataLen, padding, padding);
+
+            ret = WP11_AesKeyWrap_Encrypt(paddedData, (word32)ulDataLen + padding,
+                                          pEncryptedData, &encDataLen, session);
+            XMEMSET(paddedData, 0, ulDataLen + padding);
+            XFREE(paddedData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            if (ret != 0)
+                return CKR_FUNCTION_FAILED;
+            *pulEncryptedDataLen = encDataLen;
+            break;
+        }
     #endif
 #endif
         default:
@@ -2219,7 +2252,8 @@ CK_RV C_DecryptInit(CK_SESSION_HANDLE hSession,
     #endif
 
     #ifdef HAVE_AES_KEYWRAP
-        case CKM_AES_KEY_WRAP: {
+        case CKM_AES_KEY_WRAP:
+        case CKM_AES_KEY_WRAP_PAD: {
             byte* iv = NULL;
             word32 ivLen = 0;
 
@@ -2512,10 +2546,13 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
     #endif
     #ifdef HAVE_AES_KEYWRAP
         case CKM_AES_KEY_WRAP:
+        case CKM_AES_KEY_WRAP_PAD:
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_KEYWRAP_DEC))
                 return CKR_OPERATION_NOT_INITIALIZED;
 
-            /* AES Key Wrap unwrapping reduces the size by 8 bytes (the integrity check value) */
+            /* AES Key Wrap unwrapping reduces the size by 8 bytes (the
+             * integrity check value). If using padding then its even smaller
+             * but we can't know the final size without decrypting first. */
             decDataLen = ulEncryptedDataLen - KEYWRAP_BLOCK_SIZE;
             if (pData == NULL) {
                 *pulDataLen = decDataLen;
@@ -2528,6 +2565,17 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
                     (word32)ulEncryptedDataLen, pData, &decDataLen, session);
             if (ret != 0)
                 return CKR_FUNCTION_FAILED;
+            if (mechanism == CKM_AES_KEY_WRAP_PAD) {
+                int i;
+                byte padValue = pData[decDataLen - 1];
+                if (padValue > KEYWRAP_BLOCK_SIZE || padValue > decDataLen)
+                    return CKR_FUNCTION_FAILED;
+                for (i = 0; i < padValue; i++) {
+                    if (pData[decDataLen - 1 - i] != padValue)
+                        return CKR_FUNCTION_FAILED;
+                }
+                decDataLen -= padValue;
+            }
             *pulDataLen = decDataLen;
             break;
     #endif
@@ -5215,7 +5263,12 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
         case CKK_AES:
 #endif
         case CKK_GENERIC_SECRET:
-            serialSize = AES_MAX_KEY_SIZE/8;
+            ret = WP11_Generic_SerializeKey(key, NULL, &serialSize);
+            if (ret != 0) {
+                rv = CKR_FUNCTION_FAILED;
+                goto err_out;
+            }
+
             serialBuff = (byte*)XMALLOC(serialSize, NULL,
                     DYNAMIC_TYPE_TMP_BUFFER);
             if (serialBuff == NULL)
@@ -5238,6 +5291,7 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
         /* These unwrap mechanisms can be supported with high level C_Encrypt */
 #ifdef HAVE_AES_KEYWRAP
         case CKM_AES_KEY_WRAP:
+        case CKM_AES_KEY_WRAP_PAD:
 #endif
         case CKM_AES_CBC_PAD:
             if (wrapkeyType != CKK_AES) {
@@ -5331,7 +5385,8 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
         return CKR_UNWRAPPING_KEY_HANDLE_INVALID;
 
     if (pMechanism->mechanism != CKM_AES_CBC_PAD &&
-            pMechanism->mechanism != CKM_AES_KEY_WRAP) {
+            pMechanism->mechanism != CKM_AES_KEY_WRAP &&
+            pMechanism->mechanism != CKM_AES_KEY_WRAP_PAD) {
         return CKR_MECHANISM_INVALID;
     }
 
@@ -5365,6 +5420,7 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
         /* These unwrap mechanisms can be supported with high level C_Decrypt */
 #ifdef HAVE_AES_KEYWRAP
         case CKM_AES_KEY_WRAP:
+        case CKM_AES_KEY_WRAP_PAD:
 #endif
         case CKM_AES_CBC_PAD:
 

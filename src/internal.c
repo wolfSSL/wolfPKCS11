@@ -6771,11 +6771,15 @@ int WP11_Generic_SerializeKey(WP11_Object* object, byte* output, word32* poutsz)
     if (object->objClass != CKO_SECRET_KEY)
         return OBJ_TYPE_E;
 
-    if (*poutsz < object->data.symmKey.len)
-        return PARAM_E;
-
-    XMEMCPY(output, object->data.symmKey.data, object->data.symmKey.len);
-    *poutsz = object->data.symmKey.len;
+    if (output != NULL) {
+        if (*poutsz < object->data.symmKey.len)
+            return PARAM_E;
+        XMEMCPY(output, object->data.symmKey.data, object->data.symmKey.len);
+        *poutsz = object->data.symmKey.len;
+    }
+    else {
+        *poutsz = object->data.symmKey.len;
+    }
 
     return 0;
 }
