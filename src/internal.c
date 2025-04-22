@@ -319,10 +319,12 @@ typedef struct WP11_Digest {
     enum wc_HashType hashType;
 } WP11_Digest;
 
+#ifdef HAVE_AESCMAC
 typedef struct WP11_Cmac {
     Cmac cmac;
     byte sigLen;
 } WP11_Cmac;
+#endif
 
 struct WP11_Session {
     unsigned char inUse;               /* Indicates session has been opened   */
@@ -368,7 +370,9 @@ struct WP11_Session {
         WP11_Hmac hmac;                /* HMAC parameters                     */
 #endif
         WP11_Digest digest;            /* Digest parameters                   */
+#ifdef HAVE_AESCMAC
         WP11_Cmac cmac;                /* CMAC parameters                     */
+#endif
     } params;
 
     int devId;
@@ -7358,14 +7362,14 @@ int WP11_Object_MatchAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
     /* Get the attribute data into the stack buffer if big enough. */
     if (len <= (int)sizeof(attrData)) {
         if (WP11_Object_GetAttr(object, type, attrData, &attrLen) == 0)
-            ret = (attrLen == len) && WP11_ConstantCompare(attrData, data, len);
+            ret = (attrLen == len) && WP11_ConstantCompare(attrData, data, (int)len);
     }
     else {
         /* Allocate a buffer to hold data and then compare. */
         ptr = (byte*)XMALLOC(len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         if (ptr != NULL) {
             if (WP11_Object_GetAttr(object, type, ptr, &attrLen) == 0)
-                ret = (attrLen == len) && WP11_ConstantCompare(ptr, data, len);
+                ret = (attrLen == len) && WP11_ConstantCompare(ptr, data, (int)len);
             XFREE(ptr, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         }
     }
