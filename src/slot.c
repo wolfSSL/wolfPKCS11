@@ -284,6 +284,7 @@ static CK_MECHANISM_TYPE mechanismList[] = {
     CKM_AES_KEY_GEN,
 #ifdef HAVE_AES_KEY_WRAP
     CKM_AES_KEY_WRAP,
+    CKM_AES_KEY_WRAP_PAD,
 #endif
 #ifdef HAVE_AES_CBC
     CKM_AES_CBC,
@@ -757,6 +758,7 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
             break;
 #ifdef HAVE_AES_KEY_WRAP
         case CKM_AES_KEY_WRAP:
+        case CKM_AES_KEY_WRAP_PAD:
             XMEMCPY(pInfo, &aesKeyWrapMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
 #endif
