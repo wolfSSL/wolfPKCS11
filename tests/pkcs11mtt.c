@@ -1805,6 +1805,7 @@ static CK_RV test_wrap_unwrap_key(void* args)
 
     memset(wrappingKeyData, 9, sizeof(wrappingKeyData));
     memset(keyData, 7, sizeof(keyData));
+    memset(&mech, 0, sizeof(mech));
     wrappedKeyLen = sizeof(wrappedKey);
 
     ret = get_generic_key(session, wrappingKeyData, sizeof(wrappingKeyData),
@@ -1844,8 +1845,13 @@ static CK_RV test_wrap_unwrap_key(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_WrapKey(session, &mech, wrappingKey, key, wrappedKey,
                                                                 &wrappedKeyLen);
+#ifndef WOLFPKCS11_NO_STORE
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_INVALID,
+                                            "Wrap Key mechanism not supported");
+#else
         CHECK_CKR_FAIL(ret, CKR_KEY_NOT_WRAPPABLE,
                                             "Wrap Key mechanism not supported");
+#endif
     }
 
     /* done with key, destroy now, since uwrap returns new handle */
