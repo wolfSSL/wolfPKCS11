@@ -265,6 +265,7 @@ extern "C" {
 #define CKM_AES_CMAC_GENERAL                  0x0000108BUL
 #define CKM_AES_CBC_ENCRYPT_DATA              0x00001105UL
 #define CKM_AES_KEY_WRAP                      0x00002109UL
+#define CKM_AES_KEY_WRAP_PAD                  0x0000210AUL
 
 #define CKR_OK                                0x00000000UL
 #define CKR_CANCEL                            0x00000001UL
