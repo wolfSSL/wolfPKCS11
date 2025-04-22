@@ -3143,6 +3143,7 @@ static CK_RV test_generate_key_pair(void* args)
 }
 #endif
 
+#ifdef HAVE_AES_KEYWRAP
 static CK_RV test_aes_wrap_unwrap_key(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -3231,6 +3232,7 @@ static CK_RV test_aes_wrap_unwrap_pad_key(void* args)
 
     return ret;
 }
+#endif /* HAVE_AES_KEYWRAP */
 
 static CK_RV test_wrap_unwrap_key(void* args)
 {
@@ -3288,8 +3290,13 @@ static CK_RV test_wrap_unwrap_key(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_WrapKey(session, &mech, wrappingKey, key, wrappedKey,
                                                                 &wrappedKeyLen);
+#ifndef WOLFPKCS11_NO_STORE
         CHECK_CKR_FAIL(ret, CKR_MECHANISM_INVALID,
                                             "Wrap Key mechanism not supported");
+#else
+        CHECK_CKR_FAIL(ret, CKR_KEY_NOT_WRAPPABLE,
+                                            "Wrap Key mechanism not supported");
+#endif
     }
 
     /* done with key, destroy now, since uwrap returns new handle */
@@ -10851,8 +10858,10 @@ static TEST_FUNC testFunc[] = {
 #if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN)
     PKCS11TEST_FUNC_SESS_DECL(test_generate_key_pair),
 #endif
+#ifdef HAVE_AES_KEYWRAP
     PKCS11TEST_FUNC_SESS_DECL(test_aes_wrap_unwrap_key),
     PKCS11TEST_FUNC_SESS_DECL(test_aes_wrap_unwrap_pad_key),
+#endif
     PKCS11TEST_FUNC_SESS_DECL(test_wrap_unwrap_key),
     PKCS11TEST_FUNC_SESS_DECL(test_derive_key),
 #ifndef NO_RSA

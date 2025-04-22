@@ -1668,7 +1668,7 @@ CK_RV C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 return CKR_OPERATION_NOT_INITIALIZED;
 
             /* AES Key Wrap adds 8 bytes for the integrity check value */
-            encDataLen = ulDataLen + KEYWRAP_BLOCK_SIZE;
+            encDataLen = (word32)(ulDataLen + KEYWRAP_BLOCK_SIZE);
             if (pEncryptedData == NULL) {
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
@@ -1691,7 +1691,7 @@ CK_RV C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 
             /* AES Key Wrap Pad adds up to 16 bytes for the integrity check
              * value and padding */
-            encDataLen = ulDataLen + KEYWRAP_BLOCK_SIZE + padding;
+            encDataLen = (word32)(ulDataLen + KEYWRAP_BLOCK_SIZE + padding);
             if (pEncryptedData == NULL) {
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
@@ -2554,7 +2554,7 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
             /* AES Key Wrap unwrapping reduces the size by 8 bytes (the
              * integrity check value). If using padding then its even smaller
              * but we can't know the final size without decrypting first. */
-            decDataLen = ulEncryptedDataLen - KEYWRAP_BLOCK_SIZE;
+            decDataLen = (word32)(ulEncryptedDataLen - KEYWRAP_BLOCK_SIZE);
             if (pData == NULL) {
                 *pulDataLen = decDataLen;
                 return CKR_OK;
