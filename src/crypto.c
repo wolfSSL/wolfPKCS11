@@ -4536,7 +4536,7 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
                         CK_OBJECT_HANDLE_PTR phPrivateKey)
 {
     int ret;
-    CK_RV rv;
+    CK_RV rv = CKR_OK;
     WP11_Session* session = NULL;
     WP11_Object* pub = NULL;
     WP11_Object* priv = NULL;
@@ -4993,7 +4993,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
                   CK_OBJECT_HANDLE_PTR phKey)
 {
     int ret;
-    CK_RV rv;
+    CK_RV rv = CKR_OK;
     WP11_Session* session;
     WP11_Object* obj = NULL;
 #if defined(HAVE_ECC) || !defined(NO_DH)
