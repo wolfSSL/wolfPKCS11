@@ -109,7 +109,7 @@ static CK_TOKEN_INFO tokenInfoTemplate = {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
     }, /* serialNumber */
-#ifndef WOLFPKCS11_NO_LOGIN
+#ifndef WOLFPKCS11_NSS
     CKF_LOGIN_REQUIRED |
 #endif
     CKF_RNG | CKF_CLOCK_ON_TOKEN,

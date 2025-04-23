@@ -391,6 +391,7 @@ struct WP11_Slot {
     WP11_Lock lock;                    /* Lock for access to slot info        */
 
     int devId;
+    int nextObjId;
 #ifdef WOLFPKCS11_TPM
     WOLFTPM2_DEV tpmDev;
     WOLFTPM2_KEY tpmSrk;
@@ -3964,6 +3965,7 @@ static int wp11_Slot_Init(WP11_Slot* slot, int id)
 
     XMEMSET(slot, 0, sizeof(*slot));
     slot->id = id;
+    slot->nextObjId = 1;
 
     ret = WP11_Lock_Init(&slot->lock);
     if (ret == 0) {
@@ -4935,7 +4937,12 @@ int WP11_Session_GetState(WP11_Session* session)
  */
 int WP11_Session_IsRW(WP11_Session* session)
 {
+#ifdef WOLFPKCS11_NSS
+    (void) session;
+    return 1;
+#else
     return session->inUse == WP11_SESSION_RW;
+#endif
 }
 
 /**
@@ -5518,9 +5525,9 @@ int WP11_Session_AddObject(WP11_Session* session, int onToken,
     if (!onToken)
         object->session = session;
 
+    token = &session->slot->token;
+    WP11_Lock_LockRW(&token->lock);
     if (onToken) {
-        token = &session->slot->token;
-        WP11_Lock_LockRW(&token->lock);
         if (token->objCnt >= WP11_TOKEN_OBJECT_CNT_MAX)
             ret = OBJ_COUNT_E;
     #ifndef WOLFPKCS11_NO_STORE
@@ -5533,10 +5540,7 @@ int WP11_Session_AddObject(WP11_Session* session, int onToken,
             /* Get next item in list after this object has been added. */
             next = token->object;
             /* Determine handle value */
-            if (next != NULL)
-                object->handle = next->handle + 1;
-            else
-                object->handle = OBJ_HANDLE(onToken, 1);
+            object->handle = OBJ_HANDLE(onToken, session->slot->nextObjId++);
             object->next = next;
             token->object = object;
         }
@@ -5545,7 +5549,6 @@ int WP11_Session_AddObject(WP11_Session* session, int onToken,
             wp11_Slot_Store(session->slot, (int)session->slotId);
         }
     #endif
-        WP11_Lock_UnlockRW(&token->lock);
     }
     else {
         if (session->objCnt >= WP11_SESSION_OBJECT_CNT_MAX)
@@ -5555,14 +5558,13 @@ int WP11_Session_AddObject(WP11_Session* session, int onToken,
             /* Get next item in list after this object has been added. */
             next = session->object;
             /* Determine handle value */
-            if (next != NULL)
-                object->handle = next->handle + 1;
-            else
-                object->handle = OBJ_HANDLE(onToken, 1);
+            object->handle = OBJ_HANDLE(onToken, session->slot->nextObjId++);
             object->next = next;
             session->object = object;
+            object->session = session;
         }
     }
+    WP11_Lock_UnlockRW(&token->lock);
 
     return ret;
 }
@@ -5578,6 +5580,10 @@ void WP11_Session_RemoveObject(WP11_Session* session, WP11_Object* object)
     WP11_Object** curr;
     WP11_Token* token;
     int id;
+#ifdef WOLFPKCS11_NSS
+    if (object->session && (session != object->session))
+        session = object->session;
+#endif
 
     /* Find the object in list and relink. */
     if (object->onToken) {
@@ -5593,6 +5599,7 @@ void WP11_Session_RemoveObject(WP11_Session* session, WP11_Object* object)
         /* Id of first object in session. */
         id = session->objCnt;
         curr = &session->object;
+        WP11_Lock_LockRW(&session->slot->token.lock);
     }
 
     while (*curr != NULL) {
@@ -5610,6 +5617,9 @@ void WP11_Session_RemoveObject(WP11_Session* session, WP11_Object* object)
         wp11_Slot_Store(session->slot, (int)session->slotId);
 #endif
         WP11_Lock_UnlockRW(object->lock);
+    }
+    else {
+        WP11_Lock_UnlockRW(&session->slot->token.lock);
     }
 }
 
@@ -6341,6 +6351,9 @@ int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
 {
     int ret = BAD_FUNC_ARG;
     WP11_Object* obj;
+#ifdef WOLFPKCS11_NSS
+    WP11_Session* scan;
+#endif
     int onToken = OBJ_HANDLE_ON_TOKEN(objHandle);
 
     if (!onToken) {
@@ -6352,6 +6365,23 @@ int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
             }
             obj = obj->next;
         }
+#ifdef WOLFPKCS11_NSS
+        if (ret == BAD_FUNC_ARG) {
+            WP11_Lock_LockRO(&session->slot->token.lock);
+            for (scan = session->slot->session; scan != NULL && ret != 0;
+                 scan = scan->next) {
+                if (scan == session)
+                    continue;
+                for (obj = scan->object; obj != NULL; obj = obj->next) {
+                    if (obj->handle == objHandle) {
+                        ret = 0;
+                        break;
+                    }
+                }
+            }
+            WP11_Lock_UnlockRO(&session->slot->token.lock);
+        }
+#endif
     }
     else {
         WP11_Lock_LockRO(&session->slot->token.lock);
@@ -6366,7 +6396,8 @@ int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
         WP11_Lock_UnlockRO(&session->slot->token.lock);
     }
 
-    *object = obj;
+    if (obj && (obj->handle == objHandle))
+        *object = obj;
 
     return ret;
 }
