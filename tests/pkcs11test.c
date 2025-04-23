@@ -406,7 +406,7 @@ static CK_RV test_no_token_init(void* args)
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_RV ret;
     CK_TOKEN_INFO tokenInfo;
-#ifdef WOLFPKCS11_NO_LOGIN
+#ifdef WOLFPKCS11_NSS
     CK_FLAGS expFlags = CKF_RNG | CKF_CLOCK_ON_TOKEN;
 #else
     CK_FLAGS expFlags = CKF_RNG | CKF_CLOCK_ON_TOKEN | CKF_LOGIN_REQUIRED;
@@ -594,7 +594,7 @@ static CK_RV test_token(void* args)
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_RV ret;
     CK_TOKEN_INFO tokenInfo;
-#ifdef WOLFPKCS11_NO_LOGIN
+#ifdef WOLFPKCS11_NSS
     CK_FLAGS expFlags = CKF_RNG | CKF_CLOCK_ON_TOKEN | CKF_TOKEN_INITIALIZED;
 #else
     CK_FLAGS expFlags = CKF_RNG | CKF_CLOCK_ON_TOKEN | CKF_LOGIN_REQUIRED |
@@ -899,7 +899,7 @@ static CK_RV test_login_logout(void* args)
     int roFlags = CKF_SERIAL_SESSION;
     CK_OBJECT_HANDLE roSession;
     CK_TOKEN_INFO tokenInfo;
-#ifdef WOLFPKCS11_NO_LOGIN
+#ifdef WOLFPKCS11_NSS
     CK_FLAGS expFlags = CKF_RNG | CKF_CLOCK_ON_TOKEN |
                         CKF_TOKEN_INITIALIZED | CKF_USER_PIN_INITIALIZED;
 #else
@@ -1376,6 +1376,7 @@ static CK_RV test_object(void* args)
                                                                     &sessionRO);
         CHECK_CKR(ret, "Open Session - read-only");
     }
+#ifndef WOLFPKCS11_NSS
     if (ret == CKR_OK) {
         ret = funcList->C_CreateObject(sessionRO, tmpl, tmplCnt, &obj);
         CHECK_CKR_FAIL(ret, CKR_SESSION_READ_ONLY,
@@ -1392,6 +1393,7 @@ static CK_RV test_object(void* args)
         CHECK_CKR_FAIL(ret, CKR_SESSION_READ_ONLY,
                                          "Destroy object in read-only session");
     }
+#endif
     if (ret == CKR_OK && sessionRO != CK_INVALID_HANDLE) {
         funcList->C_CloseSession(sessionRO);
     }
@@ -1402,6 +1404,51 @@ static CK_RV test_object(void* args)
 
     return ret;
 }
+
+#ifdef WOLFPKCS11_NSS
+static CK_RV test_cross_session_object(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_SESSION_HANDLE sessionRO;
+    CK_OBJECT_HANDLE obj;
+    CK_ULONG size;
+    static byte keyData[] = { 0x00 };
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,             &pubKeyClass,      sizeof(pubKeyClass)       },
+        { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
+        { CKA_VALUE,             keyData,           sizeof(keyData)           },
+        { CKA_EXTRACTABLE,       &ckTrue,           sizeof(ckTrue)            },
+    };
+    CK_ULONG tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
+
+    ret = funcList->C_CreateObject(session, tmpl, tmplCnt, &obj);
+    CHECK_CKR(ret, "Create object");
+
+    if (ret == CKR_OK) {
+        sessionRO = CK_INVALID_HANDLE;
+        ret = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION, NULL, NULL,
+                                                                    &sessionRO);
+        CHECK_CKR(ret, "Open Session - read-only");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetObjectSize(sessionRO, obj, &size);
+        CHECK_CKR(ret, "Get Object size");
+        if (size != CK_UNAVAILABLE_INFORMATION) {
+            ret = -1;
+            CHECK_CKR(ret, "Get Object size not available");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_DestroyObject(sessionRO, obj);
+        CHECK_CKR(ret, "Cross-session deletion");
+    }
+
+    return ret;
+}
+#endif
 
 static CK_RV test_attribute(void* args)
 {
@@ -10079,6 +10126,9 @@ static TEST_FUNC testFunc[] = {
 #endif
     PKCS11TEST_FUNC_SESS_DECL(test_op_state_fail),
     PKCS11TEST_FUNC_SESS_DECL(test_object),
+#ifdef WOLFPKCS11_NSS
+    PKCS11TEST_FUNC_SESS_DECL(test_cross_session_object),
+#endif
     PKCS11TEST_FUNC_SESS_DECL(test_attribute),
     PKCS11TEST_FUNC_SESS_DECL(test_attribute_types),
     PKCS11TEST_FUNC_SESS_DECL(test_attribute_get),
