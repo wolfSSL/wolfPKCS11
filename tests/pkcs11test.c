@@ -7042,6 +7042,43 @@ static CK_RV test_aes_cbc_gen_key_id(void* args)
     return ret;
 }
 
+static CK_RV test_aes_cbc_pad_len_test(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE key;
+    CK_MECHANISM mech;
+    CK_ULONG plainSz, encSz, ivSz;
+    byte plain[15], iv[16];
+
+    memset(plain, 9, sizeof(plain));
+    plainSz = sizeof(plain);
+    encSz = plainSz;
+    ivSz = sizeof(iv);
+
+    mech.mechanism      = CKM_AES_CBC_PAD;
+    mech.ulParameterLen = ivSz;
+    mech.pParameter     = iv;
+
+    ret = get_aes_128_key(session, NULL, 0, &key);
+    CHECK_CKR(ret, "Getting AES key");
+    if (ret == CKR_OK) {
+        ret = funcList->C_EncryptInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CBC Pad Encrypt Init");
+    }
+    if (ret == CKR_OK) {
+        encSz = 0;
+        ret = funcList->C_Encrypt(session, plain, plainSz, NULL, &encSz);
+        CHECK_CKR(ret, "AES-CBC Pad Encrypt no enc");
+    }
+    /* CKM_AES_CBC_PAD length is rounded up to the nearest multiple of 16 */
+    if (ret == CKR_OK && encSz != 16) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-CBC Pad Encrypt encrypted length");
+    }
+    return ret;
+}
+
 static CK_RV test_aes_cbc_pad_encdec(CK_SESSION_HANDLE session,
                                      unsigned char* exp, CK_OBJECT_HANDLE key)
 {
@@ -10721,6 +10758,7 @@ static TEST_FUNC testFunc[] = {
 #endif
 #ifndef NO_AES
 #ifdef HAVE_AES_CBC
+    PKCS11TEST_FUNC_SESS_DECL(test_aes_cbc_pad_len_test),
     PKCS11TEST_FUNC_SESS_DECL(test_aes_cbc_fixed_key),
     PKCS11TEST_FUNC_SESS_DECL(test_aes_cbc_fail),
     PKCS11TEST_FUNC_SESS_DECL(test_aes_cbc_gen_key),
