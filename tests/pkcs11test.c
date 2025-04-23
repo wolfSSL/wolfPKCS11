@@ -5774,6 +5774,138 @@ static CK_RV ecdsa_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE privKey,
     return ret;
 }
 
+/* Tests for error occuring when private and public curves mismatch. */
+/* Crashes with TPM test right now. */
+#ifndef WOLFPKCS11_TPM
+static CK_RV test_ecc_curve(void *args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE hAlicePubKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hAlicePrivKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hBobPubKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hBobPrivKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hSharedSecret = CK_INVALID_HANDLE;
+    CK_MECHANISM mechanismGen = { CKM_EC_KEY_PAIR_GEN, NULL_PTR, 0 };
+    CK_BYTE ecParams_secp256r1[] =
+        { 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07 };
+
+    CK_ATTRIBUTE alicePubKeyTemplate[] = {
+        {CKA_EC_PARAMS, ecParams_secp256r1, sizeof(ecParams_secp256r1)},
+        {CKA_TOKEN, &ckFalse, sizeof(ckFalse)},
+        {CKA_VERIFY, &ckTrue, sizeof(ckTrue)},
+        {CKA_ENCRYPT, &ckFalse, sizeof(ckFalse)},
+        {CKA_WRAP, &ckFalse, sizeof(ckFalse)},
+        {CKA_LABEL, (CK_UTF8CHAR_PTR)"Alice_PublicKey",
+            strlen("Alice_PublicKey")}
+    };
+    CK_ULONG ulAlicePubKeyAttrCount =
+        sizeof(alicePubKeyTemplate) / sizeof(CK_ATTRIBUTE);
+    CK_ATTRIBUTE alicePrivKeyTemplate[] = {
+        {CKA_TOKEN, &ckFalse, sizeof(ckFalse)},
+        {CKA_PRIVATE, &ckTrue, sizeof(ckTrue)},
+        {CKA_SENSITIVE, &ckTrue, sizeof(ckTrue)},
+        {CKA_EXTRACTABLE, &ckFalse, sizeof(ckFalse)},
+        {CKA_SIGN, &ckFalse, sizeof(ckFalse)},
+        {CKA_DECRYPT, &ckFalse, sizeof(ckFalse)},
+        {CKA_DERIVE, &ckTrue, sizeof(ckTrue)},
+        {CKA_LABEL, (CK_UTF8CHAR_PTR)"Alice_PrivateKey",
+            strlen("Alice_PrivateKey")}
+    };
+    CK_ULONG ulAlicePrivKeyAttrCount =
+        sizeof(alicePrivKeyTemplate) / sizeof(CK_ATTRIBUTE);
+
+    CK_ATTRIBUTE bobPubKeyTemplate[] = {
+        {CKA_EC_PARAMS, ecParams_secp256r1, sizeof(ecParams_secp256r1)},
+        {CKA_TOKEN, &ckFalse, sizeof(ckFalse)},
+        {CKA_VERIFY, &ckTrue, sizeof(ckTrue)},
+        {CKA_LABEL, (CK_UTF8CHAR_PTR)"Bob_PublicKey", strlen("Bob_PublicKey")}
+    };
+    CK_ULONG ulBobPubKeyAttrCount =
+        sizeof(bobPubKeyTemplate) / sizeof(CK_ATTRIBUTE);
+    CK_ATTRIBUTE bobPrivKeyTemplate[] = {
+        {CKA_TOKEN, &ckFalse, sizeof(ckFalse)},
+        {CKA_PRIVATE, &ckTrue, sizeof(ckTrue)},
+        {CKA_SENSITIVE, &ckTrue, sizeof(ckTrue)},
+        {CKA_EXTRACTABLE, &ckFalse, sizeof(ckFalse)},
+        {CKA_DERIVE, &ckTrue, sizeof(ckTrue)},
+        {CKA_LABEL, (CK_UTF8CHAR_PTR)"Bob_PrivateKey", strlen("Bob_PrivateKey")}
+    };
+    CK_ULONG ulBobPrivKeyAttrCount =
+        sizeof(bobPrivKeyTemplate) / sizeof(CK_ATTRIBUTE);
+    CK_ATTRIBUTE bobEcPointAttr = { CKA_EC_POINT, NULL_PTR, 0 };
+
+    CK_ECDH1_DERIVE_PARAMS ecdhParams;
+    CK_MECHANISM mechanismECDH =
+        { CKM_ECDH1_DERIVE, &ecdhParams, sizeof(ecdhParams) };
+
+    CK_OBJECT_CLASS secretClass = CKO_SECRET_KEY;
+    CK_ATTRIBUTE sharedSecretTemplate[] = {
+        {CKA_CLASS, &secretClass, sizeof(secretClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_TOKEN, &ckFalse, sizeof(ckFalse)},
+        {CKA_PRIVATE, &ckTrue, sizeof(ckTrue)},
+        {CKA_SENSITIVE, &ckTrue, sizeof(ckTrue)},
+        {CKA_EXTRACTABLE, &ckFalse, sizeof(ckFalse)},
+        {CKA_DERIVE, &ckTrue, sizeof(ckTrue)},
+        {CKA_LABEL, (CK_UTF8CHAR_PTR)"ECDH_SharedSecret",
+            strlen("ECDH_SharedSecret")}
+    };
+    CK_ULONG ulSharedSecretAttrCount =
+        sizeof(sharedSecretTemplate) / sizeof(CK_ATTRIBUTE);
+
+    ret = funcList->C_GenerateKeyPair(session, &mechanismGen,
+                                alicePubKeyTemplate, ulAlicePubKeyAttrCount,
+                                alicePrivKeyTemplate, ulAlicePrivKeyAttrCount,
+                                &hAlicePubKey, &hAlicePrivKey);
+
+    CHECK_CKR(ret, "Alice key gen failure");
+    if (ret == CKR_OK) {
+        ret = funcList->C_GenerateKeyPair(session, &mechanismGen,
+            bobPubKeyTemplate, ulBobPubKeyAttrCount,
+            bobPrivKeyTemplate, ulBobPrivKeyAttrCount,
+            &hBobPubKey, &hBobPrivKey);
+        CHECK_CKR(ret, "Bob key gen failure");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, hBobPubKey,
+            &bobEcPointAttr, 1);
+        CHECK_CKR(ret, "C_GetAttributeValue (Bob EC Point size)");
+    }
+
+    if (ret == CKR_OK) {
+        bobEcPointAttr.pValue = XMALLOC(bobEcPointAttr.ulValueLen, NULL,
+                                        DYNAMIC_TYPE_TMP_BUFFER);
+        if (bobEcPointAttr.pValue == NULL)
+            ret = CKR_DEVICE_MEMORY;
+        CHECK_CKR(ret, "Allocate Bob's EC point");
+    }
+
+    if (ret == CKR_OK){
+        ret = funcList->C_GetAttributeValue(session, hBobPubKey,
+            &bobEcPointAttr, 1);
+        CHECK_CKR(ret, "C_GetAttributeValue (Bob EC Point value)");
+    }
+
+    if (ret == CKR_OK) {
+        ecdhParams.kdf = CKD_NULL;
+        ecdhParams.ulSharedDataLen = 0; /* No shared data in this step */
+        ecdhParams.pSharedData = NULL_PTR;
+        ecdhParams.ulPublicDataLen = bobEcPointAttr.ulValueLen;
+        ecdhParams.pPublicData = (CK_BYTE_PTR)bobEcPointAttr.pValue;
+
+        /* Derive the key using Alice's Private Key and Bob's Public Data */
+        ret = funcList->C_DeriveKey(session, &mechanismECDH, hAlicePrivKey,
+            sharedSecretTemplate, ulSharedSecretAttrCount,
+            &hSharedSecret);
+        CHECK_CKR(ret, "C_DeriveKey (ECDH1)");
+    }
+
+    return ret;
+}
+#endif
+
 static CK_RV test_ecc_create_key_fail(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -10936,6 +11068,9 @@ static TEST_FUNC testFunc[] = {
 #endif
 #endif
 #ifdef HAVE_ECC
+#ifndef WOLFPKCS11_TPM
+    PKCS11TEST_FUNC_SESS_DECL(test_ecc_curve),
+#endif
     PKCS11TEST_FUNC_SESS_DECL(test_ecc_create_key_fail),
     PKCS11TEST_FUNC_SESS_DECL(test_ecc_fixed_keys_ecdh),
     PKCS11TEST_FUNC_SESS_DECL(test_ecc_fixed_keys_ecdsa),
