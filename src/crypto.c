@@ -484,7 +484,8 @@ static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
  *          CKR_OK on success.
  */
 static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
-                               CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount)
+                               CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
+                               CK_BBOOL newObject)
 {
     int ret = 0;
     CK_RV rv;
@@ -494,6 +495,7 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
     CK_ULONG len[OBJ_MAX_PARAMS] = { 0, };
     CK_ATTRIBUTE_TYPE* attrs = NULL;
     int cnt;
+    CK_BBOOL attrsFound = 0;
     CK_KEY_TYPE type;
     CK_OBJECT_CLASS objClass;
     CK_BBOOL getVar;
@@ -507,6 +509,7 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
     rv = CheckAttributes(pTemplate, ulCount, 1);
     if (rv != CKR_OK)
         return rv;
+
 
     type = WP11_Object_GetType(obj);
     objClass = WP11_Object_GetClass(obj);
@@ -554,6 +557,7 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
     for (i = 0; i < cnt; i++) {
         for (j = 0; j < (int)ulCount; j++) {
             if (attrs[i] == pTemplate[j].type) {
+                attrsFound = 1;
                 data[i] = (unsigned char*)pTemplate[j].pValue;
                 if (data[i] == NULL)
                     return CKR_ATTRIBUTE_VALUE_INVALID;
@@ -563,46 +567,48 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
         }
     }
 
-    if (objClass == CKO_CERTIFICATE) {
-        ret = WP11_Object_SetCert(obj, data, len);
-    }
-    else {
-        /* Set the value and length of key specific attributes
-        * Old key data is cleared.
-        */
-        switch (type) {
-    #ifndef NO_RSA
-            case CKK_RSA:
-                ret = WP11_Object_SetRsaKey(obj, data, len);
-                break;
-    #endif
-    #ifdef HAVE_ECC
-            case CKK_EC:
-                ret = WP11_Object_SetEcKey(obj, data, len);
-                break;
-    #endif
-    #ifndef NO_DH
-            case CKK_DH:
-                ret = WP11_Object_SetDhKey(obj, data, len);
-                break;
-    #endif
-    #ifdef WOLFPKCS11_HKDF
-            case CKK_HKDF:
-    #endif
-    #ifndef NO_AES
-            case CKK_AES:
-    #endif
-            case CKK_GENERIC_SECRET:
-                ret = WP11_Object_SetSecretKey(obj, data, len);
-                break;
-            default:
-                break;
+    if (newObject == CK_TRUE || attrsFound == 1) {
+        if (objClass == CKO_CERTIFICATE) {
+            ret = WP11_Object_SetCert(obj, data, len);
         }
+        else {
+            /* Set the value and length of key specific attributes
+            * Old key data is cleared.
+            */
+            switch (type) {
+        #ifndef NO_RSA
+                case CKK_RSA:
+                    ret = WP11_Object_SetRsaKey(obj, data, len);
+                    break;
+        #endif
+        #ifdef HAVE_ECC
+                case CKK_EC:
+                    ret = WP11_Object_SetEcKey(obj, data, len);
+                    break;
+        #endif
+        #ifndef NO_DH
+                case CKK_DH:
+                    ret = WP11_Object_SetDhKey(obj, data, len);
+                    break;
+        #endif
+        #ifndef NO_AES
+                case CKK_AES:
+        #endif
+        #ifdef WOLFPKCS11_HKDF
+                case CKK_HKDF:
+        #endif
+                case CKK_GENERIC_SECRET:
+                    ret = WP11_Object_SetSecretKey(obj, data, len);
+                    break;
+                default:
+                    break;
+            }
+        }
+        if (ret == MEMORY_E)
+            return CKR_DEVICE_MEMORY;
+        if (ret != 0)
+            return CKR_FUNCTION_FAILED;
     }
-    if (ret == MEMORY_E)
-        return CKR_DEVICE_MEMORY;
-    if (ret != 0)
-        return CKR_FUNCTION_FAILED;
 
     /* Set remaining attributes - key specific attributes ignored. */
     for (i = 0; i < (int)ulCount; i++) {
@@ -660,7 +666,7 @@ static CK_RV NewObject(WP11_Session* session, CK_KEY_TYPE keyType,
     if (ret != 0)
         return CKR_FUNCTION_FAILED;
 
-    rv = SetAttributeValue(session, obj, pTemplate, ulCount);
+    rv = SetAttributeValue(session, obj, pTemplate, ulCount, CK_TRUE);
     if (rv != CKR_OK) {
         WP11_Object_Free(obj);
         return rv;
@@ -1043,7 +1049,7 @@ CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
         WP11_Object_Free(newObj);
         return rv;
     }
-    rv = SetAttributeValue(session, newObj, pTemplate, ulCount);
+    rv = SetAttributeValue(session, newObj, pTemplate, ulCount, CK_TRUE);
     if (rv != CKR_OK) {
         WP11_Object_Free(newObj);
         return rv;
@@ -1241,7 +1247,7 @@ CK_RV C_SetAttributeValue(CK_SESSION_HANDLE hSession,
     if (ret != 0)
         return CKR_OBJECT_HANDLE_INVALID;
 
-    return SetAttributeValue(session, obj, pTemplate, ulCount);
+    return SetAttributeValue(session, obj, pTemplate, ulCount, CK_FALSE);
 }
 
 /**
