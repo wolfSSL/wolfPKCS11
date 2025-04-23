@@ -8465,7 +8465,13 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
 
     ret = wc_ecc_init_ex(&pubKey, NULL, priv->slot->devId);
     if (ret == 0) {
-        ret = wc_ecc_import_x963(point, pointLen, &pubKey);
+        if (priv->data.ecKey.dp) {
+            ret = wc_ecc_import_x963_ex(point, pointLen, &pubKey,
+                                        priv->data.ecKey.dp->id);
+        }
+        else {
+            ret = wc_ecc_import_x963(point, pointLen, &pubKey);
+        }
     }
 #if defined(ECC_TIMING_RESISTANT) && (!defined(HAVE_FIPS) || \
     (defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION > 2)))
