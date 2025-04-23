@@ -393,6 +393,15 @@ then
     AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_TPM"
 fi
 
+AC_ARG_ENABLE([nss],
+    [AS_HELP_STRING([--enable-nss],[Enable NSS specific modifications (default: disabled)])],
+    [ ENABLED_NSS=$enableval ],
+    [ ENABLED_NSS=no ]
+    )
+if test "$ENABLED_NSS" = "yes"
+then
+    AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_NSS"
+fi
 
 
 AM_CONDITIONAL([BUILD_STATIC],[test "x$enable_shared" = "xno"])
@@ -565,3 +574,4 @@ echo "   * RSA-OAEP:                   $ENABLED_RSAOAEP"
 echo "   * RSA-PSS:                    $ENABLED_RSAPSS"
 echo "   * DH:                         $ENABLED_DH"
 echo "   * ECC:                        $ENABLED_ECC"
+echo "   * NSS modifications:          $ENABLED_NSS"
