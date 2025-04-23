@@ -1512,7 +1512,8 @@ CK_RV C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 return CKR_OPERATION_NOT_INITIALIZED;
             }
 
-            encDataLen = (word32)ulDataLen;
+            /* PKCS#5 pad makes the output a multiple of 16 */
+            encDataLen = (word32)((ulDataLen + 15) / 16) * 16;
             if (pEncryptedData == NULL) {
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
