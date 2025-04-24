@@ -324,7 +324,25 @@ static CK_MECHANISM_TYPE mechanismList[] = {
 #endif
 #ifdef WOLFSSL_SHA512
     CKM_SHA512_HMAC,
-    CKM_SHA512
+    CKM_SHA512,
+#endif
+#ifdef WOLFSSL_SHA3
+#ifndef WOLFSSL_NOSHA3_224
+    CKM_SHA3_224_HMAC,
+    CKM_SHA3_224,
+#endif
+#ifndef WOLFSSL_NOSHA3_256
+    CKM_SHA3_256_HMAC,
+    CKM_SHA3_256,
+#endif
+#ifndef WOLFSSL_NOSHA3_384
+    CKM_SHA3_384_HMAC,
+    CKM_SHA3_384,
+#endif
+#ifndef WOLFSSL_NOSHA3_512
+    CKM_SHA3_512_HMAC,
+    CKM_SHA3_512
+#endif
 #endif
 #endif
 };
@@ -551,6 +569,31 @@ static CK_MECHANISM_INFO sha512MechInfo = {
     0, 0, CKF_DIGEST
 };
 #endif
+#ifdef WOLFSSL_SHA3
+#ifndef WOLFSSL_NOSHA3_224
+static CK_MECHANISM_INFO hmacSha3224MechInfo = {
+    28, 512, CKF_SIGN | CKF_VERIFY
+};
+#endif
+#ifndef WOLFSSL_NOSHA3_256
+static CK_MECHANISM_INFO hmacSha3256MechInfo = {
+    32, 512, CKF_SIGN | CKF_VERIFY
+};
+#endif
+#ifndef WOLFSSL_NOSHA3_384
+static CK_MECHANISM_INFO hmacSha3384MechInfo = {
+    48, 512, CKF_SIGN | CKF_VERIFY
+};
+#endif
+#ifndef WOLFSSL_NOSHA3_512
+static CK_MECHANISM_INFO hmacSha3512MechInfo = {
+    64, 512, CKF_SIGN | CKF_VERIFY
+};
+#endif
+static CK_MECHANISM_INFO sha3MechInfo = {
+    0, 0, CKF_DIGEST
+};
+#endif
 #endif
 
 /**
@@ -763,6 +806,42 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
             break;
         case CKM_SHA512:
             XMEMCPY(pInfo, &sha512MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifdef WOLFSSL_SHA3
+#ifndef WOLFSSL_NOSHA3_224
+        case CKM_SHA3_224_HMAC:
+            XMEMCPY(pInfo, &hmacSha3224MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifndef WOLFSSL_NOSHA3_256
+        case CKM_SHA3_256_HMAC:
+            XMEMCPY(pInfo, &hmacSha3256MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifndef WOLFSSL_NOSHA3_384
+        case CKM_SHA3_384_HMAC:
+            XMEMCPY(pInfo, &hmacSha3384MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifndef WOLFSSL_NOSHA3_512
+        case CKM_SHA3_512_HMAC:
+            XMEMCPY(pInfo, &hmacSha3512MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifndef WOLFSSL_NOSHA3_224
+        case CKM_SHA3_224:
+#endif
+#ifndef WOLFSSL_NOSHA3_256
+        case CKM_SHA3_256:
+#endif
+#ifndef WOLFSSL_NOSHA3_384
+        case CKM_SHA3_384:
+#endif
+#ifndef WOLFSSL_NOSHA3_512
+        case CKM_SHA3_512:
+#endif
+            XMEMCPY(pInfo, &sha3MechInfo, sizeof(CK_MECHANISM_INFO));
             break;
 #endif
 #endif

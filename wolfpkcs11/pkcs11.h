@@ -235,6 +235,14 @@ extern "C" {
 #define CKM_SHA384_HMAC                       0x00000261UL
 #define CKM_SHA512                            0x00000270UL
 #define CKM_SHA512_HMAC                       0x00000271UL
+#define CKM_SHA3_256                          0x000002B0UL
+#define CKM_SHA3_256_HMAC                     0x000002B1UL
+#define CKM_SHA3_224                          0x000002B5UL
+#define CKM_SHA3_224_HMAC                     0x000002B6UL
+#define CKM_SHA3_384                          0x000002C0UL
+#define CKM_SHA3_384_HMAC                     0x000002C1UL
+#define CKM_SHA3_512                          0x000002D0UL
+#define CKM_SHA3_512_HMAC                     0x000002D1UL
 #define CKM_GENERIC_SECRET_KEY_GEN            0x00000350UL
 #define CKM_EC_KEY_PAIR_GEN                   0x00001040UL
 #define CKM_ECDSA                             0x00001041UL
