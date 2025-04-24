@@ -39,6 +39,7 @@
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/asn_public.h>
 #include <wolfssl/wolfcrypt/aes.h>
+#include <wolfssl/wolfcrypt/cmac.h>
 
 #include <wolfpkcs11/internal.h>
 #include <wolfpkcs11/store.h>
@@ -290,6 +291,14 @@ typedef struct WP11_CcmParams {
 } WP11_CcmParams;
 #endif
 
+#ifdef HAVE_AES_KEYWRAP
+typedef struct WP11_KeyWrapParams {
+    Aes aes;                           /* AES object from wolfCrypt           */
+    unsigned char iv[8];               /* IV/nonce data                       */
+    word32 ivSz;                       /* IV/nonce size in bytes              */
+} WP11_KeyWrapParams;
+#endif
+
 #ifdef HAVE_AESCTS
 typedef struct WP11_CtsParams {
     unsigned char iv[WP11_MAX_IV_SZ];  /* IV of CBC operation                 */
@@ -309,6 +318,13 @@ typedef struct WP11_Digest {
     wc_HashAlg hash;
     enum wc_HashType hashType;
 } WP11_Digest;
+
+#ifdef HAVE_AESCMAC
+typedef struct WP11_Cmac {
+    Cmac cmac;
+    byte sigLen;
+} WP11_Cmac;
+#endif
 
 struct WP11_Session {
     unsigned char inUse;               /* Indicates session has been opened   */
@@ -346,11 +362,17 @@ struct WP11_Session {
     #ifdef HAVE_AESCTS
         WP11_CtsParams cts;            /* AES-CTS parameters                  */
     #endif
+    #ifdef HAVE_AES_KEYWRAP
+        WP11_KeyWrapParams kw;         /* AES-KW parameters                   */
+    #endif
 #endif
 #ifndef NO_HMAC
         WP11_Hmac hmac;                /* HMAC parameters                     */
 #endif
         WP11_Digest digest;            /* Digest parameters                   */
+#ifdef HAVE_AESCMAC
+        WP11_Cmac cmac;                /* CMAC parameters                     */
+#endif
     } params;
 
     int devId;
@@ -1602,6 +1624,19 @@ static int wp11_storage_write_string(void* storage, char* str, int max)
     return wp11_storage_write(storage, (unsigned char *)str, max);
 }
 #endif /* !WOLFPKCS11_NO_STORE */
+
+/* check all length bytes for equality, return 1 on success and 0 on failure */
+int WP11_ConstantCompare(const byte* a, const byte* b, int length)
+{
+    int i;
+    int compareSum = 0;
+
+    for (i = 0; i < length; i++) {
+        compareSum |= a[i] ^ b[i];
+    }
+
+    return compareSum == 0 ? 1 : 0;
+}
 
 /**
  * Create a new Object object.
@@ -4339,7 +4374,7 @@ int WP11_Slot_CheckSOPin(WP11_Slot* slot, char* pin, int pinLen)
 
         WP11_Lock_LockRO(&slot->lock);
     }
-    if (ret == 0 && XMEMCMP(hash, token->soPin, token->soPinLen) != 0)
+    if (ret == 0 && !WP11_ConstantCompare(hash, token->soPin, token->soPinLen))
         ret = PIN_INVALID_E;
     WP11_Lock_UnlockRO(&slot->lock);
 
@@ -4377,7 +4412,8 @@ int WP11_Slot_CheckUserPin(WP11_Slot* slot, char* pin, int pinLen)
 
         WP11_Lock_LockRO(&slot->lock);
     }
-    if (ret == 0 && XMEMCMP(hash, token->userPin, token->userPinLen) != 0)
+    if (ret == 0 &&
+            !WP11_ConstantCompare(hash, token->userPin, token->userPinLen))
         ret = PIN_INVALID_E;
     WP11_Lock_UnlockRO(&slot->lock);
 
@@ -5301,6 +5337,34 @@ int WP11_Session_SetCtrParams(WP11_Session* session, CK_ULONG ulCounterBits,
     return ret;
 }
 #endif /* HAVE_AESCTR */
+
+#ifdef HAVE_AES_KEYWRAP
+int WP11_Session_SetAesWrapParams(WP11_Session* session, byte* iv, word32 ivLen,
+        WP11_Object* object, int enc)
+{
+    int ret = 0;
+    WP11_KeyWrapParams *wrap = &session->params.kw;
+    WP11_Data *key;
+
+    XMEMSET(wrap, 0, sizeof(*wrap));
+    ret = wc_AesInit(&wrap->aes, NULL, session->devId);
+    if (ret == 0) {
+        if (object->onToken)
+            WP11_Lock_LockRO(object->lock);
+        key = &object->data.symmKey;
+        ret = wc_AesSetKey(&wrap->aes, key->data, key->len, NULL,
+                enc ? AES_ENCRYPTION : AES_DECRYPTION);
+        if (object->onToken)
+            WP11_Lock_UnlockRO(object->lock);
+    }
+    if (ret == 0) {
+        XMEMCPY(wrap->iv, iv, ivLen);
+        wrap->ivSz = ivLen;
+    }
+
+    return ret;
+}
+#endif
 
 #ifdef HAVE_AESGCM
 /**
@@ -6688,6 +6752,30 @@ static int DhObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
 }
 #endif /* !NO_DH */
 
+int WP11_Generic_SerializeKey(WP11_Object* object, byte* output, word32* poutsz)
+{
+    if (object == NULL || poutsz == NULL)
+        return PARAM_E;
+
+    if (object->type != CKK_AES && object->type != CKK_GENERIC_SECRET)
+        return OBJ_TYPE_E;
+
+    if (object->objClass != CKO_SECRET_KEY)
+        return OBJ_TYPE_E;
+
+    if (output != NULL) {
+        if (*poutsz < object->data.symmKey.len)
+            return PARAM_E;
+        XMEMCPY(output, object->data.symmKey.data, object->data.symmKey.len);
+        *poutsz = object->data.symmKey.len;
+    }
+    else {
+        *poutsz = object->data.symmKey.len;
+    }
+
+    return 0;
+}
+
 /**
  * Get a secret object's data as an attribute.
  *
@@ -7256,14 +7344,14 @@ int WP11_Object_MatchAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
     /* Get the attribute data into the stack buffer if big enough. */
     if (len <= (int)sizeof(attrData)) {
         if (WP11_Object_GetAttr(object, type, attrData, &attrLen) == 0)
-            ret = (attrLen == len) && (XMEMCMP(attrData, data, len) == 0);
+            ret = (attrLen == len) && WP11_ConstantCompare(attrData, data, (int)len);
     }
     else {
         /* Allocate a buffer to hold data and then compare. */
         ptr = (byte*)XMALLOC(len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         if (ptr != NULL) {
             if (WP11_Object_GetAttr(object, type, ptr, &attrLen) == 0)
-                ret = (attrLen == len) && (XMEMCMP(ptr, data, len) == 0);
+                ret = (attrLen == len) && WP11_ConstantCompare(ptr, data, (int)len);
             XFREE(ptr, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         }
     }
@@ -7749,15 +7837,14 @@ int WP11_Rsa_Verify(unsigned char* sig, word32 sigLen, unsigned char* in,
     byte decSig[RSA_MAX_SIZE / 8];
     word32 decSigLen;
     int ret = 0;
-    byte bits;
-    word32 i;
-    word32 j;
 
     *stat = 0;
 
     if (pub->onToken)
         WP11_Lock_LockRO(pub->lock);
     decSigLen = wc_RsaEncryptSize(&pub->data.rsaKey);
+    if (inLen > decSigLen)
+        return BUFFER_E;
     ret = wc_RsaDirect(sig, sigLen, decSig, &decSigLen, &pub->data.rsaKey,
                        RSA_PUBLIC_DECRYPT, NULL);
     if (pub->onToken)
@@ -7766,18 +7853,8 @@ int WP11_Rsa_Verify(unsigned char* sig, word32 sigLen, unsigned char* in,
     if (ret > 0)
         ret = 0;
 
-    if (ret == 0) {
-        bits = 0;
-        if (inLen < decSigLen) {
-            for (i = 0; (bits == 0) && (i < decSigLen - inLen); i++) {
-                bits |= decSigLen;
-            }
-        }
-        for (j=0,i=decSigLen - inLen; (bits == 0) && (i < decSigLen); i++,j++) {
-            bits |= (in[j] ^ decSig[i]);
-        }
-        *stat = (bits == 0);
-    }
+    if (ret == 0)
+        *stat = WP11_ConstantCompare(in, decSig + (decSigLen - inLen), inLen);
 
     return ret;
 }
@@ -7855,7 +7932,7 @@ int WP11_RsaPkcs15_Verify(unsigned char* sig, word32 sigLen,
 
     if (ret == 0) {
         *stat = encHashLen == decSigLen &&
-                                       XMEMCMP(encHash, decSig, decSigLen) == 0;
+                WP11_ConstantCompare(encHash, decSig, decSigLen);
     }
 
     return ret;
@@ -8413,6 +8490,30 @@ int WP11_AesCbc_PartLen(WP11_Session* session)
     WP11_CbcParams* cbc = &session->params.cbc;
 
     return cbc->partialSz;
+}
+
+
+int WP11_AesCbc_DeriveKey(unsigned char* plain, word32 plainSz,
+                        unsigned char* enc, byte* iv,
+                        WP11_Object* key)
+{
+    Aes aes;
+    int ret = 0;
+
+    if (key->type != CKK_AES && key->type != CKK_GENERIC_SECRET)
+        return BAD_FUNC_ARG;
+
+    XMEMSET(&aes, 0, sizeof(aes));
+    ret = wc_AesInit(&aes, NULL, key->slot->devId);
+    if (ret == 0) {
+        ret = wc_AesSetKey(&aes, key->data.symmKey.data, key->data.symmKey.len,
+                iv, AES_ENCRYPTION);
+    }
+    if (ret == 0)
+        ret = wc_AesCbcEncrypt(&aes, enc, plain, plainSz);
+    wc_AesFree(&aes);
+
+    return ret;
 }
 
 /**
@@ -9446,6 +9547,38 @@ int WP11_AesEcb_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
 }
 #endif /* HAVE_AESECB */
 
+#ifdef HAVE_AES_KEYWRAP
+int WP11_AesKeyWrap_Encrypt(unsigned char* plain, word32 plainSz,
+        unsigned char* enc, word32* encSz, WP11_Session* session)
+{
+    int ret = 0;
+    WP11_KeyWrapParams *wrap = &session->params.kw;
+
+    ret = wc_AesKeyWrap_ex(&wrap->aes, plain, plainSz, enc, *encSz,
+            wrap->ivSz != 0 ? wrap->iv : NULL);
+    session->init = 0;
+    if (ret < 0)
+        return ret;
+    *encSz = ret;
+    return 0;
+}
+
+int WP11_AesKeyWrap_Decrypt(unsigned char* enc, word32 encSz,
+        unsigned char* dec, word32* decSz, WP11_Session* session)
+{
+    int ret = 0;
+    WP11_KeyWrapParams *wrap = &session->params.kw;
+
+    ret = wc_AesKeyUnWrap_ex(&wrap->aes, enc, encSz, dec, *decSz,
+            wrap->ivSz != 0 ? wrap->iv : NULL);
+    session->init = 0;
+    if (ret < 0)
+        return ret;
+    *decSz = ret;
+    return 0;
+}
+#endif /* HAVE_AES_KEYWRAP */
+
 #ifdef HAVE_AESCTS
 /**
  * Encrypt plain text with AES-CTS.
@@ -9607,6 +9740,125 @@ int WP11_AesCts_DecryptFinal(unsigned char* dec, word32* decSz,
     return ret;
 }
 #endif /* HAVE_AESCTS */
+
+#ifdef HAVE_AESCMAC
+int WP11_Aes_Cmac_Init(WP11_Object* secret, WP11_Session* session,
+        word32 sigLen)
+{
+    int ret;
+    WP11_Cmac* cmac = &session->params.cmac;
+    WP11_Data* key;
+
+    if (sigLen > WC_CMAC_TAG_MAX_SZ || sigLen < WC_CMAC_TAG_MIN_SZ)
+        return BAD_FUNC_ARG;
+    cmac->sigLen = (byte)sigLen;
+    if (secret->onToken)
+        WP11_Lock_LockRO(secret->lock);
+    key = &secret->data.symmKey;
+    ret = wc_InitCmac_ex(&cmac->cmac, key->data, key->len, WC_CMAC_AES, NULL,
+            NULL, secret->slot->devId);
+    if (secret->onToken)
+        WP11_Lock_UnlockRO(secret->lock);
+
+    return ret;
+}
+
+int WP11_Aes_Cmac_Check_Len(CK_BYTE_PTR pSignature,
+        CK_ULONG_PTR pulSignatureLen, WP11_Session* session)
+{
+    WP11_Cmac* cmac = &session->params.cmac;
+
+    if (pSignature == NULL) {
+        *pulSignatureLen = cmac->sigLen;
+        return CKR_OK;
+    }
+    if (*pulSignatureLen < cmac->sigLen)
+        return CKR_BUFFER_TOO_SMALL;
+
+    return CKR_OK;
+}
+
+int WP11_Aes_Cmac_Sign(unsigned char* data, word32 dataLen, unsigned char* sig,
+        word32* sigLen, WP11_Session* session)
+{
+    int ret = 0;
+    WP11_Cmac* cmac = &session->params.cmac;
+    int doFree = 1;
+
+    if (*sigLen < cmac->sigLen)
+        return BAD_FUNC_ARG;
+    *sigLen = (word32)cmac->sigLen;
+    ret = wc_CmacUpdate(&cmac->cmac, data, dataLen);
+    if (ret == 0) {
+        ret = wc_CmacFinal(&cmac->cmac, sig, sigLen);
+        doFree = 0;
+    }
+    if (doFree)
+        (void)wc_CmacFree(&cmac->cmac);
+    session->init = 0;
+
+    return ret;
+}
+
+int WP11_Aes_Cmac_Sign_Update(unsigned char* data, word32 dataLen,
+        WP11_Session* session)
+{
+    WP11_Cmac* cmac = &session->params.cmac;
+
+    return wc_CmacUpdate(&cmac->cmac, data, dataLen);
+}
+
+int WP11_Aes_Cmac_Sign_Final(unsigned char* sig, word32* sigLen,
+        WP11_Session* session)
+{
+    int ret = 0;
+    WP11_Cmac* cmac = &session->params.cmac;
+
+    if (*sigLen < cmac->sigLen)
+        return BAD_FUNC_ARG;
+    *sigLen = (word32)cmac->sigLen;
+    ret = wc_CmacFinal(&cmac->cmac, sig, sigLen);
+    session->init = 0;
+
+    return ret;
+}
+
+int WP11_Aes_Cmac_Verify(unsigned char* data, word32 dataLen,
+        unsigned char* sig, word32 sigLen, int* stat, WP11_Session* session)
+{
+    byte resSig[WC_CMAC_TAG_MAX_SZ];
+    word32 resSigLen = sigLen;
+    int ret = 0;
+    WP11_Cmac* cmac = &session->params.cmac;
+
+    if (sigLen != (word32)cmac->sigLen || sigLen > sizeof(resSig))
+        ret = BUFFER_E;
+    if (ret == 0)
+        ret = WP11_Aes_Cmac_Sign(data, dataLen, resSig, &resSigLen, session);
+    if (ret == 0)
+        *stat = resSigLen == sigLen && WP11_ConstantCompare(resSig, sig, sigLen);
+
+    return ret;
+}
+
+int WP11_Aes_Cmac_Verify_Final(unsigned char* sig, word32 sigLen, int* stat,
+        WP11_Session* session)
+{
+    int ret = 0;
+    byte resSig[WC_CMAC_TAG_MAX_SZ];
+    word32 resSigLen = sigLen;
+    WP11_Cmac* cmac = &session->params.cmac;
+
+    if (sigLen != (word32)cmac->sigLen || sigLen > sizeof(resSig))
+        ret = BUFFER_E;
+    if (ret == 0)
+        ret = WP11_Aes_Cmac_Sign_Final(resSig, &resSigLen, session);
+    if (ret == 0)
+        *stat = resSigLen == sigLen && WP11_ConstantCompare(resSig, sig, sigLen);
+
+    return ret;
+}
+#endif /* HAVE_AESCMAC */
 #endif /* !NO_AES */
 
 /**
@@ -9956,7 +10208,7 @@ int WP11_Hmac_Verify(unsigned char* sig, word32 sigLen, unsigned char* data,
     if (ret == 0)
         ret = WP11_Hmac_Sign(data, dataLen, genSig, &genSigLen, session);
     if (ret == 0)
-        *stat = genSigLen == sigLen && XMEMCMP(sig, genSig, sigLen) == 0;
+        *stat = genSigLen == sigLen && WP11_ConstantCompare(sig, genSig, sigLen);
 
     return ret;
 }
@@ -10027,7 +10279,7 @@ int WP11_Hmac_VerifyFinal(unsigned char* sig, word32 sigLen, int* stat,
 
     ret = WP11_Hmac_SignFinal(genSig, &genSigLen, session);
     if (ret == 0)
-        *stat = genSigLen == sigLen && XMEMCMP(sig, genSig, sigLen) == 0;
+        *stat = genSigLen == sigLen && WP11_ConstantCompare(sig, genSig, sigLen);
 
     return ret;
 }

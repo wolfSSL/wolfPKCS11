@@ -261,6 +261,11 @@ extern "C" {
 #define CKM_AES_GCM                           0x00001087UL
 #define CKM_AES_CCM                           0x00001088UL
 #define CKM_AES_CTS                           0x00001089UL
+#define CKM_AES_CMAC                          0x0000108AUL
+#define CKM_AES_CMAC_GENERAL                  0x0000108BUL
+#define CKM_AES_CBC_ENCRYPT_DATA              0x00001105UL
+#define CKM_AES_KEY_WRAP                      0x00002109UL
+#define CKM_AES_KEY_WRAP_PAD                  0x0000210AUL
 
 #define CKR_OK                                0x00000000UL
 #define CKR_CANCEL                            0x00000001UL
@@ -555,6 +560,16 @@ typedef struct CK_ECDH1_DERIVE_PARAMS {
     CK_BYTE_PTR pPublicData;
 } CK_ECDH1_DERIVE_PARAMS;
 typedef CK_ECDH1_DERIVE_PARAMS* CK_ECDH1_DERIVE_PARAMS_PTR;
+
+typedef struct CK_AES_CBC_ENCRYPT_DATA_PARAMS {
+    CK_BYTE      iv[16];
+    CK_BYTE_PTR  pData;
+    CK_ULONG     length;
+} CK_AES_CBC_ENCRYPT_DATA_PARAMS;
+typedef CK_AES_CBC_ENCRYPT_DATA_PARAMS* CK_AES_CBC_ENCRYPT_DATA_PARAMS_PTR;
+
+typedef CK_ULONG CK_MAC_GENERAL_PARAMS;
+typedef CK_MAC_GENERAL_PARAMS* CK_MAC_GENERAL_PARAMS_PTR;
 
 typedef struct CK_AES_CTR_PARAMS {
     CK_ULONG ulCounterBits;

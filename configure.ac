@@ -214,6 +214,18 @@ else
     DISABLE_DEFS="$DISABLE_DEFS -DNO_AES"
 fi
 
+AC_ARG_ENABLE([aeskeywrap],
+    [AS_HELP_STRING([--enable-aeskeywrap],[Enable AES key wrap (default: disabled)])],
+    [ ENABLED_AESKEYWRAP=$enableval ],
+    [ ENABLED_AESKEYWRAP=no ]
+    )
+if test "$ENABLED_AESKEYWRAP" = "yes"
+then
+    AM_CFLAGS="$AM_CFLAGS -DHAVE_AES_KEY_WRAP"
+else
+    DISABLE_DEFS="$DISABLE_DEFS -DHAVE_AES_KEY_WRAP"
+fi
+
 AC_ARG_ENABLE([aescbc],
     [AS_HELP_STRING([--enable-aescbc],[Enable AES-CBC (default: enabled)])],
     [ ENABLED_AESCBC=$enableval ],
@@ -284,6 +296,18 @@ then
     AM_CFLAGS="$AM_CFLAGS -DHAVE_AESCTS"
 else
     DISABLE_DEFS="$DISABLE_DEFS -DHAVE_AESCTS"
+fi
+
+AC_ARG_ENABLE([aescmac],
+    [AS_HELP_STRING([--enable-aescmac],[Enable AES-CMAC (default: disabled)])],
+    [ ENABLED_AESCMAC=$enableval ],
+    [ ENABLED_AESCMAC=no ]
+    )
+if test "$ENABLED_AES" = "yes" && test "$ENABLED_AESCMAC" = "yes"
+then
+    AM_CFLAGS="$AM_CFLAGS -DHAVE_AESCMAC"
+else
+    DISABLE_DEFS="$DISABLE_DEFS -DHAVE_AESCMAC"
 fi
 
 AC_ARG_ENABLE([hmac],
@@ -562,6 +586,7 @@ echo "   * AES-CTR:                    $ENABLED_AESCTR"
 echo "   * AES-CCM:                    $ENABLED_AESCCM"
 echo "   * AES-ECB:                    $ENABLED_AESECB"
 echo "   * AES-CTS:                    $ENABLED_AESCTS"
+echo "   * AES-CMAC:                   $ENABLED_AESCMAC"
 echo "   * MD5:                        $ENABLED_MD5"
 echo "   * SHA:                        $ENABLED_SHA1"
 echo "   * SHA-224:                    $ENABLED_SHA224"

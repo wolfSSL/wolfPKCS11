@@ -1798,13 +1798,17 @@ static CK_RV test_wrap_unwrap_key(void* args)
     CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
     byte wrappedKey[32], wrappingKeyData[32], keyData[32];
     CK_ULONG wrappedKeyLen;
+    CK_KEY_TYPE  keyType = CKK_GENERIC_SECRET;
     CK_ATTRIBUTE tmpl[] = {
-      {CKA_VALUE, CK_NULL_PTR, 0}
+      {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+      {CKA_KEY_TYPE, &keyType, sizeof(keyType)},
+      {CKA_VALUE, CK_NULL_PTR, 0},
     };
     CK_ULONG     tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
 
     memset(wrappingKeyData, 9, sizeof(wrappingKeyData));
     memset(keyData, 7, sizeof(keyData));
+    memset(&mech, 0, sizeof(mech));
     wrappedKeyLen = sizeof(wrappedKey);
 
     ret = get_generic_key(session, wrappingKeyData, sizeof(wrappingKeyData),
@@ -1844,8 +1848,13 @@ static CK_RV test_wrap_unwrap_key(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_WrapKey(session, &mech, wrappingKey, key, wrappedKey,
                                                                 &wrappedKeyLen);
+#ifndef WOLFPKCS11_NO_STORE
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_INVALID,
+                                            "Wrap Key mechanism not supported");
+#else
         CHECK_CKR_FAIL(ret, CKR_KEY_NOT_WRAPPABLE,
                                             "Wrap Key mechanism not supported");
+#endif
     }
 
     /* done with key, destroy now, since uwrap returns new handle */
@@ -4852,6 +4861,7 @@ static CK_RV test_aes_cbc_fixed_key(void* args)
     CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
 
     (void)aes_128_cbc_pad_exp;
+    (void)aes_128_cbc_encrypt_exp;
 
     ret = get_aes_128_key(session, NULL, 0, &key);
     if (ret == CKR_OK)
