@@ -5385,12 +5385,6 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
     if (ret != 0)
         return CKR_UNWRAPPING_KEY_HANDLE_INVALID;
 
-    if (pMechanism->mechanism != CKM_AES_CBC_PAD &&
-            pMechanism->mechanism != CKM_AES_KEY_WRAP &&
-            pMechanism->mechanism != CKM_AES_KEY_WRAP_PAD) {
-        return CKR_MECHANISM_INVALID;
-    }
-
     rv = FindValidAttributeType(pTemplate, ulAttributeCount, CKA_KEY_TYPE,
         &attr, sizeof(CK_KEY_TYPE));
     if (rv != CKR_OK)
@@ -5419,6 +5413,7 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
 
     switch (pMechanism->mechanism) {
         /* These unwrap mechanisms can be supported with high level C_Decrypt */
+#ifndef NO_AES
 #ifdef HAVE_AES_KEYWRAP
         case CKM_AES_KEY_WRAP:
         case CKM_AES_KEY_WRAP_PAD:
@@ -5443,6 +5438,7 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
                 goto err_out;
 
             break;
+#endif
         default:
             rv = CKR_MECHANISM_INVALID;
             goto err_out;
