@@ -1798,8 +1798,11 @@ static CK_RV test_wrap_unwrap_key(void* args)
     CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
     byte wrappedKey[32], wrappingKeyData[32], keyData[32];
     CK_ULONG wrappedKeyLen;
+    CK_KEY_TYPE  keyType = CKK_GENERIC_SECRET;
     CK_ATTRIBUTE tmpl[] = {
-      {CKA_VALUE, CK_NULL_PTR, 0}
+      {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+      {CKA_KEY_TYPE, &keyType, sizeof(keyType)},
+      {CKA_VALUE, CK_NULL_PTR, 0},
     };
     CK_ULONG     tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
 
