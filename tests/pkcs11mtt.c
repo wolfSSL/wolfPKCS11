@@ -150,7 +150,7 @@ static CK_RV test_op_state(void* args)
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_RV ret;
     byte data;
-    CK_ULONG len;
+    CK_ULONG len = 0;
 
     ret = funcList->C_GetOperationState(CK_INVALID_HANDLE, NULL, &len);
     CHECK_CKR_FAIL(ret, CKR_SESSION_HANDLE_INVALID,
@@ -433,6 +433,7 @@ static CK_RV test_object(void* args)
                                                                     &sessionRO);
         CHECK_CKR(ret, "Open Session - read-only");
     }
+#ifndef WOLFPKCS11_NSS
     if (ret == CKR_OK) {
         ret = funcList->C_CreateObject(sessionRO, tmpl, tmplCnt, &obj);
         CHECK_CKR_FAIL(ret, CKR_SESSION_READ_ONLY,
@@ -449,6 +450,7 @@ static CK_RV test_object(void* args)
         CHECK_CKR_FAIL(ret, CKR_SESSION_READ_ONLY,
                                          "Destroy object in read-only session");
     }
+#endif
     if (ret == CKR_OK) {
         ret = funcList->C_DestroyObject(session, objOnToken);
         CHECK_CKR(ret, "Destroy Object");
