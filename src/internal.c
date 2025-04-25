@@ -204,7 +204,6 @@ struct WP11_Object {
     CK_MECHANISM_TYPE keyGenMech;      /* Key Gen mechanism created with      */
     byte onToken:1;                    /* Object on token or session          */
     byte local:1;                      /* Locally created object              */
-    word32 flag;                       /* Flags about object                  */
     word32 opFlag;                     /* Flags of operations allowed         */
 
     char startDate[8];                 /* Start date of usage                 */
@@ -783,7 +782,7 @@ static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
                 FIELD_SIZE(WP11_Object, keyGenMech) +
                 1 /* FIELD_SIZE(WP11_Object, onToken) */ +
                 1 /* FIELD_SIZE(WP11_Object, local) */ +
-                FIELD_SIZE(WP11_Object, flag) +
+                4 /* FIELD_SIZE(WP11_Object, flag) */ +
                 FIELD_SIZE(WP11_Object, opFlag) +
                 FIELD_SIZE(WP11_Object, startDate) +
                 FIELD_SIZE(WP11_Object, endDate) +
@@ -3070,6 +3069,7 @@ static int wp11_Object_Load_Object(WP11_Object* object, int tokenId, int objId)
 {
     int ret;
     void* storage = NULL;
+    word32 dummy = 0;
 
     /* Open access to key object. */
     ret = wp11_storage_open_readonly(WOLFPKCS11_STORE_OBJECT, tokenId, objId,
@@ -3107,8 +3107,8 @@ static int wp11_Object_Load_Object(WP11_Object* object, int tokenId, int objId)
             }
         }
         if (ret == 0) {
-            /* Read the flags of the object. (4) */
-            ret = wp11_storage_read_word32(storage, &object->flag);
+            /* Unused word32. (4) */
+            ret = wp11_storage_read_word32(storage, &dummy);
         }
         if (ret == 0) {
             /* Read the operational flags of the object. (4) */
@@ -3198,6 +3198,7 @@ static int wp11_Object_Store_Object(WP11_Object* object, int tokenId, int objId)
 {
     int ret;
     void* storage = NULL;
+    word32 dummy = 0;
     int variableSz = (object->keyIdLen + object->labelLen);
 
     /* Open access to key object. */
@@ -3228,8 +3229,8 @@ static int wp11_Object_Store_Object(WP11_Object* object, int tokenId, int objId)
             ret = wp11_storage_write_boolean(storage, object->local);
         }
         if (ret == 0) {
-            /* Write the flags of the object. (4) */
-            ret = wp11_storage_write_word32(storage, object->flag);
+            /* Unused word32. (4) */
+            ret = wp11_storage_write_word32(storage, dummy);
         }
         if (ret == 0) {
             /* Write the operational flags of the object. (4) */
@@ -6534,8 +6535,8 @@ static int RsaObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
                              byte* data, CK_ULONG* len)
 {
     int ret = 0;
-    int noPriv = (((object->flag & WP11_FLAG_SENSITIVE) != 0) ||
-                                 ((object->flag & WP11_FLAG_EXTRACTABLE) == 0));
+    int noPriv = (((object->opFlag & WP11_FLAG_SENSITIVE) != 0) ||
+                 ((object->opFlag & WP11_FLAG_EXTRACTABLE) == 0));
 
     if (mp_iszero(&object->data.rsaKey.d))
         noPriv = 1;
@@ -6685,8 +6686,8 @@ static int EcObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
                             byte* data, CK_ULONG* len)
 {
     int ret = 0;
-    int noPriv = (((object->flag & WP11_FLAG_SENSITIVE) != 0) ||
-                                 ((object->flag & WP11_FLAG_EXTRACTABLE) == 0));
+    int noPriv = (((object->opFlag & WP11_FLAG_SENSITIVE) != 0) ||
+                 ((object->opFlag & WP11_FLAG_EXTRACTABLE) == 0));
     int noPub = 0;
 
     if (object->data.ecKey.type == ECC_PUBLICKEY)
@@ -6739,8 +6740,8 @@ static int DhObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
                             byte* data, CK_ULONG* len)
 {
     int ret = 0;
-    int noPriv = (((object->flag & WP11_FLAG_SENSITIVE) != 0) ||
-                                 ((object->flag & WP11_FLAG_EXTRACTABLE) == 0));
+    int noPriv = (((object->opFlag & WP11_FLAG_SENSITIVE) != 0) ||
+                 ((object->opFlag & WP11_FLAG_EXTRACTABLE) == 0));
 
     switch (type) {
         case CKA_PRIME:
@@ -6812,8 +6813,8 @@ static int SecretObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
                                 byte* data, CK_ULONG* len)
 {
     int ret = 0;
-    int noPriv = ((object->flag & WP11_FLAG_SENSITIVE) != 0 ||
-                                   (object->flag & WP11_FLAG_EXTRACTABLE) == 0);
+    int noPriv = ((object->opFlag & WP11_FLAG_SENSITIVE) != 0 ||
+                 (object->opFlag & WP11_FLAG_EXTRACTABLE) == 0);
 
     switch (type) {
         case CKA_VALUE:
@@ -6832,6 +6833,9 @@ static int SecretObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
             ret = NOT_AVAILABLE_E;
             break;
     }
+
+    if (noPriv && ret == CKR_OK)
+        ret = CKR_ATTRIBUTE_SENSITIVE;
 
     return ret;
 }
@@ -6940,31 +6944,33 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             break;
 
         case CKA_ENCRYPT:
-            ret = GetOpFlagBool(object->opFlag, CKF_ENCRYPT, data, len);
+            ret = GetOpFlagBool(object->opFlag, WP11_FLAG_ENCRYPT, data, len);
             break;
         case CKA_DECRYPT:
-            ret = GetOpFlagBool(object->opFlag, CKF_DECRYPT, data, len);
+            ret = GetOpFlagBool(object->opFlag, WP11_FLAG_DECRYPT, data, len);
             break;
         case CKA_VERIFY:
-            ret = GetOpFlagBool(object->opFlag, CKF_VERIFY, data, len);
+            ret = GetOpFlagBool(object->opFlag, WP11_FLAG_VERIFY, data, len);
             break;
         case CKA_VERIFY_RECOVER:
-            ret = GetOpFlagBool(object->opFlag, CKF_VERIFY_RECOVER, data, len);
+            ret = GetOpFlagBool(object->opFlag, WP11_FLAG_VERIFY_RECOVER, data,
+                                len);
             break;
         case CKA_SIGN:
-            ret = GetOpFlagBool(object->opFlag, CKF_SIGN, data, len);
+            ret = GetOpFlagBool(object->opFlag, WP11_FLAG_SIGN, data, len);
             break;
         case CKA_SIGN_RECOVER:
-            ret = GetOpFlagBool(object->opFlag, CKF_SIGN_RECOVER, data, len);
+            ret = GetOpFlagBool(object->opFlag, WP11_FLAG_SIGN_RECOVER, data,
+                                len);
             break;
         case CKA_WRAP:
-            ret = GetOpFlagBool(object->opFlag, CKF_WRAP, data, len);
+            ret = GetOpFlagBool(object->opFlag, WP11_FLAG_WRAP, data, len);
             break;
         case CKA_UNWRAP:
-            ret = GetOpFlagBool(object->opFlag, CKF_UNWRAP, data, len);
+            ret = GetOpFlagBool(object->opFlag, WP11_FLAG_UNWRAP, data, len);
             break;
         case CKA_DERIVE:
-            ret = GetOpFlagBool(object->opFlag, CKF_DERIVE, data, len);
+            ret = GetOpFlagBool(object->opFlag, WP11_FLAG_DERIVE, data, len);
             break;
         case CKA_CERTIFICATE_TYPE:
             if (object->objClass == CKO_CERTIFICATE)
@@ -7099,21 +7105,6 @@ static int WP11_Object_SetLabel(WP11_Object* object, unsigned char* label,
 }
 
 /**
- * Set the flag against the object.
- *
- * @param  object  [in]  Object object.
- * @param  flags   [in]  Flag value.
- * @param  set     [in]  Whether the flag is to be set (or cleared).
- */
-static void WP11_Object_SetFlag(WP11_Object* object, word32 flag, int set)
-{
-    if (set)
-        object->flag |= flag;
-    else
-        object->flag &= ~flag;
-}
-
-/**
  * Set the start date.
  *
  * @param  object     [in]  Object object.
@@ -7181,31 +7172,33 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             object->objClass = *(CK_ULONG*)data;
             break;
         case CKA_DECRYPT:
-            WP11_Object_SetOpFlag(object, CKF_DECRYPT, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_DECRYPT, *(CK_BBOOL*)data);
             break;
         case CKA_ENCRYPT:
-            WP11_Object_SetOpFlag(object, CKF_ENCRYPT, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_ENCRYPT, *(CK_BBOOL*)data);
             break;
         case CKA_SIGN:
-            WP11_Object_SetOpFlag(object, CKF_SIGN, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_SIGN, *(CK_BBOOL*)data);
             break;
         case CKA_VERIFY:
-            WP11_Object_SetOpFlag(object, CKF_VERIFY, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_VERIFY, *(CK_BBOOL*)data);
             break;
         case CKA_SIGN_RECOVER:
-            WP11_Object_SetOpFlag(object, CKF_SIGN_RECOVER, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_SIGN_RECOVER,
+                                  *(CK_BBOOL*)data);
             break;
         case CKA_VERIFY_RECOVER:
-            WP11_Object_SetOpFlag(object, CKF_VERIFY_RECOVER, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_VERIFY_RECOVER,
+                                  *(CK_BBOOL*)data);
             break;
         case CKA_WRAP:
-            WP11_Object_SetOpFlag(object, CKF_WRAP, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_WRAP, *(CK_BBOOL*)data);
             break;
         case CKA_UNWRAP:
-            WP11_Object_SetOpFlag(object, CKF_WRAP, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_UNWRAP, *(CK_BBOOL*)data);
             break;
         case CKA_DERIVE:
-            WP11_Object_SetOpFlag(object, CKF_DERIVE, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_DERIVE, *(CK_BBOOL*)data);
             break;
         case CKA_ID:
             ret = WP11_Object_SetKeyId(object, data, (int)len);
@@ -7214,36 +7207,38 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             ret = WP11_Object_SetLabel(object, data, (int)len);
             break;
         case CKA_PRIVATE:
-            WP11_Object_SetFlag(object, WP11_FLAG_PRIVATE, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_PRIVATE, *(CK_BBOOL*)data);
             break;
         case CKA_SENSITIVE:
-            WP11_Object_SetFlag(object, WP11_FLAG_SENSITIVE, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_SENSITIVE,
+                                  *(CK_BBOOL*)data);
             break;
         case CKA_EXTRACTABLE:
-            WP11_Object_SetFlag(object, WP11_FLAG_EXTRACTABLE,
+            WP11_Object_SetOpFlag(object, WP11_FLAG_EXTRACTABLE,
                                                               *(CK_BBOOL*)data);
             break;
         case CKA_MODIFIABLE:
-            WP11_Object_SetFlag(object, WP11_FLAG_MODIFIABLE, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_MODIFIABLE,
+                                  *(CK_BBOOL*)data);
             break;
         case CKA_ALWAYS_SENSITIVE:
-            WP11_Object_SetFlag(object, WP11_FLAG_ALWAYS_SENSITIVE,
-                                                              *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_ALWAYS_SENSITIVE,
+                                  *(CK_BBOOL*)data);
             break;
         case CKA_NEVER_EXTRACTABLE:
-            WP11_Object_SetFlag(object, WP11_FLAG_NEVER_EXTRACTABLE,
-                                                              *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_NEVER_EXTRACTABLE,
+                                  *(CK_BBOOL*)data);
             break;
         case CKA_ALWAYS_AUTHENTICATE:
-            WP11_Object_SetFlag(object, WP11_FLAG_ALWAYS_AUTHENTICATE,
-                                                              *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_ALWAYS_AUTHENTICATE,
+                                  *(CK_BBOOL*)data);
             break;
         case CKA_WRAP_WITH_TRUSTED:
-            WP11_Object_SetFlag(object, WP11_FLAG_WRAP_WITH_TRUSTED,
-                                                              *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_WRAP_WITH_TRUSTED,
+                                  *(CK_BBOOL*)data);
             break;
         case CKA_TRUSTED:
-            WP11_Object_SetFlag(object, WP11_FLAG_TRUSTED, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_TRUSTED, *(CK_BBOOL*)data);
             break;
         case CKA_START_DATE:
             ret = WP11_Object_SetStartDate(object, (char*)data, (int)len);

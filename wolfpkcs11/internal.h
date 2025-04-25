@@ -109,15 +109,24 @@ extern "C" {
 #endif
 
 /* Flags for object. */
-#define WP11_FLAG_PRIVATE              0x0001
-#define WP11_FLAG_SENSITIVE            0x0002
-#define WP11_FLAG_EXTRACTABLE          0x0004
-#define WP11_FLAG_MODIFIABLE           0x0008
-#define WP11_FLAG_ALWAYS_SENSITIVE     0x0010
-#define WP11_FLAG_NEVER_EXTRACTABLE    0x0020
-#define WP11_FLAG_ALWAYS_AUTHENTICATE  0x0040
-#define WP11_FLAG_WRAP_WITH_TRUSTED    0x0080
-#define WP11_FLAG_TRUSTED              0x0100
+#define WP11_FLAG_PRIVATE              0x00000001
+#define WP11_FLAG_SENSITIVE            0x00000002
+#define WP11_FLAG_EXTRACTABLE          0x00000004
+#define WP11_FLAG_MODIFIABLE           0x00000008
+#define WP11_FLAG_ALWAYS_SENSITIVE     0x00000010
+#define WP11_FLAG_NEVER_EXTRACTABLE    0x00000020
+#define WP11_FLAG_ALWAYS_AUTHENTICATE  0x00000040
+#define WP11_FLAG_WRAP_WITH_TRUSTED    0x00000080
+#define WP11_FLAG_TRUSTED              0x00000100
+#define WP11_FLAG_DECRYPT              0x00000200
+#define WP11_FLAG_ENCRYPT              0x00000400
+#define WP11_FLAG_SIGN                 0x00000800
+#define WP11_FLAG_VERIFY               0x00001000
+#define WP11_FLAG_SIGN_RECOVER         0x00002000
+#define WP11_FLAG_VERIFY_RECOVER       0x00004000
+#define WP11_FLAG_UNWRAP               0x00008000
+#define WP11_FLAG_WRAP                 0x00010000
+#define WP11_FLAG_DERIVE               0x00020000
 
 /* Operation session has initialized for. */
 #define WP11_INIT_AES_CBC_ENC          0x0001
