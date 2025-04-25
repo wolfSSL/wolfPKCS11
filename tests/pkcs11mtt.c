@@ -822,7 +822,8 @@ static CK_RV test_attributes_secret(void* args)
     ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE, &key);
     if (ret == CKR_OK) {
         ret = funcList->C_GetAttributeValue(session, key, tmpl, tmplCnt);
-        CHECK_CKR(ret, "Get Attributes Secret Key");
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_SENSITIVE,
+                       "Get Attributes Secret Key");
     }
     if (ret == CKR_OK) {
         for (i = 0; i < (int)badTmplCnt; i++) {
