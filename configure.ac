@@ -322,6 +322,16 @@ else
     DISABLE_DEFS="$DISABLE_DEFS -DNO_HMAC"
 fi
 
+AC_ARG_ENABLE([hkdf],
+    [AS_HELP_STRING([--enable-hkdf],[Enable HKDF (default: enabled)])],
+    [ ENABLED_HKDF=$enableval ],
+    [ ENABLED_HKDF=yes]
+    )
+if test "$ENABLED_HKDF" = "yes"
+then
+    AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_HKDF"
+fi
+
 AC_ARG_ENABLE([md5],
     [AS_HELP_STRING([--enable-md5],[Enable MD5 (default: enabled)])],
     [ ENABLED_MD5=$enableval ],
@@ -599,4 +609,5 @@ echo "   * RSA-OAEP:                   $ENABLED_RSAOAEP"
 echo "   * RSA-PSS:                    $ENABLED_RSAPSS"
 echo "   * DH:                         $ENABLED_DH"
 echo "   * ECC:                        $ENABLED_ECC"
+echo "   * HKDF:                       $ENABLED_HKDF"
 echo "   * NSS modifications:          $ENABLED_NSS"

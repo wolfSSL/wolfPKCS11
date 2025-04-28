@@ -276,6 +276,10 @@ static CK_MECHANISM_TYPE mechanismList[] = {
 #endif
     CKM_ECDH1_DERIVE,
 #endif
+#ifdef WOLFPKCS11_HKDF
+    CKM_HKDF_DERIVE,
+    CKM_HKDF_DATA,
+#endif
 #ifndef NO_DH
     CKM_DH_PKCS_KEY_PAIR_GEN,
     CKM_DH_PKCS_DERIVE,
@@ -474,6 +478,14 @@ static CK_MECHANISM_INFO ecdsaSha512MechInfo = {
 /* Info on ECDH mechanism. */
 static CK_MECHANISM_INFO ecdhMechInfo = {
     256, 521, CKF_DERIVE
+};
+#endif
+#ifdef WOLFPKCS11_HKDF
+static CK_MECHANISM_INFO hkdfMechInfo = {
+    1, 16320, CKF_DERIVE
+};
+static CK_MECHANISM_INFO hkdfDatMechInfo = {
+    1, 16320, CKF_DERIVE
 };
 #endif
 #ifndef NO_DH
@@ -742,6 +754,14 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
 #endif
         case CKM_ECDH1_DERIVE:
             XMEMCPY(pInfo, &ecdhMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifdef WOLFPKCS11_HKDF
+        case CKM_HKDF_DERIVE:
+            XMEMCPY(pInfo, &hkdfMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+        case CKM_HKDF_DATA:
+            XMEMCPY(pInfo, &hkdfDatMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
 #endif
 #ifndef NO_DH
