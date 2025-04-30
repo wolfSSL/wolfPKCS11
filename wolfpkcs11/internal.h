@@ -76,7 +76,11 @@ extern "C" {
 
 /* Maximum number of objects in a session. */
 #ifndef WP11_SESSION_OBJECT_CNT_MAX
+#ifdef WOLFPKCS11_NSS
+#define WP11_SESSION_OBJECT_CNT_MAX    64
+#else
 #define WP11_SESSION_OBJECT_CNT_MAX    8
+#endif
 #endif
 
 /* Maximum number of objects in a token. */
