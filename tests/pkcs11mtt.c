@@ -1523,8 +1523,13 @@ static CK_RV test_recover(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyRecover(session, sig, sigSz, data, &dataSz);
+#ifndef NO_RSA
         CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
                                               "Verify Recover not initialized");
+#else
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_INVALID,
+                                              "Verify Recover not initialized");
+#endif
     }
 
     funcList->C_DestroyObject(session, key);
