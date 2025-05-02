@@ -1920,6 +1920,7 @@ static CK_RV test_wrap_unwrap_key(void* args)
     return ret;
 }
 
+#ifndef NO_DH
 static CK_RV test_derive_key(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -1985,6 +1986,7 @@ static CK_RV test_derive_key(void* args)
 
     return ret;
 }
+#endif
 
 #if !defined(NO_RSA) || defined(HAVE_ECC)
 static CK_RV test_pubkey_sig_fail(CK_SESSION_HANDLE session, CK_MECHANISM* mech,
@@ -6575,7 +6577,9 @@ static TEST_FUNC testFunc[] = {
     PKCS11MTT_CASE(test_generate_key_pair),
 #endif
     PKCS11MTT_CASE(test_wrap_unwrap_key),
+#ifndef NO_DH
     PKCS11MTT_CASE(test_derive_key),
+#endif
 #ifndef NO_RSA
     PKCS11MTT_CASE(test_rsa_fixed_keys_raw),
     PKCS11MTT_CASE(test_rsa_fixed_keys_pkcs15_enc),
