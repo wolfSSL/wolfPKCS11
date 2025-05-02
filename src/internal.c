@@ -40,6 +40,7 @@
 #include <wolfssl/wolfcrypt/asn_public.h>
 #include <wolfssl/wolfcrypt/aes.h>
 #include <wolfssl/wolfcrypt/cmac.h>
+#include <wolfssl/wolfcrypt/kdf.h>
 
 #include <wolfpkcs11/internal.h>
 #include <wolfpkcs11/store.h>
@@ -8784,6 +8785,76 @@ int WP11_AesCbc_DeriveKey(unsigned char* plain, word32 plainSz,
 
     return ret;
 }
+
+/* Used for wc_PRF_TLS, less than sha256_mac not possible */
+static enum wc_MACAlgorithm MechToMac(CK_MECHANISM_TYPE mech)
+{
+    switch (mech)
+    {
+        case CKM_SHA256:
+        case CKM_SHA256_HMAC:
+            return sha256_mac;
+        case CKM_SHA384:
+        case CKM_SHA384_HMAC:
+            return sha384_mac;
+        case CKM_SHA512:
+        case CKM_SHA512_HMAC:
+            return sha512_mac;
+        default:
+            return no_mac;
+    }
+}
+
+#ifdef WOLFSSL_HAVE_PRF
+int WP11_Tls12_Master_Key_Derive(CK_SSL3_RANDOM_DATA* random,
+                                 CK_MECHANISM_TYPE mech, const char* label,
+                                 CK_ULONG ulLabelLen, byte* enc,
+                                 CK_ULONG encLen, CK_BBOOL clientFirst,
+                                 WP11_Object* key)
+{
+    int ret = 0;
+    CK_ULONG ulSeedLen = 0;
+    byte* pSeed = NULL;
+    enum wc_MACAlgorithm macType;
+
+    macType = MechToMac(mech);
+
+    if (macType == no_mac) {
+        return BAD_FUNC_ARG;
+    }
+
+    ulSeedLen = random->ulClientRandomLen + random->ulServerRandomLen;
+    if (ulSeedLen == 0) {
+        return CKR_MECHANISM_PARAM_INVALID;
+    }
+    pSeed = (byte*)XMALLOC(ulSeedLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    if (pSeed == NULL) {
+        return CKR_HOST_MEMORY;
+    }
+    if (clientFirst) {
+        XMEMCPY(pSeed, random->pClientRandom, random->ulClientRandomLen);
+        XMEMCPY(pSeed + random->ulClientRandomLen, random->pServerRandom,
+                random->ulServerRandomLen);
+    }
+    else {
+        XMEMCPY(pSeed, random->pServerRandom, random->ulServerRandomLen);
+        XMEMCPY(pSeed + random->ulServerRandomLen, random->pClientRandom,
+                random->ulClientRandomLen);
+    }
+
+    ret = wc_PRF_TLS(enc, encLen, key->data.symmKey.data, key->data.symmKey.len,
+                     (const byte*)label, ulLabelLen, pSeed, (word32)ulSeedLen,
+                     1, macType, NULL, 0);
+
+    if (pSeed) {
+        XFREE(pSeed, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        pSeed = NULL;
+    }
+
+
+    return ret;
+}
+#endif
 
 /**
  * Encrypt plain text with AES-CBC.
