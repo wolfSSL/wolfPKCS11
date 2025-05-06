@@ -5258,10 +5258,13 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
                     CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
                     CK_OBJECT_HANDLE_PTR phKey)
 {
-    int ret;
-    CK_RV rv;
+    CK_RV rv = CKR_OK;
     WP11_Session* session = NULL;
     WP11_Object* key = NULL;
+    CK_BBOOL trueVar = CK_TRUE;
+    CK_BBOOL getVar;
+    CK_ULONG getVarLen = sizeof(CK_BBOOL);
+    CK_KEY_TYPE keyType;
 
     if (!WP11_Library_IsInitialized())
         return CKR_CRYPTOKI_NOT_INITIALIZED;
@@ -5273,37 +5276,68 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
     switch (pMechanism->mechanism) {
 #ifndef NO_AES
         case CKM_AES_KEY_GEN:
-            if (pMechanism->pParameter != NULL ||
-                                              pMechanism->ulParameterLen != 0) {
-                return CKR_MECHANISM_PARAM_INVALID;
-            }
-
-            rv = NewObject(session, CKK_AES, CKO_SECRET_KEY, pTemplate, ulCount,
-                                                                          &key);
-            if (rv == CKR_OK) {
-                ret = WP11_AesGenerateKey(key, WP11_Session_GetSlot(session));
-                if (ret != 0) {
-                    WP11_Object_Free(key);
-                    rv = CKR_FUNCTION_FAILED;
-                }
-                else {
-                   rv = AddObject(session, key, pTemplate, ulCount, phKey);
-                   if (rv != CKR_OK) {
-                       WP11_Object_Free(key);
-                   }
-                }
-            }
+            keyType = CKK_AES;
+            break;
+#endif
+#ifdef HAVE_HKDF
+        case CKM_HKDF_KEY_GEN:
+            keyType = CKK_HKDF;
             break;
 #endif
         default:
-            (void)key;
-            (void)ret;
-            (void)ulCount;
-            return CKR_MECHANISM_INVALID;
+            rv = CKR_MECHANISM_INVALID;
+            break;
     }
 
     if (rv == CKR_OK) {
-        rv = SetInitialStates(key);
+        CK_ATTRIBUTE *lenAttr = NULL;
+        if (pMechanism->pParameter != NULL ||
+                                          pMechanism->ulParameterLen != 0) {
+            return CKR_MECHANISM_PARAM_INVALID;
+        }
+
+        FindAttributeType(pTemplate, ulCount, CKA_VALUE_LEN,
+            &lenAttr);
+        if (lenAttr == NULL)
+            return CKR_TEMPLATE_INCOMPLETE;
+        if (lenAttr->pValue == NULL)
+            return CKR_ATTRIBUTE_VALUE_INVALID;
+        if (lenAttr->ulValueLen != sizeof(CK_ULONG))
+            return CKR_ATTRIBUTE_VALUE_INVALID;
+        if (*(CK_ULONG*)lenAttr->pValue == 0)
+            return CKR_ATTRIBUTE_VALUE_INVALID;
+
+
+        rv = NewObject(session, keyType, CKO_SECRET_KEY, pTemplate, ulCount,
+                       &key);
+        if (rv == CKR_OK) {
+            int ret = WP11_GenerateRandomKey(key,
+                                             WP11_Session_GetSlot(session));
+            if (ret != 0) {
+                WP11_Object_Free(key);
+                rv = CKR_FUNCTION_FAILED;
+            }
+            else {
+               rv = AddObject(session, key, pTemplate, ulCount, phKey);
+               if (rv != CKR_OK) {
+                   WP11_Object_Free(key);
+               }
+            }
+        }
+    }
+    if (rv == CKR_OK) {
+        rv = WP11_Object_GetAttr(key, CKA_SENSITIVE, &getVar, &getVarLen);
+        if ((rv == CKR_OK) && (getVar == CK_TRUE)) {
+            rv = WP11_Object_SetAttr(key, CKA_ALWAYS_SENSITIVE, &trueVar,
+                                     sizeof(CK_BBOOL));
+        }
+        if (rv == CKR_OK) {
+            rv = WP11_Object_GetAttr(key, CKA_EXTRACTABLE, &getVar, &getVarLen);
+            if ((rv == CKR_OK) && (getVar == CK_FALSE)) {
+                rv = WP11_Object_SetAttr(key, CKA_NEVER_EXTRACTABLE, &trueVar,
+                                     sizeof(CK_BBOOL));
+            }
+        }
     }
 
     return rv;
@@ -5930,7 +5964,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
 #endif
 #ifdef WOLFPKCS11_HKDF
         case CKM_HKDF_DERIVE:
-        case CKM_HKDF_DATA:
+        case CKM_HKDF_DATA: {
             CK_HKDF_PARAMS_PTR kdfParams;
             CK_ATTRIBUTE *lenAttr = NULL;
 
@@ -5962,6 +5996,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
             if (ret != 0)
                 rv = CKR_FUNCTION_FAILED;
             break;
+        }
 #endif
 #ifndef NO_DH
         case CKM_DH_PKCS_DERIVE:
