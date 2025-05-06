@@ -273,6 +273,14 @@ extern "C" {
 #define CKM_HKDF_DERIVE                       0x0000402AUL
 #define CKM_HKDF_DATA                         0x0000402BUL
 #define CKM_HKDF_KEY_GEN                      0x0000402CUL
+#define CKM_VENDOR_DEFINED                    0x80000000UL
+
+#ifdef WOLFPKCS11_NSS
+#define CK_VENDOR_NSS                         0x4E534350UL
+#define CKM_NSS (CKM_VENDOR_DEFINED | CK_VENDOR_NSS)
+#define CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE    (CKM_NSS + 25)
+#define CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_DH (CKM_NSS + 26)
+#endif
 
 #define CKR_OK                                0x00000000UL
 #define CKR_CANCEL                            0x00000001UL
@@ -656,6 +664,15 @@ typedef struct CK_TLS12_KEY_MAT_PARAMS {
     CK_SSL3_KEY_MAT_OUT_PTR pReturnedKeyMaterial;
     CK_MECHANISM_TYPE prfHashMechanism;
 } CK_TLS12_KEY_MAT_PARAMS;
+
+#ifdef WOLFPKCS11_NSS
+typedef struct CK_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_PARAMS {
+    CK_MECHANISM_TYPE prfHashMechanism;
+    CK_BYTE_PTR pSessionHash;
+    CK_ULONG ulSessionHashLen;
+    CK_VERSION_PTR pVersion;
+} CK_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_PARAMS;
+#endif
 
 /* Function list types. */
 typedef struct CK_FUNCTION_LIST CK_FUNCTION_LIST;
