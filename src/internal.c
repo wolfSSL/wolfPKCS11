@@ -8751,6 +8751,29 @@ int WP11_Tls12_Master_Key_Derive(CK_SSL3_RANDOM_DATA* random,
 
     return ret;
 }
+#ifdef WOLFPKCS11_NSS
+int WP11_Nss_Tls12_Master_Key_Derive(CK_BYTE_PTR pSessionHash,
+                                     CK_ULONG ulSessionHashLen,
+                                     CK_MECHANISM_TYPE mech, const char* label,
+                                     CK_ULONG ulLabelLen, byte* enc,
+                                     CK_ULONG encLen, WP11_Object* key)
+{
+    int ret = 0;
+    enum wc_MACAlgorithm macType;
+
+    macType = MechToMac(mech);
+
+    if (macType == no_mac) {
+        return BAD_FUNC_ARG;
+    }
+
+    ret = wc_PRF_TLS(enc, encLen, key->data.symmKey.data, key->data.symmKey.len,
+                     (const byte*)label, ulLabelLen, pSessionHash,
+                     (word32)ulSessionHashLen, 1, macType, NULL, 0);
+
+    return ret;
+}
+#endif
 #endif
 
 /**

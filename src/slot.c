@@ -363,6 +363,10 @@ static CK_MECHANISM_TYPE mechanismList[] = {
     CKM_TLS12_KEY_AND_MAC_DERIVE,
     CKM_TLS12_MASTER_KEY_DERIVE,
     CKM_TLS12_MASTER_KEY_DERIVE_DH,
+#ifdef WOLFPKCS11_NSS
+    CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE,
+    CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_DH,
+#endif
 #endif
 };
 
@@ -513,6 +517,14 @@ static CK_MECHANISM_INFO tls12MasterKeyDeriveInfo = {
 static CK_MECHANISM_INFO tls12KeyAndMacDeriveInfo = {
     48, 48, CKF_DERIVE
 };
+#ifdef WOLFPKCS11_NSS
+static CK_MECHANISM_INFO nssTls12MasterKeyDeriveDhInfo = {
+    48, 128, CKF_DERIVE
+};
+static CK_MECHANISM_INFO nssTls12MasterKeyDeriveInfo = {
+    48, 128, CKF_DERIVE
+};
+#endif
 #endif
 #ifndef NO_AES
 static CK_MECHANISM_INFO aesKeyGenMechInfo = {
@@ -939,6 +951,16 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
             XMEMCPY(pInfo, &tls12MasterKeyDeriveDhInfo,
                     sizeof(CK_MECHANISM_INFO));
             break;
+#ifdef WOLFPKCS11_NSS
+        case CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE:
+            XMEMCPY(pInfo, &nssTls12MasterKeyDeriveInfo,
+                    sizeof(CK_MECHANISM_INFO));
+            break;
+        case CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_DH:
+            XMEMCPY(pInfo, &nssTls12MasterKeyDeriveDhInfo,
+                    sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
 #endif
         default:
             return CKR_MECHANISM_INVALID;

@@ -11700,6 +11700,126 @@ static CK_RV test_derive_tls12_master_key(void* args) {
 
     return ret;
 }
+#ifdef WOLFPKCS11_NSS
+static CK_RV test_nss_derive_tls12_master_key(void* args) {
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE hBaseKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hDerivedKey = CK_INVALID_HANDLE;
+
+    CK_BYTE preMasterSecret[] = {
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00,
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00
+    };
+    CK_ULONG ulPreMasterSecretLen = sizeof(preMasterSecret);
+
+    CK_BYTE sessionHash[] = {
+        0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+        0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+        0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+        0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA
+    };
+
+    /* Generated using Python scapy.layers.tls.crypto.prf */
+    CK_BYTE expectedMasterSecret[] = {
+        0xc4, 0x7f, 0xec, 0x16, 0xb4, 0x77, 0xb4, 0xc0,
+        0x15, 0x1e, 0x21, 0xb4, 0x5d, 0x18, 0x43, 0xdd,
+        0x65, 0xd8, 0x54, 0xaa, 0x32, 0x5e, 0xe6, 0x95,
+        0x11, 0xaa, 0x14, 0x53, 0x76, 0xb8, 0x21, 0xf5,
+        0x9c, 0x17, 0x63, 0x4e, 0x24, 0xce, 0x14, 0xf7,
+        0xe4, 0x3b, 0x71, 0x9f, 0xc5, 0xa2, 0x36, 0xdb
+    };
+    CK_ULONG ulExpectedMasterSecretLen = sizeof(expectedMasterSecret);
+
+    CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE keyType = CKK_GENERIC_SECRET;
+    CK_BBOOL trueValue = CK_TRUE;
+    CK_BBOOL falseValue = CK_FALSE;
+
+    CK_ATTRIBUTE baseKeyTemplate[] = {
+        {CKA_CLASS, &keyClass, sizeof(keyClass)},
+        {CKA_KEY_TYPE, &keyType, sizeof(keyType)},
+        {CKA_VALUE, preMasterSecret, ulPreMasterSecretLen},
+        {CKA_SENSITIVE, &falseValue, sizeof(falseValue)},
+        {CKA_EXTRACTABLE, &falseValue, sizeof(falseValue)},
+        {CKA_DERIVE, &trueValue, sizeof(trueValue)},
+        {CKA_TOKEN, &falseValue, sizeof(falseValue)}
+    };
+    CK_ULONG ulBaseKeyTemplateCount =
+        sizeof(baseKeyTemplate) / sizeof(CK_ATTRIBUTE);
+
+    CK_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_PARAMS params;
+    params.pSessionHash = sessionHash;
+    params.ulSessionHashLen = sizeof(sessionHash);
+    /* Version for TLS 1.2 is {3, 3} */
+    CK_VERSION version = {3, 3};
+    params.pVersion = &version;
+    params.prfHashMechanism = CKM_SHA256;
+    CK_MECHANISM mechanism = {
+        CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE, &params, sizeof(params)
+    };
+
+    CK_ULONG derivedKeyLength = 48;
+    CK_KEY_TYPE derivedKeyType = CKK_GENERIC_SECRET;
+
+    CK_ATTRIBUTE derivedKeyTemplate[] = {
+        {CKA_CLASS, &keyClass, sizeof(keyClass)},
+        {CKA_KEY_TYPE, &derivedKeyType, sizeof(derivedKeyType)},
+        {CKA_SENSITIVE, &falseValue, sizeof(falseValue)},
+        {CKA_EXTRACTABLE, &trueValue, sizeof(trueValue)},
+        {CKA_DERIVE, &trueValue, sizeof(trueValue)},
+        {CKA_ENCRYPT, &falseValue, sizeof(falseValue)},
+        {CKA_DECRYPT, &falseValue, sizeof(falseValue)},
+        {CKA_TOKEN, &falseValue, sizeof(falseValue)},
+        {CKA_VALUE_LEN, &derivedKeyLength, sizeof(derivedKeyLength)}
+    };
+    CK_ULONG ulDerivedKeyTemplateCount =
+        sizeof(derivedKeyTemplate) / sizeof(CK_ATTRIBUTE);
+
+    CK_BYTE derivedKeyValue[48];
+    CK_ATTRIBUTE getValueTemplate[] = {
+        {CKA_VALUE, derivedKeyValue, sizeof(derivedKeyValue)}
+    };
+    CK_ULONG ulGetValueTemplateCount =
+        sizeof(getValueTemplate) / sizeof(CK_ATTRIBUTE);
+
+
+    ret = funcList->C_CreateObject(session, baseKeyTemplate,
+                                   ulBaseKeyTemplateCount, &hBaseKey);
+    CHECK_CKR(ret, "Base key");
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mechanism, hBaseKey,
+                                    derivedKeyTemplate,
+                                    ulDerivedKeyTemplateCount, &hDerivedKey);
+        CHECK_CKR(ret, "Derive key");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, hDerivedKey,
+                                            getValueTemplate,
+                                            ulGetValueTemplateCount);
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(getValueTemplate[0].ulValueLen == ulExpectedMasterSecretLen,
+                   ret, "Derived key length mismatch");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(getValueTemplate[0].ulValueLen != (CK_ULONG)-1, ret,
+                   "Get CKA_VALUE");
+    }
+
+    if (ret == CKR_OK) {
+        CHECK_COND(XMEMCMP(derivedKeyValue, expectedMasterSecret,
+                           ulExpectedMasterSecretLen) == 0, ret,
+                   "Secret compare");
+    }
+
+    return ret;
+}
+#endif
 #endif
 
 static CK_RV pkcs11_lib_init(void)
@@ -11996,6 +12116,9 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_derive_tls12_master_key_dh),
     PKCS11TEST_FUNC_SESS_DECL(test_derive_tls12_key_and_mac),
     PKCS11TEST_FUNC_SESS_DECL(test_derive_tls12_master_key),
+#ifdef WOLFPKCS11_NSS
+    PKCS11TEST_FUNC_SESS_DECL(test_nss_derive_tls12_master_key),
+#endif
 #endif
 };
 static int testFuncCnt = sizeof(testFunc) / sizeof(*testFunc);

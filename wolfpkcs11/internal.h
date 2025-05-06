@@ -421,6 +421,12 @@ int WP11_Tls12_Master_Key_Derive(CK_SSL3_RANDOM_DATA* random,
                                  CK_ULONG encLen, CK_BBOOL clientFirst,
                                  WP11_Object* key);
 
+int WP11_Nss_Tls12_Master_Key_Derive(CK_BYTE_PTR pSessionHash,
+                                     CK_ULONG ulSessionHashLen,
+                                     CK_MECHANISM_TYPE mech, const char* label,
+                                     CK_ULONG ulLabelLen, byte* enc,
+                                     CK_ULONG encLen, WP11_Object* key);
+
 int WP11_AesGenerateKey(WP11_Object* secret, WP11_Slot* slot);
 
 int WP11_AesCbc_DeriveKey(unsigned char* plain, word32 plainSz,
