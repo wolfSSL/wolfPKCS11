@@ -6066,6 +6066,10 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
         return CKR_SESSION_HANDLE_INVALID;
     if (pMechanism == NULL || pTemplate == NULL)
         return CKR_ARGUMENTS_BAD;
+    /* phKey can be NULL for CKM_TLS12_KEY_AND_MAC_DERIVE as it is ignored */
+    if ((phKey == NULL) &&
+        (pMechanism->mechanism != CKM_TLS12_KEY_AND_MAC_DERIVE))
+        return CKR_ARGUMENTS_BAD;
 
     ret = WP11_Object_Find(session, hBaseKey, &obj);
     if (ret != 0)
@@ -6076,8 +6080,6 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
         case CKM_ECDH1_DERIVE: {
             CK_ECDH1_DERIVE_PARAMS* params;
 
-            if (phKey == NULL)
-                return CKR_ARGUMENTS_BAD;
             if (pMechanism->pParameter == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
             if (pMechanism->ulParameterLen != sizeof(CK_ECDH1_DERIVE_PARAMS))
@@ -6109,8 +6111,6 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
             CK_HKDF_PARAMS_PTR kdfParams;
             CK_ATTRIBUTE *lenAttr = NULL;
 
-            if (phKey == NULL)
-                return CKR_ARGUMENTS_BAD;
             if (pMechanism->pParameter == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
             if (pMechanism->ulParameterLen != sizeof(CK_HKDF_PARAMS))
@@ -6143,8 +6143,6 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
 #endif
 #ifndef NO_DH
         case CKM_DH_PKCS_DERIVE:
-            if (phKey == NULL)
-                return CKR_ARGUMENTS_BAD;
             if (pMechanism->pParameter == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
             if (pMechanism->ulParameterLen == 0)
@@ -6166,8 +6164,6 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
 #ifdef HAVE_AES_CBC
         case CKM_AES_CBC_ENCRYPT_DATA: {
             CK_AES_CBC_ENCRYPT_DATA_PARAMS* params;
-            if (phKey == NULL)
-                return CKR_ARGUMENTS_BAD;
             if (pMechanism->pParameter == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
             if (pMechanism->ulParameterLen !=
@@ -6223,6 +6219,8 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
                 ret = Tls12_Extract_Keys(session, tlsParams, pTemplate,
                                          ulAttributeCount, derivedKey);
 
+            /* Freeing here so that we don't attempt to generate a key at the
+             * end of the function */
             XMEMSET(derivedKey, 0, keyLen);
             XFREE(derivedKey, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             derivedKey = NULL;
@@ -6233,8 +6231,6 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
         case CKM_TLS12_MASTER_KEY_DERIVE:
         case CKM_TLS12_MASTER_KEY_DERIVE_DH:
             CK_TLS12_MASTER_KEY_DERIVE_PARAMS* prfParams;
-            if (phKey == NULL)
-                return CKR_ARGUMENTS_BAD;
             if (pMechanism->pParameter == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
             if (pMechanism->ulParameterLen !=
@@ -6268,6 +6264,33 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
             if (ret != 0)
                 rv = CKR_FUNCTION_FAILED;
             break;
+#ifdef WOLFPKCS11_NSS
+        case CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE:
+        case CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_DH:
+            CK_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_PARAMS* nssParams = NULL;
+            if (pMechanism->pParameter == NULL)
+                return CKR_MECHANISM_PARAM_INVALID;
+            if (pMechanism->ulParameterLen !=
+                sizeof(CK_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_PARAMS))
+                return CKR_MECHANISM_PARAM_INVALID;
+            nssParams = (CK_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_PARAMS*)
+                pMechanism->pParameter;
+
+            keyLen = PRF_KEY_SIZE;
+            derivedKey = (byte*)XMALLOC(keyLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            if (derivedKey == NULL)
+                return CKR_DEVICE_MEMORY;
+
+            ret = WP11_Nss_Tls12_Master_Key_Derive(nssParams->pSessionHash,
+                                                   nssParams->ulSessionHashLen,
+                                                   nssParams->prfHashMechanism,
+                                                   "extended master secret", 22,
+                                                   derivedKey, keyLen, obj);
+
+            if (ret != 0)
+                rv = CKR_FUNCTION_FAILED;
+            break;
+#endif
 #endif
         default:
             (void)ulAttributeCount;
