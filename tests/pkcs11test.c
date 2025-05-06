@@ -11105,6 +11105,46 @@ static CK_RV test_hkdf_derive_extract_with_expand_salt_key(void* args)
     return ret;
 }
 
+static CK_RV test_hkdf_gen_key(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV             ret = CKR_OK;
+    CK_OBJECT_HANDLE  key = CK_INVALID_HANDLE;
+    CK_MECHANISM      mech;
+    CK_ULONG          keyLen = 48;
+    CK_ATTRIBUTE      keyTmpl[] = {
+        { CKA_VALUE_LEN,       &keyLen,            sizeof(keyLen)             },
+    };
+    int               keyTmplCnt = sizeof(keyTmpl)/sizeof(*keyTmpl);
+
+    if (ret == CKR_OK) {
+        mech.mechanism      = CKM_HKDF_KEY_GEN;
+        mech.ulParameterLen = 0;
+        mech.pParameter     = NULL;
+
+        ret = funcList->C_GenerateKey(session, &mech, keyTmpl, keyTmplCnt,
+                                                                          &key);
+        CHECK_CKR(ret, "AES Key Generation");
+    }
+    if (ret == CKR_OK) {
+        mech.pParameter = keyTmpl;
+        ret = funcList->C_GenerateKey(session, &mech, keyTmpl, keyTmplCnt,
+                                                                          &key);
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
+                                                  "Generate Key bad parameter");
+        mech.pParameter = NULL;
+    }
+    if (ret == CKR_OK) {
+        mech.ulParameterLen = sizeof(keyTmpl);
+        ret = funcList->C_GenerateKey(session, &mech, keyTmpl, keyTmplCnt,
+                                                                          &key);
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
+                                           "Generate Key bad parameter length");
+        mech.ulParameterLen = 0;
+    }
+
+    return ret;
+}
 #endif
 
 static CK_RV test_random(void* args)
@@ -11463,6 +11503,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_extract_with_expand_salt_data),
     PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_expand_with_extract_null_salt),
     PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_extract_with_expand_salt_key),
+    PKCS11TEST_FUNC_SESS_DECL(test_hkdf_gen_key),
 #endif
     PKCS11TEST_FUNC_SESS_DECL(test_random),
     PKCS11TEST_FUNC_SESS_DECL(test_x509),

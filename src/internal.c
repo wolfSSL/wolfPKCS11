@@ -8473,6 +8473,28 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
 }
 #endif /* HAVE_ECC */
 
+#if defined(WOLFPKCS11_HKDF) || !defined(NO_AES)
+/**
+ * Generate a secret key.
+ *
+ * @param  secret  [in]  Secret object.
+ * @param  slot    [in]  Slot operation is performed on.
+ * @return  -ve on random number generation failure.
+ *          0 on success.
+ */
+int WP11_GenerateRandomKey(WP11_Object* secret, WP11_Slot* slot)
+{
+    int ret;
+    WP11_Data* key = &secret->data.symmKey;
+
+    WP11_Lock_LockRW(&slot->token.rngLock);
+    ret = wc_RNG_GenerateBlock(&slot->token.rng, key->data, key->len);
+    WP11_Lock_UnlockRW(&slot->token.rngLock);
+
+    return ret;
+}
+#endif /* WOLFPKCS11_HKDF || !NO_AES */
+
 #ifdef WOLFPKCS11_HKDF
 
 /**
@@ -8621,25 +8643,6 @@ int WP11_Dh_Derive(unsigned char* pub, word32 pubLen, unsigned char* key,
 #endif /* !NO_DH */
 
 #ifndef NO_AES
-/**
- * Generate an AES secret key.
- *
- * @param  secret  [in]  Secret object.
- * @param  slot    [in]  Slot operation is performed on.
- * @return  -ve on random number generation failure.
- *          0 on success.
- */
-int WP11_AesGenerateKey(WP11_Object* secret, WP11_Slot* slot)
-{
-    int ret;
-    WP11_Data* key = &secret->data.symmKey;
-
-    WP11_Lock_LockRW(&slot->token.rngLock);
-    ret = wc_RNG_GenerateBlock(&slot->token.rng, key->data, key->len);
-    WP11_Lock_UnlockRW(&slot->token.rngLock);
-
-    return ret;
-}
 
 #ifdef HAVE_AES_CBC
 /**
