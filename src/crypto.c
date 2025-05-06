@@ -4989,7 +4989,7 @@ CK_RV C_VerifyRecoverInit(CK_SESSION_HANDLE hSession,
     if (ret != CKR_OK)
         return CKR_FUNCTION_FAILED;
 
-    if (getVar != 1)
+    if (getVar != CK_TRUE)
         return CKR_KEY_FUNCTION_NOT_PERMITTED;
 
     WP11_Session_SetMechanism(session, pMechanism->mechanism);
