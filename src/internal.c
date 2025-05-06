@@ -7832,6 +7832,72 @@ int WP11_Rsa_Sign(unsigned char* in, word32 inLen, unsigned char* sig,
 }
 
 /**
+ * RSA verify the signature where the data is recovered from the signature.
+ *
+ * @param  sig     [in]   Signature data.
+ * @param  sigLen  [in]   Length of buffer.
+ * @param  in      [in]   Data to verify.
+ * @param  inLen   [in]   Length of data.
+ * @param  stat    [out]  Status of verification. 1 on success, otherwise 0.
+ * @param  pub     [in]   Public key object.
+ * @return  -ve when verifying fails.
+ *          0 on success.
+ */
+int WP11_Rsa_Verify_Recover(CK_MECHANISM_TYPE mechanism, unsigned char* sig,
+                            word32 sigLen, unsigned char* out,
+                            CK_ULONG_PTR outLen, WP11_Object* pub)
+{
+    int ret;
+    byte* data_out = NULL;
+
+    switch (mechanism) {
+        case CKM_RSA_PKCS:
+            ret = wc_RsaSSL_VerifyInline(sig, sigLen, &data_out,
+                                         &pub->data.rsaKey);
+            if (ret < 0)
+                return ret;
+
+            *outLen = ret;
+            if (out == NULL) {
+                return CKR_OK;
+            }
+            else {
+                if (*outLen < (CK_ULONG)ret) {
+                    return CKR_BUFFER_TOO_SMALL;
+                }
+                else {
+                    XMEMCPY(out, data_out, ret);
+                }
+            }
+            break;
+
+        case CKM_RSA_X_509:
+            ret =  wc_RsaDirect(sig, sigLen, out, (word32*)outLen,
+                                &pub->data.rsaKey, RSA_PUBLIC_DECRYPT, NULL);
+            if (ret < 0)
+                return ret;
+            /* Result is front padded with 0x00 */
+            for (byte* pos = out; pos < out + *outLen; pos++) {
+                if (*pos != 0x00) {
+                    data_out = pos;
+                    break;
+                }
+            }
+            if (data_out != NULL) {
+                *outLen = (out + *outLen) - data_out;
+                XMEMMOVE(out, data_out, *outLen);
+            }
+            break;
+
+        default:
+            /* Should never happen */
+            return CKR_FUNCTION_FAILED;
+    }
+
+    return CKR_OK;
+}
+
+/**
  * RSA verify data with public key.
  *
  * @param  sig     [in]   Signature data.

@@ -4926,7 +4926,6 @@ CK_RV C_VerifyFinal(CK_SESSION_HANDLE hSession,
 
 /**
  * Initialize verification operation where data is recovered from the signature.
- * No mechanisms are supported.
  *
  * @param  hSession    [in]  Handle of session.
  * @param  pMechanism  [in]  Type of operation to perform with parameters.
@@ -4943,8 +4942,11 @@ CK_RV C_VerifyRecoverInit(CK_SESSION_HANDLE hSession,
                           CK_OBJECT_HANDLE hKey)
 {
     int ret;
+    int init = 0;
     WP11_Session* session;
     WP11_Object* obj;
+    CK_BBOOL getVar;
+    CK_ULONG getVarLen = sizeof(CK_BBOOL);
 
     if (!WP11_Library_IsInitialized())
         return CKR_CRYPTOKI_NOT_INITIALIZED;
@@ -4952,17 +4954,53 @@ CK_RV C_VerifyRecoverInit(CK_SESSION_HANDLE hSession,
         return CKR_SESSION_HANDLE_INVALID;
     if (pMechanism == NULL)
         return CKR_ARGUMENTS_BAD;
-
-    ret = WP11_Object_Find(session, hKey, &obj);
-    if (ret != 0)
+    if (hKey == 0)
         return CKR_OBJECT_HANDLE_INVALID;
 
-    return CKR_MECHANISM_INVALID;
+    switch(pMechanism->mechanism) {
+        case CKM_RSA_PKCS:
+            init = WP11_INIT_RSA_PKCS_VERIFY_RECOVER;
+            break;
+        case CKM_RSA_X_509:
+            init = WP11_INIT_RSA_X_509_VERIFY_RECOVER;
+            break;
+        default:
+            return CKR_MECHANISM_INVALID;
+    }
+
+    if (pMechanism->pParameter != NULL || pMechanism->ulParameterLen != 0) {
+        return CKR_MECHANISM_PARAM_INVALID;
+    }
+
+    ret = WP11_Object_Find(session, hKey, &obj);
+    if (ret != CKR_OK)
+        return ret;
+
+    if (WP11_Object_GetClass(obj) != CKO_PUBLIC_KEY) {
+        return CKR_KEY_HANDLE_INVALID;
+    }
+
+    if (WP11_Object_GetType(obj) != CKK_RSA) {
+        return CKR_KEY_TYPE_INCONSISTENT;
+    }
+
+    ret = WP11_Object_GetAttr(obj, CKA_VERIFY, &getVar, &getVarLen);
+    if (ret != CKR_OK)
+        return CKR_FUNCTION_FAILED;
+
+    if (getVar != CK_TRUE)
+        return CKR_KEY_FUNCTION_NOT_PERMITTED;
+
+    WP11_Session_SetMechanism(session, pMechanism->mechanism);
+    WP11_Session_SetObject(session, obj);
+    WP11_Session_SetOpInitialized(session, init);
+
+
+    return CKR_OK;
 }
 
 /**
  * Verify the signature where the data is recovered from the signature.
- * No mechanisms are supported.
  *
  * @param  hSession        [in]      Handle of session.
  * @param  pSignature      [in]      Signature data.
@@ -4983,6 +5021,12 @@ CK_RV C_VerifyRecover(CK_SESSION_HANDLE hSession,
                       CK_BYTE_PTR pData, CK_ULONG_PTR pulDataLen)
 {
     WP11_Session* session;
+#ifndef NO_RSA
+    int ret;
+    WP11_Object* obj = NULL;
+    word32 decDataLen;
+    CK_MECHANISM_TYPE mechanism;
+#endif
 
     if (!WP11_Library_IsInitialized())
         return CKR_CRYPTOKI_NOT_INITIALIZED;
@@ -4991,9 +5035,50 @@ CK_RV C_VerifyRecover(CK_SESSION_HANDLE hSession,
     if (pSignature == NULL || ulSignatureLen == 0 || pulDataLen == NULL)
         return CKR_ARGUMENTS_BAD;
 
-    (void)pData;
+#ifdef NO_RSA
+    (void) pData;
+    return CKR_MECHANISM_INVALID;
+#else
 
-    return CKR_OPERATION_NOT_INITIALIZED;
+    mechanism = WP11_Session_GetMechanism(session);
+    WP11_Session_GetObject(session, &obj);
+
+    if (obj == NULL) {
+        return CKR_OPERATION_NOT_INITIALIZED;
+    }
+
+    decDataLen = WP11_Rsa_KeyLen(obj);
+    if (pData == NULL) {
+        *pulDataLen = decDataLen;
+        return CKR_OK;
+    }
+    if (decDataLen > (word32)*pulDataLen)
+        return CKR_BUFFER_TOO_SMALL;
+
+    switch (mechanism) {
+        case CKM_RSA_PKCS:
+            if (!WP11_Session_IsOpInitialized(session,
+                WP11_INIT_RSA_PKCS_VERIFY_RECOVER))
+                return CKR_OPERATION_NOT_INITIALIZED;
+            break;
+        case CKM_RSA_X_509:
+            if (!WP11_Session_IsOpInitialized(session,
+                WP11_INIT_RSA_X_509_VERIFY_RECOVER))
+                return CKR_OPERATION_NOT_INITIALIZED;
+            break;
+        default:
+            return CKR_MECHANISM_INVALID;
+    }
+
+    ret = WP11_Rsa_Verify_Recover(mechanism, pSignature, ulSignatureLen, pData,
+                                   pulDataLen, obj);
+
+    if (ret != CKR_OK) {
+        return ret;
+    }
+
+    return CKR_OK;
+#endif
 }
 
 /**
@@ -5403,7 +5488,6 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
 
 /**
  * Wrap a key using another key.
- * No mechanisms are supported.
  *
  * @param  hSession          [in]      Handle of session.
  * @param  pMechanism        [in]      Type of operation to perform with

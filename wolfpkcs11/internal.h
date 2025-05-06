@@ -158,6 +158,8 @@ extern "C" {
 #define WP11_INIT_RSA_PKCS_PSS_VERIFY  0x0033
 #define WP11_INIT_RSA_X_509_SIGN       0x0034
 #define WP11_INIT_RSA_X_509_VERIFY     0x0035
+#define WP11_INIT_RSA_PKCS_VERIFY_RECOVER 0x0036
+#define WP11_INIT_RSA_X_509_VERIFY_RECOVER 0x0037
 #define WP11_INIT_ECDSA_SIGN           0x0040
 #define WP11_INIT_ECDSA_VERIFY         0x0041
 #define WP11_INIT_AES_CMAC_SIGN        0x0050
@@ -385,6 +387,9 @@ int WP11_RsaPKCSPSS_Sign(unsigned char* hash, word32 hashLen,
 int WP11_RsaPKCSPSS_Verify(unsigned char* sig, word32 sigLen,
                            unsigned char* hash, word32 hashLen, int* stat,
                            WP11_Object* pub, WP11_Session* session);
+int WP11_Rsa_Verify_Recover(CK_MECHANISM_TYPE mechanism, unsigned char* sig,
+                            word32 sigLen, unsigned char* out,
+                            CK_ULONG_PTR outLen, WP11_Object* pub);
 
 int WP11_Ec_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
                             WP11_Slot* slot);

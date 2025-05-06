@@ -2918,6 +2918,7 @@ static CK_RV test_recover(void* args)
                                                 "Sign Recover not initialized");
     }
 
+    mech.mechanism = CKM_RSA_PKCS;
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyRecoverInit(CK_INVALID_HANDLE, &mech, key);
         CHECK_CKR_FAIL(ret, CKR_SESSION_HANDLE_INVALID,
@@ -2932,11 +2933,6 @@ static CK_RV test_recover(void* args)
         ret = funcList->C_VerifyRecoverInit(session, &mech, CK_INVALID_HANDLE);
         CHECK_CKR_FAIL(ret, CKR_OBJECT_HANDLE_INVALID,
                                    "Verify Recover Init invalid object handle");
-    }
-    if (ret == CKR_OK) {
-        ret = funcList->C_VerifyRecoverInit(session, &mech, key);
-        CHECK_CKR_FAIL(ret, CKR_MECHANISM_INVALID,
-                                           "Verify Recover Init not supported");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyRecover(CK_INVALID_HANDLE, sig, sigSz, data,
@@ -2959,12 +2955,122 @@ static CK_RV test_recover(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyRecover(session, sig, sigSz, data, &dataSz);
+#ifndef NO_RSA
         CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
                                               "Verify Recover not initialized");
+#else
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_INVALID,
+                                              "Verify Recover not initialized");
+#endif
     }
 
     return ret;
 }
+
+#ifndef NO_RSA
+static CK_RV rsa_verify_recover(CK_SESSION_HANDLE session,
+                                CK_MECHANISM_TYPE mech_type)
+{
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE private_key_handle;
+    CK_OBJECT_HANDLE public_key_handle;
+
+    CK_ATTRIBUTE rsa_2048_priv_key[] = {
+        { CKA_CLASS,             &privKeyClass,     sizeof(privKeyClass)      },
+        { CKA_KEY_TYPE,          &rsaKeyType,       sizeof(rsaKeyType)        },
+        { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue)            },
+        { CKA_MODULUS,           rsa_2048_modulus,  sizeof(rsa_2048_modulus)  },
+        { CKA_PRIVATE_EXPONENT,  rsa_2048_priv_exp, sizeof(rsa_2048_priv_exp) },
+        { CKA_PRIME_1,           rsa_2048_p,        sizeof(rsa_2048_p)        },
+        { CKA_PRIME_2,           rsa_2048_q,        sizeof(rsa_2048_q)        },
+        { CKA_EXPONENT_1,        rsa_2048_dP,       sizeof(rsa_2048_dP)       },
+        { CKA_EXPONENT_2,        rsa_2048_dQ,       sizeof(rsa_2048_dQ)       },
+        { CKA_COEFFICIENT,       rsa_2048_u,        sizeof(rsa_2048_u)        },
+        { CKA_PUBLIC_EXPONENT,   rsa_2048_pub_exp,  sizeof(rsa_2048_pub_exp)  },
+        { CKA_EXTRACTABLE,       &ckTrue,           sizeof(ckTrue)            },
+    };
+    CK_ULONG tmplCnt = sizeof(rsa_2048_priv_key) / sizeof(*rsa_2048_priv_key);
+
+    CK_ATTRIBUTE rsa_2048_pub_key[] = {
+        { CKA_CLASS,             &pubKeyClass,      sizeof(pubKeyClass)       },
+        { CKA_KEY_TYPE,          &rsaKeyType,       sizeof(rsaKeyType)        },
+        { CKA_ENCRYPT,           &ckTrue,           sizeof(ckTrue)            },
+        { CKA_MODULUS,           rsa_2048_modulus,  sizeof(rsa_2048_modulus)  },
+        { CKA_PUBLIC_EXPONENT,   rsa_2048_pub_exp,  sizeof(rsa_2048_pub_exp)  },
+        { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
+        { CKA_ID,                NULL,              0                         },
+    };
+    int cnt = sizeof(rsa_2048_pub_key)/sizeof(*rsa_2048_pub_key);
+
+    CK_MECHANISM sign_mechanism = {mech_type, NULL_PTR, 0};
+    CK_MECHANISM verify_mechanism = {mech_type, NULL_PTR, 0};
+
+    CK_BYTE signature[256];  // RSA-2048 key
+    CK_ULONG signature_len = sizeof(signature);
+
+    CK_BYTE recovered_data[256];
+    CK_ULONG recovered_data_len = sizeof(recovered_data);
+
+    const char* data_to_sign = "Hello, PKCS#11!";
+    CK_ULONG data_length = 16;
+
+    ret = funcList->C_CreateObject(session, rsa_2048_priv_key, tmplCnt,
+                                   &private_key_handle);
+    CHECK_CKR(ret, "Create object");
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, rsa_2048_pub_key, cnt,
+                                       &public_key_handle);
+        CHECK_CKR(ret, "RSA Public Key Create Object");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_SignInit(session, &sign_mechanism,
+                                   private_key_handle);
+        CHECK_CKR(ret, "Sign init");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_Sign(session, (CK_BYTE_PTR)data_to_sign, data_length,
+                               signature, &signature_len);
+        CHECK_CKR(ret, "Sign");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyRecoverInit(session, &verify_mechanism,
+                                            public_key_handle);
+        CHECK_CKR(ret, "Verify recover init");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyRecover(session, signature, signature_len,
+                                        recovered_data, &recovered_data_len);
+        CHECK_CKR(ret, "Verify recover");
+    }
+
+    if (ret == CKR_OK) {
+        CHECK_COND(recovered_data_len == data_length, ret, "Data length");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(XMEMCMP(recovered_data, data_to_sign, data_length) == 0, ret,
+                   "Data mismatch");
+    }
+
+    return ret;
+}
+
+static CK_RV test_verify_recover_pkcs(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    return rsa_verify_recover(session, CKM_RSA_PKCS);
+}
+
+static CK_RV test_verify_recover_x509(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    return rsa_verify_recover(session, CKM_RSA_X_509);
+}
+#endif
 
 static CK_RV test_encdec_digest(void* args)
 {
@@ -11199,6 +11305,10 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_digest_fail),
     PKCS11TEST_FUNC_SESS_DECL(test_sign_verify),
     PKCS11TEST_FUNC_SESS_DECL(test_recover),
+#ifndef NO_RSA
+    PKCS11TEST_FUNC_SESS_DECL(test_verify_recover_pkcs),
+    PKCS11TEST_FUNC_SESS_DECL(test_verify_recover_x509),
+#endif
     PKCS11TEST_FUNC_SESS_DECL(test_encdec_digest),
     PKCS11TEST_FUNC_SESS_DECL(test_encdec_signverify),
     PKCS11TEST_FUNC_SESS_DECL(test_generate_key),
