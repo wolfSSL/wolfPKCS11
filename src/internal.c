@@ -326,6 +326,14 @@ typedef struct WP11_Cmac {
 } WP11_Cmac;
 #endif
 
+typedef struct WP11_TlsMacParams {
+    enum wc_MACAlgorithm mac;
+    word32 macSz;
+    CK_OBJECT_HANDLE key;
+    byte server:1;
+    byte isTlsPrf:1;
+} WP11_TlsMacParams;
+
 struct WP11_Session {
     unsigned char inUse;               /* Indicates session has been opened   */
     CK_SESSION_HANDLE handle;          /* CryptoKi API session handle value   */
@@ -373,7 +381,11 @@ struct WP11_Session {
 #ifdef HAVE_AESCMAC
         WP11_Cmac cmac;                /* CMAC parameters                     */
 #endif
+        WP11_TlsMacParams tlsMac;      /* TLS MAC parameters                  */
     } params;
+
+    byte* data;                        /* Held data for one-shot mechs        */
+    word32 dataSz;                     /* Size of held data                   */
 
     int devId;
     WP11_Session* next;                /* Next session for slot               */
@@ -4994,6 +5006,32 @@ int WP11_Session_IsRW(WP11_Session* session)
 int WP11_Session_IsOpInitialized(WP11_Session* session, int init)
 {
     return (session->init & ~WP11_INIT_DIGEST_MASK) == init;
+}
+
+int WP11_Session_UpdateData(WP11_Session *session, byte *data, word32 dataLen)
+{
+    byte* tmp = (byte*)XREALLOC(session->data, session->dataSz + dataLen, NULL,
+            DYNAMIC_TYPE_TMP_BUFFER);
+    if (tmp == NULL)
+        return MEMORY_E;
+    session->data = tmp;
+    XMEMCPY(session->data + session->dataSz, data, dataLen);
+    session->dataSz += dataLen;
+    return 0;
+}
+
+void WP11_Session_GetData(WP11_Session *session, byte** data, word32* dataLen)
+{
+    *data = session->data;
+    *dataLen = session->dataSz;
+}
+
+void WP11_Session_FreeData(WP11_Session *session)
+{
+    XFREE(session->data, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    session->data = NULL;
+    session->dataSz = 0;
+    session->init = 0;
 }
 
 static int MechanismToHash(int mechanism)
@@ -10647,6 +10685,106 @@ int WP11_Hmac_VerifyFinal(unsigned char* sig, word32 sigLen, int* stat,
     return ret;
 }
 #endif /* !NO_HMAC */
+
+#ifdef WOLFSSL_HAVE_PRF
+int WP11_TLS_MAC_init(unsigned long hashType, unsigned long macLen, byte server,
+                      CK_OBJECT_HANDLE hKey, WP11_Session *session)
+{
+    int ret = 0;
+    WP11_TlsMacParams *mac = &session->params.tlsMac;
+
+    XMEMSET(mac, 0, sizeof(*mac));
+    if (hashType == CKM_TLS_PRF) {
+        mac->isTlsPrf = 1;
+    }
+    else {
+        if ((mac->mac = MechToMac(hashType)) == no_mac)
+            return BAD_FUNC_ARG;
+    }
+    mac->server = server;
+    mac->macSz = (word32)macLen;
+    mac->key = hKey;
+
+
+    return ret;
+}
+
+
+word32 WP11_TLS_MAC_get_len(WP11_Session *session)
+{
+    WP11_TlsMacParams *mac = &session->params.tlsMac;
+
+    return mac->macSz;
+}
+
+int WP11_TLS_MAC_sign(byte* data, word32 dataLen, byte* sig, word32* sigLen,
+                      WP11_Session *session)
+{
+    int ret = 0;
+    WP11_TlsMacParams *mac = &session->params.tlsMac;
+    const byte* label = (const byte*)(mac->server ?
+            "server finished" : "client finished");
+    WP11_Data* key = NULL;
+    WP11_Object* secret = NULL;
+
+    if (mac->macSz > *sigLen)
+        return BAD_FUNC_ARG;
+
+    ret = WP11_Object_Find(session, mac->key, &secret);
+    if (ret != 0)
+        return BAD_FUNC_ARG;
+    if (secret->type != CKK_GENERIC_SECRET)
+        return BAD_FUNC_ARG;
+
+    if (secret->onToken)
+        WP11_Lock_LockRO(secret->lock);
+    key = &secret->data.symmKey;
+
+    if (mac->isTlsPrf) {
+        ret = wc_PRF_TLSv1(sig, mac->macSz, key->data, key->len, label, 15,
+                data, dataLen, NULL, secret->slot->devId);
+    }
+    else {
+        ret = wc_PRF_TLS(sig, mac->macSz, key->data, key->len, label, 15,
+                data, dataLen, 1, mac->mac, NULL, secret->slot->devId);
+    }
+
+    if (secret->onToken)
+        WP11_Lock_UnlockRO(secret->lock);
+
+    if (ret == 0)
+        *sigLen = mac->macSz;
+
+    session->init = 0;
+    return ret;
+}
+
+int WP11_TLS_MAC_verify(byte* data, word32 dataLen, byte* sig, word32 sigLen,
+        int* stat, WP11_Session *session)
+{
+    int ret = 0;
+    byte* genSig;
+    word32 genSigLen = sigLen;
+    WP11_TlsMacParams *mac = &session->params.tlsMac;
+
+    if (sigLen != mac->macSz)
+        return BUFFER_E;
+
+    genSig = (byte*)XMALLOC(genSigLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    if (genSig == NULL)
+        return MEMORY_E;
+
+    ret = WP11_TLS_MAC_sign(data, dataLen, genSig, &genSigLen, session);
+    if (ret == 0) {
+        *stat = genSigLen == sigLen
+                && WP11_ConstantCompare(sig, genSig, sigLen);
+    }
+
+    XFREE(genSig, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    session->init = 0;
+    return ret;
+}
+#endif /* WOLFSSL_HAVE_PRF */
 
 /**
  * Seed the random number generator of the token in the slot.

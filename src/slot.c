@@ -374,6 +374,9 @@ static CK_MECHANISM_TYPE mechanismList[] = {
     CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_DH,
 #endif
 #endif
+#ifdef WOLFSSL_HAVE_PRF
+    CKM_TLS_MAC,
+#endif
 };
 
 /* Count of mechanisms in list. */
@@ -532,6 +535,9 @@ static CK_MECHANISM_INFO nssTls12MasterKeyDeriveInfo = {
 };
 #endif
 #endif
+static CK_MECHANISM_INFO tlsMacMechInfo = {
+    0, 512, CKF_SIGN | CKF_VERIFY
+};
 #ifndef NO_AES
 static CK_MECHANISM_INFO aesKeyGenMechInfo = {
     16, 32, CKF_GENERATE
@@ -967,6 +973,12 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
                     sizeof(CK_MECHANISM_INFO));
             break;
 #endif
+#endif
+#ifdef WOLFSSL_HAVE_PRF
+        case CKM_TLS_MAC:
+            XMEMCPY(pInfo, &tlsMacMechInfo,
+                    sizeof(CK_MECHANISM_INFO));
+            break;
 #endif
         default:
             return CKR_MECHANISM_INVALID;
