@@ -245,6 +245,9 @@ extern "C" {
 #define CKM_SHA3_512                          0x000002D0UL
 #define CKM_SHA3_512_HMAC                     0x000002D1UL
 #define CKM_GENERIC_SECRET_KEY_GEN            0x00000350UL
+#define CKM_TLS12_MASTER_KEY_DERIVE           0x000003E0UL
+#define CKM_TLS12_KEY_AND_MAC_DERIVE          0x000003E1UL
+#define CKM_TLS12_MASTER_KEY_DERIVE_DH        0x000003E2UL
 #define CKM_EC_KEY_PAIR_GEN                   0x00001040UL
 #define CKM_ECDSA                             0x00001041UL
 #define CKM_ECDSA_SHA1                        0x00001042UL
@@ -270,6 +273,14 @@ extern "C" {
 #define CKM_HKDF_DERIVE                       0x0000402AUL
 #define CKM_HKDF_DATA                         0x0000402BUL
 #define CKM_HKDF_KEY_GEN                      0x0000402CUL
+#define CKM_VENDOR_DEFINED                    0x80000000UL
+
+#ifdef WOLFPKCS11_NSS
+#define CK_VENDOR_NSS                         0x4E534350UL
+#define CKM_NSS (CKM_VENDOR_DEFINED | CK_VENDOR_NSS)
+#define CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE    (CKM_NSS + 25)
+#define CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_DH (CKM_NSS + 26)
+#endif
 
 #define CKR_OK                                0x00000000UL
 #define CKR_CANCEL                            0x00000001UL
@@ -619,6 +630,49 @@ typedef struct CK_CCM_PARAMS {
 } CK_CCM_PARAMS;
 typedef CK_CCM_PARAMS* CK_CCM_PARAMS_PTR;
 
+typedef struct CK_SSL3_RANDOM_DATA {
+    CK_BYTE_PTR pClientRandom;
+    CK_ULONG ulClientRandomLen;
+    CK_BYTE_PTR pServerRandom;
+    CK_ULONG ulServerRandomLen;
+} CK_SSL3_RANDOM_DATA;
+
+typedef struct CK_TLS12_MASTER_KEY_DERIVE_PARAMS {
+    CK_SSL3_RANDOM_DATA RandomInfo;
+    CK_VERSION_PTR pVersion;
+    CK_MECHANISM_TYPE prfHashMechanism;
+} CK_TLS12_MASTER_KEY_DERIVE_PARAMS;
+typedef CK_TLS12_MASTER_KEY_DERIVE_PARAMS*
+    CK_TLS12_MASTER_KEY_DERIVE_PARAMS_PTR;
+
+typedef struct CK_SSL3_KEY_MAT_OUT {
+    CK_OBJECT_HANDLE hClientMacSecret;
+    CK_OBJECT_HANDLE hServerMacSecret;
+    CK_OBJECT_HANDLE hClientKey;
+    CK_OBJECT_HANDLE hServerKey;
+    CK_BYTE_PTR pIVClient;
+    CK_BYTE_PTR pIVServer;
+} CK_SSL3_KEY_MAT_OUT;
+typedef CK_SSL3_KEY_MAT_OUT* CK_SSL3_KEY_MAT_OUT_PTR;
+
+typedef struct CK_TLS12_KEY_MAT_PARAMS {
+    CK_ULONG ulMacSizeInBits;
+    CK_ULONG ulKeySizeInBits;
+    CK_ULONG ulIVSizeInBits;
+    CK_BBOOL bIsExport; /* Always CK_FALSE. */
+    CK_SSL3_RANDOM_DATA RandomInfo;
+    CK_SSL3_KEY_MAT_OUT_PTR pReturnedKeyMaterial;
+    CK_MECHANISM_TYPE prfHashMechanism;
+} CK_TLS12_KEY_MAT_PARAMS;
+
+#ifdef WOLFPKCS11_NSS
+typedef struct CK_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_PARAMS {
+    CK_MECHANISM_TYPE prfHashMechanism;
+    CK_BYTE_PTR pSessionHash;
+    CK_ULONG ulSessionHashLen;
+    CK_VERSION_PTR pVersion;
+} CK_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_PARAMS;
+#endif
 
 /* Function list types. */
 typedef struct CK_FUNCTION_LIST CK_FUNCTION_LIST;

@@ -3540,6 +3540,7 @@ static CK_RV test_wrap_unwrap_key(void* args)
     return ret;
 }
 
+#ifndef NO_DH
 static CK_RV test_derive_key(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -3602,6 +3603,7 @@ static CK_RV test_derive_key(void* args)
 
     return ret;
 }
+#endif
 
 #if !defined(NO_RSA) || defined(HAVE_ECC)
 static CK_RV test_pubkey_sig_fail(CK_SESSION_HANDLE session, CK_MECHANISM* mech,
@@ -11218,6 +11220,607 @@ static CK_RV test_random(void* args)
     return ret;
 }
 
+#ifdef WOLFSSL_HAVE_PRF
+static CK_RV test_derive_tls12_key_and_mac(void *args) {
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE premasterSecret;
+    unsigned char clientIV[16], serverIV[16];
+    CK_BBOOL trueValue = CK_TRUE;
+    CK_BBOOL falseValue = CK_FALSE;
+    CK_OBJECT_HANDLE hDerivedKey = CK_INVALID_HANDLE;
+    static unsigned char test_premaster_secret[] = {
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+        0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+        0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
+        0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
+        0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30
+    };
+
+    static unsigned char test_client_random[] = {
+        0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68,
+        0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f, 0x70,
+        0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78,
+        0x79, 0x7a, 0x7b, 0x7c, 0x7d, 0x7e, 0x7f, 0x80
+    };
+
+    static unsigned char test_server_random[] = {
+        0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48,
+        0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50,
+        0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58,
+        0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f, 0x60
+    };
+
+    static unsigned char expected_client_mac_key[] = {
+        0x2e, 0xe2, 0xcb, 0x38, 0xb5, 0xd8, 0x50, 0x90,
+        0xda, 0xc2, 0x87, 0x65, 0xeb, 0xfb, 0x59, 0x34,
+        0xb1, 0x54, 0xa3, 0xc8, 0x2a, 0x9d, 0xad, 0xed,
+        0x5f, 0xa3, 0x01, 0x79, 0xd8, 0x10, 0x93, 0xcc
+    };
+
+    static unsigned char expected_server_mac_key[] = {
+        0xdd, 0x6e, 0xc7, 0x90, 0x9d, 0xf9, 0xbf, 0x39,
+        0xec, 0x2f, 0x44, 0x89, 0x4a, 0xc4, 0x04, 0xfe,
+        0x93, 0xb9, 0x77, 0xff, 0xed, 0x96, 0x7d, 0x1f,
+        0xeb, 0x26, 0x61, 0x45, 0xfc, 0x48, 0x2d, 0x1b
+    };
+
+    static unsigned char expected_client_key[] = {
+        0x2a, 0xb4, 0x47, 0x20, 0x2e, 0x35, 0xd2, 0xe6,
+        0xe3, 0xdd, 0x71, 0x34, 0x84, 0x00, 0x9d, 0xb5
+    };
+
+    static unsigned char expected_server_key[] = {
+        0x19, 0xca, 0x53, 0x63, 0x3e, 0x49, 0x86, 0x63,
+        0x7f, 0x3d, 0x18, 0x12, 0xa3, 0x9d, 0x0a, 0x4a
+    };
+
+    static unsigned char expected_client_iv[] = {
+        0xb8, 0xdb, 0x5b, 0xf6, 0xce, 0x7e, 0x3a, 0x31,
+        0x97, 0x30, 0xbb, 0x57, 0x6f, 0xa7, 0xb1, 0x72
+    };
+
+    static unsigned char expected_server_iv[] = {
+        0x15, 0xe9, 0xad, 0xa0, 0x0b, 0xfe, 0x61, 0xd6,
+        0x3a, 0xfa, 0x1b, 0xc3, 0x8c, 0x4a, 0xa2, 0x95
+    };
+
+    CK_ATTRIBUTE premasterAttrs[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_VALUE, test_premaster_secret, sizeof(test_premaster_secret)},
+        {CKA_DERIVE, &trueValue, sizeof(trueValue)}
+    };
+
+    CK_SSL3_RANDOM_DATA randomInfo = {
+        test_client_random, sizeof(test_client_random),
+        test_server_random, sizeof(test_server_random)
+    };
+
+    CK_SSL3_KEY_MAT_OUT keyMaterialOut = {
+        CK_INVALID_HANDLE, CK_INVALID_HANDLE,
+        CK_INVALID_HANDLE, CK_INVALID_HANDLE,
+        clientIV, serverIV
+    };
+
+    CK_TLS12_KEY_MAT_PARAMS params = {
+        32*8,
+        16*8,
+        16*8,
+        CK_FALSE,
+        randomInfo,
+        &keyMaterialOut,
+        CKM_SHA256
+    };
+
+    CK_MECHANISM mechanism = {
+        CKM_TLS12_KEY_AND_MAC_DERIVE,
+        &params,
+        sizeof(params)
+    };
+
+    CK_ATTRIBUTE derivedKeyTemplate[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_SENSITIVE, &falseValue, sizeof(falseValue)},
+        {CKA_EXTRACTABLE, &trueValue, sizeof(trueValue)},
+        {CKA_DERIVE, &trueValue, sizeof(trueValue)},
+        {CKA_ENCRYPT, &falseValue, sizeof(falseValue)},
+        {CKA_DECRYPT, &falseValue, sizeof(falseValue)},
+        {CKA_TOKEN, &falseValue, sizeof(falseValue)}
+    };
+    CK_ULONG ulDerivedKeyTemplateCount =
+        sizeof(derivedKeyTemplate) / sizeof(CK_ATTRIBUTE);
+
+    CK_BYTE derivedKeyValue[48];
+    CK_ATTRIBUTE getValueTemplate[] = {
+        {CKA_VALUE, derivedKeyValue, sizeof(derivedKeyValue)}
+    };
+    CK_ULONG ulGetValueTemplateCount =
+        sizeof(getValueTemplate) / sizeof(CK_ATTRIBUTE);
+
+    ret = funcList->C_CreateObject(session, premasterAttrs,
+                                sizeof(premasterAttrs) / sizeof(CK_ATTRIBUTE),
+                                &premasterSecret);
+    CHECK_CKR(ret, "Create object");
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mechanism, premasterSecret,
+                                    derivedKeyTemplate,
+                                    ulDerivedKeyTemplateCount, &hDerivedKey);
+        CHECK_CKR(ret, "Derive key");
+    }
+
+    if (ret == CKR_OK) {
+        CHECK_COND(hDerivedKey == CK_INVALID_HANDLE, ret,
+                   "No single derived key");
+    }
+
+    if (ret == CKR_OK) {
+        CHECK_COND(XMEMCMP(clientIV, expected_client_iv,
+                           sizeof(expected_client_iv)) == 0,
+                   ret, "Client IV compare");
+    }
+
+    if (ret == CKR_OK) {
+        CHECK_COND(XMEMCMP(serverIV, expected_server_iv,
+                           sizeof(expected_server_iv)) == 0,
+                   ret, "Server IV compare");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session,
+                                            keyMaterialOut.hClientMacSecret,
+                                            getValueTemplate,
+                                            ulGetValueTemplateCount);
+    }
+
+    if (ret == CKR_OK) {
+        CHECK_COND(getValueTemplate[0].ulValueLen == 32, ret, "Get CKA_VALUE");
+    }
+
+    if (ret == CKR_OK) {
+        CHECK_COND(XMEMCMP(derivedKeyValue, expected_client_mac_key, 32) == 0,
+                   ret, "Client mac compare");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session,
+                                            keyMaterialOut.hServerMacSecret,
+                                            getValueTemplate,
+                                            ulGetValueTemplateCount);
+    }
+
+    if (ret == CKR_OK) {
+        CHECK_COND(getValueTemplate[0].ulValueLen == 32, ret,
+                   "Get CKA_VALUE");
+    }
+
+    if (ret == CKR_OK) {
+        CHECK_COND(XMEMCMP(derivedKeyValue, expected_server_mac_key, 32) == 0,
+                   ret, "Client mac compare");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session,
+                                            keyMaterialOut.hClientKey,
+                                            getValueTemplate,
+                                            ulGetValueTemplateCount);
+    }
+
+    if (ret == CKR_OK) {
+        CHECK_COND(getValueTemplate[0].ulValueLen == 16, ret,
+                   "Get CKA_VALUE");
+    }
+
+    if (ret == CKR_OK) {
+        CHECK_COND(XMEMCMP(derivedKeyValue, expected_client_key, 16) == 0,
+                   ret, "Client key compare");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session,
+                                            keyMaterialOut.hServerKey,
+                                            getValueTemplate,
+                                            ulGetValueTemplateCount);
+    }
+
+    if (ret == CKR_OK) {
+        CHECK_COND(getValueTemplate[0].ulValueLen == 16, ret,
+                   "Get CKA_VALUE");
+    }
+
+    if (ret == CKR_OK) {
+        CHECK_COND(XMEMCMP(derivedKeyValue, expected_server_key, 16) == 0,
+                   ret, "Server key compare");
+    }
+
+    return ret;
+}
+
+static CK_RV test_derive_tls12_master_key_dh(void* args) {
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE hBaseKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hDerivedKey = CK_INVALID_HANDLE;
+
+    CK_BYTE preMasterSecret[] = {
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00,
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00
+    };
+    CK_ULONG ulPreMasterSecretLen = sizeof(preMasterSecret);
+
+    CK_BYTE clientRandom[] = {
+        0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+        0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+        0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+        0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA
+    };
+    CK_BYTE serverRandom[] = {
+        0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB,
+        0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB,
+        0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB,
+        0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB
+    };
+
+    /* Generated using Python scapy.layers.tls.crypto.prf */
+    CK_BYTE expectedMasterSecret[] = {
+        0xc8, 0x43, 0xf0, 0x67, 0xbf, 0xc2, 0x7b, 0xd6,
+        0xb6, 0x42, 0x26, 0x01, 0xe9, 0x1a, 0xc9, 0xb5,
+        0x32, 0xaa, 0x4b, 0xbb, 0x02, 0xd0, 0x1f, 0x20,
+        0xe9, 0x3b, 0x75, 0x60, 0x2d, 0x6d, 0x0d, 0xf1,
+        0x4f, 0x4b, 0xff, 0xff, 0x2a, 0x12, 0x9b, 0xf1,
+        0x6a, 0x4d, 0x16, 0x69, 0x07, 0x55, 0x38, 0x30
+    };
+    CK_ULONG ulExpectedMasterSecretLen = sizeof(expectedMasterSecret);
+
+    CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE keyType = CKK_GENERIC_SECRET;
+    CK_BBOOL trueValue = CK_TRUE;
+    CK_BBOOL falseValue = CK_FALSE;
+
+    CK_ATTRIBUTE baseKeyTemplate[] = {
+        {CKA_CLASS, &keyClass, sizeof(keyClass)},
+        {CKA_KEY_TYPE, &keyType, sizeof(keyType)},
+        {CKA_VALUE, preMasterSecret, ulPreMasterSecretLen},
+        {CKA_SENSITIVE, &falseValue, sizeof(falseValue)},
+        {CKA_EXTRACTABLE, &falseValue, sizeof(falseValue)},
+        {CKA_DERIVE, &trueValue, sizeof(trueValue)},
+        {CKA_TOKEN, &falseValue, sizeof(falseValue)}
+    };
+    CK_ULONG ulBaseKeyTemplateCount =
+        sizeof(baseKeyTemplate) / sizeof(CK_ATTRIBUTE);
+
+    CK_TLS12_MASTER_KEY_DERIVE_PARAMS params;
+    params.RandomInfo.pClientRandom = clientRandom;
+    params.RandomInfo.ulClientRandomLen = sizeof(clientRandom);
+    params.RandomInfo.pServerRandom = serverRandom;
+    params.RandomInfo.ulServerRandomLen = sizeof(serverRandom);
+    /* Version for TLS 1.2 is {3, 3} */
+    CK_VERSION version = {3, 3};
+    params.pVersion = &version;
+    params.prfHashMechanism = CKM_SHA256;
+    CK_MECHANISM mechanism = {
+        CKM_TLS12_MASTER_KEY_DERIVE_DH, &params, sizeof(params)
+    };
+
+    CK_ULONG derivedKeyLength = 48;
+    CK_KEY_TYPE derivedKeyType = CKK_GENERIC_SECRET;
+
+    CK_ATTRIBUTE derivedKeyTemplate[] = {
+        {CKA_CLASS, &keyClass, sizeof(keyClass)},
+        {CKA_KEY_TYPE, &derivedKeyType, sizeof(derivedKeyType)},
+        {CKA_SENSITIVE, &falseValue, sizeof(falseValue)},
+        {CKA_EXTRACTABLE, &trueValue, sizeof(trueValue)},
+        {CKA_DERIVE, &trueValue, sizeof(trueValue)},
+        {CKA_ENCRYPT, &falseValue, sizeof(falseValue)},
+        {CKA_DECRYPT, &falseValue, sizeof(falseValue)},
+        {CKA_TOKEN, &falseValue, sizeof(falseValue)},
+        {CKA_VALUE_LEN, &derivedKeyLength, sizeof(derivedKeyLength)}
+    };
+    CK_ULONG ulDerivedKeyTemplateCount =
+        sizeof(derivedKeyTemplate) / sizeof(CK_ATTRIBUTE);
+
+    CK_BYTE derivedKeyValue[48];
+    CK_ATTRIBUTE getValueTemplate[] = {
+        {CKA_VALUE, derivedKeyValue, sizeof(derivedKeyValue)}
+    };
+    CK_ULONG ulGetValueTemplateCount =
+        sizeof(getValueTemplate) / sizeof(CK_ATTRIBUTE);
+
+
+    ret = funcList->C_CreateObject(session, baseKeyTemplate,
+                                   ulBaseKeyTemplateCount, &hBaseKey);
+    CHECK_CKR(ret, "Base key");
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mechanism, hBaseKey,
+                                    derivedKeyTemplate,
+                                    ulDerivedKeyTemplateCount, &hDerivedKey);
+        CHECK_CKR(ret, "Derive key");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, hDerivedKey,
+                                            getValueTemplate,
+                                            ulGetValueTemplateCount);
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(getValueTemplate[0].ulValueLen == ulExpectedMasterSecretLen,
+                   ret, "Derived key length mismatch");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(getValueTemplate[0].ulValueLen != (CK_ULONG)-1, ret,
+                   "Get CKA_VALUE");
+    }
+
+    if (ret == CKR_OK) {
+        CHECK_COND(XMEMCMP(derivedKeyValue, expectedMasterSecret,
+                           ulExpectedMasterSecretLen) == 0, ret,
+                   "Secret compare");
+    }
+
+    return ret;
+}
+
+static CK_RV test_derive_tls12_master_key(void* args) {
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE hBaseKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hDerivedKey = CK_INVALID_HANDLE;
+
+    CK_BYTE preMasterSecret[] = {
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00,
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00
+    };
+    CK_ULONG ulPreMasterSecretLen = sizeof(preMasterSecret);
+
+    CK_BYTE clientRandom[] = {
+        0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+        0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+        0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+        0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA
+    };
+    CK_BYTE serverRandom[] = {
+        0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB,
+        0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB,
+        0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB,
+        0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB
+    };
+
+    /* Generated using Python scapy.layers.tls.crypto.prf */
+    CK_BYTE expectedMasterSecret[] = {
+        0xc8, 0x43, 0xf0, 0x67, 0xbf, 0xc2, 0x7b, 0xd6,
+        0xb6, 0x42, 0x26, 0x01, 0xe9, 0x1a, 0xc9, 0xb5,
+        0x32, 0xaa, 0x4b, 0xbb, 0x02, 0xd0, 0x1f, 0x20,
+        0xe9, 0x3b, 0x75, 0x60, 0x2d, 0x6d, 0x0d, 0xf1,
+        0x4f, 0x4b, 0xff, 0xff, 0x2a, 0x12, 0x9b, 0xf1,
+        0x6a, 0x4d, 0x16, 0x69, 0x07, 0x55, 0x38, 0x30
+    };
+    CK_ULONG ulExpectedMasterSecretLen = sizeof(expectedMasterSecret);
+
+    CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE keyType = CKK_GENERIC_SECRET;
+    CK_BBOOL trueValue = CK_TRUE;
+    CK_BBOOL falseValue = CK_FALSE;
+
+    CK_ATTRIBUTE baseKeyTemplate[] = {
+        {CKA_CLASS, &keyClass, sizeof(keyClass)},
+        {CKA_KEY_TYPE, &keyType, sizeof(keyType)},
+        {CKA_VALUE, preMasterSecret, ulPreMasterSecretLen},
+        {CKA_SENSITIVE, &falseValue, sizeof(falseValue)},
+        {CKA_EXTRACTABLE, &falseValue, sizeof(falseValue)},
+        {CKA_DERIVE, &trueValue, sizeof(trueValue)},
+        {CKA_TOKEN, &falseValue, sizeof(falseValue)}
+    };
+    CK_ULONG ulBaseKeyTemplateCount =
+        sizeof(baseKeyTemplate) / sizeof(CK_ATTRIBUTE);
+
+    CK_TLS12_MASTER_KEY_DERIVE_PARAMS params;
+    params.RandomInfo.pClientRandom = clientRandom;
+    params.RandomInfo.ulClientRandomLen = sizeof(clientRandom);
+    params.RandomInfo.pServerRandom = serverRandom;
+    params.RandomInfo.ulServerRandomLen = sizeof(serverRandom);
+    /* Version for TLS 1.2 is {3, 3} */
+    CK_VERSION version = {3, 3};
+    params.pVersion = &version;
+    params.prfHashMechanism = CKM_SHA256;
+    CK_MECHANISM mechanism = {
+        CKM_TLS12_MASTER_KEY_DERIVE, &params, sizeof(params)
+    };
+
+    CK_ULONG derivedKeyLength = 48;
+    CK_KEY_TYPE derivedKeyType = CKK_GENERIC_SECRET;
+
+    CK_ATTRIBUTE derivedKeyTemplate[] = {
+        {CKA_CLASS, &keyClass, sizeof(keyClass)},
+        {CKA_KEY_TYPE, &derivedKeyType, sizeof(derivedKeyType)},
+        {CKA_SENSITIVE, &falseValue, sizeof(falseValue)},
+        {CKA_EXTRACTABLE, &trueValue, sizeof(trueValue)},
+        {CKA_DERIVE, &trueValue, sizeof(trueValue)},
+        {CKA_ENCRYPT, &falseValue, sizeof(falseValue)},
+        {CKA_DECRYPT, &falseValue, sizeof(falseValue)},
+        {CKA_TOKEN, &falseValue, sizeof(falseValue)},
+        {CKA_VALUE_LEN, &derivedKeyLength, sizeof(derivedKeyLength)}
+    };
+    CK_ULONG ulDerivedKeyTemplateCount =
+        sizeof(derivedKeyTemplate) / sizeof(CK_ATTRIBUTE);
+
+    CK_BYTE derivedKeyValue[48];
+    CK_ATTRIBUTE getValueTemplate[] = {
+        {CKA_VALUE, derivedKeyValue, sizeof(derivedKeyValue)}
+    };
+    CK_ULONG ulGetValueTemplateCount =
+        sizeof(getValueTemplate) / sizeof(CK_ATTRIBUTE);
+
+
+    ret = funcList->C_CreateObject(session, baseKeyTemplate,
+                                   ulBaseKeyTemplateCount, &hBaseKey);
+    CHECK_CKR(ret, "Base key");
+
+    if (ret == CKR_OK) {
+        version.major = 2;
+        ret = funcList->C_DeriveKey(session, &mechanism, hBaseKey,
+                                    derivedKeyTemplate,
+                                    ulDerivedKeyTemplateCount, &hDerivedKey);
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_INVALID, "Invalid version");
+        version.major = 3;
+    }
+
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mechanism, hBaseKey,
+                                    derivedKeyTemplate,
+                                    ulDerivedKeyTemplateCount, &hDerivedKey);
+        CHECK_CKR(ret, "Derive key");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, hDerivedKey,
+                                            getValueTemplate,
+                                            ulGetValueTemplateCount);
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(getValueTemplate[0].ulValueLen == ulExpectedMasterSecretLen,
+                   ret, "Derived key length mismatch");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(getValueTemplate[0].ulValueLen != (CK_ULONG)-1, ret,
+                   "Get CKA_VALUE");
+    }
+
+    if (ret == CKR_OK) {
+        CHECK_COND(XMEMCMP(derivedKeyValue, expectedMasterSecret,
+                           ulExpectedMasterSecretLen) == 0, ret,
+                   "Secret compare");
+    }
+
+    return ret;
+}
+#ifdef WOLFPKCS11_NSS
+static CK_RV test_nss_derive_tls12_master_key(void* args) {
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE hBaseKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hDerivedKey = CK_INVALID_HANDLE;
+
+    CK_BYTE preMasterSecret[] = {
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00,
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00
+    };
+    CK_ULONG ulPreMasterSecretLen = sizeof(preMasterSecret);
+
+    CK_BYTE sessionHash[] = {
+        0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+        0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+        0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+        0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA
+    };
+
+    /* Generated using Python scapy.layers.tls.crypto.prf */
+    CK_BYTE expectedMasterSecret[] = {
+        0xc4, 0x7f, 0xec, 0x16, 0xb4, 0x77, 0xb4, 0xc0,
+        0x15, 0x1e, 0x21, 0xb4, 0x5d, 0x18, 0x43, 0xdd,
+        0x65, 0xd8, 0x54, 0xaa, 0x32, 0x5e, 0xe6, 0x95,
+        0x11, 0xaa, 0x14, 0x53, 0x76, 0xb8, 0x21, 0xf5,
+        0x9c, 0x17, 0x63, 0x4e, 0x24, 0xce, 0x14, 0xf7,
+        0xe4, 0x3b, 0x71, 0x9f, 0xc5, 0xa2, 0x36, 0xdb
+    };
+    CK_ULONG ulExpectedMasterSecretLen = sizeof(expectedMasterSecret);
+
+    CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE keyType = CKK_GENERIC_SECRET;
+    CK_BBOOL trueValue = CK_TRUE;
+    CK_BBOOL falseValue = CK_FALSE;
+
+    CK_ATTRIBUTE baseKeyTemplate[] = {
+        {CKA_CLASS, &keyClass, sizeof(keyClass)},
+        {CKA_KEY_TYPE, &keyType, sizeof(keyType)},
+        {CKA_VALUE, preMasterSecret, ulPreMasterSecretLen},
+        {CKA_SENSITIVE, &falseValue, sizeof(falseValue)},
+        {CKA_EXTRACTABLE, &falseValue, sizeof(falseValue)},
+        {CKA_DERIVE, &trueValue, sizeof(trueValue)},
+        {CKA_TOKEN, &falseValue, sizeof(falseValue)}
+    };
+    CK_ULONG ulBaseKeyTemplateCount =
+        sizeof(baseKeyTemplate) / sizeof(CK_ATTRIBUTE);
+
+    CK_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_PARAMS params;
+    params.pSessionHash = sessionHash;
+    params.ulSessionHashLen = sizeof(sessionHash);
+    /* Version for TLS 1.2 is {3, 3} */
+    CK_VERSION version = {3, 3};
+    params.pVersion = &version;
+    params.prfHashMechanism = CKM_SHA256;
+    CK_MECHANISM mechanism = {
+        CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE, &params, sizeof(params)
+    };
+
+    CK_ULONG derivedKeyLength = 48;
+    CK_KEY_TYPE derivedKeyType = CKK_GENERIC_SECRET;
+
+    CK_ATTRIBUTE derivedKeyTemplate[] = {
+        {CKA_CLASS, &keyClass, sizeof(keyClass)},
+        {CKA_KEY_TYPE, &derivedKeyType, sizeof(derivedKeyType)},
+        {CKA_SENSITIVE, &falseValue, sizeof(falseValue)},
+        {CKA_EXTRACTABLE, &trueValue, sizeof(trueValue)},
+        {CKA_DERIVE, &trueValue, sizeof(trueValue)},
+        {CKA_ENCRYPT, &falseValue, sizeof(falseValue)},
+        {CKA_DECRYPT, &falseValue, sizeof(falseValue)},
+        {CKA_TOKEN, &falseValue, sizeof(falseValue)},
+        {CKA_VALUE_LEN, &derivedKeyLength, sizeof(derivedKeyLength)}
+    };
+    CK_ULONG ulDerivedKeyTemplateCount =
+        sizeof(derivedKeyTemplate) / sizeof(CK_ATTRIBUTE);
+
+    CK_BYTE derivedKeyValue[48];
+    CK_ATTRIBUTE getValueTemplate[] = {
+        {CKA_VALUE, derivedKeyValue, sizeof(derivedKeyValue)}
+    };
+    CK_ULONG ulGetValueTemplateCount =
+        sizeof(getValueTemplate) / sizeof(CK_ATTRIBUTE);
+
+
+    ret = funcList->C_CreateObject(session, baseKeyTemplate,
+                                   ulBaseKeyTemplateCount, &hBaseKey);
+    CHECK_CKR(ret, "Base key");
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mechanism, hBaseKey,
+                                    derivedKeyTemplate,
+                                    ulDerivedKeyTemplateCount, &hDerivedKey);
+        CHECK_CKR(ret, "Derive key");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, hDerivedKey,
+                                            getValueTemplate,
+                                            ulGetValueTemplateCount);
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(getValueTemplate[0].ulValueLen == ulExpectedMasterSecretLen,
+                   ret, "Derived key length mismatch");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(getValueTemplate[0].ulValueLen != (CK_ULONG)-1, ret,
+                   "Get CKA_VALUE");
+    }
+
+    if (ret == CKR_OK) {
+        CHECK_COND(XMEMCMP(derivedKeyValue, expectedMasterSecret,
+                           ulExpectedMasterSecretLen) == 0, ret,
+                   "Secret compare");
+    }
+
+    return ret;
+}
+#endif
+#endif
 
 static CK_RV pkcs11_lib_init(void)
 {
@@ -11358,7 +11961,9 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_aes_wrap_unwrap_pad_key),
 #endif
     PKCS11TEST_FUNC_SESS_DECL(test_wrap_unwrap_key),
+#ifndef NO_DH
     PKCS11TEST_FUNC_SESS_DECL(test_derive_key),
+#endif
 #ifndef NO_RSA
     PKCS11TEST_FUNC_SESS_DECL(test_rsa_fixed_keys_raw),
     PKCS11TEST_FUNC_SESS_DECL(test_rsa_fixed_keys_pkcs15_enc),
@@ -11507,6 +12112,14 @@ static TEST_FUNC testFunc[] = {
 #endif
     PKCS11TEST_FUNC_SESS_DECL(test_random),
     PKCS11TEST_FUNC_SESS_DECL(test_x509),
+#ifdef WOLFSSL_HAVE_PRF
+    PKCS11TEST_FUNC_SESS_DECL(test_derive_tls12_master_key_dh),
+    PKCS11TEST_FUNC_SESS_DECL(test_derive_tls12_key_and_mac),
+    PKCS11TEST_FUNC_SESS_DECL(test_derive_tls12_master_key),
+#ifdef WOLFPKCS11_NSS
+    PKCS11TEST_FUNC_SESS_DECL(test_nss_derive_tls12_master_key),
+#endif
+#endif
 };
 static int testFuncCnt = sizeof(testFunc) / sizeof(*testFunc);
 
