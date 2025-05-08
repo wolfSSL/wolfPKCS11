@@ -173,6 +173,8 @@ extern "C" {
 #define WP11_INIT_AES_CMAC_VERIFY      0x0051
 #define WP11_INIT_AES_KEYWRAP_ENC      0x0060
 #define WP11_INIT_AES_KEYWRAP_DEC      0x0061
+#define WP11_INIT_TLS_MAC_SIGN         0x0070
+#define WP11_INIT_TLS_MAC_VERIFY       0x0071
 /* Some operations can have an additional hashing step before the sign/verify */
 #define WP11_INIT_DIGEST_SHIFT         12
 #define WP11_INIT_DIGEST_MASK          (0xF << WP11_INIT_DIGEST_SHIFT)
@@ -276,6 +278,9 @@ int WP11_Session_Get(CK_SESSION_HANDLE sessionHandle, WP11_Session** session);
 int WP11_Session_GetState(WP11_Session* session);
 int WP11_Session_IsRW(WP11_Session* session);
 int WP11_Session_IsOpInitialized(WP11_Session* session, int init);
+int WP11_Session_UpdateData(WP11_Session *session, byte *data, word32 dataLen);
+void WP11_Session_GetData(WP11_Session *session, byte** data, word32* dataLen);
+void WP11_Session_FreeData(WP11_Session *session);
 int WP11_Session_IsHashOpInitialized(WP11_Session* session, int mechanism);
 enum wc_HashType WP11_Session_ToHashType(WP11_Session* session);
 void WP11_Session_SetOpInitialized(WP11_Session* session, int init);
@@ -554,6 +559,14 @@ int WP11_Hmac_SignFinal(unsigned char* sig, word32* sigLen,
                         WP11_Session* session);
 int WP11_Hmac_VerifyFinal(unsigned char* sig, word32 sigLen, int* stat,
                           WP11_Session* session);
+
+int WP11_TLS_MAC_init(unsigned long hashType, unsigned long macLen, byte server,
+                      CK_OBJECT_HANDLE hKey, WP11_Session *session);
+word32 WP11_TLS_MAC_get_len(WP11_Session *session);
+int WP11_TLS_MAC_sign(byte* data, word32 dataLen, byte* sig, word32* sigLen,
+                      WP11_Session *session);
+int WP11_TLS_MAC_verify(byte* data, word32 dataLen, byte* sig, word32 sigLen,
+        int* stat, WP11_Session *session);
 
 int WP11_Digest_Init(CK_MECHANISM_TYPE mechanism, WP11_Session* session);
 int WP11_Digest_Update(unsigned char* data, word32 dataLen,

@@ -3304,6 +3304,41 @@ CK_RV C_DigestFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pDigest,
     return ret;
 }
 
+#ifdef WOLFSSL_HAVE_PRF
+static int CKM_TLS_MAC_init(CK_KEY_TYPE type, CK_MECHANISM_PTR pMechanism,
+        CK_OBJECT_HANDLE hKey, WP11_Session* session)
+{
+    CK_TLS_MAC_PARAMS* params;
+    byte server = 0;
+    int ret;
+
+    if (type != CKK_GENERIC_SECRET)
+        return CKR_KEY_TYPE_INCONSISTENT;
+    if (pMechanism->pParameter == NULL ||
+                        pMechanism->ulParameterLen != sizeof(*params)) {
+        return CKR_MECHANISM_PARAM_INVALID;
+    }
+    params = (CK_TLS_MAC_PARAMS*)pMechanism->pParameter;
+    if (params->prfHashMechanism == CKM_TLS_PRF) {
+        if (params->ulMacLength != 12)
+            return CKR_MECHANISM_PARAM_INVALID;
+    }
+    else {
+        if (params->ulMacLength < 12)
+            return CKR_MECHANISM_PARAM_INVALID;
+    }
+    if (params->ulServerOrClient == 1)
+        server = 1;
+    else if (params->ulServerOrClient != 2)
+        return CKR_MECHANISM_PARAM_INVALID;
+    ret = WP11_TLS_MAC_init(params->prfHashMechanism,
+            params->ulMacLength, server, hKey, session);
+    if (ret != 0)
+        return CKR_FUNCTION_FAILED;
+    return CKR_OK;
+}
+#endif
+
 /**
  * Initialize signing operation.
  *
@@ -3580,6 +3615,14 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
             init = WP11_INIT_AES_CMAC_SIGN;
             break;
 #endif
+#endif
+#ifdef WOLFSSL_HAVE_PRF
+        case CKM_TLS_MAC:
+            ret = CKM_TLS_MAC_init(type, pMechanism, hKey, session);
+            if (ret != CKR_OK)
+                return ret;
+            init = WP11_INIT_TLS_MAC_SIGN;
+            break;
 #endif
         default:
             (void)type;
@@ -3890,6 +3933,24 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             break;
 #endif
 #endif
+#ifdef WOLFSSL_HAVE_PRF
+        case CKM_TLS_MAC:
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_TLS_MAC_SIGN))
+                return CKR_OPERATION_NOT_INITIALIZED;
+
+            if (pSignature == NULL) {
+                *pulSignatureLen = (CK_ULONG)WP11_TLS_MAC_get_len(session);
+                return CKR_OK;
+            }
+            if (WP11_TLS_MAC_get_len(session) > (word32)*pulSignatureLen)
+                return CKR_BUFFER_TOO_SMALL;
+
+            sigLen = *pulSignatureLen;
+            ret = WP11_TLS_MAC_sign(pData, (word32)ulDataLen, pSignature,
+                    &sigLen, session);
+            *pulSignatureLen = sigLen;
+            break;
+#endif
         default:
             (void)sigLen;
             (void)ulDataLen;
@@ -3990,6 +4051,14 @@ CK_RV C_SignUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
             ret = WP11_Aes_Cmac_Sign_Update(pPart, (word32)ulPartLen, session);
             break;
 #endif
+#endif
+#ifdef WOLFSSL_HAVE_PRF
+        case CKM_TLS_MAC:
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_TLS_MAC_SIGN))
+                return CKR_OPERATION_NOT_INITIALIZED;
+
+            ret = WP11_Session_UpdateData(session, pPart, ulPartLen);
+            break;
 #endif
         default:
             (void)ulPartLen;
@@ -4110,6 +4179,23 @@ CK_RV C_SignFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature,
             *pulSignatureLen = sigLen;
             break;
 #endif
+#endif
+#ifdef WOLFSSL_HAVE_PRF
+        case CKM_TLS_MAC: {
+            byte* data = NULL;
+            word32 dataLen = 0;
+
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_TLS_MAC_SIGN))
+                return CKR_OPERATION_NOT_INITIALIZED;
+
+            WP11_Session_GetData(session, &data, &dataLen);
+            ret = C_Sign(hSession, data, dataLen, pSignature, pulSignatureLen);
+            WP11_Session_FreeData(session);
+            if (ret != CKR_OK)
+                return ret;
+
+            break;
+        }
 #endif
         default:
             (void)sigLen;
@@ -4454,6 +4540,14 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
             break;
 #endif
 #endif
+#ifdef WOLFSSL_HAVE_PRF
+        case CKM_TLS_MAC:
+            ret = CKM_TLS_MAC_init(type, pMechanism, hKey, session);
+            if (ret != CKR_OK)
+                return ret;
+            init = WP11_INIT_TLS_MAC_VERIFY;
+            break;
+#endif
         default:
             (void)type;
             return CKR_MECHANISM_INVALID;
@@ -4488,14 +4582,14 @@ CK_RV C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                CK_ULONG ulDataLen, CK_BYTE_PTR pSignature,
                CK_ULONG ulSignatureLen)
 {
-    int ret;
-    int stat;
+    int ret = 0;
+    int stat = 0;
 #ifndef NO_RSA
-    int oid;
+    int oid = 0;
 #endif
-    WP11_Session* session;
+    WP11_Session* session = NULL;
     WP11_Object* obj = NULL;
-    CK_MECHANISM_TYPE mechanism;
+    CK_MECHANISM_TYPE mechanism = 0;
 
     if (!WP11_Library_IsInitialized())
         return CKR_CRYPTOKI_NOT_INITIALIZED;
@@ -4710,6 +4804,16 @@ CK_RV C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             break;
 #endif
 #endif
+#ifdef WOLFSSL_HAVE_PRF
+        case CKM_TLS_MAC: {
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_TLS_MAC_VERIFY))
+                return CKR_OPERATION_NOT_INITIALIZED;
+
+            ret = WP11_TLS_MAC_verify(pData, (word32)ulDataLen, pSignature,
+                    ulSignatureLen, &stat, session);
+            break;
+        }
+#endif
         default:
             (void)ulDataLen;
             (void)ulSignatureLen;
@@ -4717,7 +4821,7 @@ CK_RV C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
     }
     if (ret < 0)
         return CKR_FUNCTION_FAILED;
-    if (stat == 0)
+    if (!stat)
         return CKR_SIGNATURE_INVALID;
 
     return CKR_OK;
@@ -4841,11 +4945,11 @@ CK_RV C_VerifyUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
 CK_RV C_VerifyFinal(CK_SESSION_HANDLE hSession,
                     CK_BYTE_PTR pSignature, CK_ULONG ulSignatureLen)
 {
-    int ret;
-    int stat;
-    WP11_Session* session;
+    int ret = 0;
+    int stat = 0;
+    WP11_Session* session = NULL;
     WP11_Object* obj = NULL;
-    CK_MECHANISM_TYPE mechanism;
+    CK_MECHANISM_TYPE mechanism = 0;
 
     if (!WP11_Library_IsInitialized())
         return CKR_CRYPTOKI_NOT_INITIALIZED;
@@ -4921,7 +5025,7 @@ CK_RV C_VerifyFinal(CK_SESSION_HANDLE hSession,
     }
     if (ret < 0)
         return CKR_FUNCTION_FAILED;
-    if (stat == 0)
+    if (!stat)
         return CKR_SIGNATURE_INVALID;
 
     return CKR_OK;
