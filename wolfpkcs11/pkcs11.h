@@ -245,9 +245,11 @@ extern "C" {
 #define CKM_SHA3_512                          0x000002D0UL
 #define CKM_SHA3_512_HMAC                     0x000002D1UL
 #define CKM_GENERIC_SECRET_KEY_GEN            0x00000350UL
+#define CKM_TLS_PRF                           0x00000378UL
 #define CKM_TLS12_MASTER_KEY_DERIVE           0x000003E0UL
 #define CKM_TLS12_KEY_AND_MAC_DERIVE          0x000003E1UL
 #define CKM_TLS12_MASTER_KEY_DERIVE_DH        0x000003E2UL
+#define CKM_TLS_MAC                           0x000003E4UL
 #define CKM_EC_KEY_PAIR_GEN                   0x00001040UL
 #define CKM_ECDSA                             0x00001041UL
 #define CKM_ECDSA_SHA1                        0x00001042UL
@@ -673,6 +675,13 @@ typedef struct CK_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_PARAMS {
     CK_VERSION_PTR pVersion;
 } CK_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_PARAMS;
 #endif
+
+typedef struct CK_TLS_MAC_PARAMS {
+    CK_MECHANISM_TYPE prfHashMechanism;
+    CK_ULONG ulMacLength;
+    CK_ULONG ulServerOrClient;
+} CK_TLS_MAC_PARAMS;
+typedef CK_TLS_MAC_PARAMS* CK_TLS_MAC_PARAMS_PTR;
 
 /* Function list types. */
 typedef struct CK_FUNCTION_LIST CK_FUNCTION_LIST;
