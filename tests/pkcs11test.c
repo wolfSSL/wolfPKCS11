@@ -9611,6 +9611,170 @@ static CK_RV test_aes_cmac_general(void* args)
 
 #endif
 
+
+static CK_RV test_tls_mac(CK_SESSION_HANDLE session, int hashType,
+        unsigned char* exp, int expLen, CK_OBJECT_HANDLE key)
+{
+    CK_RV  ret = CKR_OK;
+    byte   data[32], out[64];
+    CK_ULONG dataSz, outSz;
+    CK_MECHANISM mech;
+    CK_TLS_MAC_PARAMS params;
+
+    memset(data, 9, sizeof(data));
+    dataSz = sizeof(data);
+    outSz = sizeof(out);
+
+    mech.mechanism      = CKM_TLS_MAC;
+    mech.pParameter     = &params;
+    mech.ulParameterLen = sizeof(params);
+
+    params.prfHashMechanism = hashType;
+    params.ulMacLength = expLen;
+    params.ulServerOrClient = 1;
+
+    ret = funcList->C_SignInit(session, &mech, key);
+    CHECK_CKR(ret, "TLS-MAC Sign Init");
+    if (ret == CKR_OK) {
+        outSz = 0;
+        ret = funcList->C_Sign(session, data, dataSz, NULL, &outSz);
+        CHECK_CKR(ret, "TLS-MAC Sign no out");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(outSz == (CK_ULONG)expLen, ret, "TLS-MAC Sign out size");
+    }
+    if (ret == CKR_OK) {
+        outSz = 0;
+        ret = funcList->C_Sign(session, data, dataSz, out, &outSz);
+        CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
+                                                "TLS-MAC Sign out size too small");
+        outSz = sizeof(out);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Sign(session, data, dataSz, out, &outSz);
+        CHECK_CKR(ret, "TLS-MAC Sign");
+    }
+    if (ret == CKR_OK && exp != NULL) {
+        if (expLen != (int)outSz) {
+            ret = -1;
+            CHECK_CKR(ret, "TLS-MAC Sign Result expected length");
+        }
+        if (ret == CKR_OK && XMEMCMP(out, exp, expLen) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "TLS-MAC Sign Result not matching expected");
+        }
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, key);
+        CHECK_CKR(ret, "TLS-MAC Verify Init");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Verify(session, data, dataSz, out, outSz);
+        CHECK_CKR(ret, "TLS-MAC Verify");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, key);
+        CHECK_CKR(ret, "TLS-MAC Verify Init");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Verify(session, data, dataSz - 1, out, outSz);
+        CHECK_CKR_FAIL(ret, CKR_SIGNATURE_INVALID, "TLS-MAC Verify bad hash");
+    }
+
+    return ret;
+}
+
+
+static CK_RV test_tls_mac_tls_prf(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE key;
+    static unsigned char keyData[] = {
+        0x74, 0x9A, 0xBD, 0xAA, 0x2A, 0x52, 0x07, 0x47,
+        0xD6, 0xA6, 0x36, 0xB2, 0x07, 0x32, 0x8E, 0xD0,
+    };
+    static unsigned char exp[] = {
+        0x17, 0x74, 0x60, 0x8b, 0x2c, 0x7d, 0x75, 0x60,
+        0xe7, 0x2d, 0xef, 0x6c
+    };
+
+    ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE, &key);
+    if (ret == CKR_OK)
+        ret = test_tls_mac(session, CKM_TLS_PRF, exp, sizeof(exp), key);
+
+    return ret;
+}
+
+#ifndef NO_SHA256
+static CK_RV test_tls_mac_sha256(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE key;
+    static unsigned char keyData[] = {
+        0x74, 0x9A, 0xBD, 0xAA, 0x2A, 0x52, 0x07, 0x47,
+        0xD6, 0xA6, 0x36, 0xB2, 0x07, 0x32, 0x8E, 0xD0,
+    };
+    static unsigned char exp[] = {
+        0xf8, 0x51, 0xa1, 0xa4, 0x69, 0xbc, 0x26, 0x42,
+        0x99, 0xbf, 0xf4, 0x99
+    };
+
+    ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE, &key);
+    if (ret == CKR_OK)
+        ret = test_tls_mac(session, CKM_SHA256, exp, sizeof(exp), key);
+
+    return ret;
+}
+#endif
+
+#ifdef WOLFSSL_SHA384
+static CK_RV test_tls_mac_sha384(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE key;
+    static unsigned char keyData[] = {
+        0x74, 0x9A, 0xBD, 0xAA, 0x2A, 0x52, 0x07, 0x47,
+        0xD6, 0xA6, 0x36, 0xB2, 0x07, 0x32, 0x8E, 0xD0,
+    };
+    static unsigned char exp[] = {
+        0x45, 0x42, 0x8e, 0x1d, 0xf7, 0x96, 0x62, 0x37,
+        0x16, 0xb3, 0xb2, 0x52
+    };
+
+    ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE, &key);
+    if (ret == CKR_OK)
+        ret = test_tls_mac(session, CKM_SHA384, exp, sizeof(exp), key);
+
+    return ret;
+}
+#endif
+
+#ifdef WOLFSSL_SHA512
+static CK_RV test_tls_mac_sha512(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE key;
+    static unsigned char keyData[] = {
+        0x74, 0x9A, 0xBD, 0xAA, 0x2A, 0x52, 0x07, 0x47,
+        0xD6, 0xA6, 0x36, 0xB2, 0x07, 0x32, 0x8E, 0xD0,
+    };
+    static unsigned char exp[] = {
+        0xab, 0x3f, 0xeb, 0xe5, 0x01, 0xad, 0xf1, 0x25,
+        0xce, 0x41, 0x95, 0x83
+    };
+
+    ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE, &key);
+    if (ret == CKR_OK)
+        ret = test_tls_mac(session, CKM_SHA512, exp, sizeof(exp), key);
+
+    return ret;
+}
+#endif
+
 #ifndef NO_HMAC
 static CK_RV test_hmac(CK_SESSION_HANDLE session, int mechanism,
                        unsigned char* exp, int expLen, CK_OBJECT_HANDLE key)
@@ -12456,6 +12620,16 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_expand_with_extract_null_salt),
     PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_extract_with_expand_salt_key),
     PKCS11TEST_FUNC_SESS_DECL(test_hkdf_gen_key),
+#endif
+    PKCS11TEST_FUNC_SESS_DECL(test_tls_mac_tls_prf),
+#ifndef NO_SHA256
+    PKCS11TEST_FUNC_SESS_DECL(test_tls_mac_sha256),
+#endif
+#ifdef WOLFSSL_SHA384
+    PKCS11TEST_FUNC_SESS_DECL(test_tls_mac_sha384),
+#endif
+#ifdef WOLFSSL_SHA512
+    PKCS11TEST_FUNC_SESS_DECL(test_tls_mac_sha512),
 #endif
     PKCS11TEST_FUNC_SESS_DECL(test_random),
     PKCS11TEST_FUNC_SESS_DECL(test_x509),
