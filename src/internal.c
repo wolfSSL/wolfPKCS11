@@ -4004,14 +4004,21 @@ int WP11_Library_Init(void)
     if (libraryInitCount == 0) {
         ret = WP11_Lock_Init(&globalLock);
         if (ret == 0) {
-#ifdef WOLFSSL_MAXQ10XX_CRYPTO
+
             ret = wolfCrypt_Init();
+#ifdef WC_RNG_SEED_CB
             if (ret == 0) {
-                ret = wc_InitRng_ex(&globalRandom, NULL, MAXQ_DEVICE_ID);
+                ret = wc_SetSeed_Cb(wc_GenerateSeed);
             }
-#else
-            ret = wc_InitRng(&globalRandom);
 #endif
+            if (ret == 0) {
+#ifdef WOLFSSL_MAXQ10XX_CRYPTO
+                ret = wc_InitRng_ex(&globalRandom, NULL, MAXQ_DEVICE_ID);
+#else
+                ret = wc_InitRng(&globalRandom);
+#endif
+            }
+
         }
         for (i = 0; (ret == 0) && (i < slotCnt); i++) {
             ret = wp11_Slot_Init(&slotList[i], i + 1);
@@ -6020,10 +6027,10 @@ int WP11_Object_SetRsaKey(WP11_Object* object, unsigned char** data,
 
 #ifdef HAVE_ECC
 
-#if defined(HAVE_FIPS) || \
+#if defined(HAVE_FIPS) && \
     (defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION <= 2))
 #define USE_LOCAL_CURVE_OID_LOOKUP
-/* this function is not in the FIPS 140-2 version */
+/* This function is not in the FIPS 140-2 version */
 /* ecc_sets is exposed in ecc.h */
 static int ecc_get_curve_id_from_oid(const byte* oid, word32 len)
 {
@@ -6038,7 +6045,8 @@ static int ecc_get_curve_id_from_oid(const byte* oid, word32 len)
             ecc_sets[curve_idx].oid &&
         #endif
             ecc_sets[curve_idx].oidSz == len &&
-                              XMEMCMP(ecc_sets[curve_idx].oid, oid, len) == 0) {
+                XMEMCMP(ecc_sets[curve_idx].oid, oid, len) == 0
+        ) {
             break;
         }
     }
@@ -6159,7 +6167,11 @@ int WP11_Object_SetEcKey(WP11_Object* object, unsigned char** data,
             ret = EcSetParams(key, data[0], (int)len[0]);
         if (ret == 0 && data[1] != NULL) {
             key->type = ECC_PRIVATEKEY_ONLY;
+#if defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION <= 5)
+            ret = SetMPI(&key->k, data[1], (int)len[1]);
+#else
             ret = SetMPI(key->k, data[1], (int)len[1]);
+#endif
         }
         if (ret == 0 && data[2] != NULL) {
             if (key->type == ECC_PRIVATEKEY_ONLY)
@@ -6691,7 +6703,9 @@ static int GetEcPoint(ecc_key* key, byte* data, CK_ULONG* len)
         if (longLen)
             data[i++] = ASN_LONG_LENGTH | 1;
         data[i++] = dataLen;
+        PRIVATE_KEY_UNLOCK();
         ret = wc_ecc_export_x963(key, data + i, &dataLen);
+        PRIVATE_KEY_LOCK();
     }
 
     return ret;
@@ -6730,7 +6744,11 @@ static int EcObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
             if (noPriv)
                 *len = CK_UNAVAILABLE_INFORMATION;
             else
+#if defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION <= 5)
+                ret = GetMPIData(&object->data.ecKey.k, data, len);
+#else
                 ret = GetMPIData(object->data.ecKey.k, data, len);
+#endif
             break;
         case CKA_EC_POINT:
             if (noPub)
@@ -8497,7 +8515,9 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
     if (ret == 0) {
         if (priv->onToken)
             WP11_Lock_LockRO(priv->lock);
+        PRIVATE_KEY_UNLOCK();
         ret = wc_ecc_shared_secret(&priv->data.ecKey, &pubKey, key, &keyLen);
+        PRIVATE_KEY_LOCK();
         if (priv->onToken)
             WP11_Lock_UnlockRO(priv->lock);
 #if defined(ECC_TIMING_RESISTANT) && (!defined(HAVE_FIPS) || \
@@ -8589,6 +8609,7 @@ int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
         }
     }
 
+    PRIVATE_KEY_UNLOCK();
     if (params->bExtract && !params->bExpand) {
         ret = wc_HKDF_Extract(hashType, salt, saltLen, priv->data.symmKey.data,
             priv->data.symmKey.len, key);
@@ -8606,7 +8627,7 @@ int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
         ret = wc_HKDF(hashType, priv->data.symmKey.data,priv->data.symmKey.len,
             salt, saltLen, params->pInfo, params->ulInfoLen, key, *keyLen);
     }
-
+    PRIVATE_KEY_LOCK();
 
     return ret;
 }
@@ -8638,9 +8659,11 @@ int WP11_Dh_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
         if (ret == 0) {
             priv->data.dhKey.len = (word32)sizeof(priv->data.dhKey.key);
             pub->data.dhKey.len = (word32)sizeof(pub->data.dhKey.key);
+            PRIVATE_KEY_UNLOCK();
             ret = wc_DhGenerateKeyPair(&pub->data.dhKey.params, &rng,
                                     priv->data.dhKey.key, &priv->data.dhKey.len,
                                     pub->data.dhKey.key, &pub->data.dhKey.len);
+            PRIVATE_KEY_LOCK();
             Rng_Free(&rng);
         }
     }
@@ -8672,8 +8695,10 @@ int WP11_Dh_Derive(unsigned char* pub, word32 pubLen, unsigned char* key,
 
     if (priv->onToken)
         WP11_Lock_LockRO(priv->lock);
+    PRIVATE_KEY_UNLOCK();
     ret = wc_DhAgree(&priv->data.dhKey.params, key, keyLen,
                        priv->data.dhKey.key, priv->data.dhKey.len, pub, pubLen);
+    PRIVATE_KEY_LOCK();
     if (priv->onToken)
         WP11_Lock_UnlockRO(priv->lock);
 
@@ -8777,9 +8802,11 @@ int WP11_Tls12_Master_Key_Derive(CK_SSL3_RANDOM_DATA* random,
                 random->ulClientRandomLen);
     }
 
+    PRIVATE_KEY_UNLOCK();
     ret = wc_PRF_TLS(enc, encLen, key->data.symmKey.data, key->data.symmKey.len,
                      (const byte*)label, ulLabelLen, pSeed, (word32)ulSeedLen,
                      1, macType, NULL, 0);
+    PRIVATE_KEY_LOCK();
 
     if (pSeed) {
         XFREE(pSeed, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -8805,9 +8832,11 @@ int WP11_Nss_Tls12_Master_Key_Derive(CK_BYTE_PTR pSessionHash,
         return BAD_FUNC_ARG;
     }
 
+    PRIVATE_KEY_UNLOCK();
     ret = wc_PRF_TLS(enc, encLen, key->data.symmKey.data, key->data.symmKey.len,
                      (const byte*)label, ulLabelLen, pSessionHash,
                      (word32)ulSessionHashLen, 1, macType, NULL, 0);
+    PRIVATE_KEY_LOCK();
 
     return ret;
 }
@@ -10091,8 +10120,11 @@ int WP11_Aes_Cmac_Sign(unsigned char* data, word32 dataLen, unsigned char* sig,
         ret = wc_CmacFinal(&cmac->cmac, sig, sigLen);
         doFree = 0;
     }
-    if (doFree)
+    if (doFree) {
+#if (!defined(HAVE_FIPS) || FIPS_VERSION_GE(5, 3))
         (void)wc_CmacFree(&cmac->cmac);
+#endif
+    }
     session->init = 0;
 
     return ret;
@@ -10637,6 +10669,7 @@ int WP11_TLS_MAC_sign(byte* data, word32 dataLen, byte* sig, word32* sigLen,
         WP11_Lock_LockRO(secret->lock);
     key = &secret->data.symmKey;
 
+    PRIVATE_KEY_UNLOCK();
     if (mac->isTlsPrf) {
         ret = wc_PRF_TLSv1(sig, mac->macSz, key->data, key->len, label, 15,
                 data, dataLen, NULL, secret->slot->devId);
@@ -10645,6 +10678,7 @@ int WP11_TLS_MAC_sign(byte* data, word32 dataLen, byte* sig, word32* sigLen,
         ret = wc_PRF_TLS(sig, mac->macSz, key->data, key->len, label, 15,
                 data, dataLen, 1, mac->mac, NULL, secret->slot->devId);
     }
+    PRIVATE_KEY_LOCK();
 
     if (secret->onToken)
         WP11_Lock_UnlockRO(secret->lock);
