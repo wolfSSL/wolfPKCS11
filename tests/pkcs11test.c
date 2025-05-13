@@ -3736,6 +3736,56 @@ static CK_RV rsa_pss_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE priv,
 }
 #endif
 
+static CK_RV test_rsa_no_public_exponent(void *args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_BBOOL extractable = CK_TRUE;
+    CK_OBJECT_HANDLE hTest = CK_INVALID_HANDLE;
+    int sessFlags = CKF_SERIAL_SESSION | CKF_RW_SESSION;
+
+    CK_ATTRIBUTE rsa_2048_priv_key[] = {
+        { CKA_CLASS,             &privKeyClass,     sizeof(privKeyClass)      },
+        { CKA_KEY_TYPE,          &rsaKeyType,       sizeof(rsaKeyType)        },
+        { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue)            },
+        { CKA_MODULUS,           rsa_2048_modulus,  sizeof(rsa_2048_modulus)  },
+        { CKA_PRIVATE_EXPONENT,  rsa_2048_priv_exp, sizeof(rsa_2048_priv_exp) },
+        { CKA_PRIME_1,           rsa_2048_p,        sizeof(rsa_2048_p)        },
+        { CKA_PRIME_2,           rsa_2048_q,        sizeof(rsa_2048_q)        },
+        { CKA_EXPONENT_1,        rsa_2048_dP,       sizeof(rsa_2048_dP)       },
+        { CKA_EXPONENT_2,        rsa_2048_dQ,       sizeof(rsa_2048_dQ)       },
+        { CKA_COEFFICIENT,       rsa_2048_u,        sizeof(rsa_2048_u)        },
+        { CKA_EXTRACTABLE,       &extractable,      sizeof(CK_BBOOL)          },
+        { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
+        { CKA_ID,                NULL,              0                         },
+    };
+    int cnt = sizeof(rsa_2048_priv_key)/sizeof(*rsa_2048_priv_key);
+
+
+    ret = funcList->C_CreateObject(session, rsa_2048_priv_key, cnt, &hTest);
+
+    CHECK_CKR(ret, "Create object");
+
+    if ((ret == CKR_OK) && (userPinLen != 0)) {
+        funcList->C_Logout(session);
+        funcList->C_CloseSession(session);
+        ret = funcList->C_OpenSession(slot, sessFlags, NULL, NULL, &session);
+        CHECK_CKR(ret, "Open Session");
+    }
+
+    /* Login will encode and decode the RSA and fail if there is no public
+    exponent */
+    if (ret == CKR_OK && userPinLen != 0) {
+        ret = funcList->C_Login(session, CKU_USER, userPin, userPinLen);
+        CHECK_CKR(ret, "Login");
+    }
+
+    funcList->C_DestroyObject(session, hTest);
+
+    return ret;
+
+}
+
 static CK_RV test_rsa_fixed_keys_raw(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -8241,6 +8291,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_wrap_unwrap_key),
     PKCS11TEST_FUNC_SESS_DECL(test_derive_key),
 #ifndef NO_RSA
+    PKCS11TEST_FUNC_SESS_DECL(test_rsa_no_public_exponent),
     PKCS11TEST_FUNC_SESS_DECL(test_rsa_fixed_keys_raw),
     PKCS11TEST_FUNC_SESS_DECL(test_rsa_fixed_keys_pkcs15_enc),
 #ifndef WC_NO_RSA_OAEP
@@ -8587,4 +8638,3 @@ int pkcs11test_test(int argc, char* argv[])
         ret = 1;
     return ret;
 }
-
