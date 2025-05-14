@@ -63,7 +63,11 @@ extern "C" {
 
 /* Maximum number of sessions allocated per slot/token. */
 #ifndef WP11_SESSION_CNT_MAX
+#ifdef WOLFPKCS11_NSS
+#define WP11_SESSION_CNT_MAX           7000
+#else
 #define WP11_SESSION_CNT_MAX           70
+#endif
 #endif
 /* Minimum number of sessions allocated per slot/token. */
 #ifndef WP11_SESSION_CNT_MIN
@@ -77,7 +81,7 @@ extern "C" {
 /* Maximum number of objects in a session. */
 #ifndef WP11_SESSION_OBJECT_CNT_MAX
 #ifdef WOLFPKCS11_NSS
-#define WP11_SESSION_OBJECT_CNT_MAX    64
+#define WP11_SESSION_OBJECT_CNT_MAX    6400
 #else
 #define WP11_SESSION_OBJECT_CNT_MAX    8
 #endif

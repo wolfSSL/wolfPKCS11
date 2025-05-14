@@ -90,7 +90,9 @@
 #define WP11_MAX_DH_KEY_SZ             (4096/8)
 
 /* Maximum size of storage for generated/derived symmetric key. */
-#ifndef NO_DH
+#ifdef WOLFPKCS11_NSS
+#define WP11_MAX_SYM_KEY_SZ            (2048)
+#elif !defined(NO_DH)
 #define WP11_MAX_SYM_KEY_SZ            (4096/8)
 #elif defined(HAVE_ECC)
 #define WP11_MAX_SYM_KEY_SZ            ((521+7)/8)
@@ -2970,13 +2972,17 @@ static int wp11_Object_Store_DhKey(WP11_Object* object, int tokenId, int objId)
  */
 static int wp11_Object_Decode_SymmKey(WP11_Object* object)
 {
-    int ret;
+    int ret = 0;
 
-    ret = wp11_DecryptData(object->data.symmKey.data, object->keyData,
+    if (object->keyDataLen - AES_BLOCK_SIZE > WP11_MAX_SYM_KEY_SZ)
+        ret = BUFFER_E;
+    if (ret == 0) {
+        ret = wp11_DecryptData(object->data.symmKey.data, object->keyData,
                                     object->keyDataLen - AES_BLOCK_SIZE,
                                     object->slot->token.key,
                                     sizeof(object->slot->token.key), object->iv,
                                     sizeof(object->iv));
+    }
     if (ret == 0)
         object->data.symmKey.len = object->keyDataLen - AES_BLOCK_SIZE;
     object->encoded = (ret != 0);
@@ -6305,9 +6311,11 @@ int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
     if (ret == 0 && data[1] != NULL) {
         if (key->len == 0)
             key->len = (word32)len[1];
-        else if (len[1] < (CK_ULONG)key->len)
+        else if (len[1] != (CK_ULONG)key->len)
             ret = BUFFER_E;
     }
+    if (ret == 0 && key->len > WP11_MAX_SYM_KEY_SZ)
+        ret = BUFFER_E;
     if (ret == 0 && data[1] != NULL)
         XMEMCPY(key->data, data[1], key->len);
 
