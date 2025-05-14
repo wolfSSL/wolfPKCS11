@@ -68,7 +68,11 @@ CK_RV C_GetSlotList(CK_BBOOL tokenPresent, CK_SLOT_ID_PTR pSlotList,
 static CK_SLOT_INFO slotInfoTemplate = {
     "wolfSSL HSM slot ID xx",
     "wolfpkcs11",
-    CKF_TOKEN_PRESENT,
+    CKF_TOKEN_PRESENT
+#ifdef WOLFPKCS11_NSS
+    | CKF_USER_PIN_INITIALIZED
+#endif
+    ,
     { WOLFPKCS11_MAJOR_VERSION, WOLFPKCS11_MINOR_VERSION },
     { WOLFPKCS11_MAJOR_VERSION, WOLFPKCS11_MINOR_VERSION }
 };
@@ -368,9 +372,14 @@ static CK_MECHANISM_TYPE mechanismList[] = {
     CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_DH,
 #endif
 #endif
+#ifdef WOLFPKCS11_NSS
+    /* Only advertise CKM_SSL3_MASTER_KEY_DERIVE. Not implemented. */
+    CKM_SSL3_MASTER_KEY_DERIVE,
+#endif
 #ifdef WOLFSSL_HAVE_PRF
     CKM_TLS_MAC,
 #endif
+    CKM_GENERIC_SECRET_KEY_GEN,
 };
 
 /* Count of mechanisms in list. */
@@ -529,6 +538,11 @@ static CK_MECHANISM_INFO nssTls12MasterKeyDeriveInfo = {
 };
 #endif
 #endif
+#ifdef WOLFPKCS11_NSS
+static CK_MECHANISM_INFO ssl3MasterKeyDeriveInfo = {
+    48, 48, CKF_DERIVE
+};
+#endif
 static CK_MECHANISM_INFO tlsMacMechInfo = {
     0, 512, CKF_SIGN | CKF_VERIFY
 };
@@ -667,6 +681,9 @@ static CK_MECHANISM_INFO sha3MechInfo = {
 };
 #endif
 #endif
+static CK_MECHANISM_INFO genSecKeyGenMechInfo = {
+    1, 32, CKF_GENERATE
+};
 
 /**
  * Get information on a mechanism.
@@ -968,12 +985,23 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
             break;
 #endif
 #endif
+#ifdef WOLFPKCS11_NSS
+        /* Only advertise CKM_SSL3_MASTER_KEY_DERIVE. Not implemented. */
+        case CKM_SSL3_MASTER_KEY_DERIVE:
+            XMEMCPY(pInfo, &ssl3MasterKeyDeriveInfo,
+                    sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
 #ifdef WOLFSSL_HAVE_PRF
         case CKM_TLS_MAC:
             XMEMCPY(pInfo, &tlsMacMechInfo,
                     sizeof(CK_MECHANISM_INFO));
             break;
 #endif
+        case CKM_GENERIC_SECRET_KEY_GEN:
+            XMEMCPY(pInfo, &genSecKeyGenMechInfo,
+                    sizeof(CK_MECHANISM_INFO));
+            break;
         default:
             return CKR_MECHANISM_INVALID;
     }
