@@ -5390,6 +5390,9 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
             keyType = CKK_HKDF;
             break;
 #endif
+        case CKM_GENERIC_SECRET_KEY_GEN:
+            keyType = CKK_GENERIC_SECRET;
+            break;
         default:
             rv = CKR_MECHANISM_INVALID;
             break;
