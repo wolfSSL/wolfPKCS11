@@ -2091,11 +2091,12 @@ static int wp11_Object_Decode_RsaKey(WP11_Object* object)
 static int wp11_Object_Encode_RsaKey(WP11_Object* object)
 {
     int ret;
+    RsaKey* rsaKey = &object->data.rsaKey;
 
-    if (object->objClass == CKO_PRIVATE_KEY) {
+    if (object->objClass == CKO_PRIVATE_KEY && rsaKey->type == RSA_PRIVATE) {
     #if defined(WOLFSSL_KEY_GEN) || defined(OPENSSL_EXTRA)
         /* Get length of encoded private key. */
-        ret = wc_RsaKeyToDer(&object->data.rsaKey, NULL, 0);
+        ret = wc_RsaKeyToDer(rsaKey, NULL, 0);
         if (ret >= 0) {
             object->keyDataLen = ret + AES_BLOCK_SIZE;
             ret = 0;
@@ -2108,7 +2109,7 @@ static int wp11_Object_Encode_RsaKey(WP11_Object* object)
     #if defined(WOLFSSL_KEY_GEN) || defined(OPENSSL_EXTRA) || \
         defined(WOLFSSL_CERT_GEN)
         /* Get length of encoded public key. */
-        ret = wc_RsaKeyToPublicDer(&object->data.rsaKey, NULL, 0);
+        ret = wc_RsaKeyToPublicDer(rsaKey, NULL, 0);
         if (ret >= 0) {
             object->keyDataLen = ret;
             ret = 0;
@@ -2127,11 +2128,11 @@ static int wp11_Object_Encode_RsaKey(WP11_Object* object)
             ret = MEMORY_E;
     }
 
-    if (ret == 0 && object->objClass == CKO_PRIVATE_KEY) {
+    if (ret == 0 && object->objClass == CKO_PRIVATE_KEY &&
+            rsaKey->type == RSA_PRIVATE) {
     #if defined(WOLFSSL_KEY_GEN) || defined(OPENSSL_EXTRA)
         /* Encode private key. */
-        ret = wc_RsaKeyToDer(&object->data.rsaKey, object->keyData,
-                                                            object->keyDataLen);
+        ret = wc_RsaKeyToDer(rsaKey, object->keyData, object->keyDataLen);
         if (ret >= 0) {
             ret = wp11_EncryptData(object->keyData, object->keyData, ret,
                                     object->slot->token.key,
@@ -2144,8 +2145,7 @@ static int wp11_Object_Encode_RsaKey(WP11_Object* object)
     }
     else if (ret == 0 && object->objClass == CKO_PUBLIC_KEY) {
         /* Encode public key. */
-        ret = wc_RsaKeyToPublicDer(&object->data.rsaKey, object->keyData,
-                                                            object->keyDataLen);
+        ret = wc_RsaKeyToPublicDer(rsaKey, object->keyData, object->keyDataLen);
         if (ret >= 0) {
             ret = 0;
         }
