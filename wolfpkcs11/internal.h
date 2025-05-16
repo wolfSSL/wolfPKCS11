@@ -56,6 +56,15 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 extern "C" {
 #endif
 
+/* We need the next two for NSS, just for storage, even if we have no algos */
+#ifndef WC_MD5_DIGEST_SIZE
+#define WC_MD5_DIGEST_SIZE 16
+#endif
+
+#ifndef WC_SHA_DIGEST_SIZE
+#define WC_SHA_DIGEST_SIZE 20
+#endif
+
 /* Crypto-Ki supported version information. */
 #define WOLFPKCS11_MAJOR_VERSION  (LIBWOLFPKCS11_VERSION_HEX >> 24)
 #define WOLFPKCS11_MINOR_VERSION  ((LIBWOLFPKCS11_VERSION_HEX >> 16) & 0xff)
@@ -339,11 +348,14 @@ int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
                              CK_ULONG* len);
 int WP11_Object_SetCert(WP11_Object* object, unsigned char** data,
                              CK_ULONG* len);
-int WP11_Object_SetData(WP11_Object* object, unsigned char* data,
-                        CK_ULONG len);
 
 int WP11_Object_SetClass(WP11_Object* object, CK_OBJECT_CLASS objClass);
 CK_OBJECT_CLASS WP11_Object_GetClass(WP11_Object* object);
+
+#ifdef WOLFPKCS11_NSS
+int WP11_Object_SetTrust(WP11_Object* object, unsigned char** data,
+                         CK_ULONG* len);
+#endif
 
 int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
                      WP11_Object** object);

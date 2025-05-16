@@ -113,6 +113,21 @@ static CK_ATTRIBUTE_TYPE certParams[] = {
 };
 #define CERT_PARAMS_CNT     (sizeof(certParams)/sizeof(*certParams))
 
+#ifdef WOLFPKCS11_NSS
+static CK_ATTRIBUTE_TYPE trustParams[] = {
+    CKA_CERT_SHA1_HASH,
+    CKA_CERT_MD5_HASH,
+    CKA_TRUST_SERVER_AUTH,
+    CKA_TRUST_CLIENT_AUTH,
+    CKA_TRUST_EMAIL_PROTECTION,
+    CKA_TRUST_CODE_SIGNING,
+    CKA_TRUST_STEP_UP_APPROVED,
+    CKA_ISSUER,
+    CKA_SERIAL_NUMBER,
+};
+#define TRUST_PARAMS_CNT    (sizeof(trustParams)/sizeof(*trustParams))
+#endif
+
 /* Identify maximum count for stack array. */
 #ifndef NO_RSA
 #define OBJ_MAX_PARAMS        RSA_KEY_PARAMS_CNT
@@ -199,6 +214,15 @@ static AttributeType attrType[] = {
     { CKA_HASH_OF_SUBJECT_PUBLIC_KEY,  ATTR_TYPE_DATA  },
     { CKA_HASH_OF_ISSUER_PUBLIC_KEY,   ATTR_TYPE_DATA  },
     { CKA_NAME_HASH_ALGORITHM,         ATTR_TYPE_ULONG },
+#ifdef WOLFPKCS11_NSS
+    { CKA_CERT_SHA1_HASH,              ATTR_TYPE_DATA  },
+    { CKA_CERT_MD5_HASH,               ATTR_TYPE_DATA  },
+    { CKA_TRUST_SERVER_AUTH,           ATTR_TYPE_ULONG },
+    { CKA_TRUST_CLIENT_AUTH,           ATTR_TYPE_ULONG },
+    { CKA_TRUST_EMAIL_PROTECTION,      ATTR_TYPE_ULONG },
+    { CKA_TRUST_CODE_SIGNING,          ATTR_TYPE_ULONG },
+    { CKA_TRUST_STEP_UP_APPROVED,      ATTR_TYPE_BOOL  },
+#endif
 };
 /* Count of elements in attribute type list. */
 #define ATTR_TYPE_SIZE     (sizeof(attrType) / sizeof(*attrType))
@@ -518,6 +542,12 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
         attrs = certParams;
         cnt = CERT_PARAMS_CNT;
     }
+#ifdef WOLFPKCS11_NSS
+    else if (objClass == CKO_NSS_TRUST) {
+        attrs = trustParams;
+        cnt = TRUST_PARAMS_CNT;
+    }
+#endif
     else {
         /* Get the value and length of key specific attribute types. */
         switch (type) {
@@ -572,6 +602,11 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
         if (objClass == CKO_CERTIFICATE) {
             ret = WP11_Object_SetCert(obj, data, len);
         }
+#ifdef WOLFPKCS11_NSS
+        else if (objClass == CKO_NSS_TRUST) {
+            ret = WP11_Object_SetTrust(obj, data, len);
+        }
+#endif
         else {
             /* Set the value and length of key specific attributes
             * Old key data is cleared.
@@ -909,6 +944,23 @@ static CK_RV CreateObject(WP11_Session* session, CK_ATTRIBUTE_PTR pTemplate,
             return CKR_TEMPLATE_INCOMPLETE;
         objType = CKK_HKDF;
     }
+#ifdef WOLFPKCS11_NSS
+    else if (objectClass == CKO_NSS_TRUST) {
+        FindAttributeType(pTemplate, ulCount, CKA_ISSUER, &attr);
+        if (attr == NULL)
+            return CKR_TEMPLATE_INCOMPLETE;
+        FindAttributeType(pTemplate, ulCount, CKA_SERIAL_NUMBER, &attr);
+        if (attr == NULL)
+            return CKR_TEMPLATE_INCOMPLETE;
+        FindAttributeType(pTemplate, ulCount, CKA_CERT_SHA1_HASH, &attr);
+        if (attr == NULL)
+            return CKR_TEMPLATE_INCOMPLETE;
+        FindAttributeType(pTemplate, ulCount, CKA_CERT_MD5_HASH, &attr);
+        if (attr == NULL)
+            return CKR_TEMPLATE_INCOMPLETE;
+        objType = CKK_NSS_TRUST;
+    }
+#endif
     else {
         FindAttributeType(pTemplate, ulCount, CKA_KEY_TYPE, &attr);
         if (attr == NULL)
