@@ -34,6 +34,7 @@
 #define WOLFPKCS11_STORE_DHKEY_PRIV     0x07
 #define WOLFPKCS11_STORE_DHKEY_PUB      0x08
 #define WOLFPKCS11_STORE_CERT           0x09
+#define WOLFPKCS11_STORE_TRUST          0x0A
 
 /*
  * Opens access to location to read/write token data.
@@ -97,4 +98,3 @@ int wolfPKCS11_Store_Read(void* store, unsigned char* buffer, int len);
 int wolfPKCS11_Store_Write(void* store, unsigned char* buffer, int len);
 
 #endif /* WOLFPKCS11_STORE */
-

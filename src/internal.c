@@ -19,6 +19,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
+#include "wolfpkcs11/pkcs11.h"
 #ifdef HAVE_CONFIG_H
     #include <wolfpkcs11/config.h>
 #endif
@@ -165,6 +166,16 @@ typedef struct WP11_Cert {
     CK_CERTIFICATE_TYPE type;
 } WP11_Cert;
 
+typedef struct WP11_Trust {
+    byte sha1Hash[WC_SHA_DIGEST_SIZE];
+    byte md5Hash[WC_MD5_DIGEST_SIZE];
+    CK_ULONG serverAuth;
+    CK_ULONG clientAuth;
+    CK_ULONG emailProtection;
+    CK_ULONG codeSigning;
+    CK_BBOOL stepUpApproved;
+} WP11_Trust;
+
 #ifndef NO_DH
 typedef struct WP11_DhKey {
     byte key[WP11_MAX_DH_KEY_SZ];      /* Public or private key               */
@@ -186,6 +197,9 @@ struct WP11_Object {
     #endif
         WP11_Data symmKey;             /* Symmetric key object                */
         WP11_Cert cert;                /* Certificate object                  */
+    #ifdef WOLFPKCS11_NSS
+        WP11_Trust trust;              /* Trust object                        */
+    #endif
     } data;
 #ifdef WOLFPKCS11_TPM
     WOLFTPM2_KEYBLOB tpmKey;
@@ -216,6 +230,12 @@ struct WP11_Object {
     int keyIdLen;                      /* Length of key identifier            */
     unsigned char* label;              /* Object label                        */
     int labelLen;                      /* Length of object label              */
+    unsigned char* issuer;             /* Certificate issuer                  */
+    int issuerLen;                     /* Length of certificate issuer        */
+    unsigned char* serial;             /* Certificate serial number           */
+    int serialLen;                     /* Length of certificate serial number */
+    unsigned char* subject;            /* Subject of the object               */
+    int subjectLen;                    /* Length of subject                   */
 
     WP11_Lock* lock;                   /* Object specific lock                */
 
@@ -803,7 +823,10 @@ static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
                 FIELD_SIZE(WP11_Object, endDate) +
                 sizeof(word32) + /* keyIdLenSz */
                 sizeof(word32) + /* labelLen */
-                variableSz /* keyIdLen + labelLen */
+                sizeof(word32) + /* issuerLen */
+                sizeof(word32) + /* serialLen */
+                sizeof(word32) + /* subjectLen */
+                variableSz /* keyIdLen + labelLen + issuerLen + serialLen + issuerLen + serialLen + subjectLen */
             ;
             break;
         case WOLFPKCS11_STORE_SYMMKEY:
@@ -814,6 +837,7 @@ static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
         case WOLFPKCS11_STORE_DHKEY_PRIV:
         case WOLFPKCS11_STORE_DHKEY_PUB:
         case WOLFPKCS11_STORE_CERT:
+        case WOLFPKCS11_STORE_TRUST:
             maxSz = sizeof(word32) + variableSz;
             break;
 
@@ -1768,6 +1792,38 @@ static int wp11_DecryptData(byte* out, byte* data, int len, byte* key,
 }
 
 /**
+ * "Decode" the certificate.
+ *
+ * Certificates are not encrypted.
+ *
+ * @param [in, out]  object  Certificate object.
+ */
+static void wp11_Object_Decode_Cert(WP11_Object* object)
+{
+    if (object->data.cert.data == NULL) {
+        object->data.cert.data = object->keyData;
+        object->data.cert.len = object->keyDataLen;
+    }
+    object->encoded = 0;
+}
+
+#ifdef WOLFPKCS11_NSS
+/**
+ * "Decode" the trust.
+ *
+ * Trust is not encrypted.
+ *
+ * @param [in, out]  object  Trust object.
+ */
+static void wp11_Object_Decode_Trust(WP11_Object* object)
+{
+    XMEMCPY((unsigned char*)&object->data.trust, object->keyData,
+        object->keyDataLen);
+    object->encoded = 0;
+}
+#endif
+
+/**
  * Load a certificate from storage.
  *
  * @param [in, out]  object   Certificate object.
@@ -1791,10 +1847,45 @@ static int wp11_Object_Load_Cert(WP11_Object* object, int tokenId, int objId)
         ret = wp11_storage_read_alloc_array(storage, &object->keyData,
             &object->keyDataLen);
         wp11_storage_close(storage);
+        /* Decode without login needed */
+        wp11_Object_Decode_Cert(object);
     }
 
     return ret;
 }
+
+#ifdef WOLFPKCS11_NSS
+/**
+ * Load trust object from storage.
+ *
+ * @param [in, out]  object   Trust object.
+ * @param [in]       tokenId  Id of token this cert belongs to.
+ * @param [in]       objId    Id of object for token.
+ * @return  0 on success.
+ * @return  MEMORY_E when dynamic memory allocation fails.
+ * @return  BUFFER_E when loading fails.
+ * @return  NOT_AVAILABLE_E when unable to locate data.
+ */
+static int wp11_Object_Load_Trust(WP11_Object* object, int tokenId, int objId)
+{
+    int ret;
+    void* storage = NULL;
+
+    /* Open access to trust. */
+    ret = wp11_storage_open_readonly(WOLFPKCS11_STORE_TRUST, tokenId, objId,
+        &storage);
+    if (ret == 0) {
+        /* Read trust. */
+        ret = wp11_storage_read_alloc_array(storage, &object->keyData,
+            &object->keyDataLen);
+        wp11_storage_close(storage);
+        wp11_Object_Decode_Trust(object);
+    }
+
+    return ret;
+}
+#endif
+
 
 #ifdef WOLFSSL_MAXQ10XX_CRYPTO
 #ifdef MAXQ10XX_PRODUCTION_KEY
@@ -2103,21 +2194,36 @@ exit:
     return ret;
 }
 
+#ifdef WOLFPKCS11_NSS
 /**
- * "Decode" the certificate.
+ * Store an trust object to storage.
  *
- * Certificates are not encrypted.
- *
- * @param [in, out]  object  Certificate object.
+ * @param [in]  object   Trust object.
+ * @param [in]  tokenId  Id of token this cert belongs to.
+ * @param [in]  objId    Id of object for token.
+ * @return  0 on success.
+ * @return  MEMORY_E when dynamic memory allocation fails.
+ * @return  BUFFER_E when storing fails.
+ * @return  NOT_AVAILABLE_E when unable to write data.
  */
-static void wp11_Object_Decode_Cert(WP11_Object* object)
+static int wp11_Object_Store_Trust(WP11_Object* object, int tokenId, int objId)
 {
-    if (object->data.cert.data == NULL) {
-        object->data.cert.data = object->keyData;
-        object->data.cert.len = object->keyDataLen;
+    int ret;
+    void* storage = NULL;
+
+    /* Open access to trust. */
+    ret = wp11_storage_open(WOLFPKCS11_STORE_TRUST, tokenId, objId,
+        sizeof(WP11_Trust), &storage);
+    if (ret == 0) {
+        /* Write trust to storage. */
+        ret = wp11_storage_write_array(storage,
+            (unsigned char*)&object->data.trust, sizeof(WP11_Trust));
+        wp11_storage_close(storage);
     }
-    object->encoded = 0;
+
+    return ret;
 }
+#endif /* WOLFPKCS11_NSS */
 
 #ifndef NO_RSA
 /**
@@ -3238,6 +3344,21 @@ static int wp11_Object_Load_Object(WP11_Object* object, int tokenId, int objId)
             ret = wp11_storage_read_alloc_array(storage, &object->label,
                                                 &object->labelLen);
         }
+        if (ret == 0) {
+            /* Read issuer of the object. (variable issuerLen) */
+            ret = wp11_storage_read_alloc_array(storage, &object->issuer,
+                                                &object->issuerLen);
+        }
+        if (ret == 0) {
+            /* Read serial number of the object. (variable serialLen) */
+            ret = wp11_storage_read_alloc_array(storage, &object->serial,
+                                                &object->serialLen);
+        }
+        if (ret == 0) {
+            /* Read subject of the object. (variable subjectLen) */
+            ret = wp11_storage_read_alloc_array(storage, &object->subject,
+                                                &object->subjectLen);
+        }
 
         wp11_storage_close(storage);
     }
@@ -3264,6 +3385,12 @@ static int wp11_Object_Load(WP11_Object* object, int tokenId, int objId)
         if (object->objClass == CKO_CERTIFICATE) {
             ret = wp11_Object_Load_Cert(object, tokenId, objId);
         }
+#ifdef WOLFPKCS11_NSS
+        else if(object->objClass == CKO_NSS_TRUST) {
+            ret = wp11_Object_Load_Trust(object, tokenId, objId);
+        }
+#endif
+
         else {
             /* Load separate key data. */
             switch (object->type) {
@@ -3302,7 +3429,8 @@ static int wp11_Object_Store_Object(WP11_Object* object, int tokenId, int objId)
     int ret;
     void* storage = NULL;
     word32 dummy = 0;
-    int variableSz = (object->keyIdLen + object->labelLen);
+    int variableSz = (object->keyIdLen + object->labelLen +
+        object->issuerLen + object->serialLen + object->subjectLen);
 
     /* Open access to key object. */
     ret = wp11_storage_open(WOLFPKCS11_STORE_OBJECT, tokenId, objId, variableSz,
@@ -3360,6 +3488,21 @@ static int wp11_Object_Store_Object(WP11_Object* object, int tokenId, int objId)
             ret = wp11_storage_write_array(storage, object->label,
                                                               object->labelLen);
         }
+        if (ret == 0) {
+            /* Write issuer of the object. (variable issuerLen) */
+            ret = wp11_storage_write_array(storage, object->issuer,
+                                           object->issuerLen);
+        }
+        if (ret == 0) {
+            /* Write serial of the object. (variable serialLen) */
+            ret = wp11_storage_write_array(storage, object->serial,
+                                           object->serialLen);
+        }
+        if (ret == 0) {
+            /* Write subject of the object. (variable subjectLen) */
+            ret = wp11_storage_write_array(storage, object->subject,
+                                           object->subjectLen);
+        }
 
         wp11_storage_close(storage);
     }
@@ -3396,6 +3539,11 @@ static int wp11_Object_Store(WP11_Object* object, int tokenId, int objId)
         if (object->objClass == CKO_CERTIFICATE) {
             ret = wp11_Object_Store_Cert(object, tokenId, objId);
         }
+#ifdef WOLFPKCS11_NSS
+        else if (object->objClass == CKO_NSS_TRUST) {
+            ret = wp11_Object_Store_Trust(object, tokenId, objId);
+        }
+#endif
         else {
             /* Store key data separately. */
             switch (object->type) {
@@ -3447,6 +3595,12 @@ static int wp11_Object_Decode(WP11_Object* object)
         wp11_Object_Decode_Cert(object);
         ret = 0;
     }
+#ifdef WOLFPKCS11_NSS
+    else if (object->objClass == CKO_NSS_TRUST) {
+        wp11_Object_Decode_Trust(object);
+        ret = 0;
+    }
+#endif
     else {
         switch (object->type) {
         #ifndef NO_RSA
@@ -3494,9 +3648,14 @@ static int wp11_Object_Encode(WP11_Object* object, int protect)
 {
     int ret;
 
-    if (object->objClass == CKO_CERTIFICATE) {
+    if (object->objClass == CKO_CERTIFICATE)  {
         ret = 0;
     }
+#ifdef WOLFPKCS11_NSS
+    else if (object->objClass == CKO_NSS_TRUST) {
+        ret = 0;
+    }
+#endif
     else {
         switch (object->type) {
         #ifndef NO_RSA
@@ -5957,6 +6116,14 @@ void WP11_Object_Free(WP11_Object* object)
         XFREE(object->data.cert.data, NULL, DYNAMIC_TYPE_CERT);
         certFreed = 1;
     }
+    #ifdef WOLFPKCS11_NSS
+    else if (object->objClass == CKO_NSS_TRUST) {
+        if (object->issuer != NULL)
+            XFREE(object->issuer, NULL, DYNAMIC_TYPE_CERT);
+        if (object->serial != NULL)
+            XFREE(object->serial, NULL, DYNAMIC_TYPE_CERT);
+    }
+    #endif
     else {
     #ifndef NO_RSA
         if (object->type == CKK_RSA)
@@ -6409,6 +6576,43 @@ int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
     return ret;
 }
 
+#ifdef WOLFPKCS11_NSS
+int WP11_Object_SetTrust(WP11_Object* object, unsigned char** data,
+                         CK_ULONG* len)
+{
+    WP11_Trust* trust;
+
+    if (data[0] == NULL && len[0] != WC_SHA_DIGEST_SIZE)
+        return BAD_FUNC_ARG;
+
+    if (data[1] == NULL && len[1] != WC_MD5_DIGEST_SIZE)
+        return BAD_FUNC_ARG;
+
+    if (object->onToken)
+        WP11_Lock_LockRW(object->lock);
+
+    trust = &object->data.trust;
+
+    XMEMCPY(trust->sha1Hash, data[0], WC_SHA_DIGEST_SIZE);
+    XMEMCPY(trust->md5Hash, data[1], WC_MD5_DIGEST_SIZE);
+    if (data[2] != NULL)
+        trust->serverAuth = *(CK_ULONG*)data[2];
+    if (data[3] != NULL)
+        trust->clientAuth = *(CK_ULONG*)data[3];
+    if (data[4] != NULL)
+        trust->emailProtection = *(CK_ULONG*)data[4];
+    if (data[5] != NULL)
+        trust->codeSigning = *(CK_ULONG*)data[5];
+    if (data[6] != NULL)
+        trust->stepUpApproved = *(CK_BBOOL*)data[6];
+
+    if (object->onToken)
+        WP11_Lock_UnlockRW(object->lock);
+
+    return CKR_OK;
+}
+#endif
+
 int WP11_Object_SetCert(WP11_Object* object, unsigned char** data,
                         CK_ULONG* len)
 {
@@ -6660,6 +6864,70 @@ static int GetData(byte* data, CK_ULONG dataLen, byte* out, CK_ULONG* outLen)
 
     return ret;
 }
+
+#ifdef WOLFPKCS11_NSS
+static int GetTrustAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
+                        byte* data, CK_ULONG* len)
+{
+    int ret = 0;
+
+    if (object == NULL || len == NULL)
+        return BAD_FUNC_ARG;
+
+    switch (type) {
+        case CKA_CERT_SHA1_HASH:
+            if (*len < WC_SHA_DIGEST_SIZE)
+                return BUFFER_E;
+            *len = WC_SHA_DIGEST_SIZE;
+            if (data != NULL)
+                XMEMCPY(data, &object->data.trust.sha1Hash, WC_SHA_DIGEST_SIZE);
+            break;
+        case CKA_CERT_MD5_HASH:
+            if (*len < WC_MD5_DIGEST_SIZE)
+                return BUFFER_E;
+            *len = WC_MD5_DIGEST_SIZE;
+            if (data != NULL)
+                XMEMCPY(data, &object->data.trust.md5Hash, WC_MD5_DIGEST_SIZE);
+            break;
+        case CKA_TRUST_SERVER_AUTH:
+            *len = sizeof(CK_ULONG);
+            if (data != NULL)
+                ret = GetULong(object->data.trust.serverAuth, data, len);
+            break;
+        case CKA_TRUST_CLIENT_AUTH:
+            *len = sizeof(CK_ULONG);
+            if (data != NULL)
+                ret = GetULong(object->data.trust.clientAuth, data, len);
+            break;
+        case CKA_TRUST_CODE_SIGNING:
+            *len = sizeof(CK_ULONG);
+            if (data != NULL)
+                ret = GetULong(object->data.trust.codeSigning, data, len);
+            break;
+        case CKA_TRUST_EMAIL_PROTECTION:
+            *len = sizeof(CK_ULONG);
+            if (data != NULL)
+                ret = GetULong(object->data.trust.emailProtection, data, len);
+            break;
+        case CKA_TRUST_STEP_UP_APPROVED:
+            *len = sizeof(CK_BBOOL);
+            if (data != NULL)
+                ret = GetBool(object->data.trust.stepUpApproved, data, len);
+            break;
+        case CKA_ISSUER:
+            ret = GetData(object->issuer, object->issuerLen, data, len);
+            break;
+        case CKA_SERIAL_NUMBER:
+            ret = GetData(object->serial, object->serialLen, data, len);
+            break;
+        default:
+            ret = NOT_AVAILABLE_E;
+            break;
+    }
+
+    return ret;
+}
+#endif
 
 #ifndef NO_RSA
 /**
@@ -7016,6 +7284,9 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
         case CKA_LABEL:
             ret = GetData(object->label, object->labelLen, data, len);
             break;
+        case CKA_SUBJECT:
+            ret = GetData(object->subject, object->subjectLen, data, len);
+            break;
         case CKA_TOKEN:
             ret = GetBool(object->onToken, data, len);
             break;
@@ -7132,10 +7403,6 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                 ret = CKR_ATTRIBUTE_TYPE_INVALID;
             break;
 
-        case CKA_SUBJECT:
-            /* Not available */
-            break;
-
         default:
             {
                 if (object->objClass == CKO_CERTIFICATE) {
@@ -7146,6 +7413,12 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                             break;
                     }
                 }
+                #if defined(WOLFPKCS11_NSS)
+                else if ((object->objClass == CKO_NSS_TRUST)) {
+                    ret = GetTrustAttr(object, type, data, len);
+                    break;
+                }
+                #endif
                 else {
                     switch (object->type) {
         #ifndef NO_RSA
@@ -7229,28 +7502,29 @@ static int WP11_Object_SetKeyId(WP11_Object* object, unsigned char* keyId,
 }
 
 /**
- * Set the label against the object.
+ * Set the attribute against the object.
  *
- * @param  object    [in]  Object object.
- * @param  label     [in]  Label data.
- * @param  labelLen  [in]  Length of label in bytes.
+ * @param  attribute    [out] Object attribute.
+ * @param  attributeLen [out] Length of attribute in bytes.
+ * @param  data         [in]  Data to be set.
+ * @param  dataLen      [in]  Length of data in bytes.
  * @return  MEMORY_E when dynamic memory allocation fails.
  *          0 on success.
  */
-static int WP11_Object_SetLabel(WP11_Object* object, unsigned char* label,
-                                int labelLen)
+static int WP11_Object_SetData(byte** attribute, int* attributeLen, byte* data,
+                                int dataLen)
 {
     int ret = 0;
 
-    if (object->label != NULL)
-        XFREE(object->label, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-    object->label = (unsigned char*)XMALLOC(labelLen, NULL,
+    if (*attribute != NULL)
+        XFREE(*attribute, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    *attribute = (byte*)XMALLOC(dataLen, NULL,
         DYNAMIC_TYPE_TMP_BUFFER);
-    if (object->label == NULL)
+    if (*attribute == NULL)
         ret = MEMORY_E;
     if (ret == 0) {
-        XMEMCPY(object->label, label, labelLen);
-        object->labelLen = labelLen;
+        XMEMCPY(*attribute, data, dataLen);
+        *attributeLen = dataLen;
     }
 
     return ret;
@@ -7356,7 +7630,8 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             ret = WP11_Object_SetKeyId(object, data, (int)len);
             break;
         case CKA_LABEL:
-            ret = WP11_Object_SetLabel(object, data, (int)len);
+            ret = WP11_Object_SetData(&object->label, &object->labelLen, data,
+                                       (int)len);
             break;
         case CKA_PRIVATE:
             WP11_Object_SetOpFlag(object, WP11_FLAG_PRIVATE, *(CK_BBOOL*)data);
@@ -7472,12 +7747,33 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             /* Handled in layer above */
         case CKA_TOKEN:
             /* Handled in layer above */
+            break;
+#ifdef WOLFPKCS11_NSS
+        case CKA_CERT_SHA1_HASH:
+        case CKA_CERT_MD5_HASH:
+        case CKA_TRUST_SERVER_AUTH:
+        case CKA_TRUST_CLIENT_AUTH:
+        case CKA_TRUST_EMAIL_PROTECTION:
+        case CKA_TRUST_CODE_SIGNING:
+        case CKA_TRUST_STEP_UP_APPROVED:
+            /* Handled in WP11_Object_SetTrust */
+            break;
+#endif
         case CKA_CERTIFICATE_TYPE:
             /* Handled in WP11_Object_SetCert */
+        case CKA_ISSUER:
+            ret = WP11_Object_SetData(&object->issuer, &object->issuerLen,
+                                      data, (int)len);
+            break;
+        case CKA_SERIAL_NUMBER:
+            ret = WP11_Object_SetData(&object->serial, &object->serialLen,
+                                      data, (int)len);
             break;
         case CKA_SUBJECT:
-        case CKA_ISSUER:
-        case CKA_SERIAL_NUMBER:
+            ret = WP11_Object_SetData(&object->subject, &object->subjectLen,
+                                      data, (int)len);
+            break;
+
         case CKA_AC_ISSUER:
         case CKA_ATTR_TYPES:
         case CKA_CERTIFICATE_CATEGORY:
