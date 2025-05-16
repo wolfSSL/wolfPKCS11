@@ -43,6 +43,20 @@ extern "C" {
     #endif
 #endif
 
+
+#define CKM_VENDOR_DEFINED 0x80000000UL
+#define CKO_VENDOR_DEFINED 0x80000000UL
+#define CKK_VENDOR_DEFINED 0x80000000UL
+#define CKA_VENDOR_DEFINED 0x80000000UL
+
+#ifdef WOLFPKCS11_NSS
+#define CK_VENDOR_NSS 0x4E534350UL
+#define CKM_NSS (CKM_VENDOR_DEFINED | CK_VENDOR_NSS)
+#define CKO_NSS (CKO_VENDOR_DEFINED | CK_VENDOR_NSS)
+#define CKK_NSS (CKK_VENDOR_DEFINED | CK_VENDOR_NSS)
+#define CKA_NSS (CKA_VENDOR_DEFINED | CK_VENDOR_NSS)
+#endif
+
 #ifndef NULL_PTR
 #define NULL_PTR        0
 #endif
@@ -128,6 +142,9 @@ extern "C" {
 #define CKO_PRIVATE_KEY                       0x00000003UL
 #define CKO_SECRET_KEY                        0x00000004UL
 
+#ifdef WOLFPKCS11_NSS
+#define CKO_NSS_TRUST                         (CKO_NSS + 3)
+#endif
 
 #define CKK_RSA                               0x00000000UL
 #define CKK_DH                                0x00000002UL
@@ -136,6 +153,11 @@ extern "C" {
 #define CKK_AES                               0x0000001FUL
 #define CKK_DES3                              0x00000015UL /* not supported */
 #define CKK_HKDF                              0x00000042UL
+
+#ifdef WOLFPKCS11_NSS
+/* Not defined by NSS, but we need one */
+#define CKK_NSS_TRUST                         (CKK_NSS + 512)
+#endif
 
 #define CKA_CLASS                             0x00000000UL
 #define CKA_TOKEN                             0x00000001UL
@@ -209,6 +231,28 @@ extern "C" {
 #define CKA_DERIVE_TEMPLATE                   0x40000213UL
 #define CKA_ALLOWED_MECHANISMS                0x40000600UL
 
+#ifdef WOLFPKCS11_NSS
+#define CKA_TRUST                             (CKA_NSS + 0x2000)
+#define CKA_TRUST_DIGITAL_SIGNATURE           (CKA_TRUST + 1)
+#define CKA_TRUST_NON_REPUDIATION             (CKA_TRUST + 2)
+#define CKA_TRUST_KEY_ENCIPHERMENT            (CKA_TRUST + 3)
+#define CKA_TRUST_DATA_ENCIPHERMENT           (CKA_TRUST + 4)
+#define CKA_TRUST_KEY_AGREEMENT               (CKA_TRUST + 5)
+#define CKA_TRUST_KEY_CERT_SIGN               (CKA_TRUST + 6)
+#define CKA_TRUST_CRL_SIGN                    (CKA_TRUST + 7)
+#define CKA_TRUST_SERVER_AUTH                 (CKA_TRUST + 8)
+#define CKA_TRUST_CLIENT_AUTH                 (CKA_TRUST + 9)
+#define CKA_TRUST_CODE_SIGNING                (CKA_TRUST + 10)
+#define CKA_TRUST_EMAIL_PROTECTION            (CKA_TRUST + 11)
+#define CKA_TRUST_IPSEC_END_SYSTEM            (CKA_TRUST + 12)
+#define CKA_TRUST_IPSEC_TUNNEL                (CKA_TRUST + 13)
+#define CKA_TRUST_IPSEC_USER                  (CKA_TRUST + 14)
+#define CKA_TRUST_TIME_STAMPING               (CKA_TRUST + 15)
+#define CKA_TRUST_STEP_UP_APPROVED            (CKA_TRUST + 16)
+#define CKA_CERT_SHA1_HASH                    (CKA_TRUST + 100)
+#define CKA_CERT_MD5_HASH                     (CKA_TRUST + 101)
+#endif
+
 #define CKM_RSA_PKCS_KEY_PAIR_GEN             0x00000000UL
 #define CKM_RSA_PKCS                          0x00000001UL
 #define CKM_RSA_X_509                         0x00000003UL
@@ -275,11 +319,8 @@ extern "C" {
 #define CKM_HKDF_DERIVE                       0x0000402AUL
 #define CKM_HKDF_DATA                         0x0000402BUL
 #define CKM_HKDF_KEY_GEN                      0x0000402CUL
-#define CKM_VENDOR_DEFINED                    0x80000000UL
 
 #ifdef WOLFPKCS11_NSS
-#define CK_VENDOR_NSS                         0x4E534350UL
-#define CKM_NSS (CKM_VENDOR_DEFINED | CK_VENDOR_NSS)
 #define CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE    (CKM_NSS + 25)
 #define CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_DH (CKM_NSS + 26)
 #endif
@@ -1058,4 +1099,3 @@ struct CK_FUNCTION_LIST {
 #endif
 
 #endif /* _PKCS11_H_ */
-
