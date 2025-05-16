@@ -5597,8 +5597,15 @@ int WP11_Object_SetRsaKey(WP11_Object* object, unsigned char** data,
            ret = SetMPI(&key->dQ, data[5], (int)len[5]);
         if (ret == 0)
            ret = SetMPI(&key->u, data[6], (int)len[6]);
-        if (ret == 0)
-           ret = SetMPI(&key->e, data[7], (int)len[7]);
+        if (ret == 0) {
+            /* Public exponent defaults to 65537 in PKCS11 > 2.11 */
+            if (len[7] > 0)
+                ret = SetMPI(&key->e, data[7], (int)len[7]);
+            else {
+                byte defaultPublic[] = {0x01, 0x00, 0x01};
+                ret = SetMPI(&key->e, defaultPublic, sizeof(defaultPublic));
+            }
+        }
         if (ret == 0) {
            if (len[8] == sizeof(CK_ULONG))
                object->size = (word32)*(CK_ULONG*)data[8];

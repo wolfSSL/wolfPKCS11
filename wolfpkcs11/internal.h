@@ -442,5 +442,3 @@ int WP11_Slot_GenerateRandom(WP11_Slot* slot, unsigned char* data, int len);
 
 
 #endif /* WOLFPKCS11_INTERNAL_H */
-
-

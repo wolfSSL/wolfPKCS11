@@ -4523,4 +4523,3 @@ CK_RV C_GenerateRandom(CK_SESSION_HANDLE hSession,
 
     return CKR_OK;
 }
-
