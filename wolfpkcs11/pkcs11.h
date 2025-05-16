@@ -245,6 +245,7 @@ extern "C" {
 #define CKM_SHA3_512                          0x000002D0UL
 #define CKM_SHA3_512_HMAC                     0x000002D1UL
 #define CKM_GENERIC_SECRET_KEY_GEN            0x00000350UL
+#define CKM_SSL3_MASTER_KEY_DERIVE            0x00000371UL
 #define CKM_TLS_PRF                           0x00000378UL
 #define CKM_TLS12_MASTER_KEY_DERIVE           0x000003E0UL
 #define CKM_TLS12_KEY_AND_MAC_DERIVE          0x000003E1UL
