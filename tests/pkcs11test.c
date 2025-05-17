@@ -11865,6 +11865,199 @@ static CK_RV test_derive_tls12_master_key(void* args) {
     return ret;
 }
 #ifdef WOLFPKCS11_NSS
+/* Test creating a CKO_NSS_TRUST object and verifying its attributes */
+static CK_RV test_nss_trust_object(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS nss_trust_class = CKO_NSS_TRUST;
+
+    /* Values for attributes */
+    static byte issuer[] = "CN=PDF Signer,O=wolfSSL,C=US";
+    static byte serial_number[] = { 0x02, 0x05, 0x00, 0xC6, 0xA7, 0x91, 0x84 };
+    static byte sha1_hash[] = {
+        0x00, 0x75, 0x85, 0x74, 0xF9, 0xD2, 0x3D, 0x09,
+        0x74, 0x5B, 0x1A, 0x72, 0xBA, 0xA6, 0xCC, 0x15,
+        0xF1, 0xD0, 0x7A, 0x36
+    };
+    static byte md5_hash[] = {
+        0x47, 0xC3, 0x68, 0x9D, 0xB0, 0xEA, 0x15, 0x22,
+        0xD3, 0xE6, 0xA1, 0x7D, 0x84, 0xA0, 0x8E, 0xEB
+    };
+    CK_ULONG trust_value = 0xCE534352;
+    CK_BBOOL step_up = CK_FALSE;
+
+    /* Template for creating the object */
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_TOKEN, &ckTrue, sizeof(ckTrue) },
+        { CKA_CLASS, &nss_trust_class, sizeof(nss_trust_class) },
+        { CKA_ISSUER, issuer, sizeof(issuer)-1 },
+        { CKA_SERIAL_NUMBER, serial_number, sizeof(serial_number) },
+        { CKA_CERT_SHA1_HASH, sha1_hash, sizeof(sha1_hash) },
+        { CKA_CERT_MD5_HASH, md5_hash, sizeof(md5_hash) },
+        { CKA_TRUST_SERVER_AUTH, &trust_value, sizeof(trust_value) },
+        { CKA_TRUST_CLIENT_AUTH, &trust_value, sizeof(trust_value) },
+        { CKA_TRUST_CODE_SIGNING, &trust_value, sizeof(trust_value) },
+        { CKA_TRUST_EMAIL_PROTECTION, &trust_value, sizeof(trust_value) },
+        { CKA_TRUST_STEP_UP_APPROVED, &step_up, sizeof(step_up) }
+    };
+    CK_ULONG tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
+    /* Buffer to retrieve attribute values */
+    CK_BYTE buffer[64];
+    CK_ATTRIBUTE getAttr;
+    CK_OBJECT_CLASS retClass;
+    CK_ULONG retTrustValue;
+    CK_BBOOL retBool;
+
+    /* Create the NSS_TRUST object */
+    ret = funcList->C_CreateObject(session, tmpl, tmplCnt, &obj);
+    CHECK_CKR(ret, "Create NSS_TRUST Object");
+
+    if (ret == CKR_OK) {
+        /* Verify object class */
+        getAttr.type = CKA_CLASS;
+        getAttr.pValue = &retClass;
+        getAttr.ulValueLen = sizeof(retClass);
+        ret = funcList->C_GetAttributeValue(session, obj, &getAttr, 1);
+        CHECK_CKR(ret, "Get NSS_TRUST Object class");
+    }
+    if (ret == CKR_OK && retClass != CKO_NSS_TRUST) {
+        ret = -1;
+        CHECK_CKR(ret, "NSS_TRUST Object class incorrect");
+    }
+
+    if (ret == CKR_OK) {
+        /* Verify ISSUER attribute */
+        getAttr.type = CKA_ISSUER;
+        getAttr.pValue = buffer;
+        getAttr.ulValueLen = sizeof(buffer);
+        ret = funcList->C_GetAttributeValue(session, obj, &getAttr, 1);
+        CHECK_CKR(ret, "Get NSS_TRUST Object issuer");
+    }
+    if (ret == CKR_OK && (getAttr.ulValueLen != sizeof(issuer)-1 ||
+            XMEMCMP(buffer, issuer, sizeof(issuer)-1) != 0)) {
+        ret = -1;
+        CHECK_CKR(ret, "NSS_TRUST Object issuer incorrect");
+    }
+
+    if (ret == CKR_OK) {
+        /* Verify SERIAL_NUMBER attribute */
+        getAttr.type = CKA_SERIAL_NUMBER;
+        getAttr.pValue = buffer;
+        getAttr.ulValueLen = sizeof(buffer);
+        ret = funcList->C_GetAttributeValue(session, obj, &getAttr, 1);
+        CHECK_CKR(ret, "Get NSS_TRUST Object serial number");
+    }
+    if (ret == CKR_OK && (getAttr.ulValueLen != sizeof(serial_number) ||
+            XMEMCMP(buffer, serial_number, sizeof(serial_number)) != 0)) {
+        ret = -1;
+        CHECK_CKR(ret, "NSS_TRUST Object serial number incorrect");
+    }
+
+    if (ret == CKR_OK) {
+        /* Verify SHA1_HASH attribute */
+        getAttr.type = CKA_CERT_SHA1_HASH;
+        getAttr.pValue = buffer;
+        getAttr.ulValueLen = sizeof(buffer);
+        ret = funcList->C_GetAttributeValue(session, obj, &getAttr, 1);
+        CHECK_CKR(ret, "Get NSS_TRUST Object SHA1 hash");
+    }
+    if (ret == CKR_OK && (getAttr.ulValueLen != sizeof(sha1_hash) ||
+            XMEMCMP(buffer, sha1_hash, sizeof(sha1_hash)) != 0)) {
+        ret = -1;
+        CHECK_CKR(ret, "NSS_TRUST Object SHA1 hash incorrect");
+    }
+
+    if (ret == CKR_OK) {
+        /* Verify MD5_HASH attribute */
+        getAttr.type = CKA_CERT_MD5_HASH;
+        getAttr.pValue = buffer;
+        getAttr.ulValueLen = sizeof(buffer);
+        ret = funcList->C_GetAttributeValue(session, obj, &getAttr, 1);
+        CHECK_CKR(ret, "Get NSS_TRUST Object MD5 hash");
+    }
+
+    if (ret == CKR_OK && (getAttr.ulValueLen != sizeof(md5_hash) ||
+            XMEMCMP(buffer, md5_hash, sizeof(md5_hash)) != 0)) {
+        ret = -1;
+        CHECK_CKR(ret, "NSS_TRUST Object MD5 hash incorrect");
+    }
+
+    if (ret == CKR_OK) {
+        /* Verify TRUST_SERVER_AUTH attribute */
+        getAttr.type = CKA_TRUST_SERVER_AUTH;
+        getAttr.pValue = &retTrustValue;
+        getAttr.ulValueLen = sizeof(retTrustValue);
+        ret = funcList->C_GetAttributeValue(session, obj, &getAttr, 1);
+        CHECK_CKR(ret, "Get NSS_TRUST Object server auth");
+    }
+    if (ret == CKR_OK && retTrustValue != trust_value) {
+        ret = -1;
+        CHECK_CKR(ret, "NSS_TRUST Object server auth incorrect");
+    }
+
+    if (ret == CKR_OK) {
+        /* Verify TRUST_CLIENT_AUTH attribute */
+        getAttr.type = CKA_TRUST_CLIENT_AUTH;
+        getAttr.pValue = &retTrustValue;
+        getAttr.ulValueLen = sizeof(retTrustValue);
+        ret = funcList->C_GetAttributeValue(session, obj, &getAttr, 1);
+        CHECK_CKR(ret, "Get NSS_TRUST Object client auth");
+    }
+    if (ret == CKR_OK && retTrustValue != trust_value) {
+        ret = -1;
+        CHECK_CKR(ret, "NSS_TRUST Object client auth incorrect");
+    }
+
+    if (ret == CKR_OK) {
+        /* Verify TRUST_CODE_SIGNING attribute */
+        getAttr.type = CKA_TRUST_CODE_SIGNING;
+        getAttr.pValue = &retTrustValue;
+        getAttr.ulValueLen = sizeof(retTrustValue);
+        ret = funcList->C_GetAttributeValue(session, obj, &getAttr, 1);
+        CHECK_CKR(ret, "Get NSS_TRUST Object code signing");
+    }
+    if (ret == CKR_OK && retTrustValue != trust_value) {
+        ret = -1;
+        CHECK_CKR(ret, "NSS_TRUST Object code signing incorrect");
+    }
+
+    if (ret == CKR_OK) {
+        /* Verify TRUST_EMAIL_PROTECTION attribute */
+        getAttr.type = CKA_TRUST_EMAIL_PROTECTION;
+        getAttr.pValue = &retTrustValue;
+        getAttr.ulValueLen = sizeof(retTrustValue);
+        ret = funcList->C_GetAttributeValue(session, obj, &getAttr, 1);
+        CHECK_CKR(ret, "Get NSS_TRUST Object email protection");
+    }
+    if (ret == CKR_OK && retTrustValue != trust_value) {
+        ret = -1;
+        CHECK_CKR(ret, "NSS_TRUST Object email protection incorrect");
+    }
+
+    if (ret == CKR_OK) {
+        /* Verify TRUST_STEP_UP_APPROVED attribute */
+        getAttr.type = CKA_TRUST_STEP_UP_APPROVED;
+        getAttr.pValue = &retBool;
+        getAttr.ulValueLen = sizeof(retBool);
+        ret = funcList->C_GetAttributeValue(session, obj, &getAttr, 1);
+        CHECK_CKR(ret, "Get NSS_TRUST Object step up approved");
+    }
+    if (ret == CKR_OK && retBool != step_up) {
+        ret = -1;
+        CHECK_CKR(ret, "NSS_TRUST Object step up approved incorrect");
+    }
+
+    /* Destroy the object */
+    if (ret == CKR_OK) {
+        ret = funcList->C_DestroyObject(session, obj);
+        CHECK_CKR(ret, "Destroy NSS_TRUST Object");
+    }
+
+    return ret;
+}
+
 static CK_RV test_nss_derive_tls12_master_key(void* args) {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_RV ret;
@@ -12291,6 +12484,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_derive_tls12_key_and_mac),
     PKCS11TEST_FUNC_SESS_DECL(test_derive_tls12_master_key),
 #ifdef WOLFPKCS11_NSS
+    PKCS11TEST_FUNC_SESS_DECL(test_nss_trust_object),
     PKCS11TEST_FUNC_SESS_DECL(test_nss_derive_tls12_master_key),
 #endif
 #endif
@@ -12549,4 +12743,3 @@ int pkcs11test_test(int argc, char* argv[])
         ret = 1;
     return ret;
 }
-
