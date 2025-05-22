@@ -6577,6 +6577,12 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
         case CKA_DERIVE:
             ret = GetOpFlagBool(object->opFlag, CKF_DERIVE, data, len);
             break;
+        case CKA_CERTIFICATE_TYPE:
+            if (object->objClass == CKO_CERTIFICATE)
+                ret = GetULong(object->data.cert.type, data, len);
+            else
+                ret = CKR_ATTRIBUTE_TYPE_INVALID;
+            break;
 
         case CKA_SUBJECT:
             ret = NOT_AVAILABLE_E;
