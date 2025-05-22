@@ -5584,13 +5584,18 @@ int WP11_Object_SetRsaKey(WP11_Object* object, unsigned char** data,
     key = &object->data.rsaKey;
     ret = wc_InitRsaKey_ex(key, NULL, object->slot->devId);
     if (ret == 0) {
-        ret = SetMPI(&key->n, data[0], (int)len[0]);
         if (ret == 0)
            ret = SetMPI(&key->d, data[1], (int)len[1]);
         if (ret == 0)
            ret = SetMPI(&key->p, data[2], (int)len[2]);
         if (ret == 0)
            ret = SetMPI(&key->q, data[3], (int)len[3]);
+        /* If modulus is not provided, calculate it */
+        if (data[0] == NULL || len[0] == 0) {
+            ret = mp_mul(&key->p, &key->q, &key->n);
+        } else {
+            ret = SetMPI(&key->n, data[0], (int)len[0]);
+        }
         if (ret == 0)
            ret = SetMPI(&key->dP, data[4], (int)len[4]);
         if (ret == 0)
