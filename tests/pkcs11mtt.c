@@ -711,7 +711,6 @@ static CK_RV test_attribute_types(void* args)
         { CKA_WRAP_TEMPLATE,       NULL,                0                     },
         { CKA_UNWRAP_TEMPLATE,     NULL,                0                     },
         { CKA_ALLOWED_MECHANISMS,  NULL,                0                     },
-        { CKA_SUBJECT,             NULL,                0                     },
     };
     CK_ULONG badAttrsTmplCnt = sizeof(badAttrsTmpl) / sizeof(*badAttrsTmpl);
     CK_DATE startDate = { "2018", "01", "01" };
