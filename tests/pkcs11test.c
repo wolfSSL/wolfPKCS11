@@ -1118,6 +1118,254 @@ static CK_RV test_op_state_success(void* args)
 }
 #endif
 
+#ifdef WOLFPKCS11_NSS
+/* Test creating a token stored CKO_NSS_TRUST object, closing session,
+ * reopening session, logging in, and verifying persistence */
+static CK_RV test_nss_trust_object_token_storage(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_SESSION_HANDLE newSession = CK_INVALID_HANDLE;
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS nss_trust_class = CKO_NSS_TRUST;
+    int rwFlags = CKF_SERIAL_SESSION | CKF_RW_SESSION;
+
+    /* Values for attributes */
+    static byte issuer[] = "CN=Token Test Signer,O=wolfSSL,C=US";
+    static byte serial_number[] = { 0x02, 0x05, 0x00, 0xC6, 0xA7, 0x91, 0x85 };
+    static byte sha1_hash[] = {
+        0x01, 0x75, 0x85, 0x74, 0xF9, 0xD2, 0x3D, 0x09,
+        0x74, 0x5B, 0x1A, 0x72, 0xBA, 0xA6, 0xCC, 0x15,
+        0xF1, 0xD0, 0x7A, 0x37
+    };
+    static byte md5_hash[] = {
+        0x48, 0xC3, 0x68, 0x9D, 0xB0, 0xEA, 0x15, 0x22,
+        0xD3, 0xE6, 0xA1, 0x7D, 0x84, 0xA0, 0x8E, 0xEC
+    };
+    static byte label[] = "TokenTrustTest";
+    CK_ULONG trust_value = 0xCE534353;
+    CK_BBOOL step_up = CK_FALSE;
+
+    /* Template for creating the token object */
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_TOKEN, &ckTrue, sizeof(ckTrue) },
+        { CKA_CLASS, &nss_trust_class, sizeof(nss_trust_class) },
+        { CKA_LABEL, label, sizeof(label)-1 },
+        { CKA_ISSUER, issuer, sizeof(issuer)-1 },
+        { CKA_SERIAL_NUMBER, serial_number, sizeof(serial_number) },
+        { CKA_CERT_SHA1_HASH, sha1_hash, sizeof(sha1_hash) },
+        { CKA_CERT_MD5_HASH, md5_hash, sizeof(md5_hash) },
+        { CKA_TRUST_SERVER_AUTH, &trust_value, sizeof(trust_value) },
+        { CKA_TRUST_CLIENT_AUTH, &trust_value, sizeof(trust_value) },
+        { CKA_TRUST_CODE_SIGNING, &trust_value, sizeof(trust_value) },
+        { CKA_TRUST_EMAIL_PROTECTION, &trust_value, sizeof(trust_value) },
+        { CKA_TRUST_STEP_UP_APPROVED, &step_up, sizeof(step_up) }
+    };
+    CK_ULONG tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
+
+    /* Template for finding the object */
+    CK_ATTRIBUTE findTmpl[] = {
+        { CKA_CLASS, &nss_trust_class, sizeof(nss_trust_class) },
+        { CKA_LABEL, label, sizeof(label)-1 }
+    };
+    CK_ULONG findTmplCnt = sizeof(findTmpl) / sizeof(*findTmpl);
+
+    /* Buffer to retrieve attribute values */
+    CK_BYTE buffer[64];
+    CK_ATTRIBUTE getAttr;
+    CK_OBJECT_CLASS retClass;
+    CK_ULONG retTrustValue;
+    CK_BBOOL retBool;
+    CK_ULONG count;
+
+    /* Create the token stored NSS_TRUST object */
+    ret = funcList->C_CreateObject(session, tmpl, tmplCnt, &obj);
+    CHECK_CKR(ret, "Create Token NSS_TRUST Object");
+
+    /* Close the session */
+    if (ret == CKR_OK) {
+        if (userPinLen != 0)
+            funcList->C_Logout(session);
+        funcList->C_CloseSession(session);
+    }
+
+    /* Open a new session */
+    if (ret == CKR_OK) {
+        ret = funcList->C_OpenSession(slot, rwFlags, NULL, NULL, &newSession);
+        CHECK_CKR(ret, "Open New Session for Token Trust Test");
+    }
+
+    /* Login as user */
+    if (ret == CKR_OK && userPinLen != 0) {
+        ret = funcList->C_Login(newSession, CKU_USER, userPin, userPinLen);
+        CHECK_CKR(ret, "Login User for Token Trust Test");
+    }
+
+    /* Find the token object */
+    if (ret == CKR_OK) {
+        ret = funcList->C_FindObjectsInit(newSession, findTmpl, findTmplCnt);
+        CHECK_CKR(ret, "Find Token NSS_TRUST Objects Init");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_FindObjects(newSession, &obj, 1, &count);
+        CHECK_CKR(ret, "Find Token NSS_TRUST Objects");
+    }
+    if (ret == CKR_OK && count != 1) {
+        ret = -1;
+        CHECK_CKR(ret, "Token NSS_TRUST Object not found");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_FindObjectsFinal(newSession);
+        CHECK_CKR(ret, "Find Token NSS_TRUST Objects Final");
+    }
+
+    /* Verify object class */
+    if (ret == CKR_OK) {
+        getAttr.type = CKA_CLASS;
+        getAttr.pValue = &retClass;
+        getAttr.ulValueLen = sizeof(retClass);
+        ret = funcList->C_GetAttributeValue(newSession, obj, &getAttr, 1);
+        CHECK_CKR(ret, "Get Token NSS_TRUST Object class");
+    }
+    if (ret == CKR_OK && retClass != CKO_NSS_TRUST) {
+        ret = -1;
+        CHECK_CKR(ret, "Token NSS_TRUST Object class incorrect");
+    }
+
+    /* Verify ISSUER attribute */
+    if (ret == CKR_OK) {
+        getAttr.type = CKA_ISSUER;
+        getAttr.pValue = buffer;
+        getAttr.ulValueLen = sizeof(buffer);
+        ret = funcList->C_GetAttributeValue(newSession, obj, &getAttr, 1);
+        CHECK_CKR(ret, "Get Token NSS_TRUST Object issuer");
+    }
+    if (ret == CKR_OK && (getAttr.ulValueLen != sizeof(issuer)-1 ||
+            XMEMCMP(buffer, issuer, sizeof(issuer)-1) != 0)) {
+        ret = -1;
+        CHECK_CKR(ret, "Token NSS_TRUST Object issuer incorrect");
+    }
+
+    /* Verify SERIAL_NUMBER attribute */
+    if (ret == CKR_OK) {
+        getAttr.type = CKA_SERIAL_NUMBER;
+        getAttr.pValue = buffer;
+        getAttr.ulValueLen = sizeof(buffer);
+        ret = funcList->C_GetAttributeValue(newSession, obj, &getAttr, 1);
+        CHECK_CKR(ret, "Get Token NSS_TRUST Object serial number");
+    }
+    if (ret == CKR_OK && (getAttr.ulValueLen != sizeof(serial_number) ||
+            XMEMCMP(buffer, serial_number, sizeof(serial_number)) != 0)) {
+        ret = -1;
+        CHECK_CKR(ret, "Token NSS_TRUST Object serial number incorrect");
+    }
+
+    /* Verify SHA1_HASH attribute */
+    if (ret == CKR_OK) {
+        getAttr.type = CKA_CERT_SHA1_HASH;
+        getAttr.pValue = buffer;
+        getAttr.ulValueLen = sizeof(buffer);
+        ret = funcList->C_GetAttributeValue(newSession, obj, &getAttr, 1);
+        CHECK_CKR(ret, "Get Token NSS_TRUST Object SHA1 hash");
+    }
+    if (ret == CKR_OK && (getAttr.ulValueLen != sizeof(sha1_hash) ||
+            XMEMCMP(buffer, sha1_hash, sizeof(sha1_hash)) != 0)) {
+        ret = -1;
+        CHECK_CKR(ret, "Token NSS_TRUST Object SHA1 hash incorrect");
+    }
+
+    /* Verify MD5_HASH attribute */
+    if (ret == CKR_OK) {
+        getAttr.type = CKA_CERT_MD5_HASH;
+        getAttr.pValue = buffer;
+        getAttr.ulValueLen = sizeof(buffer);
+        ret = funcList->C_GetAttributeValue(newSession, obj, &getAttr, 1);
+        CHECK_CKR(ret, "Get Token NSS_TRUST Object MD5 hash");
+    }
+    if (ret == CKR_OK && (getAttr.ulValueLen != sizeof(md5_hash) ||
+            XMEMCMP(buffer, md5_hash, sizeof(md5_hash)) != 0)) {
+        ret = -1;
+        CHECK_CKR(ret, "Token NSS_TRUST Object MD5 hash incorrect");
+    }
+
+    /* Verify TRUST_SERVER_AUTH attribute */
+    if (ret == CKR_OK) {
+        getAttr.type = CKA_TRUST_SERVER_AUTH;
+        getAttr.pValue = &retTrustValue;
+        getAttr.ulValueLen = sizeof(retTrustValue);
+        ret = funcList->C_GetAttributeValue(newSession, obj, &getAttr, 1);
+        CHECK_CKR(ret, "Get Token NSS_TRUST Object server auth");
+    }
+    if (ret == CKR_OK && retTrustValue != trust_value) {
+        ret = -1;
+        CHECK_CKR(ret, "Token NSS_TRUST Object server auth incorrect");
+    }
+
+    /* Verify TRUST_CLIENT_AUTH attribute */
+    if (ret == CKR_OK) {
+        getAttr.type = CKA_TRUST_CLIENT_AUTH;
+        getAttr.pValue = &retTrustValue;
+        getAttr.ulValueLen = sizeof(retTrustValue);
+        ret = funcList->C_GetAttributeValue(newSession, obj, &getAttr, 1);
+        CHECK_CKR(ret, "Get Token NSS_TRUST Object client auth");
+    }
+    if (ret == CKR_OK && retTrustValue != trust_value) {
+        ret = -1;
+        CHECK_CKR(ret, "Token NSS_TRUST Object client auth incorrect");
+    }
+
+    /* Verify TRUST_CODE_SIGNING attribute */
+    if (ret == CKR_OK) {
+        getAttr.type = CKA_TRUST_CODE_SIGNING;
+        getAttr.pValue = &retTrustValue;
+        getAttr.ulValueLen = sizeof(retTrustValue);
+        ret = funcList->C_GetAttributeValue(newSession, obj, &getAttr, 1);
+        CHECK_CKR(ret, "Get Token NSS_TRUST Object code signing");
+    }
+    if (ret == CKR_OK && retTrustValue != trust_value) {
+        ret = -1;
+        CHECK_CKR(ret, "Token NSS_TRUST Object code signing incorrect");
+    }
+
+    /* Verify TRUST_EMAIL_PROTECTION attribute */
+    if (ret == CKR_OK) {
+        getAttr.type = CKA_TRUST_EMAIL_PROTECTION;
+        getAttr.pValue = &retTrustValue;
+        getAttr.ulValueLen = sizeof(retTrustValue);
+        ret = funcList->C_GetAttributeValue(newSession, obj, &getAttr, 1);
+        CHECK_CKR(ret, "Get Token NSS_TRUST Object email protection");
+    }
+    if (ret == CKR_OK && retTrustValue != trust_value) {
+        ret = -1;
+        CHECK_CKR(ret, "Token NSS_TRUST Object email protection incorrect");
+    }
+
+    /* Verify TRUST_STEP_UP_APPROVED attribute */
+    if (ret == CKR_OK) {
+        getAttr.type = CKA_TRUST_STEP_UP_APPROVED;
+        getAttr.pValue = &retBool;
+        getAttr.ulValueLen = sizeof(retBool);
+        ret = funcList->C_GetAttributeValue(newSession, obj, &getAttr, 1);
+        CHECK_CKR(ret, "Get Token NSS_TRUST Object step up approved");
+    }
+    if (ret == CKR_OK && retBool != step_up) {
+        ret = -1;
+        CHECK_CKR(ret, "Token NSS_TRUST Object step up approved incorrect");
+    }
+
+    /* Destroy the token object */
+    if (ret == CKR_OK) {
+        ret = funcList->C_DestroyObject(newSession, obj);
+        CHECK_CKR(ret, "Destroy Token NSS_TRUST Object");
+    }
+
+    /* Update the session handle for cleanup */
+    *(CK_SESSION_HANDLE*)args = newSession;
+
+    return ret;
+}
+#endif
+
 static CK_RV test_op_state_fail(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -1696,7 +1944,6 @@ static CK_RV test_attribute_types(void* args)
         { CKA_WRAP_TEMPLATE,       NULL,                0                     },
         { CKA_UNWRAP_TEMPLATE,     NULL,                0                     },
         { CKA_ALLOWED_MECHANISMS,  NULL,                0                     },
-        { CKA_SUBJECT,             NULL,                0                     },
     };
     CK_ULONG badAttrsTmplCnt = sizeof(badAttrsTmpl) / sizeof(*badAttrsTmpl);
     CK_DATE startDate = { {'2','0','1','8'}, {'0','1'}, {'0','1'} };
@@ -1711,6 +1958,24 @@ static CK_RV test_attribute_types(void* args)
         { CKA_LABEL,               emptyLabel,          sizeof(emptyLabel)    },
     };
     CK_ULONG setGetTmplCnt = sizeof(setGetTmpl) / sizeof(*setGetTmpl);
+
+    /* Certificate test variables */
+    CK_OBJECT_HANDLE certObj = CK_INVALID_HANDLE;
+    CK_CERTIFICATE_TYPE certType = CKC_X_509;
+    CK_BYTE subject[] = "C = US, ST = Montana, L = Bozeman, O = wolfSSL, "
+        "OU = Support, CN = www.wolfssl.com, emailAddress = info@wolfssl.com";
+    CK_BYTE certificate[] = { 0x30, 0x82, 0x01, 0x00 }; /* Minimal cert data */
+    CK_ATTRIBUTE certTmpl[] = {
+        { CKA_CLASS,             &certificateClass, sizeof(certificateClass) },
+        { CKA_CERTIFICATE_TYPE,  &certType,         sizeof(certType)         },
+        { CKA_SUBJECT,           subject,           sizeof(subject)-1        },
+        { CKA_VALUE,             certificate,       sizeof(certificate)      },
+    };
+    CK_ULONG certTmplCnt = sizeof(certTmpl) / sizeof(*certTmpl);
+    CK_BYTE subjectBuffer[256];
+    CK_ATTRIBUTE subjectAttr[] = {
+        { CKA_SUBJECT,             subjectBuffer,       sizeof(subjectBuffer)    },
+    };
     int i;
 
     ret = funcList->C_CreateObject(session, tmpl, tmplCnt, &obj);
@@ -1752,8 +2017,48 @@ static CK_RV test_attribute_types(void* args)
         CHECK_CKR(ret, "Get Empty data attributes");
     }
 
+    /* Test CKA_SUBJECT attribute with CKO_CERTIFICATE object
+     * This verifies that CKA_SUBJECT is properly supported for certificate objects
+     * and that the subject data can be retrieved correctly. */
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, certTmpl, certTmplCnt,
+            &certObj);
+        CHECK_CKR(ret, "Create Certificate Object");
+    }
+    if (ret == CKR_OK) {
+        /* First get the required buffer size for CKA_SUBJECT */
+        subjectAttr[0].pValue = NULL;
+        subjectAttr[0].ulValueLen = 0;
+        ret = funcList->C_GetAttributeValue(session, certObj, subjectAttr, 1);
+        CHECK_CKR(ret, "Get CKA_SUBJECT length from certificate");
+    }
+    if (ret == CKR_OK) {
+        /* Verify the length matches our expected subject size */
+        if (subjectAttr[0].ulValueLen != sizeof(subject)-1) {
+            ret = CKR_GENERAL_ERROR;
+            CHECK_CKR(ret, "CKA_SUBJECT length verification");
+        }
+    }
+    if (ret == CKR_OK) {
+        /* Now get the actual CKA_SUBJECT data */
+        subjectAttr[0].pValue = subjectBuffer;
+        subjectAttr[0].ulValueLen = sizeof(subjectBuffer);
+        ret = funcList->C_GetAttributeValue(session, certObj, subjectAttr, 1);
+        CHECK_CKR(ret, "Get CKA_SUBJECT data from certificate");
+    }
+    if (ret == CKR_OK) {
+        /* Verify subject data matches what we set */
+        if (subjectAttr[0].ulValueLen != sizeof(subject)-1 ||
+            XMEMCMP(subjectAttr[0].pValue, subject, sizeof(subject)-1) != 0) {
+            ret = CKR_GENERAL_ERROR;
+            CHECK_CKR(ret, "CKA_SUBJECT data verification failed");
+        }
+    }
+
     if (obj != CK_INVALID_HANDLE)
         funcList->C_DestroyObject(session, obj);
+    if (certObj != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, certObj);
 
     return ret;
 }
@@ -13029,6 +13334,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_derive_tls12_master_key),
 #ifdef WOLFPKCS11_NSS
     PKCS11TEST_FUNC_SESS_DECL(test_nss_trust_object),
+    PKCS11TEST_FUNC_SESS_DECL(test_nss_trust_object_token_storage),
     PKCS11TEST_FUNC_SESS_DECL(test_nss_derive_tls12_master_key),
 #endif
 #endif

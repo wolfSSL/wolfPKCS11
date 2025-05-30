@@ -122,8 +122,6 @@ static CK_ATTRIBUTE_TYPE trustParams[] = {
     CKA_TRUST_EMAIL_PROTECTION,
     CKA_TRUST_CODE_SIGNING,
     CKA_TRUST_STEP_UP_APPROVED,
-    CKA_ISSUER,
-    CKA_SERIAL_NUMBER,
 };
 #define TRUST_PARAMS_CNT    (sizeof(trustParams)/sizeof(*trustParams))
 #endif
