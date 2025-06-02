@@ -13109,6 +13109,99 @@ static void pkcs11_close_session(int flags, void* args)
     }
 }
 
+/* Test for bug fix in internal.c where bitwise OR was changed to AND
+ * This test validates that private objects (CKA_PRIVATE = TRUE) are properly
+ * filtered based on login state:
+ * - When not logged in: private objects should NOT be found
+ * - When logged in: private objects should be found
+ */
+static CK_RV test_private_object_access(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    static byte keyData[] = { 0x01, 0x02, 0x03, 0x04 };
+    static byte id[] = { 0x10, 0x11, 0x12, 0x13 };
+    CK_BBOOL isPrivate = CK_TRUE;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
+        { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
+        { CKA_VALUE,             keyData,           sizeof(keyData)           },
+        { CKA_PRIVATE,           &isPrivate,        sizeof(isPrivate)         },
+        { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
+        { CKA_ID,                id,                sizeof(id)                },
+    };
+    CK_ULONG tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
+    CK_ATTRIBUTE findTmpl[] = {
+        { CKA_ID,                id,                sizeof(id)                },
+    };
+    CK_ULONG findTmplCnt = sizeof(findTmpl) / sizeof(*findTmpl);
+    CK_OBJECT_HANDLE found;
+    CK_ULONG count;
+
+    /* Create a private object while logged in (test setup logs us in) */
+    ret = funcList->C_CreateObject(session, tmpl, tmplCnt, &obj);
+    CHECK_CKR(ret, "Create Private Object");
+
+    if (ret == CKR_OK) {
+        /* Logout to test private object access control */
+        ret = funcList->C_Logout(session);
+        CHECK_CKR(ret, "Logout for private object test");
+    }
+
+    if (ret == CKR_OK) {
+        /* Try to find the private object while not logged in - should NOT find it */
+        ret = funcList->C_FindObjectsInit(session, findTmpl, findTmplCnt);
+        CHECK_CKR(ret, "Find Objects Init - not logged in");
+        if (ret == CKR_OK) {
+            ret = funcList->C_FindObjects(session, &found, 1, &count);
+            CHECK_CKR(ret, "Find Objects - not logged in");
+        }
+        if (ret == CKR_OK && count != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Private object should not be found when not logged in");
+        }
+        if (ret == CKR_OK) {
+            ret = funcList->C_FindObjectsFinal(session);
+            CHECK_CKR(ret, "Find Objects Final - not logged in");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        /* Login as user */
+        ret = funcList->C_Login(session, CKU_USER, userPin, userPinLen);
+        CHECK_CKR(ret, "Login for private object test");
+    }
+
+    if (ret == CKR_OK) {
+        /* Now try to find the private object while logged in - should find it */
+        ret = funcList->C_FindObjectsInit(session, findTmpl, findTmplCnt);
+        CHECK_CKR(ret, "Find Objects Init - logged in");
+        if (ret == CKR_OK) {
+            ret = funcList->C_FindObjects(session, &found, 1, &count);
+            CHECK_CKR(ret, "Find Objects - logged in");
+        }
+        if (ret == CKR_OK && count != 1) {
+            ret = -1;
+            CHECK_CKR(ret, "Private object should be found when logged in");
+        }
+        if (ret == CKR_OK && found != obj) {
+            ret = -1;
+            CHECK_CKR(ret, "Found object should match created object");
+        }
+        if (ret == CKR_OK) {
+            ret = funcList->C_FindObjectsFinal(session);
+            CHECK_CKR(ret, "Find Objects Final - logged in");
+        }
+    }
+
+    if (obj != CK_INVALID_HANDLE) {
+        funcList->C_DestroyObject(session, obj);
+    }
+
+    return ret;
+}
+
 static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_NO_INIT_DECL(test_get_function_list),
     PKCS11TEST_FUNC_NO_INIT_DECL(test_not_initialized),
@@ -13142,6 +13235,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_attributes_dh),
 #endif
     PKCS11TEST_FUNC_SESS_DECL(test_find_objects),
+    PKCS11TEST_FUNC_SESS_DECL(test_private_object_access),
     PKCS11TEST_FUNC_SESS_DECL(test_encrypt_decrypt),
     PKCS11TEST_FUNC_SESS_DECL(test_digest_fail),
     PKCS11TEST_FUNC_SESS_DECL(test_sign_verify),
