@@ -722,11 +722,11 @@ static CK_RV test_attribute_types(void* args)
         { CKA_SUBJECT,             NULL,                0                     },
     };
     CK_ULONG badAttrsTmplCnt = sizeof(badAttrsTmpl) / sizeof(*badAttrsTmpl);
-    CK_DATE startDate = { "2018", "01", "01" };
-    CK_DATE endDate = { "2118", "01", "01" };
+    CK_DATE startDate = { {'2','0','1','8'}, {'0','1'}, {'0','1'} };
+    CK_DATE endDate = { {'2','1','1','8'}, {'0','1'}, {'0','1'} };
     CK_CHAR label[32] = "The Key's Label!!!";
-    CK_DATE emptyStartDate = { "2018", "01", "01" };
-    CK_DATE emptyEndDate = { "2118", "01", "01" };
+    CK_DATE emptyStartDate = { {'2','0','1','8'}, {'0','1'}, {'0','1'} };
+    CK_DATE emptyEndDate = { {'2','1','1','8'}, {'0','1'}, {'0','1'} };
     CK_CHAR emptyLabel[32] = "The Key's Label!!!";
     CK_ATTRIBUTE setGetTmpl[] = {
         { CKA_START_DATE,          &emptyStartDate,     sizeof(CK_DATE)       },

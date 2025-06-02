@@ -105,7 +105,10 @@ static CK_TOKEN_INFO tokenInfoTemplate = {
     "",
     "wolfpkcs11",
     "wolfpkcs11",
-    "0000000000000000", /* serialNumber */
+    {
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    }, /* serialNumber */
     CKF_RNG | CKF_CLOCK_ON_TOKEN | CKF_LOGIN_REQUIRED,
     WP11_SESSION_CNT_MAX, /* ulMaxSessionCount */
     CK_UNAVAILABLE_INFORMATION, /* ulSessionCount */
@@ -119,7 +122,10 @@ static CK_TOKEN_INFO tokenInfoTemplate = {
     CK_UNAVAILABLE_INFORMATION, /* ulFreePrivateMemory */
     { WOLFPKCS11_MAJOR_VERSION, WOLFPKCS11_MINOR_VERSION },
     { WOLFPKCS11_MAJOR_VERSION, WOLFPKCS11_MINOR_VERSION },
-    "YYYYMMDDhhmmss00"
+    {
+        'Y', 'Y', 'Y', 'Y', 'M', 'M', 'D', 'D', 'h', 'h', 'm', 'm', 's', 's',
+        '0', '0'
+    }
 };
 
 /**
@@ -1067,4 +1073,3 @@ CK_RV C_WaitForSlotEvent(CK_FLAGS flags, CK_SLOT_ID_PTR pSlot,
 
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
-
