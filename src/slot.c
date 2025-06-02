@@ -69,9 +69,6 @@ static CK_SLOT_INFO slotInfoTemplate = {
     "wolfSSL HSM slot ID xx",
     "wolfpkcs11",
     CKF_TOKEN_PRESENT
-#ifdef WOLFPKCS11_NSS
-    | CKF_USER_PIN_INITIALIZED
-#endif
     ,
     { WOLFPKCS11_MAJOR_VERSION, WOLFPKCS11_MINOR_VERSION },
     { WOLFPKCS11_MAJOR_VERSION, WOLFPKCS11_MINOR_VERSION }
@@ -104,15 +101,24 @@ CK_RV C_GetSlotInfo(CK_SLOT_ID slotID, CK_SLOT_INFO_PTR pInfo)
     return CKR_OK;
 }
 
+static CK_RV checkPinLen(CK_ULONG pinLen)
+{
+#if (WP11_MIN_PIN_LEN > 0)
+    if (pinLen > WP11_MAX_PIN_LEN || pinLen < WP11_MIN_PIN_LEN)
+#else
+    if (pinLen > WP11_MAX_PIN_LEN)
+#endif
+        return CKR_PIN_INCORRECT;
+    return CKR_OK;
+}
+
 /* Template for token information. */
 static CK_TOKEN_INFO tokenInfoTemplate = {
     "",
     "wolfpkcs11",
     "wolfpkcs11",
     "0000000000000000", /* serialNumber */
-#ifndef WOLFPKCS11_NSS
     CKF_LOGIN_REQUIRED |
-#endif
     CKF_RNG | CKF_CLOCK_ON_TOKEN,
     WP11_SESSION_CNT_MAX, /* ulMaxSessionCount */
     CK_UNAVAILABLE_INFORMATION, /* ulSessionCount */
@@ -159,6 +165,10 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
     WP11_Slot_GetTokenLabel(slot, (char*)pInfo->label);
     pInfo->serialNumber[14] = ((slotID / 10) % 10) + '0';
     pInfo->serialNumber[15] = ((slotID /  1) % 10) + '0';
+    if (WP11_Slot_Has_Empty_Pin(slot) ||
+        !WP11_Slot_IsTokenUserPinInitialized(slot)) {
+        pInfo->flags &= ~(CKF_LOGIN_REQUIRED);
+    }
 
 #ifndef WOLFPKCS11_NO_TIME
     now = XTIME(0);
@@ -1038,15 +1048,17 @@ CK_RV C_InitToken(CK_SLOT_ID slotID, CK_UTF8CHAR_PTR pPin,
     if (pPin == NULL || pLabel == NULL)
         return CKR_ARGUMENTS_BAD;
 
-    if (ulPinLen < WP11_MIN_PIN_LEN || ulPinLen > WP11_MAX_PIN_LEN)
+    if (checkPinLen(ulPinLen) != CKR_OK)
         return CKR_PIN_INCORRECT;
 
     if (WP11_Slot_IsTokenInitialized(slot)) {
         if (WP11_Slot_HasSession(slot))
             return CKR_SESSION_EXISTS;
-        ret = WP11_Slot_CheckSOPin(slot, (char*)pPin, (int)ulPinLen);
-        if (ret != 0)
-            return CKR_PIN_INCORRECT;
+        if (WP11_Slot_SOPin_IsSet(slot)) {
+            ret = WP11_Slot_CheckSOPin(slot, (char*)pPin, (int)ulPinLen);
+            if (ret != 0)
+                return CKR_PIN_INCORRECT;
+        }
     }
 
     ret = WP11_Slot_TokenReset(slot, (char*)pPin, (int)ulPinLen, (char*)pLabel);
@@ -1081,12 +1093,12 @@ CK_RV C_InitPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pPin,
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     if (WP11_Session_Get(hSession, &session) != 0)
         return CKR_SESSION_HANDLE_INVALID;
-    if (pPin == NULL)
+    if (pPin == NULL && ulPinLen > 0)
         return CKR_ARGUMENTS_BAD;
     if (WP11_Session_GetState(session) != WP11_APP_STATE_RW_SO)
         return CKR_USER_NOT_LOGGED_IN;
 
-    if (ulPinLen < WP11_MIN_PIN_LEN || ulPinLen > WP11_MAX_PIN_LEN)
+    if (checkPinLen(ulPinLen) != CKR_OK)
         return CKR_PIN_INCORRECT;
 
     slot = WP11_Session_GetSlot(session);
@@ -1130,9 +1142,9 @@ CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
         return CKR_SESSION_HANDLE_INVALID;
     if (pOldPin == NULL || pNewPin == NULL)
         return CKR_ARGUMENTS_BAD;
-    if (ulOldLen < WP11_MIN_PIN_LEN || ulOldLen > WP11_MAX_PIN_LEN)
+    if (checkPinLen(ulOldLen) != CKR_OK)
         return CKR_PIN_INCORRECT;
-    if (ulNewLen < WP11_MIN_PIN_LEN || ulNewLen > WP11_MAX_PIN_LEN)
+    if (checkPinLen(ulNewLen) != CKR_OK)
         return CKR_PIN_INCORRECT;
 
     state = WP11_Session_GetState(session);
@@ -1393,7 +1405,7 @@ CK_RV C_Login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
     if (pPin == NULL)
         return CKR_ARGUMENTS_BAD;
 
-    if (ulPinLen < WP11_MIN_PIN_LEN || ulPinLen > WP11_MAX_PIN_LEN)
+    if (checkPinLen(ulPinLen) != CKR_OK)
         return CKR_PIN_INCORRECT;
 
     slot = WP11_Session_GetSlot(session);
@@ -1509,4 +1521,3 @@ CK_RV C_WaitForSlotEvent(CK_FLAGS flags, CK_SLOT_ID_PTR pSlot,
 
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
-
