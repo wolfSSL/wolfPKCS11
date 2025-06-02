@@ -3843,10 +3843,7 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
             token->state = WP11_TOKEN_STATE_INITIALIZED;
         }
         if (ret != 0) {
-            /* Failed to load - clear out any data and initialize. */
-            wp11_Token_Final(token);
-            wp11_Token_Init(token, token->label);
-            ret = 0;
+            ret = CKR_DEVICE_ERROR;
         }
     }
     else if (ret == NOT_AVAILABLE_E) {
