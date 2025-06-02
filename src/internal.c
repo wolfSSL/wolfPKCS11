@@ -5906,7 +5906,7 @@ static WP11_Object* wp11_Session_FindNext(WP11_Session* session, int onToken,
         }
    #endif
 
-        if ((ret->opFlag | WP11_FLAG_PRIVATE) == WP11_FLAG_PRIVATE) {
+        if ((ret->opFlag & WP11_FLAG_PRIVATE) == WP11_FLAG_PRIVATE) {
             if (!onToken)
                 WP11_Lock_LockRO(&session->slot->token.lock);
             if (session->slot->token.loginState == WP11_APP_STATE_RW_PUBLIC ||
