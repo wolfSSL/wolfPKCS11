@@ -40,6 +40,7 @@
 
 #include "unit.h"
 #include "testdata.h"
+#include <wolfpkcs11/internal.h>
 
 
 #define TEST_FLAG_INIT                 0x01
@@ -406,20 +407,18 @@ static CK_RV test_no_token_init(void* args)
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_RV ret;
     CK_TOKEN_INFO tokenInfo;
-#ifdef WOLFPKCS11_NSS
-    CK_FLAGS expFlags = CKF_RNG | CKF_CLOCK_ON_TOKEN;
-#else
-    CK_FLAGS expFlags = CKF_RNG | CKF_CLOCK_ON_TOKEN | CKF_LOGIN_REQUIRED;
-#endif
+    CK_FLAGS expFlags = CKF_RNG | CKF_CLOCK_ON_TOKEN | CKF_TOKEN_INITIALIZED;
     int flags = CKF_SERIAL_SESSION | CKF_RW_SESSION;
 
     session = CK_INVALID_HANDLE;
     ret = funcList->C_OpenSession(slot, flags, NULL, NULL, &session);
     CHECK_CKR(ret, "Open Session");
     if (ret == CKR_OK) {
+#ifndef WOLFPKCS11_NSS
         ret = funcList->C_Login(session, CKU_SO, soPin, soPinLen);
         CHECK_CKR_FAIL(ret, CKR_USER_PIN_NOT_INITIALIZED,
                                                          "Login SO no PIN set");
+#endif
         if (ret == CKR_OK) {
             ret = funcList->C_Login(session, CKU_USER, userPin, userPinLen);
             CHECK_CKR_FAIL(ret, CKR_USER_PIN_NOT_INITIALIZED,
@@ -594,12 +593,7 @@ static CK_RV test_token(void* args)
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_RV ret;
     CK_TOKEN_INFO tokenInfo;
-#ifdef WOLFPKCS11_NSS
     CK_FLAGS expFlags = CKF_RNG | CKF_CLOCK_ON_TOKEN | CKF_TOKEN_INITIALIZED;
-#else
-    CK_FLAGS expFlags = CKF_RNG | CKF_CLOCK_ON_TOKEN | CKF_LOGIN_REQUIRED |
-                        CKF_TOKEN_INITIALIZED;
-#endif
     unsigned char label[32];
     int flags = CKF_SERIAL_SESSION | CKF_RW_SESSION;
 
@@ -674,6 +668,8 @@ static CK_RV test_token(void* args)
     return ret;
 }
 
+#ifndef WOLFPKCS11_NSS
+/* Fails on NSS due to single-session mode */
 static CK_RV test_open_close_session(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -737,6 +733,7 @@ static CK_RV test_open_close_session(void* args)
 
     return ret;
 }
+#endif
 
 static CK_RV test_pin(void* args)
 {
@@ -763,11 +760,13 @@ static CK_RV test_pin(void* args)
             if (ret == CKR_OK) {
                 ret = funcList->C_InitPIN(session, NULL, userPinLen);
                 CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD, "Init PIN no pin");
+#if WP11_MIN_PIN_LEN > 3
                 if (ret == CKR_OK) {
                     ret = funcList->C_InitPIN(session, userPin, 3);
                     CHECK_CKR_FAIL(ret, CKR_PIN_INCORRECT,
                                                       "Init PIN too short PIN");
                 }
+#endif
                 if (ret == CKR_OK) {
                     ret = funcList->C_InitPIN(session, userPin, 33);
                     CHECK_CKR_FAIL(ret, CKR_PIN_INCORRECT,
@@ -809,12 +808,14 @@ static CK_RV test_pin(void* args)
                 CHECK_CKR_FAIL(ret, CKR_PIN_INCORRECT,
                                                     "Set PIN too long old pin");
             }
+#if WP11_MIN_PIN_LEN > 3
             if (ret == CKR_OK) {
                 ret = funcList->C_SetPIN(session, userPin, userPinLen,userPin,
                                                                              3);
                 CHECK_CKR_FAIL(ret, CKR_PIN_INCORRECT,
                                                    "Set PIN too short new pin");
             }
+#endif
             if (ret == CKR_OK) {
                 ret = funcList->C_SetPIN(session, userPin, userPinLen, userPin,
                                                                             33);
@@ -896,16 +897,9 @@ static CK_RV test_login_logout(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_RV ret = 0;
-    int roFlags = CKF_SERIAL_SESSION;
-    CK_OBJECT_HANDLE roSession;
     CK_TOKEN_INFO tokenInfo;
-#ifdef WOLFPKCS11_NSS
-    CK_FLAGS expFlags = CKF_RNG | CKF_CLOCK_ON_TOKEN |
-                        CKF_TOKEN_INITIALIZED | CKF_USER_PIN_INITIALIZED;
-#else
     CK_FLAGS expFlags = CKF_RNG | CKF_CLOCK_ON_TOKEN | CKF_LOGIN_REQUIRED |
                         CKF_TOKEN_INITIALIZED | CKF_USER_PIN_INITIALIZED;
-#endif
 
     funcList->C_Logout(session);
 
@@ -963,7 +957,10 @@ static CK_RV test_login_logout(void* args)
                              "Get Token Info - token initialized flag not set");
     }
 
+#ifndef WOLFPKCS11_NSS
     if (ret == CKR_OK) {
+        CK_OBJECT_HANDLE roSession;
+        int roFlags = CKF_SERIAL_SESSION;
         ret = funcList->C_OpenSession(slot, roFlags, NULL, NULL, &roSession);
         CHECK_CKR(ret, "Login/out - Open Session RO");
         if (ret == CKR_OK) {
@@ -973,6 +970,7 @@ static CK_RV test_login_logout(void* args)
             funcList->C_CloseSession(roSession);
         }
     }
+#endif
 
     return ret;
 }
@@ -1406,7 +1404,9 @@ static CK_RV test_object(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_RV ret = CKR_OK;
+#ifndef WOLFPKCS11_NSS
     CK_SESSION_HANDLE sessionRO;
+#endif
     static byte keyData[] = { 0x00 };
     CK_ATTRIBUTE tmpl[] = {
         { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
@@ -1617,14 +1617,14 @@ static CK_RV test_object(void* args)
         ret = funcList->C_DestroyObject(session, obj);
         CHECK_CKR(ret, "Destroy Object");
     }
-
+#ifndef WOLFPKCS11_NSS
     if (ret == CKR_OK) {
         sessionRO = CK_INVALID_HANDLE;
         ret = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION, NULL, NULL,
                                                                     &sessionRO);
         CHECK_CKR(ret, "Open Session - read-only");
     }
-#ifndef WOLFPKCS11_NSS
+
     if (ret == CKR_OK) {
         ret = funcList->C_CreateObject(sessionRO, tmpl, tmplCnt, &obj);
         CHECK_CKR_FAIL(ret, CKR_SESSION_READ_ONLY,
@@ -1641,10 +1641,11 @@ static CK_RV test_object(void* args)
         CHECK_CKR_FAIL(ret, CKR_SESSION_READ_ONLY,
                                          "Destroy object in read-only session");
     }
-#endif
+
     if (ret == CKR_OK && sessionRO != CK_INVALID_HANDLE) {
         funcList->C_CloseSession(sessionRO);
     }
+#endif
     if (ret == CKR_OK) {
         ret = funcList->C_DestroyObject(session, objOnToken);
         CHECK_CKR(ret, "Destroy Object");
@@ -1653,7 +1654,8 @@ static CK_RV test_object(void* args)
     return ret;
 }
 
-#ifdef WOLFPKCS11_NSS
+#if ((defined(WOLFPKCS11_NSS)) && ((WP11_SESSION_CNT_MAX != 1) || \
+    (WP11_SESSION_CNT_MIN != 1)))
 static CK_RV test_cross_session_object(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -5268,11 +5270,14 @@ static CK_RV test_rsa_fixed_keys_store_token(void* args)
     if (ret == CKR_OK)
         ret = get_rsa_pub_key(session, pubId, pubIdLen, &pub);
 
+#if ((defined(WOLFPKCS11_NSS)) && ((WP11_SESSION_CNT_MAX != 1) || \
+    (WP11_SESSION_CNT_MIN != 1)))
     if (ret == CKR_OK) {
         ret = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION, NULL, NULL,
                                                                     &sessionRO);
         CHECK_CKR(ret, "Open Session read only");
     }
+#endif
     if (ret == CKR_OK)
         ret = find_rsa_priv_key(session, &priv, privId, privIdLen);
     if (ret == CKR_OK)
@@ -13209,7 +13214,9 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_TOKEN_DECL(test_get_info),
     PKCS11TEST_FUNC_TOKEN_DECL(test_slot),
     PKCS11TEST_FUNC_TOKEN_DECL(test_token),
+#ifndef WOLFPKCS11_NSS
     PKCS11TEST_FUNC_TOKEN_DECL(test_open_close_session),
+#endif
     PKCS11TEST_FUNC_SESS_DECL(test_login_logout),
     PKCS11TEST_FUNC_SESS_DECL(test_pin),
     PKCS11TEST_FUNC_SESS_DECL(test_session),
@@ -13218,7 +13225,8 @@ static TEST_FUNC testFunc[] = {
 #endif
     PKCS11TEST_FUNC_SESS_DECL(test_op_state_fail),
     PKCS11TEST_FUNC_SESS_DECL(test_object),
-#ifdef WOLFPKCS11_NSS
+#if ((defined(WOLFPKCS11_NSS)) && ((WP11_SESSION_CNT_MAX != 1) || \
+    (WP11_SESSION_CNT_MIN != 1)))
     PKCS11TEST_FUNC_SESS_DECL(test_cross_session_object),
 #endif
     PKCS11TEST_FUNC_SESS_DECL(test_attribute),
