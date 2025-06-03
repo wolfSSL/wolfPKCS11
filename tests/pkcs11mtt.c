@@ -1741,6 +1741,7 @@ static CK_RV test_generate_key(void* args)
     return ret;
 }
 
+#ifndef NO_RSA
 static CK_RV test_generate_key_pair(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -1749,12 +1750,11 @@ static CK_RV test_generate_key_pair(void* args)
     CK_OBJECT_HANDLE  priv = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE  pub = CK_INVALID_HANDLE;
     CK_MECHANISM      mech;
-    static CK_BYTE    pub_exp[] = { 0x01, 0x00, 0x01 };
     CK_ATTRIBUTE      pubKeyTmpl[] = {
         { CKA_MODULUS_BITS,    &bits,    sizeof(bits)    },
         { CKA_ENCRYPT,         &ckTrue,  sizeof(ckTrue)  },
         { CKA_VERIFY,          &ckTrue,  sizeof(ckTrue)  },
-        { CKA_PUBLIC_EXPONENT, pub_exp,  sizeof(pub_exp) }
+        { CKA_PUBLIC_EXPONENT, rsa_2048_pub_exp,  sizeof(rsa_2048_pub_exp) }
     };
     int               pubTmplCnt = sizeof(pubKeyTmpl)/sizeof(*pubKeyTmpl);
     CK_ATTRIBUTE      privKeyTmpl[] = {
@@ -1821,6 +1821,7 @@ static CK_RV test_generate_key_pair(void* args)
 
     return ret;
 }
+#endif
 
 static CK_RV test_wrap_unwrap_key(void* args)
 {
@@ -2107,8 +2108,6 @@ static CK_RV get_rsa_pub_key(CK_SESSION_HANDLE session, unsigned char* pubId,
 }
 
 #ifdef WOLFSSL_KEY_GEN
-static CK_BYTE         pub_exp[] = { 0x01, 0x00, 0x01 };
-
 static CK_RV gen_rsa_key(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE* pubKey,
                        CK_OBJECT_HANDLE* privKey, unsigned char* id, int idLen)
 {
@@ -2120,7 +2119,7 @@ static CK_RV gen_rsa_key(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE* pubKey,
         { CKA_MODULUS_BITS,    &bits,    sizeof(bits)    },
         { CKA_ENCRYPT,         &ckTrue,  sizeof(ckTrue)  },
         { CKA_VERIFY,          &ckTrue,  sizeof(ckTrue)  },
-        { CKA_PUBLIC_EXPONENT, pub_exp,  sizeof(pub_exp) }
+        { CKA_PUBLIC_EXPONENT, rsa_2048_pub_exp,  sizeof(rsa_2048_pub_exp) }
     };
     int               pubTmplCnt = sizeof(pubKeyTmpl)/sizeof(*pubKeyTmpl);
     CK_ATTRIBUTE      privKeyTmpl[] = {
@@ -6292,7 +6291,9 @@ static TEST_FUNC testFunc[] = {
     PKCS11MTT_CASE(test_encdec_digest),
     PKCS11MTT_CASE(test_encdec_signverify),
     PKCS11MTT_CASE(test_generate_key),
+#ifndef NO_RSA
     PKCS11MTT_CASE(test_generate_key_pair),
+#endif
     PKCS11MTT_CASE(test_wrap_unwrap_key),
     PKCS11MTT_CASE(test_derive_key),
 #ifndef NO_RSA

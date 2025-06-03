@@ -253,6 +253,116 @@ static void pkcs11_close_session(CK_SESSION_HANDLE session)
 }
 
 #ifndef NO_RSA
+
+#ifdef WOLFSSL_KEY_GEN
+static CK_RV generate_rsa_keypair(CK_SESSION_HANDLE session,
+    unsigned char* label, int labelLen,
+    CK_OBJECT_HANDLE* genPriv, CK_OBJECT_HANDLE* genPub)
+{
+    CK_RV ret = CKR_OK;
+    CK_ULONG          bits = 2048;
+    CK_MECHANISM      mech;
+    CK_ATTRIBUTE      pubKeyTmpl[] = {
+        { CKA_MODULUS_BITS,    &bits,    sizeof(bits)    },
+        { CKA_ENCRYPT,         &ckTrue,  sizeof(ckTrue)  },
+        { CKA_VERIFY,          &ckTrue,  sizeof(ckTrue)  },
+        { CKA_PUBLIC_EXPONENT, rsa_2048_pub_exp,  sizeof(rsa_2048_pub_exp) },
+        { CKA_TOKEN,           &ckTrue,  sizeof(ckTrue)  },
+        { CKA_LABEL,           (unsigned char*)"", 0 },
+    };
+    int               pubTmplCnt = sizeof(pubKeyTmpl)/sizeof(*pubKeyTmpl);
+    CK_ATTRIBUTE      privKeyTmpl[] = {
+        { CKA_DECRYPT,  &ckTrue, sizeof(ckTrue) },
+        { CKA_SIGN,     &ckTrue, sizeof(ckTrue) },
+        { CKA_LABEL,    label, labelLen },
+        { CKA_TOKEN,    &ckTrue, sizeof(ckTrue) },
+    };
+    int privTmplCnt = sizeof(privKeyTmpl)/sizeof(*privKeyTmpl);
+
+    if (ret == CKR_OK) {
+        mech.mechanism      = CKM_RSA_PKCS_KEY_PAIR_GEN;
+        mech.ulParameterLen = 0;
+        mech.pParameter     = NULL;
+
+        ret = funcList->C_GenerateKeyPair(session, &mech, pubKeyTmpl,
+                           pubTmplCnt, privKeyTmpl, privTmplCnt, genPub, genPriv);
+        CHECK_CKR(ret, "RSA Generate Key Pair");
+    }
+
+    return ret;
+
+}
+
+static CK_RV find_rsa_pub_key_label(CK_SESSION_HANDLE session,
+    CK_OBJECT_HANDLE* pubKey)
+{
+    CK_RV ret = CKR_OK;
+    CK_ATTRIBUTE      pubKeyTmpl[] = {
+        { CKA_CLASS,     &pubKeyClass,   sizeof(pubKeyClass)  },
+        { CKA_KEY_TYPE,  &rsaKeyType,    sizeof(rsaKeyType)   },
+        { CKA_LABEL,     (unsigned char*)"", 0 },
+    };
+    CK_ULONG pubKeyTmplCnt = sizeof(pubKeyTmpl) / sizeof(*pubKeyTmpl);
+    CK_ULONG count;
+
+    ret = funcList->C_FindObjectsInit(session, pubKeyTmpl, pubKeyTmplCnt);
+    CHECK_CKR(ret, "RSA Public Key Find label Objects Init");
+    if (ret == CKR_OK) {
+        ret = funcList->C_FindObjects(session, pubKey, 1, &count);
+        CHECK_CKR(ret, "RSA Public Key Find label Objects");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_FindObjectsFinal(session);
+        CHECK_CKR(ret, "RSA Public Key Find label Objects Final");
+    }
+    if (ret == CKR_OK && count == 0) {
+        ret = -1;
+        CHECK_CKR(ret, "RSA Public Key Find label Objects Count");
+    }
+
+    return ret;
+}
+
+static CK_RV find_rsa_priv_key_label(CK_SESSION_HANDLE session,
+    CK_OBJECT_HANDLE* privKey, unsigned char* label, int labelLen)
+{
+    CK_RV ret = CKR_OK;
+    CK_ATTRIBUTE      privKeyTmpl[] = {
+        { CKA_CLASS,     &privKeyClass,  sizeof(privKeyClass) },
+        { CKA_KEY_TYPE,  &rsaKeyType,    sizeof(rsaKeyType)   },
+        { CKA_LABEL,     label,          labelLen             }
+    };
+    CK_ULONG privKeyTmplCnt = sizeof(privKeyTmpl) / sizeof(*privKeyTmpl);
+    CK_ULONG count;
+
+    ret = funcList->C_FindObjectsInit(session, privKeyTmpl, privKeyTmplCnt);
+    CHECK_CKR(ret, "RSA Private Key Find label Objects Init");
+    if (ret == CKR_OK) {
+        ret = funcList->C_FindObjects(session, privKey, 1, &count);
+        CHECK_CKR(ret, "RSA Private Key Find label Objects");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_FindObjectsFinal(session);
+        CHECK_CKR(ret, "RSA Private Key Find label Objects Final");
+    }
+    if (ret == CKR_OK && count == 0) {
+        ret = -1;
+        CHECK_CKR(ret, "RSA Private Key Find label Objects Count");
+    }
+
+    (void)rsa_2048_u;
+    (void)rsa_2048_dQ;
+    (void)rsa_2048_dP;
+    (void)rsa_2048_q;
+    (void)rsa_2048_p;
+    (void)rsa_2048_priv_exp;
+    (void)rsa_2048_modulus;
+
+    return ret;
+}
+
+#else
+
 static CK_RV create_rsa_priv_key(CK_SESSION_HANDLE session,
     unsigned char* privId, int privIdLen, CK_OBJECT_HANDLE* obj)
 {
@@ -367,6 +477,7 @@ static CK_RV find_rsa_priv_key(CK_SESSION_HANDLE session,
     return ret;
 }
 #endif
+#endif /* !NO_RSA */
 
 #ifdef HAVE_ECC
 static CK_OBJECT_HANDLE create_ecc_priv_key(CK_SESSION_HANDLE session,
@@ -656,11 +767,19 @@ static CK_RV pkcs11_test(int slotId, int setPin, int closeDl)
     CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+
 #ifndef NO_RSA
+#ifdef WOLFSSL_KEY_GEN
+    CK_OBJECT_HANDLE genPriv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE genPub = CK_INVALID_HANDLE;
+    unsigned char* genLabel = (unsigned char *)"priv_label";
+    int genLabelLen = (int)strlen((char*)genLabel);
+#else
     unsigned char* privId = (unsigned char *)"123rsafixedpriv";
     int privIdLen = (int)strlen((char*)privId);
     unsigned char* pubId = (unsigned char *)"123rsafixedpub";
     int pubIdLen = (int)strlen((char*)pubId);
+#endif
 #endif
 #ifdef HAVE_ECC
     unsigned char* eccPrivId = (unsigned char *)"123eccfixedpriv";
@@ -710,10 +829,17 @@ static CK_RV pkcs11_test(int slotId, int setPin, int closeDl)
 #ifndef NO_RSA
             if (ret == CKR_OK) {
                 printf("Create RSA key pair ... ");
+            #ifdef WOLFSSL_KEY_GEN
+                if (ret == CKR_OK) {
+                    ret = generate_rsa_keypair(session, genLabel, genLabelLen,
+                        &genPriv, &genPub);
+                }
+            #else
                 ret = create_rsa_priv_key(session, privId, privIdLen, &priv);
                 if (ret == CKR_OK) {
                     ret = create_rsa_pub_key(session, pubId, pubIdLen, &pub);
                 }
+            #endif
                 if (ret == CKR_OK) {
                     printf("Done\n");
                 }
@@ -779,6 +905,10 @@ static CK_RV pkcs11_test(int slotId, int setPin, int closeDl)
         inited = 0;
         priv = CK_INVALID_HANDLE;
         pub = CK_INVALID_HANDLE;
+    #ifdef WOLFSSL_KEY_GEN
+        genPriv = CK_INVALID_HANDLE;
+        genPub = CK_INVALID_HANDLE;
+    #endif
     }
 
     if (ret == CKR_OK) {
@@ -796,12 +926,22 @@ static CK_RV pkcs11_test(int slotId, int setPin, int closeDl)
         if (ret == CKR_OK) {
 #ifndef NO_RSA
             printf("Find RSA key ... ");
+        #ifdef WOLFSSL_KEY_GEN
+            if (ret == CKR_OK) {
+                ret = find_rsa_priv_key_label(session, &genPriv, genLabel,
+                    genLabelLen);
+            }
+            if (ret == CKR_OK) {
+                ret = find_rsa_pub_key_label(session, &genPub);
+            }
+        #else
             if (ret == CKR_OK) {
                 ret = find_rsa_priv_key(session, &priv, privId, privIdLen);
             }
             if (ret == CKR_OK) {
                 ret = find_rsa_pub_key(session, &pub, pubId, pubIdLen);
             }
+        #endif
             if (ret == CKR_OK) {
                 printf("Done\n");
             }
