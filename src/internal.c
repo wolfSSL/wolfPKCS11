@@ -68,7 +68,7 @@
 #endif
 
 #if defined(WOLFPKCS11_TPM) && defined(WOLFSSL_MAXQ10XX_CRYPTO)
-    #error "wolfTPM and MAXQ10XX are incompatable with each other."
+    #error "wolfTPM and MAXQ10XX are incompatible with each other."
 #endif
 
 /* Helper to get size of struct field */
@@ -2047,6 +2047,43 @@ static int wp11_Object_Decode_RsaKey(WP11_Object* object)
     int ret = 0;
     word32 idx = 0;
 
+#ifdef WOLFPKCS11_TPM
+    if (object->flag & WP11_FLAG_TPM) {
+        byte pubAreaBuffer[sizeof(TPM2B_PUBLIC)];
+        UINT16 pubAreaSize = 0;
+
+        /* Extract public size */
+        XMEMCPY(&pubAreaSize, object->keyData, sizeof(pubAreaSize));
+        idx += sizeof(pubAreaSize);
+        if (pubAreaSize <= (UINT16)sizeof(pubAreaBuffer)) {
+            /* Parse public */
+            /* TODO: pass: sizeof(UINT16) + pubAreaSize (see wolfTPM PR 419) */
+            int parsedPubSize = pubAreaSize;
+            ret = TPM2_ParsePublic(&object->tpmKey.pub, object->keyData + idx,
+                sizeof(object->tpmKey.pub), &parsedPubSize);
+            if (ret == 0) {
+                idx += sizeof(UINT16) + pubAreaSize;
+
+                XMEMCPY(&object->tpmKey.priv.size, object->keyData + idx,
+                    sizeof(object->tpmKey.priv.size));
+                if (object->tpmKey.priv.size <
+                                      (int)sizeof(object->tpmKey.priv.buffer)) {
+                    idx += sizeof(object->tpmKey.priv.size);
+                    /* Extract private size and private */
+                    XMEMCPY(object->tpmKey.priv.buffer, object->keyData + idx,
+                        object->tpmKey.priv.size);
+                }
+                else {
+                    ret = BUFFER_E;
+                }
+            }
+        }
+        else {
+            ret = BUFFER_E;
+        }
+    }
+    else
+#endif
     if (object->objClass == CKO_PRIVATE_KEY) {
         unsigned char* der;
         int len = object->keyDataLen - AES_BLOCK_SIZE;
@@ -2092,6 +2129,25 @@ static int wp11_Object_Encode_RsaKey(WP11_Object* object)
 {
     int ret;
 
+#ifdef WOLFPKCS11_TPM
+    byte pubAreaBuffer[sizeof(TPM2B_PUBLIC)];
+    int pubAreaSize = 0;
+    if (object->slot != NULL && object->slot->devId != INVALID_DEVID &&
+        object->tpmKey.pub.size > 0 && object->tpmKey.priv.size > 0) {
+        /* save off the public and private portion of the TPM key.
+         * Private is encrypted by a symmetric key only known by the TPM.
+         * Make publicArea in encoded format to eliminate empty fields */
+        ret = TPM2_AppendPublic(pubAreaBuffer, (word32)sizeof(pubAreaBuffer),
+            &pubAreaSize, &object->tpmKey.pub);
+        if (ret == 0) {
+            object->keyDataLen =
+                sizeof(UINT16) +
+                    sizeof(UINT16) + pubAreaSize +
+                    sizeof(UINT16) + object->tpmKey.priv.size;
+        }
+    }
+    else
+#endif
     if (object->objClass == CKO_PRIVATE_KEY) {
     #if defined(WOLFSSL_KEY_GEN) || defined(OPENSSL_EXTRA)
         /* Get length of encoded private key. */
@@ -2127,6 +2183,29 @@ static int wp11_Object_Encode_RsaKey(WP11_Object* object)
             ret = MEMORY_E;
     }
 
+#ifdef WOLFPKCS11_TPM
+    if (ret == 0 && object->slot != NULL && object->slot->devId != INVALID_DEVID
+        && object->tpmKey.pub.size > 0 && object->tpmKey.priv.size > 0)
+    {
+        int idx = 0;
+        /* Write size marker for the public part */
+        XMEMCPY(object->keyData, &pubAreaSize,
+               sizeof(UINT16));
+        idx += sizeof(UINT16);
+        /* Write the public part with bytes aligned */
+        XMEMCPY(object->keyData + idx, pubAreaBuffer,
+               sizeof(UINT16) + pubAreaSize);
+        idx += sizeof(UINT16) + pubAreaSize;
+        /* Write the private part, size marker is included */
+        XMEMCPY(object->keyData + idx, &object->tpmKey.priv,
+               sizeof(UINT16) + object->tpmKey.priv.size);
+        idx += sizeof(UINT16) + object->tpmKey.priv.size;
+
+        /* set flag indicating this is TPM based key */
+        object->flag |= WP11_FLAG_TPM;
+    }
+    else
+#endif
     if (ret == 0 && object->objClass == CKO_PRIVATE_KEY) {
     #if defined(WOLFSSL_KEY_GEN) || defined(OPENSSL_EXTRA)
         /* Encode private key. */
@@ -5350,7 +5429,7 @@ static WP11_Object* wp11_Session_FindNext(WP11_Session* session, int onToken,
         }
    #endif
 
-        if ((ret->opFlag | WP11_FLAG_PRIVATE) == WP11_FLAG_PRIVATE) {
+        if ((ret->opFlag & WP11_FLAG_PRIVATE) == WP11_FLAG_PRIVATE) {
             if (!onToken)
                 WP11_Lock_LockRO(&session->slot->token.lock);
             if (session->slot->token.loginState == WP11_APP_STATE_RW_PUBLIC ||

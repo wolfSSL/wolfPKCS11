@@ -54,6 +54,7 @@ examples_add_hmac_key_LDADD     += src/libwolfpkcs11.la
 examples_add_rsa_key_LDADD      += src/libwolfpkcs11.la
 examples_add_rsa_key_file_LDADD += src/libwolfpkcs11.la
 examples_add_cert_LDADD         += src/libwolfpkcs11.la
+examples_add_cert_file_LDADD    += src/libwolfpkcs11.la
 examples_init_token_LDADD       += src/libwolfpkcs11.la
 examples_mech_info_LDADD        += src/libwolfpkcs11.la
 examples_obj_list_LDADD         += src/libwolfpkcs11.la

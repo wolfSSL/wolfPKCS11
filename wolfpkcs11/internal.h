@@ -115,6 +115,9 @@ extern "C" {
 #define WP11_FLAG_ALWAYS_AUTHENTICATE  0x0040
 #define WP11_FLAG_WRAP_WITH_TRUSTED    0x0080
 #define WP11_FLAG_TRUSTED              0x0100
+#ifdef WOLFPKCS11_TPM
+#define WP11_FLAG_TPM                  0x0200
+#endif
 
 /* Operation session has initialized for. */
 #define WP11_INIT_AES_CBC_ENC          0x0001

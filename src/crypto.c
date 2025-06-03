@@ -212,6 +212,7 @@ static void FindAttributeType(CK_ATTRIBUTE* pTemplate, CK_ULONG ulCount,
     for (i = 0; i < (int)ulCount; i++) {
         if (pTemplate[i].type == type) {
             *attribute = &pTemplate[i];
+            break;
         }
     }
 }
