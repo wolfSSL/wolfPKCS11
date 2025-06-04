@@ -437,6 +437,16 @@ then
     AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_NSS"
 fi
 
+AC_ARG_WITH([default-token-path],
+    [AS_HELP_STRING([--with-default-token-path=PATH],[Set default token storage path (default: none)])],
+    [ WOLFPKCS11_DEFAULT_TOKEN_PATH=$withval ],
+    [ WOLFPKCS11_DEFAULT_TOKEN_PATH="" ]
+    )
+if test "x$WOLFPKCS11_DEFAULT_TOKEN_PATH" != "x"
+then
+    AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_DEFAULT_TOKEN_PATH=\"$WOLFPKCS11_DEFAULT_TOKEN_PATH\""
+fi
+
 
 AM_CONDITIONAL([BUILD_STATIC],[test "x$enable_shared" = "xno"])
 
@@ -611,3 +621,4 @@ echo "   * DH:                         $ENABLED_DH"
 echo "   * ECC:                        $ENABLED_ECC"
 echo "   * HKDF:                       $ENABLED_HKDF"
 echo "   * NSS modifications:          $ENABLED_NSS"
+echo "   * Default token path:         $WOLFPKCS11_DEFAULT_TOKEN_PATH"
