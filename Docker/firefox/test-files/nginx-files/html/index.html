@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>HTTPS Connection Information</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+            line-height: 1.6;
+        }
+        .info-box {
+            background-color: #f5f5f5;
+            border: 1px solid #ddd;
+            padding: 20px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+    </style>
+</head>
+<body>
+    <h1>HTTPS Connection Information</h1>
+    
+    <div class="info-box">
+        <h2>TLS Connection Details</h2>
+        <table>
+            <tr>
+                <th>Property</th>
+                <th>Value</th>
+            </tr>
+            <tr>
+                <td>Server Name</td>
+                <td id="server-name">%server_name%</td>
+            </tr>
+            <tr>
+                <td>TLS Protocol</td>
+                <td id="tls-protocol">%ssl_protocol%</td>
+            </tr>
+            <tr>
+                <td>Cipher</td>
+                <td id="ssl-cipher">%ssl_cipher%</td>
+            </tr>
+            <tr>
+                <td>Session Reused</td>
+                <td id="ssl_session_reused">%ssl_session_reused%</td>
+            </tr>
+            <tr>
+                <td>Server Port</td>
+                <td id="server-port">%server_port%</td>
+            </tr>
+            <tr>
+                <td>Client IP</td>
+                <td id="remote-addr">%remote_addr%</td>
+            </tr>
+            <tr>
+                <td>ALPN Protocol</td>
+                <td id="ssl-alpn-protocol">%ssl_alpn_protocol%</td>
+            </tr>
+            <tr>
+                <td>Session ID</td>
+                <td id="ssl-session-id">%ssl_session_id%</td>
+            </tr>
+        </table>
+    </div>
+    
+    <div class="info-box">
+        <h2>Server Configuration</h2>
+        <p>This server is configured to test different TLS versions and cipher suites.</p>
+        <p>Server Configuration: <span id="server-description"></span>%description%</span></p>
+    </div>
+</body>
+</html>

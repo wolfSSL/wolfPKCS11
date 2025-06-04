@@ -1,0 +1,41 @@
+name: wolfPKCS11 Firefox Tests
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  test-firefox:
+    runs-on: ubuntu-latest-m
+    container: wolfssl/wolfpkcs11-firefox-test:latest
+    if: github.repository_owner == 'wolfssl'
+    steps:
+    - name: Checkout wolfPKCS11 repository
+      uses: actions/checkout@v4
+      with:
+        path: wolfpkcs11
+
+    - name: Clone wolfPKCS11
+      uses: actions/checkout@v4
+      with:
+        path: wolfpkcs11
+
+    - name: Build and install wolfPKCS11
+      working-directory: wolfpkcs11
+      run: |
+        autoreconf -ivf
+        ./configure \
+          --enable-nss --enable-rsa --enable-rsaoaep --enable-rsapss \
+          --enable-keygen --enable-ecc --enable-dh --enable-aes \
+          --enable-aeskeywrap --enable-aescbc --enable-aesgcm --enable-aesctr \
+          --enable-aesccm --enable-aesecb --enable-aescmac --enable-hmac \
+          --enable-md5 --enable-sha --enable-sha1 --enable-sha224 --enable-sha256 \
+          --enable-sha384 --enable-sha512
+        make -j
+        make install
+
+    - name: Run tests
+      working-directory: wolfpkcs11/Docker/firefox/test-files
+      run: ./selenium-script.sh
