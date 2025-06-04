@@ -43,6 +43,17 @@
 #include <wolfssl/wolfcrypt/cmac.h>
 #include <wolfssl/wolfcrypt/kdf.h>
 
+/* OS-specific includes for directory creation */
+#if defined(_WIN32) || defined(_MSC_VER)
+    #include <direct.h>
+    #include <io.h>
+    #define MKDIR(path) _mkdir(path)
+#else
+    #include <sys/stat.h>
+    #include <errno.h>
+    #define MKDIR(path) mkdir(path, 0700)
+#endif
+
 #include <wolfpkcs11/internal.h>
 #include <wolfpkcs11/store.h>
 
@@ -955,12 +966,59 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
     #endif
 
 #else
+    /* Path order:
+     * 1. Environment variable WOLFPKCS11_TOKEN_PATH
+     * 2. Home directory with .wolfPKCS11 (or APPDIR with wolfPKCS11 for
+     * Windows)
+     * 3. WOLFPKCS11_DEFAULT_TOKEN_PATH, if set
+     * 4. /tmp in Linux, %TEMP% or C:\Windows\Temp in Windows
+     */
     #ifndef WOLFPKCS11_NO_ENV
     str = XGETENV("WOLFPKCS11_TOKEN_PATH");
     #endif
+
     if (str == NULL) {
-        str = "/tmp";
+        char homePath[47]; /* Must fit within name buffer size limit */
+        const char* homeDir = NULL;
+
+        #if defined(_WIN32) || defined(_MSC_VER)
+        homeDir = XGETENV("%APPDIR%");
+        if (homeDir != NULL && XSTRLEN(homeDir) <= sizeof(homePath) - 13) {
+            int len = XSNPRINTF(homePath, sizeof(homePath), "%s\\wolfPKCS11",
+                               homeDir);
+            if (len > 0 && len < (int)sizeof(homePath)) {
+                str = homePath;
+            }
+        }
+        #else
+        homeDir = XGETENV("HOME");
+        if (homeDir != NULL && XSTRLEN(homeDir) <= sizeof(homePath) - 13) {
+            int len = XSNPRINTF(homePath, sizeof(homePath), "%s/.wolfPKCS11",
+                               homeDir);
+            if (len > 0 && len < (int)sizeof(homePath)) {
+                str = homePath;
+            }
+        }
+        #endif
     }
+
+    #ifdef WOLFPKCS11_DEFAULT_TOKEN_PATH
+    if (str == NULL) {
+        str = WC_STRINGIFY(WOLFPKCS11_DEFAULT_TOKEN_PATH);
+    }
+    #else
+    if (str == NULL) {
+        #if defined(_WIN32) || defined(_MSC_VER)
+        str = XGETENV("%TEMP%");
+        if (str == NULL) {
+            str = "C:\\Windows\\Temp";
+        }
+        #else
+        str = "/tmp";
+        #endif
+    }
+    #endif
+
 
     /* 47 is maximum number of character to a filename and path separator. */
     if (str == NULL || (XSTRLEN(str) > sizeof(name) - 47)) {
@@ -1024,7 +1082,36 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
         else {
             file = XFOPEN(name, "w");
             if (file == NULL) {
-                ret = READ_ONLY_E;
+                /* Try to create directory if it doesn't exist */
+                char* lastSlash = NULL;
+                char dirPath[120];
+                int i;
+
+                /* Find the last directory separator */
+                for (i = 0; name[i] != '\0'; i++) {
+                    if (name[i] == '/' || name[i] == '\\') {
+                        lastSlash = (char*)&name[i];
+                    }
+                }
+
+                if (lastSlash != NULL) {
+                    /* Extract directory path */
+                    int dirLen = (int)(lastSlash - name);
+                    if (dirLen > 0 && dirLen < (int)sizeof(dirPath)) {
+                        XMEMCPY(dirPath, name, dirLen);
+                        dirPath[dirLen] = '\0';
+
+                        /* Try to create the directory */
+                        if (MKDIR(dirPath) == 0 || errno == EEXIST) {
+                            /* Directory created or already exists, try opening file again */
+                            file = XFOPEN(name, "w");
+                        }
+                    }
+                }
+
+                if (file == NULL) {
+                    ret = READ_ONLY_E;
+                }
             }
         }
     }

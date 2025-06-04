@@ -16,10 +16,16 @@ noinst_PROGRAMS += tests/pkcs11str
 tests_pkcs11str_SOURCES = tests/pkcs11str.c
 tests_pkcs11str_LDADD =
 
+check_PROGRAMS += tests/token_path_test
+noinst_PROGRAMS += tests/token_path_test
+tests_token_path_test_SOURCES = tests/token_path_test.c
+tests_token_path_test_LDADD =
+
 if BUILD_STATIC
 tests_pkcs11test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11mtt_LDADD  += src/libwolfpkcs11.la
 tests_pkcs11str_LDADD  += src/libwolfpkcs11.la
+tests_token_path_test_LDADD += src/libwolfpkcs11.la
 endif
 
 EXTRA_DIST += tests/unit.h \
