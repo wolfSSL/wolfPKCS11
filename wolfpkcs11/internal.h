@@ -148,6 +148,10 @@ extern "C" {
 #define WP11_FLAG_WRAP                 0x00020000
 #define WP11_FLAG_DERIVE               0x00040000
 
+/* Flags for token. */
+#define WP11_TOKEN_FLAG_USER_PIN_SET   0x00000001
+#define WP11_TOKEN_FLAG_SO_PIN_SET     0x00000002
+
 /* Operation session has initialized for. */
 #define WP11_INIT_AES_CBC_ENC          0x0001
 #define WP11_INIT_AES_CBC_DEC          0x0002
@@ -216,7 +220,11 @@ extern "C" {
 
 /* PIN length constraints. */
 #ifndef WP11_MIN_PIN_LEN
+#ifdef WOLFPKCS11_NSS
+#define WP11_MIN_PIN_LEN               0
+#else
 #define WP11_MIN_PIN_LEN               4
+#endif
 #endif
 #ifndef WP11_MAX_PIN_LEN
 #define WP11_MAX_PIN_LEN               32
@@ -274,6 +282,8 @@ void WP11_Slot_CloseSessions(WP11_Slot* slot);
 int WP11_Slot_HasSession(WP11_Slot* slot);
 int WP11_Slot_CheckSOPin(WP11_Slot* slot, char* pin, int pinLen);
 int WP11_Slot_CheckUserPin(WP11_Slot* slot, char* pin, int pinLen);
+int WP11_Slot_Has_Empty_Pin(WP11_Slot* slot);
+int WP11_Slot_SOPin_IsSet(WP11_Slot* slot);
 int WP11_Slot_SOLogin(WP11_Slot* slot, char* pin, int pinLen);
 int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen);
 void WP11_Slot_Logout(WP11_Slot* slot);
