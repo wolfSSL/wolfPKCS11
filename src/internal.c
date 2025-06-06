@@ -3392,16 +3392,24 @@ static int wp11_Object_Load_Object(WP11_Object* object, int tokenId, int objId)
             /* Read issuer of the object. (variable issuerLen) */
             ret = wp11_storage_read_alloc_array(storage, &object->issuer,
                                                 &object->issuerLen);
-        }
-        if (ret == 0) {
-            /* Read serial number of the object. (variable serialLen) */
-            ret = wp11_storage_read_alloc_array(storage, &object->serial,
-                                                &object->serialLen);
-        }
-        if (ret == 0) {
-            /* Read subject of the object. (variable subjectLen) */
-            ret = wp11_storage_read_alloc_array(storage, &object->subject,
-                                                &object->subjectLen);
+            if (ret == 0) {
+                if (ret == 0) {
+                    /* Read serial number of the object. (variable serialLen) */
+                    ret = wp11_storage_read_alloc_array(storage,
+                       &object->serial, &object->serialLen);
+                }
+                if (ret == 0) {
+                    /* Read subject of the object. (variable subjectLen) */
+                    ret = wp11_storage_read_alloc_array(storage,
+                       &object->subject, &object->subjectLen);
+                }
+            }
+            else if (ret == BUFFER_E) {
+                /* Older version of the storage format, doesn't have these, so
+                 * skip reading.
+                 */
+                ret = 0;
+            }
         }
 
         wp11_storage_close(storage);
@@ -3956,8 +3964,20 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
             }
         }
         if (ret == 0) {
-            /* Read token flags. */
+            /* Read token flags. This is a new varible, so might not exist on
+             * an upgrade. If not set, it was from a version that doesn't
+             * support empty pins. So, we can calculate it from the pin lengths.
+             */
             ret = wp11_storage_read_int(storage, &token->tokenFlags);
+            if (ret == BUFFER_E) {
+                if (token->userPinLen > 0) {
+                    token->tokenFlags |= WP11_TOKEN_FLAG_USER_PIN_SET;
+                }
+                if (token->soPinLen > 0) {
+                    token->tokenFlags |= WP11_TOKEN_FLAG_SO_PIN_SET;
+                }
+                ret = 0;
+            }
         }
 
         wp11_storage_close(storage);

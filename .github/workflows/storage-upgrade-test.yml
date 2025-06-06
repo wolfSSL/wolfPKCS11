@@ -1,0 +1,156 @@
+name: wolfPKCS11 Storage Format Upgrade Test
+
+on:
+  pull_request:
+    branches: [ '*' ]
+
+env:
+  WOLFSSL_VERSION: v5.8.0-stable
+
+jobs:
+  storage-upgrade-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        base-ref:
+          - name: master
+            ref: master
+            branch-dir: master-branch
+          - name: v1.3.0
+            ref: v1.3.0-stable
+            branch-dir: v1.3.0-stable-branch
+    
+    steps:
+    # Checkout the PR branch
+    - name: Checkout PR branch
+      uses: actions/checkout@v4
+      with:
+        path: pr-branch
+        submodules: true
+
+    # Checkout base branch/tag separately
+    - name: Checkout ${{ matrix.base-ref.name }} branch
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ matrix.base-ref.ref }}
+        path: ${{ matrix.base-ref.branch-dir }}
+        submodules: true
+
+    - name: Cache wolfSSL
+      id: cache-wolfssl
+      uses: actions/cache@v4
+      with:
+        path: wolfssl
+        key: wolfssl-${{ env.WOLFSSL_VERSION }}
+
+    # Setup wolfssl (required dependency)
+    - name: Checkout wolfssl
+      if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+      uses: actions/checkout@v4
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+        ref: ${{ env.WOLFSSL_VERSION }}
+    
+    - name: Build wolfssl
+      if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+      working-directory: ./wolfssl
+      run: |
+        ./autogen.sh
+        ./configure --enable-cryptocb --enable-aescfb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt \
+            C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
+        make
+
+    - name: Install wolfssl
+      working-directory: ./wolfssl
+      run: |
+        sudo make install
+        sudo ldconfig
+
+    # Phase 1: Build and test base branch/tag
+    - name: Build wolfPKCS11 ${{ matrix.base-ref.name }}
+      working-directory: ./${{ matrix.base-ref.branch-dir }}
+      run: |
+        echo "=== Building wolfPKCS11 ${{ matrix.base-ref.name }} branch ==="
+        ./autogen.sh
+        ./configure
+        make
+
+    - name: Run tests on ${{ matrix.base-ref.name }} to generate storage files
+      working-directory: ./${{ matrix.base-ref.branch-dir }}
+      run: |
+        echo "=== Running tests on ${{ matrix.base-ref.name }} branch ==="
+        make test
+        echo "=== ${{ matrix.base-ref.name }} branch test completed ==="
+
+    # Phase 2: Build PR branch and copy storage files from base
+    - name: Build wolfPKCS11 PR branch
+      working-directory: ./pr-branch
+      run: |
+        echo "=== Building wolfPKCS11 PR branch ==="
+        ./autogen.sh
+        ./configure
+        make
+
+    - name: Copy storage files from ${{ matrix.base-ref.name }} to PR
+      run: |
+        echo "=== Copying storage files from ${{ matrix.base-ref.name }} to PR branch ==="
+        
+        # Create directories if they don't exist
+        mkdir -p pr-branch/tests
+        mkdir -p pr-branch/store
+        
+        # Copy test storage files
+        if [ -d "${{ matrix.base-ref.branch-dir }}/tests" ]; then
+          cp -v ${{ matrix.base-ref.branch-dir }}/tests/wp* pr-branch/tests/ 2>/dev/null || echo "No wp* files in ${{ matrix.base-ref.branch-dir }}/tests/"
+        fi
+        
+        # Copy store files
+        if [ -d "${{ matrix.base-ref.branch-dir }}/store" ]; then
+          cp -v ${{ matrix.base-ref.branch-dir }}/store/wp* pr-branch/store/ 2>/dev/null || echo "No wp* files in ${{ matrix.base-ref.branch-dir }}/store/"
+        fi
+        
+        echo "=== Storage file copy completed ==="
+
+    - name: Test storage format compatibility (${{ matrix.base-ref.name }} → PR)
+      working-directory: ./pr-branch
+      run: |
+        echo "=== Testing storage format compatibility with PR branch ==="
+        echo "This tests that the PR can read storage files created by ${{ matrix.base-ref.name }} branch"
+        
+        # List the copied files for verification
+        echo "Files in tests directory:"
+        ls -la tests/wp* 2>/dev/null || echo "No wp* files in tests/"
+        echo "Files in store directory:"
+        ls -la store/wp* 2>/dev/null || echo "No wp* files in store/"
+        
+        # Run the tests with the copied storage files
+        make test
+        
+        echo "=== Storage format upgrade test (${{ matrix.base-ref.name }} → PR) completed successfully ==="
+
+    # Upload artifacts for debugging if needed
+    - name: Upload storage test artifacts
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: storage-upgrade-test-artifacts-${{ matrix.base-ref.name }}
+        path: |
+          pr-branch/test-suite.log
+          ${{ matrix.base-ref.branch-dir }}/store/wp*
+          ${{ matrix.base-ref.branch-dir }}/tests/wp*
+          ${{ matrix.base-ref.branch-dir }}/test-suite.log
+        retention-days: 5
+
+    # Capture logs on failure
+    - name: Upload failure logs
+      if: failure() || cancelled()
+      uses: actions/upload-artifact@v4
+      with:
+        name: storage-upgrade-test-failure-logs-${{ matrix.base-ref.name }}
+        path: |
+          pr-branch/test-suite.log
+          pr-branch/config.log
+          ${{ matrix.base-ref.branch-dir }}/test-suite.log
+          ${{ matrix.base-ref.branch-dir }}/config.log
+        retention-days: 5
