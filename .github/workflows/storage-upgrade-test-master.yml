@@ -1,0 +1,149 @@
+name: wolfPKCS11 Storage Format Upgrade Test - Master
+
+on:
+  pull_request:
+    branches: [ '*' ]
+
+env:
+  WOLFSSL_VERSION: v5.8.0-stable
+
+jobs:
+  storage-upgrade-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    # Checkout the PR branch
+    - name: Checkout PR branch
+      uses: actions/checkout@v4
+      with:
+        path: pr-branch
+        submodules: true
+
+    # Checkout master branch separately
+    - name: Checkout master branch
+      uses: actions/checkout@v4
+      with:
+        ref: master
+        path: master-branch
+        submodules: true
+
+    - name: Cache wolfSSL
+      id: cache-wolfssl
+      uses: actions/cache@v4
+      with:
+        path: wolfssl
+        key: wolfssl-${{ env.WOLFSSL_VERSION }}
+        restore-keys: |
+          wolfssl-
+
+    # Setup wolfssl (required dependency)
+    - name: Checkout wolfssl
+      if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+      uses: actions/checkout@v4
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+        ref: ${{ env.WOLFSSL_VERSION }}
+    
+    - name: Build wolfssl
+      if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+      working-directory: ./wolfssl
+      run: |
+        ./autogen.sh
+        ./configure --enable-cryptocb --enable-aescfb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt \
+            C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
+        make
+
+    - name: Install wolfssl
+      working-directory: ./wolfssl
+      run: |
+        sudo make install
+        sudo ldconfig
+
+    # Phase 1: Build and test master branch
+    - name: Build wolfPKCS11 master
+      working-directory: ./master-branch
+      run: |
+        echo "=== Building wolfPKCS11 master branch ==="
+        ./autogen.sh
+        ./configure
+        make
+
+    - name: Run tests on master to generate storage files
+      working-directory: ./master-branch
+      run: |
+        echo "=== Running tests on master branch ==="
+        make test
+        echo "=== Master branch test completed ==="
+
+    # Phase 2: Build PR branch and copy storage files from master
+    - name: Build wolfPKCS11 PR branch
+      working-directory: ./pr-branch
+      run: |
+        echo "=== Building wolfPKCS11 PR branch ==="
+        ./autogen.sh
+        ./configure
+        make
+
+    - name: Copy storage files from master to PR
+      run: |
+        echo "=== Copying storage files from master to PR branch ==="
+        
+        # Create directories if they don't exist
+        mkdir -p pr-branch/tests
+        mkdir -p pr-branch/store
+        
+        # Copy test storage files
+        if [ -d "master-branch/tests" ]; then
+          cp -v master-branch/tests/wp* pr-branch/tests/ 2>/dev/null || echo "No wp* files in master-branch/tests/"
+        fi
+        
+        # Copy store files
+        if [ -d "master-branch/store" ]; then
+          cp -v master-branch/store/wp* pr-branch/store/ 2>/dev/null || echo "No wp* files in master-branch/store/"
+        fi
+        
+        echo "=== Storage file copy completed ==="
+
+    - name: Test storage format compatibility
+      working-directory: ./pr-branch
+      run: |
+        echo "=== Testing storage format compatibility with PR branch ==="
+        echo "This tests that the PR can read storage files created by master branch"
+        
+        # List the copied files for verification
+        echo "Files in tests directory:"
+        ls -la tests/wp* 2>/dev/null || echo "No wp* files in tests/"
+        echo "Files in store directory:"
+        ls -la store/wp* 2>/dev/null || echo "No wp* files in store/"
+        
+        # Run the tests with the copied master storage files
+        make test
+        
+        echo "=== Storage format upgrade test completed successfully ==="
+
+    # Upload artifacts for debugging if needed
+    - name: Upload storage test artifacts
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: storage-upgrade-test-artifacts
+        path: |
+          pr-branch/test-suite.log
+          master-branch/store/wp*
+          master-branch/tests/wp*
+          master-branch/test-suite.log
+        retention-days: 5
+
+    # Capture logs on failure
+    - name: Upload failure logs
+      if: failure() || cancelled()
+      uses: actions/upload-artifact@v4
+      with:
+        name: storage-upgrade-test-failure-logs
+        path: |
+          pr-branch/test-suite.log
+          pr-branch/config.log
+          master-branch/test-suite.log
+          master-branch/config.log
+        retention-days: 5

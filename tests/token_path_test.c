@@ -319,7 +319,7 @@ static int test_temp_fallback_path(void)
 #endif
 
 #ifdef WOLFPKCS11_DEFAULT_TOKEN_PATH
-    strcpy(expected_dir, WOLFPKCS11_DEFAULT_TOKEN_PATH);
+    strcpy(expected_dir, WC_STRINGIFY(WOLFPKCS11_DEFAULT_TOKEN_PATH));
 #else
 #ifdef _WIN32
     const char* temp = getenv("TEMP");
