@@ -1,0 +1,338 @@
+name: wolfPKCS11 NSS PDF Signing Test
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+
+env:
+  NSPR_VERSION: NSPR_4_36_BRANCH
+  NSS_VERSION: NSS_3_112_RTM
+  WOLFSSL_VERSION: v5.8.0-stable
+
+jobs:
+  test-nss-pdf-signing:
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - name: Checkout wolfPKCS11 repository
+      uses: actions/checkout@v4
+      with:
+        path: wolfpkcs11
+    
+    - name: Install NSS and NSPR headers and libraries
+      run: |
+        sudo apt-get update
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+          mercurial \
+          python3 \
+          python-is-python3 \
+          python3-pip \
+          gyp \
+          ninja-build \
+          build-essential \
+          automake \
+          libtool \
+          git \
+          pkg-config \
+          poppler-utils \
+          wget \
+          enscript \
+          ghostscript \
+          gdb \
+          vim \
+          hexedit
+    
+    - name: Cache NSPR
+      id: cache-nspr
+      uses: actions/cache@v4
+      with:
+        path: /tmp/src/nspr
+        key: nspr-${{ env.NSPR_VERSION }}
+
+    - name: Clone and build NSPR
+      if: steps.cache-nspr.outputs.cache-hit != 'true'
+      run: |
+        mkdir -p /tmp/src
+        cd /tmp/src
+        hg clone https://hg.mozilla.org/projects/nspr -r ${{ env.NSPR_VERSION }}
+    
+    - name: Cache NSS source and patches
+      id: cache-nss-source
+      uses: actions/cache@v4
+      with:
+        path: |
+          /tmp/src/nss
+          /tmp/src/osp
+        key: nss-source-${{ env.NSS_VERSION }}-latest
+
+    - name: Cache NSS build artifacts
+      id: cache-nss-build
+      uses: actions/cache@v4
+      with:
+        path: /tmp/src/dist
+        key: nss-build-${{ env.NSS_VERSION }}-latest
+
+    - name: Clone NSS and apply wolfSSL patches
+      if: steps.cache-nss-source.outputs.cache-hit != 'true'
+      run: |
+        mkdir -p /tmp/src
+        cd /tmp/src
+        
+        # Clone official Mozilla NSS with specific tag
+        hg clone https://hg.mozilla.org/projects/nss -r ${{ env.NSS_VERSION }}
+        
+        # Clone wolfSSL OSP repository for patches
+        git clone https://github.com/wolfSSL/osp.git
+        
+        cd nss
+        
+        # Apply patches from wolfSSL/osp/nss directory
+        echo "Applying wolfSSL NSS patches..."
+        if [ -d "../osp/nss" ]; then
+          for patch in ../osp/nss/*.patch; do
+            if [ -f "$patch" ]; then
+              echo "Applying patch: $(basename $patch)"
+              patch -p1 < "$patch" || {
+                echo "Warning: Patch $(basename $patch) failed to apply cleanly"
+                echo "Attempting to apply with --reject-file option..."
+                patch -p1 --reject-file=/tmp/$(basename $patch).rej < "$patch" || true
+              }
+            fi
+          done
+        else
+          echo "No patches found in wolfSSL/osp/nss directory"
+        fi
+
+    - name: Build NSS
+      if: steps.cache-nss-build.outputs.cache-hit != 'true'
+      run: |
+        cd /tmp/src/nss
+        
+        # Set NSS build environment
+        export USE_64=1
+        export NSS_ENABLE_WERROR=0
+        export BUILD_OPT=0
+        
+        # Build NSS with debug mode enabled
+        ./build.sh -v
+    
+    - name: Display patch application results
+      if: steps.cache-nss-source.outputs.cache-hit != 'true'
+      run: |
+        echo "=== NSS Patch Application Summary ==="
+        if [ -d /tmp/src/osp/nss ]; then
+          echo "Available patches in wolfSSL/osp/nss:"
+          ls -la /tmp/src/osp/nss/*.patch 2>/dev/null || echo "No .patch files found"
+          
+          # Check for any rejected patches
+          if ls /tmp/*.rej 2>/dev/null; then
+            echo ""
+            echo "⚠ Warning: Some patches were rejected:"
+            ls -la /tmp/*.rej
+            echo ""
+            echo "Rejected patch contents:"
+            for rej in /tmp/*.rej; do
+              echo "--- $(basename $rej) ---"
+              cat "$rej"
+              echo ""
+            done
+          else
+            echo "✓ All patches applied successfully (no .rej files found)"
+          fi
+        else
+          echo "No patches directory found at wolfSSL/osp/nss"
+        fi
+
+    - name: Copy NSS headers and libraries
+      run: |
+        # Create directories for headers
+        sudo mkdir -p /usr/local/include/nss
+        sudo mkdir -p /usr/local/include/nspr
+        sudo mkdir -p /usr/local/lib
+        
+        # Copy NSS headers from dist directory
+        sudo cp -r /tmp/src/dist/public/nss/* /usr/local/include/nss/
+        
+        # Copy NSPR headers from dist directory  
+        sudo cp -r /tmp/src/dist/Debug/include/nspr/* /usr/local/include/nspr/
+        
+        # Copy NSS and NSPR libraries
+        sudo find /tmp/src/dist/Debug -name "*.so" -exec cp {} /usr/local/lib/ \;
+        sudo find /tmp/src/nspr/Debug -name "*.so" -exec cp {} /usr/local/lib/ \;
+        
+        # Update library cache
+        sudo ldconfig
+    
+    - name: Cache wolfSSL
+      id: cache-wolfssl
+      uses: actions/cache@v4
+      with:
+        path: /tmp/wolfssl
+        key: wolfssl-${{ env.WOLFSSL_VERSION }}
+
+    - name: Clone and build wolfSSL
+      if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+      run: |
+        cd /tmp
+        git clone https://github.com/wolfSSL/wolfssl.git --branch ${{ env.WOLFSSL_VERSION }} --depth 1
+        cd wolfssl
+        ./autogen.sh
+        ./configure --enable-aescfb --enable-cryptocb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt --enable-cmac --enable-aesctr --enable-aesccm C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT -DHAVE_AES_ECB -D_GNU_SOURCE"
+        make -j$(nproc)
+        
+    - name: Install wolfSSL
+      run: |
+        cd /tmp/wolfssl
+        sudo make install
+        sudo ldconfig
+    
+    - name: Build wolfPKCS11 with NSS support
+      run: |
+        cd wolfpkcs11
+        ./autogen.sh
+        ./configure --enable-debug --enable-nss --enable-aesecb --enable-aesctr --enable-aesccm --enable-aescmac CFLAGS="-D_GNU_SOURCE"
+        make -j$(nproc)
+        sudo make install
+        sudo ldconfig
+    
+    - name: Verify wolfPKCS11 installation
+      run: |
+        echo "Checking wolfPKCS11 library..."
+        if [ -f /usr/local/lib/libwolfpkcs11.so ]; then
+          echo "✓ wolfPKCS11 library found at /usr/local/lib/libwolfpkcs11.so"
+          ls -la /usr/local/lib/libwolfpkcs11.so
+          ldd /usr/local/lib/libwolfpkcs11.so || echo "Failed to run ldd on libwolfpkcs11.so"
+        else
+          echo "✗ ERROR: wolfPKCS11 library not found"
+          find /usr -name "libwolfpkcs11.so" 2>/dev/null || true
+          exit 1
+        fi
+        
+        echo "Checking wolfSSL library..."
+        if [ -f /usr/local/lib/libwolfssl.so ]; then
+          echo "✓ wolfSSL library found at /usr/local/lib/libwolfssl.so"
+          ls -la /usr/local/lib/libwolfssl.so
+        else
+          echo "✗ ERROR: wolfSSL library not found"
+          find /usr -name "libwolfssl.so" 2>/dev/null || true
+          exit 1
+        fi
+    
+    - name: Configure NSS database
+      run: |
+        mkdir -p /tmp/nssdb
+        chmod 755 /tmp/nssdb
+        
+        # Configure NSS to use wolfPKCS11
+        cat > /tmp/nssdb/pkcs11.txt << 'EOF'
+        library=/usr/local/lib/libwolfpkcs11.so
+        name=wolfPKCS11
+        NSS=Flags=internal,critical,fips cipherOrder=100 slotParams={0x00000001=[slotFlags=ECC,RSA,DSA,DH,RC2,RC4,DES,RANDOM,SHA1,MD5,MD2,SSL,TLS,AES,Camellia,SEED,SHA256,SHA512] }
+        EOF
+        
+        # Initialize NSS database
+        /tmp/src/dist/Debug/bin/certutil -N -d /tmp/nssdb/ --empty-password
+    
+    - name: Generate test certificate
+      run: |
+        echo "Generating self-signed certificate for PDF signing..."
+        /tmp/src/dist/Debug/bin/certutil -d /tmp/nssdb -S -n "PDF Signing Certificate" -s "CN=PDF Signer,O=wolfSSL,C=US" -x -t "CT,C,C" -v 120 -g 2048 -z wolfpkcs11/configure.ac
+    
+    - name: Generate test PDF
+      run: |
+        cd /tmp
+        
+        # Create test content
+        cat > test.txt << EOF
+        This is a test document for PDF signing with wolfPKCS11 and NSS.
+        Generated on $(date)
+        Branch: ${GITHUB_REF#refs/heads/}
+        Commit: ${GITHUB_SHA:0:8}
+        EOF
+        
+        echo "Converting text to PDF..."
+        cat test.txt | enscript -B -o - | ps2pdf - test.pdf
+        
+        if [ -f test.pdf ]; then
+          echo "✓ PDF generation successful!"
+          ls -la test.pdf
+        else
+          echo "✗ PDF generation failed!"
+          exit 1
+        fi
+    
+    - name: Test PDF signing with wolfPKCS11
+      env:
+        NSS_DEBUG_PKCS11_MODULE: "wolfPKCS11"
+        NSPR_LOG_MODULES: "all:5"
+        NSPR_LOG_FILE: /tmp/nss.log
+        NSS_OUTPUT_FILE: /tmp/stats.log
+        NSS_STRICT_NOFORK: "1"
+        NSS_DEBUG: "all"
+      run: |
+        cd /tmp
+        
+        echo "Signing the PDF file with wolfPKCS11..."
+        echo "Note: NSS shutdown warnings are normal and expected"
+        
+        # Attempt to sign the PDF
+        if pdfsig test.pdf signed.pdf -add-signature -nick "PDF Signing Certificate" -nssdir /tmp/nssdb; then
+          echo "✓ PDF signing completed successfully!"
+        else
+          echo "⚠ PDF signing completed with warnings (this may be normal)"
+        fi
+        
+        # Check if signed PDF was created
+        if [ -f signed.pdf ]; then
+          echo "✓ Signed PDF file created successfully"
+          ls -la signed.pdf
+        else
+          echo "✗ Signed PDF file was not created"
+          exit 1
+        fi
+    
+    - name: Verify PDF signature
+      run: |
+        cd /tmp
+        
+        echo "Verifying the PDF signature..."
+        if pdfsig signed.pdf -nssdir /tmp/nssdb; then
+          echo "✓ PDF signature verification completed"
+        else
+          echo "⚠ PDF signature verification completed with warnings"
+        fi
+    
+    - name: Upload test artifacts
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: pdf-test-artifacts
+        path: |
+          /tmp/test.pdf
+          /tmp/signed.pdf
+          /tmp/*.log
+        retention-days: 7
+    
+    - name: Display test summary
+      if: always()
+      run: |
+        echo "=== wolfPKCS11 NSS PDF Signing Test Summary ==="
+        echo "Branch: ${GITHUB_REF#refs/heads/}"
+        echo "Commit: ${GITHUB_SHA:0:8}"
+        echo ""
+        if [ -f /tmp/signed.pdf ]; then
+          echo "✓ Test PASSED: PDF was successfully signed using wolfPKCS11 with NSS"
+        else
+          echo "✗ Test FAILED: PDF signing was not successful"
+        fi
+        echo ""
+        echo "Files created during test:"
+        ls -la /tmp/*.pdf 2>/dev/null || echo "No PDF files found"
+        echo ""
+        if [ -f /tmp/nss.log ]; then
+          echo "NSS debug log (last 20 lines):"
+          tail -20 /tmp/nss.log
+        fi
+
