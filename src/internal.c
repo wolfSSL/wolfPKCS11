@@ -3477,11 +3477,10 @@ static int wp11_Object_Load_Object(WP11_Object* object, int tokenId, int objId)
             ret = wp11_storage_read_alloc_array(storage, &object->issuer,
                                                 &object->issuerLen);
             if (ret == 0) {
-                if (ret == 0) {
-                    /* Read serial number of the object. (variable serialLen) */
-                    ret = wp11_storage_read_alloc_array(storage,
-                       &object->serial, &object->serialLen);
-                }
+                /* Read serial number of the object. (variable serialLen) */
+                ret = wp11_storage_read_alloc_array(storage,
+                    &object->serial, &object->serialLen);
+
                 if (ret == 0) {
                     /* Read subject of the object. (variable subjectLen) */
                     ret = wp11_storage_read_alloc_array(storage,
@@ -7049,6 +7048,36 @@ static int GetData(byte* data, CK_ULONG dataLen, byte* out, CK_ULONG* outLen)
     return ret;
 }
 
+static int GetCertAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
+                       CK_ULONG* len)
+{
+    int ret = 0;
+
+    if (object == NULL || len == NULL)
+        return BAD_FUNC_ARG;
+
+    switch (type) {
+        case CKA_VALUE:
+            ret = GetData((byte*)object->data.cert.data, object->data.cert.len,
+                data, len);
+            break;
+        case CKA_ISSUER:
+            ret = GetData(object->issuer, object->issuerLen, data, len);
+            break;
+        case CKA_SERIAL_NUMBER:
+            ret = GetData(object->serial, object->serialLen, data, len);
+            break;
+        case CKA_SUBJECT:
+            ret = GetData(object->subject, object->subjectLen, data, len);
+            break;
+        default:
+            ret = NOT_AVAILABLE_E;
+            break;
+    }
+
+    return ret;
+}
+
 #ifdef WOLFPKCS11_NSS
 static int GetTrustAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
                         byte* data, CK_ULONG* len)
@@ -7097,6 +7126,15 @@ static int GetTrustAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
             *len = sizeof(CK_BBOOL);
             if (data != NULL)
                 ret = GetBool(object->data.trust.stepUpApproved, data, len);
+            break;
+        case CKA_ISSUER:
+            ret = GetData(object->issuer, object->issuerLen, data, len);
+            break;
+        case CKA_SERIAL_NUMBER:
+            ret = GetData(object->serial, object->serialLen, data, len);
+            break;
+        case CKA_SUBJECT:
+            ret = GetData(object->subject, object->subjectLen, data, len);
             break;
         default:
             ret = NOT_AVAILABLE_E;
@@ -7462,15 +7500,6 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
         case CKA_LABEL:
             ret = GetData(object->label, object->labelLen, data, len);
             break;
-        case CKA_ISSUER:
-            ret = GetData(object->issuer, object->issuerLen, data, len);
-            break;
-        case CKA_SERIAL_NUMBER:
-            ret = GetData(object->serial, object->serialLen, data, len);
-            break;
-        case CKA_SUBJECT:
-            ret = GetData(object->subject, object->subjectLen, data, len);
-            break;
         case CKA_TOKEN:
             ret = GetBool(object->onToken, data, len);
             break;
@@ -7590,15 +7619,11 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
         default:
             {
                 if (object->objClass == CKO_CERTIFICATE) {
-                    switch (type) {
-                        case CKA_VALUE:
-                            ret = GetData((byte*)object->data.cert.data,
-                                    object->data.cert.len, data, len);
-                            break;
-                    }
+                    ret = GetCertAttr(object, type, data, len);
+                    break;
                 }
                 #if defined(WOLFPKCS11_NSS)
-                else if ((object->objClass == CKO_NSS_TRUST)) {
+                else if (object->objClass == CKO_NSS_TRUST) {
                     ret = GetTrustAttr(object, type, data, len);
                     break;
                 }
