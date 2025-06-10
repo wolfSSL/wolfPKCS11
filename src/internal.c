@@ -928,6 +928,7 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
 #else
     char name[120] = "\0";
     XFILE file = XBADFILE;
+    char homePath[47]; /* Must fit within name buffer size limit */
 #endif
 
 #ifdef WOLFPKCS11_DEBUG_STORE
@@ -1014,7 +1015,6 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
     #endif
 
     if (str == NULL) {
-        char homePath[47]; /* Must fit within name buffer size limit */
         const char* homeDir = NULL;
 
         #if defined(_WIN32) || defined(_MSC_VER)
@@ -2648,6 +2648,9 @@ static int wp11_Object_Store_RsaKey(WP11_Object* object, int tokenId, int objId)
         ret = wp11_Object_Encode_RsaKey(object);
     }
 
+    if (ret != 0)
+        return ret;
+
     /* Determine store type - private keys may be encrypted. */
     if (object->objClass == CKO_PRIVATE_KEY)
         storeType = WOLFPKCS11_STORE_RSAKEY_PRIV;
@@ -2842,6 +2845,9 @@ static int wp11_Object_Store_EccKey(WP11_Object* object, int tokenId, int objId)
     if (object->keyData == NULL) {
         ret = wp11_Object_Encode_EccKey(object);
     }
+
+    if (ret != 0)
+        return ret;
 
     /* Determine store type - private keys may be encrypted. */
     if (object->objClass == CKO_PRIVATE_KEY)
@@ -3177,8 +3183,10 @@ static int wp11_Object_Store_DhKey(WP11_Object* object, int tokenId, int objId)
         storeType = WOLFPKCS11_STORE_DHKEY_PUB;
 
     /* Open access to DH key. */
-    ret = wp11_storage_open(storeType, tokenId, objId, object->keyDataLen + len,
-                            &storage);
+    if (ret == 0) {
+        ret = wp11_storage_open(storeType, tokenId, objId,
+            object->keyDataLen + len, &storage);
+    }
     if (ret == 0) {
         ret = wp11_storage_write_array(storage, object->keyData,
                                                             object->keyDataLen);
@@ -3305,8 +3313,10 @@ static int wp11_Object_Store_SymmKey(WP11_Object* object, int tokenId,
     }
 
     /* Open access to symmetric key. */
-    ret = wp11_storage_open(WOLFPKCS11_STORE_SYMMKEY, tokenId, objId,
-                            object->keyDataLen, &storage);
+    if (ret == 0) {
+        ret = wp11_storage_open(WOLFPKCS11_STORE_SYMMKEY, tokenId, objId,
+                                object->keyDataLen, &storage);
+    }
     if (ret == 0) {
         /* Write symmetric key to storage. */
         ret = wp11_storage_write_array(storage, object->keyData,
@@ -6339,10 +6349,12 @@ int WP11_Object_SetRsaKey(WP11_Object* object, unsigned char** data,
         if (ret == 0)
            ret = SetMPI(&key->q, data[3], (int)len[3]);
         /* If modulus is not provided, calculate it */
-        if (data[0] == NULL || len[0] == 0) {
-            ret = mp_mul(&key->p, &key->q, &key->n);
-        } else {
-            ret = SetMPI(&key->n, data[0], (int)len[0]);
+        if (ret == 0) {
+            if (data[0] == NULL || len[0] == 0) {
+                ret = mp_mul(&key->p, &key->q, &key->n);
+            } else {
+                ret = SetMPI(&key->n, data[0], (int)len[0]);
+            }
         }
         if (ret == 0)
            ret = SetMPI(&key->dP, data[4], (int)len[4]);
@@ -11395,6 +11407,9 @@ int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
     stateData += sizeof(session->mechanism);
 
     ret = wp11_digest_hash_type(session->mechanism, &hashType);
+
+    if (ret != CKR_OK)
+        return ret;
 
     session->params.digest.hashType = hashType;
     ret = wc_HashInit(&session->params.digest.hash, hashType);
