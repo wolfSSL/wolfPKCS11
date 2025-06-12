@@ -3710,7 +3710,7 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
              CK_ULONG ulDataLen, CK_BYTE_PTR pSignature,
              CK_ULONG_PTR pulSignatureLen)
 {
-    int ret;
+    int ret = 0;
 #ifndef NO_RSA
     int oid;
 #endif
@@ -3799,7 +3799,6 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 if (ret > 0) {
                     data = digest;
                     dataSz = ret;
-                    ret = 0;
                 }
                 else {
                     return CKR_FUNCTION_FAILED;
@@ -3807,8 +3806,9 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             }
 
             ret = WP11_RsaPkcs15_Sign(data, (word32)dataSz, pSignature,
-                                                 &sigLen, obj,
-                                                 WP11_Session_GetSlot(session));
+                                                &sigLen, obj,
+                                                WP11_Session_GetSlot(session));
+
             *pulSignatureLen = sigLen;
             break;
         }
@@ -4705,7 +4705,6 @@ CK_RV C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 if (ret > 0) {
                     data = digest;
                     dataSz = ret;
-                    ret = 0;
                 }
                 else {
                     return CKR_FUNCTION_FAILED;
@@ -4713,7 +4712,7 @@ CK_RV C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             }
 
             ret = WP11_RsaPkcs15_Verify(pSignature, (int)ulSignatureLen, data,
-                                                    (word32)dataSz, &stat, obj);
+                (word32)dataSz, &stat, obj);
             break;
         }
     #ifdef WC_RSA_PSS
@@ -6344,6 +6343,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
 #endif
 #ifdef WOLFSSL_HAVE_PRF
         case CKM_TLS12_KEY_AND_MAC_DERIVE:
+        {
             CK_TLS12_KEY_MAT_PARAMS* tlsParams = NULL;
             if (pMechanism->pParameter == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
@@ -6384,8 +6384,10 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
             if (ret != 0)
                 rv = CKR_FUNCTION_FAILED;
             break;
+        }
         case CKM_TLS12_MASTER_KEY_DERIVE:
         case CKM_TLS12_MASTER_KEY_DERIVE_DH:
+        {
             CK_TLS12_MASTER_KEY_DERIVE_PARAMS* prfParams;
             if (pMechanism->pParameter == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
@@ -6420,9 +6422,11 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
             if (ret != 0)
                 rv = CKR_FUNCTION_FAILED;
             break;
+        }
 #ifdef WOLFPKCS11_NSS
         case CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE:
         case CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_DH:
+        {
             CK_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_PARAMS* nssParams = NULL;
             if (pMechanism->pParameter == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
@@ -6446,6 +6450,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
             if (ret != 0)
                 rv = CKR_FUNCTION_FAILED;
             break;
+        }
 #endif
 #endif
         default:
