@@ -6541,7 +6541,7 @@ static int SecretObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
 int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                         CK_ULONG* len)
 {
-    int ret = 0;
+    int ret = NOT_AVAILABLE_E;
 
     if (object->onToken)
         WP11_Lock_LockRO(object->lock);
@@ -6597,7 +6597,7 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             ret = GetBool(CK_TRUE, data, len);
             break;
         case CKA_APPLICATION:
-            ret = NOT_AVAILABLE_E;
+            /* Not available */
             break;
         case CKA_ID:
             ret = GetData(object->keyId, object->keyIdLen, data, len);
@@ -6606,15 +6606,19 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             ret = GetULong(object->type, data, len);
             break;
         case CKA_START_DATE:
-            if (object->startDate[0] == '\0')
+            if (object->startDate[0] == '\0') {
                 *len = 0;
+                ret = CKR_OK;
+            }
             else
                 ret = GetData((byte*)object->startDate,
                                           sizeof(object->startDate), data, len);
             break;
         case CKA_END_DATE:
-            if (object->endDate[0] == '\0')
+            if (object->endDate[0] == '\0') {
                 *len = 0;
+                ret = CKR_OK;
+            }
             else
                 ret = GetData((byte*)object->endDate, sizeof(object->endDate),
                                                                      data, len);
@@ -6626,7 +6630,7 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             ret = GetULong(object->keyGenMech, data, len);
             break;
         case CKA_ALLOWED_MECHANISMS:
-            ret = NOT_AVAILABLE_E;
+            /* Not available */
             break;
 
         case CKA_ENCRYPT:
@@ -6664,16 +6668,18 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             break;
 
         case CKA_SUBJECT:
-            ret = NOT_AVAILABLE_E;
+            /* Not available */
             break;
 
         default:
             {
-                if ((object->objClass == CKO_CERTIFICATE) &&
-                    (type == CKA_VALUE)) {
-                    ret = GetData((byte*)object->data.cert.data,
-                                object->data.cert.len, data, len);
-                    break;
+                if (object->objClass == CKO_CERTIFICATE) {
+                    switch (type) {
+                        case CKA_VALUE:
+                            ret = GetData((byte*)object->data.cert.data,
+                                    object->data.cert.len, data, len);
+                            break;
+                    }
                 }
                 else {
                     switch (object->type) {
@@ -6697,9 +6703,6 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
         #endif
                         case CKK_GENERIC_SECRET:
                             ret = SecretObject_GetAttr(object, type, data, len);
-                            break;
-                        default:
-                            ret = NOT_AVAILABLE_E;
                             break;
                     }
                     break;

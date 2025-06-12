@@ -90,6 +90,10 @@ jobs:
       run: sudo make install
     - name: wolfpkcs11 make dist
       run: make dist
+    - name: Run pkcs11test with ASAN LD_PRELOAD
+      run: |
+        export LD_PRELOAD=$(gcc -print-file-name=libasan.so):$LD_PRELOAD
+        ./tests/pkcs11test
 
 # capture logs on failure
     - name: Upload failure logs
