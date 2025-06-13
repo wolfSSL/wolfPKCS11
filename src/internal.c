@@ -2081,6 +2081,11 @@ static int wp11_Object_Decode_RsaKey(WP11_Object* object)
         else {
             ret = BUFFER_E;
         }
+        if (ret == 0) {
+            /* load public portion into wolf RsaKey structure */
+            ret = wolfTPM2_RsaKey_TpmToWolf(&object->slot->tpmDev,
+                (WOLFTPM2_KEY*)&object->tpmKey, &object->data.rsaKey);
+        }
     }
     else
 #endif

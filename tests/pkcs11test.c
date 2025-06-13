@@ -3554,6 +3554,7 @@ static CK_RV rsa_oaep_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE priv,
 }
 #endif
 
+#if !defined(NO_RSA) && defined(WC_RSA_DIRECT)
 static CK_RV rsa_x_509_sig_test(CK_SESSION_HANDLE session,
                                 CK_OBJECT_HANDLE priv, CK_OBJECT_HANDLE pub,
                                 int hashSz)
@@ -3607,6 +3608,7 @@ static CK_RV rsa_x_509_sig_test(CK_SESSION_HANDLE session,
 
     return ret;
 }
+#endif
 
 static CK_RV rsa_pkcs15_sig_test(CK_SESSION_HANDLE session,
                                  CK_OBJECT_HANDLE priv, CK_OBJECT_HANDLE pub,
@@ -3912,6 +3914,7 @@ static CK_RV test_rsa_fixed_keys_oaep(void* args)
 }
 #endif
 
+#if !defined(NO_RSA) && defined(WC_RSA_DIRECT)
 static CK_RV test_rsa_fixed_keys_x_509_sig(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -3941,6 +3944,7 @@ static CK_RV test_rsa_fixed_keys_x_509_sig(void* args)
 
     return ret;
 }
+#endif
 
 static CK_RV test_rsa_fixed_keys_pkcs15_sig(void* args)
 {
@@ -8786,7 +8790,9 @@ static TEST_FUNC testFunc[] = {
 #ifndef WC_NO_RSA_OAEP
     PKCS11TEST_FUNC_SESS_DECL(test_rsa_fixed_keys_oaep),
 #endif
+#ifdef WC_RSA_DIRECT
     PKCS11TEST_FUNC_SESS_DECL(test_rsa_fixed_keys_x_509_sig),
+#endif
     PKCS11TEST_FUNC_SESS_DECL(test_rsa_fixed_keys_pkcs15_sig),
 #ifdef WC_RSA_PSS
     PKCS11TEST_FUNC_SESS_DECL(test_rsa_fixed_keys_pss),
@@ -8805,7 +8811,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_rsa_gen_keys),
     PKCS11TEST_FUNC_SESS_DECL(test_rsa_gen_keys_id),
 #endif
-#endif
+#endif /* !NO_RSA */
 #ifdef HAVE_ECC
     PKCS11TEST_FUNC_SESS_DECL(test_ecc_create_key_fail),
     PKCS11TEST_FUNC_SESS_DECL(test_ecc_fixed_keys_ecdh),
@@ -8815,7 +8821,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_ecc_gen_keys_token),
     PKCS11TEST_FUNC_SESS_DECL(test_ecc_token_keys_ecdsa),
     PKCS11TEST_FUNC_SESS_DECL(test_ecdsa_sig_fail),
-#endif
+#endif /* HAVE_ECC */
 #ifndef NO_DH
     PKCS11TEST_FUNC_SESS_DECL(test_dh_fixed_keys),
     PKCS11TEST_FUNC_SESS_DECL(test_dh_gen_keys),
