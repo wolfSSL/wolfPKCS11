@@ -1,0 +1,13 @@
+# TSAN suppressions for wolfPKCS11
+
+# Suppress lock-order-inversion between mutexes in WP11_Library_IsInitialized
+# This occurs when WP11_Lock_LockRO and WP11_Lock_UnlockRO acquire mutexes
+# in different orders, causing ThreadSanitizer to detect a potential deadlock.
+# The pattern matches the specific function where the lock order inversion occurs.
+deadlock:WP11_Lock_LockRO
+deadlock:WP11_Lock_UnlockRO
+
+# Suppress unlock of unlocked mutex errors
+# This occurs when WP11_Lock_UnlockRO tries to unlock a mutex that may have
+# already been unlocked or was never locked by the current thread.
+mutex:WP11_Lock_UnlockRO

@@ -19,7 +19,7 @@ jobs:
   tpm:
     uses: ./.github/workflows/build-workflow.yml
     with:
-      config: --enable-singlethreaded --enable-wolftpm --disable-dh CFLAGS="-DWOLFPKCS11_TPM_STORE"
+      config: --enable-singlethreaded --enable-wolftpm --disable-dh C_EXTRA_FLAGS="-DWOLFPKCS11_TPM_STORE"
       check: ./tests/pkcs11str && ./tests/pkcs11test
 
   no_rsa:
