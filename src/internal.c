@@ -2369,7 +2369,7 @@ static int wp11_Object_Decode_RsaKey(WP11_Object* object)
     word32 idx = 0;
 
 #ifdef WOLFPKCS11_TPM
-    if (object->flag & WP11_FLAG_TPM) {
+    if (object->opFlag & WP11_FLAG_TPM) {
         byte pubAreaBuffer[sizeof(TPM2B_PUBLIC)];
         UINT16 pubAreaSize = 0;
 
@@ -2523,7 +2523,7 @@ static int wp11_Object_Encode_RsaKey(WP11_Object* object)
         idx += sizeof(UINT16) + object->tpmKey.priv.size;
 
         /* set flag indicating this is TPM based key */
-        object->flag |= WP11_FLAG_TPM;
+        object->opFlag |= WP11_FLAG_TPM;
     }
     else
 #endif
@@ -9234,21 +9234,22 @@ int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
 
     PRIVATE_KEY_UNLOCK();
     if (params->bExtract && !params->bExpand) {
-        ret = wc_HKDF_Extract(hashType, salt, saltLen, priv->data.symmKey.data,
-            priv->data.symmKey.len, key);
+        ret = wc_HKDF_Extract(hashType, salt, (word32)saltLen,
+            priv->data.symmKey.data, priv->data.symmKey.len, key);
 
         if (!ret)
             *keyLen = hashLen;
     }
     else if (!params->bExtract && params->bExpand) {
         ret = wc_HKDF_Expand(hashType, priv->data.symmKey.data,
-            priv->data.symmKey.len, params->pInfo, params->ulInfoLen, key,
-            *keyLen);
+            priv->data.symmKey.len, params->pInfo, (word32)params->ulInfoLen,
+            key, *keyLen);
     }
     else {
         /* Both */
         ret = wc_HKDF(hashType, priv->data.symmKey.data,priv->data.symmKey.len,
-            salt, saltLen, params->pInfo, params->ulInfoLen, key, *keyLen);
+            salt, (word32)saltLen, params->pInfo, (word32)params->ulInfoLen,
+            key, *keyLen);
     }
     PRIVATE_KEY_LOCK();
 
@@ -9426,8 +9427,9 @@ int WP11_Tls12_Master_Key_Derive(CK_SSL3_RANDOM_DATA* random,
     }
 
     PRIVATE_KEY_UNLOCK();
-    ret = wc_PRF_TLS(enc, encLen, key->data.symmKey.data, key->data.symmKey.len,
-                     (const byte*)label, ulLabelLen, pSeed, (word32)ulSeedLen,
+    ret = wc_PRF_TLS(enc, (word32)encLen, key->data.symmKey.data,
+                     key->data.symmKey.len, (const byte*)label,
+                     (word32)ulLabelLen, pSeed, (word32)ulSeedLen,
                      1, macType, NULL, 0);
     PRIVATE_KEY_LOCK();
 

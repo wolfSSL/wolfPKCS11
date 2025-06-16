@@ -3995,7 +3995,7 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             if (WP11_TLS_MAC_get_len(session) > (word32)*pulSignatureLen)
                 return CKR_BUFFER_TOO_SMALL;
 
-            sigLen = *pulSignatureLen;
+            sigLen = (word32)*pulSignatureLen;
             ret = WP11_TLS_MAC_sign(pData, (word32)ulDataLen, pSignature,
                     &sigLen, session);
             *pulSignatureLen = sigLen;
@@ -4107,7 +4107,7 @@ CK_RV C_SignUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_TLS_MAC_SIGN))
                 return CKR_OPERATION_NOT_INITIALIZED;
 
-            ret = WP11_Session_UpdateData(session, pPart, ulPartLen);
+            ret = WP11_Session_UpdateData(session, pPart, (word32)ulPartLen);
             break;
 #endif
         default:
@@ -4239,7 +4239,8 @@ CK_RV C_SignFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature,
                 return CKR_OPERATION_NOT_INITIALIZED;
 
             WP11_Session_GetData(session, &data, &dataLen);
-            ret = C_Sign(hSession, data, dataLen, pSignature, pulSignatureLen);
+            ret = (int)C_Sign(hSession, data, dataLen, pSignature,
+                pulSignatureLen);
             WP11_Session_FreeData(session);
             if (ret != CKR_OK)
                 return ret;
@@ -4859,7 +4860,7 @@ CK_RV C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 return CKR_OPERATION_NOT_INITIALIZED;
 
             ret = WP11_TLS_MAC_verify(pData, (word32)ulDataLen, pSignature,
-                    ulSignatureLen, &stat, session);
+                    (word32)ulSignatureLen, &stat, session);
             break;
         }
 #endif
@@ -5226,8 +5227,8 @@ CK_RV C_VerifyRecover(CK_SESSION_HANDLE hSession,
             return CKR_MECHANISM_INVALID;
     }
 
-    ret = WP11_Rsa_Verify_Recover(mechanism, pSignature, ulSignatureLen, pData,
-                                   pulDataLen, obj);
+    ret = WP11_Rsa_Verify_Recover(mechanism, pSignature, (word32)ulSignatureLen,
+                                  pData, pulDataLen, obj);
 
     if (ret != CKR_OK) {
         return ret;
@@ -6050,11 +6051,11 @@ static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
     unsigned char* secretKeyData[2] = { NULL, NULL };
     CK_ULONG secretKeyLen[2] = { 0, 0 };
 
-    ret = CreateObject(session, pTemplate, ulAttributeCount, &secret);
+    ret = (int)CreateObject(session, pTemplate, ulAttributeCount, &secret);
     if (ret != 0)
         return CKR_OBJECT_HANDLE_INVALID;
 
-    ret = SymmKeyLen(secret, length, &symmKeyLen);
+    ret = SymmKeyLen(secret, (word32)length, &symmKeyLen);
     if (ret == 0) {
         /* Only use the bottom part of the secret for the key. */
         secretKeyData[1] = ptr + (length - symmKeyLen);
@@ -6062,7 +6063,8 @@ static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
         ret = WP11_Object_SetSecretKey(secret, secretKeyData, secretKeyLen);
         if (ret != CKR_OK)
             return CKR_FUNCTION_FAILED;
-        ret = AddObject(session, secret, pTemplate, ulAttributeCount, handle);
+        ret = (int)AddObject(session, secret, pTemplate, ulAttributeCount,
+            handle);
         if (ret != CKR_OK) {
             return ret;
         }
@@ -6281,7 +6283,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
                 if (!lenAttr) {
                     return CKR_MECHANISM_PARAM_INVALID;
                 }
-                keyLen = *(CK_ULONG*)lenAttr->pValue;
+                keyLen = *(word32*)lenAttr->pValue;
             }
             else {
                 keyLen = WC_MAX_DIGEST_SIZE;
@@ -6355,9 +6357,9 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
             if (tlsParams->pReturnedKeyMaterial == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
 
-            keyLen = (2 * tlsParams->ulMacSizeInBits) +
-                     (2 * tlsParams->ulKeySizeInBits) +
-                     (2 * tlsParams->ulIVSizeInBits);
+            keyLen = (word32)(2 * tlsParams->ulMacSizeInBits) +
+                     (word32)(2 * tlsParams->ulKeySizeInBits) +
+                     (word32)(2 * tlsParams->ulIVSizeInBits);
             if (keyLen == 0)
                 return CKR_MECHANISM_PARAM_INVALID;
             if ((keyLen % 8) != 0)
