@@ -1,0 +1,30 @@
+Checks: >
+  -*,
+  bugprone-*,
+  clang-analyzer-*,
+  concurrency-*,
+  misc-*,
+  modernize-*,
+  portability-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-reserved-identifier,
+  -bugprone-macro-parentheses,
+  -bugprone-narrowing-conversions,
+  -bugprone-switch-missing-default-case,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-assignment-in-if-condition,
+  -concurrency-mt-unsafe,
+  -clang-analyzer-security.insecureAPI.strcpy,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  -misc-unused-parameters,
+  -misc-no-recursion,
+  -misc-header-include-cycle,
+  -misc-include-cleaner,
+  -modernize-macro-to-enum,
+  -modernize-use-designated-initializers,
+
+WarningsAsErrors: true
+
+HeaderFilterRegex: '(src/|wolfpkcs11/|examples/|tests/).*\.(h|hpp)$'
+
+FormatStyle: none

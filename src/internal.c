@@ -2413,7 +2413,8 @@ static int wp11_Object_Store_RsaKey(WP11_Object* object, int tokenId, int objId)
         storeType = WOLFPKCS11_STORE_RSAKEY_PUB;
 
     /* Open access to RSA key. */
-    ret = wp11_storage_open(storeType, tokenId, objId, object->keyDataLen,
+    if (ret == 0)
+        ret = wp11_storage_open(storeType, tokenId, objId, object->keyDataLen,
                             &storage);
     if (ret == 0) {
         /* Write encoded RSA key to storage. */
@@ -2608,7 +2609,8 @@ static int wp11_Object_Store_EccKey(WP11_Object* object, int tokenId, int objId)
         storeType = WOLFPKCS11_STORE_ECCKEY_PUB;
 
     /* Open access to ECC key. */
-    ret = wp11_storage_open(storeType, tokenId, objId, object->keyDataLen,
+    if (ret == 0)
+        ret = wp11_storage_open(storeType, tokenId, objId, object->keyDataLen,
                             &storage);
     if (ret == 0) {
         /* Write encoded ECC key to storage. */
@@ -2935,8 +2937,10 @@ static int wp11_Object_Store_DhKey(WP11_Object* object, int tokenId, int objId)
         storeType = WOLFPKCS11_STORE_DHKEY_PUB;
 
     /* Open access to DH key. */
-    ret = wp11_storage_open(storeType, tokenId, objId, object->keyDataLen + len,
-                            &storage);
+    if (ret == 0)
+        ret = wp11_storage_open(storeType, tokenId, objId,
+                object->keyDataLen + len, &storage);
+
     if (ret == 0) {
         ret = wp11_storage_write_array(storage, object->keyData,
                                                             object->keyDataLen);
@@ -3059,7 +3063,8 @@ static int wp11_Object_Store_SymmKey(WP11_Object* object, int tokenId,
     }
 
     /* Open access to symmetric key. */
-    ret = wp11_storage_open(WOLFPKCS11_STORE_SYMMKEY, tokenId, objId,
+    if (ret == 0)
+        ret = wp11_storage_open(WOLFPKCS11_STORE_SYMMKEY, tokenId, objId,
                             object->keyDataLen, &storage);
     if (ret == 0) {
         /* Write symmetric key to storage. */
@@ -5662,61 +5667,61 @@ int WP11_Object_SetRsaKey(WP11_Object* object, unsigned char** data,
 
     key = &object->data.rsaKey;
     ret = wc_InitRsaKey_ex(key, NULL, object->slot->devId);
+    if (ret == 0)
+       ret = SetMPI(&key->d, data[1], (int)len[1]);
+    if (ret == 0)
+       ret = SetMPI(&key->p, data[2], (int)len[2]);
+    if (ret == 0)
+       ret = SetMPI(&key->q, data[3], (int)len[3]);
+    /* If modulus is not provided, calculate it */
     if (ret == 0) {
-        if (ret == 0)
-           ret = SetMPI(&key->d, data[1], (int)len[1]);
-        if (ret == 0)
-           ret = SetMPI(&key->p, data[2], (int)len[2]);
-        if (ret == 0)
-           ret = SetMPI(&key->q, data[3], (int)len[3]);
-        /* If modulus is not provided, calculate it */
         if (data[0] == NULL || len[0] == 0) {
             ret = mp_mul(&key->p, &key->q, &key->n);
         } else {
             ret = SetMPI(&key->n, data[0], (int)len[0]);
         }
-        if (ret == 0)
-           ret = SetMPI(&key->dP, data[4], (int)len[4]);
-        if (ret == 0)
-           ret = SetMPI(&key->dQ, data[5], (int)len[5]);
-        if (ret == 0)
-           ret = SetMPI(&key->u, data[6], (int)len[6]);
-        if (ret == 0) {
-            /* Public exponent defaults to 65537 in PKCS11 > 2.11 */
-            if (len[7] > 0)
-                ret = SetMPI(&key->e, data[7], (int)len[7]);
-            else {
-                byte defaultPublic[] = {0x01, 0x00, 0x01};
-                ret = SetMPI(&key->e, defaultPublic, sizeof(defaultPublic));
-            }
-        }
-        if (ret == 0) {
-           if (len[8] == sizeof(CK_ULONG))
-               object->size = (word32)*(CK_ULONG*)data[8];
-           else if (len[8] != 0)
-               ret = BUFFER_E;
-        }
-        if (ret == 0) {
-            if (mp_iszero(&key->d) && mp_iszero(&key->p)) {
-                key->type = RSA_PUBLIC;
-            }
-            else {
-                key->type = RSA_PRIVATE;
-            }
-        }
-    #ifdef WOLFPKCS11_TPM
-        if (ret == 0 && key->type == RSA_PRIVATE) {
-            /* load private key - populates handle */
-            object->slot->tpmCtx.rsaKey = (WOLFTPM2_KEY*)&object->tpmKey;
-            ret = wolfTPM2_RsaKey_WolfToTpm_ex(&object->slot->tpmDev,
-                &object->slot->tpmSrk, &object->data.rsaKey,
-                (WOLFTPM2_KEY*)&object->tpmKey);
-        }
-    #endif
-
-        if (ret != 0)
-            wc_FreeRsaKey(key);
     }
+    if (ret == 0)
+       ret = SetMPI(&key->dP, data[4], (int)len[4]);
+    if (ret == 0)
+       ret = SetMPI(&key->dQ, data[5], (int)len[5]);
+    if (ret == 0)
+       ret = SetMPI(&key->u, data[6], (int)len[6]);
+    if (ret == 0) {
+        /* Public exponent defaults to 65537 in PKCS11 > 2.11 */
+        if (len[7] > 0)
+            ret = SetMPI(&key->e, data[7], (int)len[7]);
+        else {
+            byte defaultPublic[] = {0x01, 0x00, 0x01};
+            ret = SetMPI(&key->e, defaultPublic, sizeof(defaultPublic));
+        }
+    }
+    if (ret == 0) {
+       if (len[8] == sizeof(CK_ULONG))
+           object->size = (word32)*(CK_ULONG*)data[8];
+       else if (len[8] != 0)
+           ret = BUFFER_E;
+    }
+    if (ret == 0) {
+        if (mp_iszero(&key->d) && mp_iszero(&key->p)) {
+            key->type = RSA_PUBLIC;
+        }
+        else {
+            key->type = RSA_PRIVATE;
+        }
+    }
+#ifdef WOLFPKCS11_TPM
+    if (ret == 0 && key->type == RSA_PRIVATE) {
+        /* load private key - populates handle */
+        object->slot->tpmCtx.rsaKey = (WOLFTPM2_KEY*)&object->tpmKey;
+        ret = wolfTPM2_RsaKey_WolfToTpm_ex(&object->slot->tpmDev,
+            &object->slot->tpmSrk, &object->data.rsaKey,
+            (WOLFTPM2_KEY*)&object->tpmKey);
+    }
+#endif
+
+    if (ret != 0)
+        wc_FreeRsaKey(key);
 
     if (object->onToken)
         WP11_Lock_UnlockRW(object->lock);
@@ -6892,7 +6897,7 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             WP11_Object_SetOpFlag(object, CKF_WRAP, *(CK_BBOOL*)data);
             break;
         case CKA_UNWRAP:
-            WP11_Object_SetOpFlag(object, CKF_WRAP, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, CKF_UNWRAP, *(CK_BBOOL*)data);
             break;
         case CKA_DERIVE:
             WP11_Object_SetOpFlag(object, CKF_DERIVE, *(CK_BBOOL*)data);
@@ -7007,10 +7012,8 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             break;
         case CKA_KEY_TYPE:
             /* Handled in layer above */
-            break;
         case CKA_TOKEN:
             /* Handled in layer above */
-            break;
         case CKA_CERTIFICATE_TYPE:
             /* Handled in WP11_Object_SetCert */
             break;

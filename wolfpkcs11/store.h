@@ -22,6 +22,8 @@
 #ifndef WOLFPKCS11_STORE
 #define WOLFPKCS11_STORE
 
+#include <wolfpkcs11/pkcs11.h>
+
 #define WOLFPKCS11_STORE_TOKEN          0x00
 #define WOLFPKCS11_STORE_OBJECT         0x01
 #define WOLFPKCS11_STORE_SYMMKEY        0x02
