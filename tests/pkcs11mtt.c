@@ -3724,7 +3724,7 @@ static CK_RV ecdh_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE privKey,
         if (outSz != (word32)sizeof_ecc_secret_256 ||
                                       memcmp(out, ecc_secret_256, outSz) != 0) {
             ret = -1;
-            CHECK_CKR(ret, "Secret compare with exepcted");
+            CHECK_CKR(ret, "Secret compare with expected");
         }
     }
     if (ret == CKR_OK) {
@@ -4444,7 +4444,7 @@ static CK_RV dh_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE privKey,
         if (outSz != (word32)sizeof_dh_2048_exp ||
                                          memcmp(out, dh_2048_exp, outSz) != 0) {
             ret = -1;
-            CHECK_CKR(ret, "Secret compare with exepcted");
+            CHECK_CKR(ret, "Secret compare with expected");
         }
     }
     if (ret == CKR_OK) {

@@ -139,7 +139,7 @@ static CK_RV pkcs11_slot_info(CK_SLOT_ID slotId)
     CHECK_CKR(ret, "Get Slot info");
 
     if (ret == CKR_OK) {
-        printf("Decription: %.64s\n", slotInfo.slotDescription);
+        printf("Description: %.64s\n", slotInfo.slotDescription);
         printf("Manufacturer Id: %.32s\n", slotInfo.manufacturerID);
         printf("Hardware Version: %2x.%02x\n", slotInfo.hardwareVersion.major,
             slotInfo.hardwareVersion.minor);
