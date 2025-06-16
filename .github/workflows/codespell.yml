@@ -1,0 +1,29 @@
+name: Codespell Check
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  codespell:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+    
+    - name: Install codespell
+      run: pip install codespell
+    
+    - name: Run codespell
+      run: |
+        echo "Running codespell to check for spelling errors..."
+        codespell . || (echo "❌ Spelling errors found. Please fix the issues above." && exit 1)
+        echo "✅ No spelling errors found!"

@@ -1,0 +1,6 @@
+[codespell]
+skip = *.git*,*.log,*.pdf,*.png,*.jpg,*.jpeg,*.svg,*.ico,*.woff*,*.ttf,*.eot,*.min.*,*.map,*.orig,*.rej,autom4te.cache,build-aux,*.in,*.m4,configure,libtool,compile_commands.json,config.*,*.diff,*.patch,out.txt,configure~,IDE
+exclude-file = .gitignore
+check-filenames =
+check-hidden =
+quiet-level = 2

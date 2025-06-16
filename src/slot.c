@@ -285,7 +285,7 @@ static CK_MECHANISM_TYPE mechanismList[] = {
 static int mechanismCnt = ((int)(sizeof(mechanismList)/sizeof(*mechanismList)));
 
 /**
- * Get list of supported mechanism fo for the slot.
+ * Get list of supported mechanisms for the slot.
  *
  * @param  slotID           [in]      Id of slot to use.
  * @param  pMechanismList   [in]      Array to hold mechanisms.
@@ -450,7 +450,7 @@ static CK_MECHANISM_INFO hmacSha512MechInfo = {
  *
  * @param  slotID  [in]  Id of slot to use.
  * @param  type    [in]  Mechanism type.
- * @param  pInfo   [in]  Mechnism information copied into it.
+ * @param  pInfo   [in]  Mechanism information copied into it.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SLOT_ID_INVALID when no slot with id can be found.
  *          CKR_ARGUMENTS_BAD when pInfo is NULL.
@@ -939,7 +939,7 @@ CK_RV C_SetOperationState(CK_SESSION_HANDLE hSession,
  *          type.
  *          CKR_PIN_INCORRECT when PIN is wrong length or does not verify.
  *          CKR_OPERATION_NOT_INITIALIZED when using user type
- *          CKU_CONTEXT_SPECIFIC - uesr type not supported.
+ *          CKU_CONTEXT_SPECIFIC - user type not supported.
  *          CKR_USER_TYPE_INVALID when other user type is specified.
  *          CKR_OK on success.
  */
