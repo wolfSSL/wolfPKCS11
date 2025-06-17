@@ -2318,7 +2318,7 @@ static CK_RV test_secret_key_check_value(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_RV ret = CKR_OK;
-    CK_OBJECT_HANDLE key;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
     CK_ATTRIBUTE checkValueTmpl[] = {
         { CKA_CHECK_VALUE, NULL, 0 }
     };
@@ -12306,6 +12306,7 @@ static CK_RV test_hkdf_gen_key(void* args)
 }
 #endif
 
+#ifndef NO_SHA
 static CK_RV test_x509_check_value(void* args)
 {
     CK_RV ret = CKR_OK;
@@ -12505,6 +12506,7 @@ static CK_RV test_x509_check_value(void* args)
 
     return ret;
 }
+#endif
 
 
 static CK_RV test_random(void* args)
@@ -13791,7 +13793,9 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_nss_derive_tls12_master_key),
 #endif
 #endif
+#ifndef NO_SHA
     PKCS11TEST_FUNC_SESS_DECL(test_x509_check_value),
+#endif
 };
 static int testFuncCnt = sizeof(testFunc) / sizeof(*testFunc);
 
