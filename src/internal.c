@@ -3789,14 +3789,13 @@ static int wp11_Object_Encode(WP11_Object* object, int protect)
 {
     int ret;
 
-    if (object->objClass == CKO_CERTIFICATE)  {
-        ret = 0;
-    }
 #ifdef WOLFPKCS11_NSS
-    else if (object->objClass == CKO_NSS_TRUST) {
-        ret = 0;
-    }
+    if ((object->objClass == CKO_CERTIFICATE) ||
+        (object->objClass == CKO_NSS_TRUST))
+#else
+    if (object->objClass == CKO_CERTIFICATE)
 #endif
+        ret = 0;
     else {
         switch (object->type) {
         #ifndef NO_RSA
@@ -4054,7 +4053,7 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
             }
         }
         if (ret == 0) {
-            /* Read token flags. This is a new varible, so might not exist on
+            /* Read token flags. This is a new variable, so might not exist on
              * an upgrade. If not set, it was from a version that doesn't
              * support empty pins. So, we can calculate it from the pin lengths.
              */
@@ -4483,6 +4482,7 @@ void WP11_Library_Final(void)
 
         wc_FreeRng(&globalRandom);
         WP11_Lock_Free(&globalLock);
+        wolfCrypt_Cleanup();
     }
 }
 
@@ -5423,25 +5423,21 @@ static int MechanismToHash(int mechanism)
 #ifndef NO_RSA
 #ifdef WOLFSSL_SHA224
         case CKM_SHA224_RSA_PKCS:
-            return WP11_INIT_SHA224;
         case CKM_SHA224_RSA_PKCS_PSS:
             return WP11_INIT_SHA224;
 #endif
 #ifndef NO_SHA256
         case CKM_SHA256_RSA_PKCS:
-            return WP11_INIT_SHA256;
         case CKM_SHA256_RSA_PKCS_PSS:
             return WP11_INIT_SHA256;
 #endif
 #ifdef WOLFSSL_SHA384
         case CKM_SHA384_RSA_PKCS:
-            return WP11_INIT_SHA384;
         case CKM_SHA384_RSA_PKCS_PSS:
             return WP11_INIT_SHA384;
 #endif
 #ifdef WOLFSSL_SHA512
         case CKM_SHA512_RSA_PKCS:
-            return WP11_INIT_SHA512;
         case CKM_SHA512_RSA_PKCS_PSS:
             return WP11_INIT_SHA512;
 #endif
@@ -6302,18 +6298,16 @@ void WP11_Object_Free(WP11_Object* object)
         XFREE(object->label, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     if (object->keyId != NULL)
         XFREE(object->keyId, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    if (object->issuer != NULL)
+        XFREE(object->issuer, NULL, DYNAMIC_TYPE_CERT);
+    if (object->serial != NULL)
+        XFREE(object->serial, NULL, DYNAMIC_TYPE_CERT);
+    if (object->subject != NULL)
+        XFREE(object->subject, NULL, DYNAMIC_TYPE_CERT);
     if (object->objClass == CKO_CERTIFICATE) {
         XFREE(object->data.cert.data, NULL, DYNAMIC_TYPE_CERT);
         certFreed = 1;
     }
-    #ifdef WOLFPKCS11_NSS
-    else if (object->objClass == CKO_NSS_TRUST) {
-        if (object->issuer != NULL)
-            XFREE(object->issuer, NULL, DYNAMIC_TYPE_CERT);
-        if (object->serial != NULL)
-            XFREE(object->serial, NULL, DYNAMIC_TYPE_CERT);
-    }
-    #endif
     else {
     #ifndef NO_RSA
         if (object->type == CKK_RSA)
@@ -7458,8 +7452,10 @@ static int SecretObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
 
     switch (type) {
         case CKA_VALUE:
-            if (noPriv)
+            if (noPriv) {
                 *len = CK_UNAVAILABLE_INFORMATION;
+                ret = CKR_ATTRIBUTE_SENSITIVE;
+            }
             else
                 ret = GetData(object->data.symmKey.data,
                                            object->data.symmKey.len, data, len);
@@ -7473,9 +7469,6 @@ static int SecretObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
             ret = NOT_AVAILABLE_E;
             break;
     }
-
-    if (noPriv && ret == CKR_OK)
-        ret = CKR_ATTRIBUTE_SENSITIVE;
 
     return ret;
 }
@@ -7959,11 +7952,6 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                     break;
             }
             break;
-        case CKA_KEY_TYPE:
-            /* Handled in layer above */
-        case CKA_TOKEN:
-            /* Handled in layer above */
-            break;
 #ifdef WOLFPKCS11_NSS
         case CKA_CERT_SHA1_HASH:
         case CKA_CERT_MD5_HASH:
@@ -7973,10 +7961,14 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
         case CKA_TRUST_CODE_SIGNING:
         case CKA_TRUST_STEP_UP_APPROVED:
             /* Handled in WP11_Object_SetTrust */
-            break;
 #endif
         case CKA_CERTIFICATE_TYPE:
             /* Handled in WP11_Object_SetCert */
+        case CKA_KEY_TYPE:
+            /* Handled in layer above */
+        case CKA_TOKEN:
+            /* Handled in layer above */
+            break;
         case CKA_ISSUER:
             ret = WP11_Object_SetData(&object->issuer, &object->issuerLen,
                                       data, (int)len);
@@ -9458,9 +9450,10 @@ int WP11_Nss_Tls12_Master_Key_Derive(CK_BYTE_PTR pSessionHash,
     }
 
     PRIVATE_KEY_UNLOCK();
-    ret = wc_PRF_TLS(enc, encLen, key->data.symmKey.data, key->data.symmKey.len,
-                     (const byte*)label, ulLabelLen, pSessionHash,
-                     (word32)ulSessionHashLen, 1, macType, NULL, 0);
+    ret = wc_PRF_TLS(enc, (word32)encLen, key->data.symmKey.data,
+                     key->data.symmKey.len, (const byte*)label,
+                     (word32)ulLabelLen, pSessionHash, (word32)ulSessionHashLen,
+                     1, macType, NULL, 0);
     PRIVATE_KEY_LOCK();
 
     return ret;
@@ -10942,7 +10935,7 @@ int WP11_Digest_Key(WP11_Object* key, WP11_Session* session)
  *
  * @param  data     [in]       Output data.
  * @param  dataLen  [in, out]  Length of data in bytes.
- * @param  session  [in]       Session object witht he Digest object.
+ * @param  session  [in]       Session object with the Digest object.
  * @return  -ve on failure.
  *          0 on success.
  */
@@ -10979,7 +10972,7 @@ int WP11_Digest_Final(unsigned char* data, word32* dataLen,
  * @param  dataLen     [in]       Length of data in bytes.
  * @param  dataOut     [in]       Output data.
  * @param  dataOutLen  [in, out]  Lenget of dataOut in bytes.
- * @param  session     [in]       Session object witht he Digest object.
+ * @param  session     [in]       Session object with the Digest object.
  * @return  -ve on failure.
  *          0 on success.
  */

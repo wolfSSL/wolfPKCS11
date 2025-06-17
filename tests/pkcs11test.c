@@ -1368,8 +1368,8 @@ static CK_RV test_op_state_fail(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_RV ret;
-    byte data;
-    CK_ULONG len;
+    byte data = 0x00;
+    CK_ULONG len = 0;
 
     ret = funcList->C_GetOperationState(CK_INVALID_HANDLE, NULL, &len);
     CHECK_CKR_FAIL(ret, CKR_SESSION_HANDLE_INVALID,
@@ -6270,7 +6270,7 @@ static CK_RV ecdsa_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE privKey,
     return ret;
 }
 
-/* Tests for error occuring when private and public curves mismatch. */
+/* Tests for error occurring when private and public curves mismatch. */
 /* Crashes with TPM test right now. */
 #ifndef WOLFPKCS11_TPM
 static CK_RV test_ecc_curve(void *args)
@@ -6397,6 +6397,12 @@ static CK_RV test_ecc_curve(void *args)
             &hSharedSecret);
         CHECK_CKR(ret, "C_DeriveKey (ECDH1)");
     }
+    funcList->C_DestroyObject(session, hSharedSecret);
+    funcList->C_DestroyObject(session, hAlicePrivKey);
+    funcList->C_DestroyObject(session, hAlicePubKey);
+    funcList->C_DestroyObject(session, hBobPrivKey);
+    funcList->C_DestroyObject(session, hBobPubKey);
+    XFREE(bobEcPointAttr.pValue, NULL, DYNAMIC_TYPE_TMP_BUFFER);
 
     return ret;
 }
@@ -7226,7 +7232,7 @@ static CK_RV aes_cbc_encrypt_data_test(CK_SESSION_HANDLE session,
         if (outSz != sizeof(aes_128_cbc_encrypt_exp) ||
                              memcmp(out, aes_128_cbc_encrypt_exp, outSz) != 0) {
             ret = -1;
-            CHECK_CKR(ret, "Secret compare with exepcted");
+            CHECK_CKR(ret, "Secret compare with expected");
         }
     }
     if (ret == CKR_OK) {
