@@ -742,48 +742,36 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
     #endif
     #ifndef NO_SHA256
         case CKM_SHA256_RSA_PKCS:
-            XMEMCPY(pInfo, &shaRsaPkcsMechInfo, sizeof(CK_MECHANISM_INFO));
-            break;
     #endif
     #ifdef WOLFSSL_SHA224
         case CKM_SHA224_RSA_PKCS:
-            XMEMCPY(pInfo, &shaRsaPkcsMechInfo, sizeof(CK_MECHANISM_INFO));
-            break;
     #endif
     #ifdef WOLFSSL_SHA384
         case CKM_SHA384_RSA_PKCS:
-            XMEMCPY(pInfo, &shaRsaPkcsMechInfo, sizeof(CK_MECHANISM_INFO));
-            break;
     #endif
     #ifdef WOLFSSL_SHA512
         case CKM_SHA512_RSA_PKCS:
+    #endif
             XMEMCPY(pInfo, &shaRsaPkcsMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
-    #endif
     #ifdef WC_RSA_PSS
         case CKM_RSA_PKCS_PSS:
             XMEMCPY(pInfo, &rsaPssMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
         #ifndef NO_SHA256
         case CKM_SHA256_RSA_PKCS_PSS:
-            XMEMCPY(pInfo, &shaRsaPkcsMechInfo, sizeof(CK_MECHANISM_INFO));
-            break;
         #endif
         #ifdef WOLFSSL_SHA224
         case CKM_SHA224_RSA_PKCS_PSS:
-            XMEMCPY(pInfo, &shaRsaPkcsMechInfo, sizeof(CK_MECHANISM_INFO));
-            break;
         #endif
         #ifdef WOLFSSL_SHA384
         case CKM_SHA384_RSA_PKCS_PSS:
-            XMEMCPY(pInfo, &shaRsaPkcsMechInfo, sizeof(CK_MECHANISM_INFO));
-            break;
         #endif
         #ifdef WOLFSSL_SHA512
         case CKM_SHA512_RSA_PKCS_PSS:
+        #endif
             XMEMCPY(pInfo, &shaRsaPkcsMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
-        #endif
     #endif
 #endif
 #ifdef HAVE_ECC
