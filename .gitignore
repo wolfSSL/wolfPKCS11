@@ -59,5 +59,6 @@ tests/wp11_ecckey_*
 tests/wp11_symmkey_*
 tests/wp11_token_*
 tests/wp11_obj_*
+tests/token_path_test
 
 IDE/VisualStudio/.vs

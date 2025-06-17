@@ -116,6 +116,8 @@
 #define WP11_MAX_CERT_SZ              4096
 #endif
 
+#define PKCS11_CHECK_VALUE_SIZE       3
+
 /* Sizes for storage. */
 #define WP11_MAX_IV_SZ                 16
 #define WP11_MAX_GCM_NONCE_SZ          16
@@ -247,6 +249,8 @@ struct WP11_Object {
     int serialLen;                     /* Length of certificate serial number */
     unsigned char* subject;            /* Subject of the object               */
     int subjectLen;                    /* Length of subject                   */
+
+    word32 category;                   /* Category of certificate             */
 
     WP11_Lock* lock;                   /* Object specific lock                */
 
@@ -873,6 +877,7 @@ static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
                 sizeof(word32) + /* issuerLen */
                 sizeof(word32) + /* serialLen */
                 sizeof(word32) + /* subjectLen */
+                FIELD_SIZE(WP11_Object, category) +
                 variableSz /* keyIdLen + labelLen + issuerLen + serialLen + subjectLen */
             ;
             break;
@@ -1246,6 +1251,18 @@ int wolfPKCS11_Store_Read(void* store, unsigned char* buffer, int len)
     if (ret == 0) {
         tpmStore->offset += readSize;
         ret = readSize;
+    }
+    else {
+        /* calling code expects BUFFER_E if the read is out of range */
+        if (ret == TPM_RC_NV_RANGE)
+            ret = BUFFER_E;
+        else {
+            /* log failure and make negative error code */
+        #ifdef WOLFPKCS11_DEBUG_STORE
+            printf("TPM NV Read Error 0x%x: %s\n", ret, wolfTPM2_GetRCString(ret));
+        #endif
+            ret = -ret;
+        }
     }
 #else
     /* Read from a valid file pointer. */
@@ -2402,6 +2419,11 @@ static int wp11_Object_Decode_RsaKey(WP11_Object* object)
         else {
             ret = BUFFER_E;
         }
+        if (ret == 0) {
+            /* load public portion into wolf RsaKey structure */
+            ret = wolfTPM2_RsaKey_TpmToWolf(&object->slot->tpmDev,
+                (WOLFTPM2_KEY*)&object->tpmKey, &object->data.rsaKey);
+        }
     }
     else
 #endif
@@ -3493,6 +3515,10 @@ static int wp11_Object_Load_Object(WP11_Object* object, int tokenId, int objId)
                     ret = wp11_storage_read_alloc_array(storage,
                        &object->subject, &object->subjectLen);
                 }
+                if (ret == 0) {
+                    /* Read the category of the object. (4) */
+                    ret = wp11_storage_read_word32(storage, &object->category);
+                }
             }
             else if (ret == BUFFER_E) {
                 /* Older version of the storage format, doesn't have these, so
@@ -3643,6 +3669,10 @@ static int wp11_Object_Store_Object(WP11_Object* object, int tokenId, int objId)
             /* Write subject of the object. (variable subjectLen) */
             ret = wp11_storage_write_array(storage, object->subject,
                                            object->subjectLen);
+        }
+        if (ret == 0) {
+            /* Write the category of the object. (4) */
+            ret = wp11_storage_write_word32(storage, object->category);
         }
 
         wp11_storage_close(storage);
@@ -7473,6 +7503,81 @@ static int SecretObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
     return ret;
 }
 
+#ifndef NO_SHA
+static int GetSha1CheckValue(const byte* dataIn, int inLen, byte* dataOut,
+    CK_ULONG* outLen)
+{
+    int ret;
+    byte hash[WC_SHA_DIGEST_SIZE];
+
+    if (dataOut == NULL) {
+        if (outLen != NULL) {
+            *outLen = PKCS11_CHECK_VALUE_SIZE;
+            return CKR_OK;
+        }
+        return BUFFER_E;
+    }
+
+    if (*outLen < PKCS11_CHECK_VALUE_SIZE) {
+        *outLen = PKCS11_CHECK_VALUE_SIZE;
+        return BUFFER_E;
+    }
+
+    ret = wc_Hash(WC_HASH_TYPE_SHA, dataIn, inLen, hash, WC_SHA_DIGEST_SIZE);
+    if (ret == 0) {
+        XMEMCPY(dataOut, hash, PKCS11_CHECK_VALUE_SIZE);
+        *outLen = PKCS11_CHECK_VALUE_SIZE;
+    }
+
+    return CKR_OK;
+}
+#endif
+
+#ifdef HAVE_AESECB
+static int GetEcbCheckValue(WP11_Object* secret, byte* dataOut,
+    CK_ULONG* outLen)
+{
+    int ret;
+    byte* hash;
+    byte* input;
+    word32 inLen;
+    WP11_Data* key = &secret->data.symmKey;
+
+    if (dataOut == NULL) {
+        if (outLen != NULL) {
+            *outLen = PKCS11_CHECK_VALUE_SIZE;
+            return CKR_OK;
+        }
+        return BUFFER_E;
+    }
+
+    if (*outLen < PKCS11_CHECK_VALUE_SIZE) {
+        *outLen = PKCS11_CHECK_VALUE_SIZE;
+        return BUFFER_E;
+    }
+
+    hash = XMALLOC(key->len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    if (!hash)
+        return MEMORY_E;
+    input = XMALLOC(key->len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+
+    inLen = key->len;
+    XMEMSET(input, 0, inLen);
+
+    ret = WP11_AesEcb_Encrypt(input, inLen, hash, &inLen, secret,
+        secret->session);
+
+    if (ret == 0) {
+        XMEMCPY(dataOut, hash, PKCS11_CHECK_VALUE_SIZE);
+        *outLen = PKCS11_CHECK_VALUE_SIZE;
+    }
+
+    XFREE(hash, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+
+    return CKR_OK;
+}
+#endif
+
 /**
  * Get the data for an attribute from the object.
  *
@@ -7614,6 +7719,23 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                 ret = GetULong(object->data.cert.type, data, len);
             else
                 ret = CKR_ATTRIBUTE_TYPE_INVALID;
+            break;
+        case CKA_CHECK_VALUE:
+            if (object->objClass == CKO_CERTIFICATE)
+#ifndef NO_SHA
+                ret = GetSha1CheckValue(object->data.cert.data,
+                    object->data.cert.len, data, len);
+#else
+                ret = NOT_AVAILABLE_E;
+#endif
+            else if (object->objClass == CKO_SECRET_KEY)
+#ifdef HAVE_AESECB
+                ret = GetEcbCheckValue(object, data, len);
+#else
+                ret = NOT_AVAILABLE_E;
+#endif
+            else
+                ret = NOT_AVAILABLE_E;
             break;
 
         default:
@@ -7842,6 +7964,9 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             ret = WP11_Object_SetData(&object->label, &object->labelLen, data,
                                        (int)len);
             break;
+        case CKA_CERTIFICATE_CATEGORY:
+            object->category = *(word32*)data;
+            break;
         case CKA_PRIVATE:
             WP11_Object_SetOpFlag(object, WP11_FLAG_PRIVATE, *(CK_BBOOL*)data);
             break;
@@ -7984,7 +8109,6 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
 
         case CKA_AC_ISSUER:
         case CKA_ATTR_TYPES:
-        case CKA_CERTIFICATE_CATEGORY:
         case CKA_JAVA_MIDP_SECURITY_DOMAIN:
         case CKA_URL:
         case CKA_HASH_OF_SUBJECT_PUBLIC_KEY:
