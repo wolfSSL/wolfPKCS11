@@ -6480,6 +6480,10 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
                                     ulAttributeCount, phKey);
                 }
             }
+            else {
+                WP11_Object_Free(obj);
+                rv = ret;
+            }
         }
     }
 
