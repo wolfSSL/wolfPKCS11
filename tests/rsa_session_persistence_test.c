@@ -43,6 +43,8 @@
 #include <dlfcn.h>
 #endif
 
+#if !defined(NO_RSA) && !defined(WOLFPKCS11_NO_STORE)
+
 /* only include the RSA test data */
 #undef HAVE_ECC
 #define NO_AES
@@ -632,8 +634,11 @@ cleanup:
     return ret;
 }
 
+#endif /* !NO_RSA && !WOLFPKCS11_NO_STORE */
+
 int main(int argc, char* argv[])
 {
+#if !defined(NO_RSA) && !defined(WOLFPKCS11_NO_STORE)
     CK_RV ret;
 
     if (argc > 1 && strcmp(argv[1], "-v") == 0) {
@@ -644,7 +649,6 @@ int main(int argc, char* argv[])
     printf("========================================\n\n");
 
     ret = rsa_session_persistence_test();
-
     if (ret == CKR_OK) {
         printf("\nAll tests passed!\n");
         return 0;
@@ -652,4 +656,10 @@ int main(int argc, char* argv[])
         printf("\nTest failed with error: %lx\n", ret);
         return 1;
     }
+#else
+    (void)argc;
+    (void)argv;
+    printf("RSA or KeyStore not compiled in!\n");
+    return 77;
+#endif
 }
