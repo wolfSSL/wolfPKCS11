@@ -2318,7 +2318,7 @@ static CK_RV test_secret_key_check_value(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_RV ret = CKR_OK;
-    CK_OBJECT_HANDLE key;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
     CK_ATTRIBUTE checkValueTmpl[] = {
         { CKA_CHECK_VALUE, NULL, 0 }
     };

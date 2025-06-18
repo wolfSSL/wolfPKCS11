@@ -6917,6 +6917,9 @@ int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
         }
 #ifdef WOLFPKCS11_NSS
         if (ret == BAD_FUNC_ARG) {
+            /* Token lock is needed in case remove object is run, slot lock is
+             * needed in case remove session is run */
+            WP11_Lock_LockRO(&session->slot->lock);
             WP11_Lock_LockRO(&session->slot->token.lock);
             for (scan = session->slot->session; scan != NULL && ret != 0;
                  scan = scan->next) {
@@ -6930,6 +6933,7 @@ int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
                 }
             }
             WP11_Lock_UnlockRO(&session->slot->token.lock);
+            WP11_Lock_UnlockRO(&session->slot->lock);
         }
 #endif
     }
