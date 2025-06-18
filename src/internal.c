@@ -19,6 +19,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
+#include "wolfpkcs11/pkcs11.h"
 #ifdef HAVE_CONFIG_H
     #include <wolfpkcs11/config.h>
 #endif
@@ -39,6 +40,19 @@
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/asn_public.h>
 #include <wolfssl/wolfcrypt/aes.h>
+#include <wolfssl/wolfcrypt/cmac.h>
+#include <wolfssl/wolfcrypt/kdf.h>
+
+/* OS-specific includes for directory creation */
+#if defined(_WIN32) || defined(_MSC_VER)
+    #include <direct.h>
+    #include <io.h>
+    #define MKDIR(path) _mkdir(path)
+#else
+    #include <sys/stat.h>
+    #include <errno.h>
+    #define MKDIR(path) mkdir(path, 0700)
+#endif
 
 #include <wolfpkcs11/internal.h>
 #include <wolfpkcs11/store.h>
@@ -88,7 +102,9 @@
 #define WP11_MAX_DH_KEY_SZ             (4096/8)
 
 /* Maximum size of storage for generated/derived symmetric key. */
-#ifndef NO_DH
+#ifdef WOLFPKCS11_NSS
+#define WP11_MAX_SYM_KEY_SZ            (2048)
+#elif !defined(NO_DH)
 #define WP11_MAX_SYM_KEY_SZ            (4096/8)
 #elif defined(HAVE_ECC)
 #define WP11_MAX_SYM_KEY_SZ            ((521+7)/8)
@@ -99,6 +115,8 @@
 #ifndef WP11_MAX_CERT_SZ
 #define WP11_MAX_CERT_SZ              4096
 #endif
+
+#define PKCS11_CHECK_VALUE_SIZE       3
 
 /* Sizes for storage. */
 #define WP11_MAX_IV_SZ                 16
@@ -161,6 +179,16 @@ typedef struct WP11_Cert {
     CK_CERTIFICATE_TYPE type;
 } WP11_Cert;
 
+typedef struct WP11_Trust {
+    byte sha1Hash[WC_SHA_DIGEST_SIZE];
+    byte md5Hash[WC_MD5_DIGEST_SIZE];
+    CK_ULONG serverAuth;
+    CK_ULONG clientAuth;
+    CK_ULONG emailProtection;
+    CK_ULONG codeSigning;
+    CK_BBOOL stepUpApproved;
+} WP11_Trust;
+
 #ifndef NO_DH
 typedef struct WP11_DhKey {
     byte key[WP11_MAX_DH_KEY_SZ];      /* Public or private key               */
@@ -182,6 +210,9 @@ struct WP11_Object {
     #endif
         WP11_Data symmKey;             /* Symmetric key object                */
         WP11_Cert cert;                /* Certificate object                  */
+    #ifdef WOLFPKCS11_NSS
+        WP11_Trust trust;              /* Trust object                        */
+    #endif
     } data;
 #ifdef WOLFPKCS11_TPM
     WOLFTPM2_KEYBLOB tpmKey;
@@ -203,7 +234,6 @@ struct WP11_Object {
     CK_MECHANISM_TYPE keyGenMech;      /* Key Gen mechanism created with      */
     byte onToken:1;                    /* Object on token or session          */
     byte local:1;                      /* Locally created object              */
-    word32 flag;                       /* Flags about object                  */
     word32 opFlag;                     /* Flags of operations allowed         */
 
     char startDate[8];                 /* Start date of usage                 */
@@ -213,6 +243,14 @@ struct WP11_Object {
     int keyIdLen;                      /* Length of key identifier            */
     unsigned char* label;              /* Object label                        */
     int labelLen;                      /* Length of object label              */
+    unsigned char* issuer;             /* Certificate issuer                  */
+    int issuerLen;                     /* Length of certificate issuer        */
+    unsigned char* serial;             /* Certificate serial number           */
+    int serialLen;                     /* Length of certificate serial number */
+    unsigned char* subject;            /* Subject of the object               */
+    int subjectLen;                    /* Length of subject                   */
+
+    word32 category;                   /* Category of certificate             */
 
     WP11_Lock* lock;                   /* Object specific lock                */
 
@@ -257,6 +295,12 @@ typedef struct WP11_CbcParams {
 } WP11_CbcParams;
 #endif
 
+#ifdef HAVE_AESCTR
+typedef struct WP11_CtrParams {
+    Aes aes;                           /* AES object from wolfCrypt           */
+} WP11_CtrParams;
+#endif
+
 #ifdef HAVE_AESGCM
 typedef struct WP11_GcmParams {
     unsigned char iv[WP11_MAX_GCM_NONCE_SZ];
@@ -283,6 +327,21 @@ typedef struct WP11_CcmParams {
     int macSz;                         /* Size of MAC data in bytes           */
 } WP11_CcmParams;
 #endif
+
+#ifdef HAVE_AES_KEYWRAP
+typedef struct WP11_KeyWrapParams {
+    Aes aes;                           /* AES object from wolfCrypt           */
+    unsigned char iv[8];               /* IV/nonce data                       */
+    word32 ivSz;                       /* IV/nonce size in bytes              */
+} WP11_KeyWrapParams;
+#endif
+
+#ifdef HAVE_AESCTS
+typedef struct WP11_CtsParams {
+    unsigned char iv[WP11_MAX_IV_SZ];  /* IV of CBC operation                 */
+    Aes aes;                           /* AES object from wolfCrypt           */
+} WP11_CtsParams;
+#endif
 #endif
 
 #ifndef NO_HMAC
@@ -291,6 +350,26 @@ typedef struct WP11_Hmac {
     word32 hmacSz;
 } WP11_Hmac;
 #endif
+
+typedef struct WP11_Digest {
+    wc_HashAlg hash;
+    enum wc_HashType hashType;
+} WP11_Digest;
+
+#ifdef HAVE_AESCMAC
+typedef struct WP11_Cmac {
+    Cmac cmac;
+    byte sigLen;
+} WP11_Cmac;
+#endif
+
+typedef struct WP11_TlsMacParams {
+    enum wc_MACAlgorithm mac;
+    word32 macSz;
+    CK_OBJECT_HANDLE key;
+    byte server:1;
+    byte isTlsPrf:1;
+} WP11_TlsMacParams;
 
 struct WP11_Session {
     unsigned char inUse;               /* Indicates session has been opened   */
@@ -316,17 +395,34 @@ struct WP11_Session {
     #ifdef HAVE_AES_CBC
         WP11_CbcParams cbc;            /* AES-CBC parameters                  */
     #endif
+    #ifdef HAVE_AESCTR
+        WP11_CtrParams ctr;            /* AES-CTR parameters                  */
+    #endif
     #ifdef HAVE_AESGCM
         WP11_GcmParams gcm;            /* AES-GCM parameters                  */
     #endif
     #ifdef HAVE_AESCCM
         WP11_CcmParams ccm;            /* AES-CCM parameters                  */
     #endif
+    #ifdef HAVE_AESCTS
+        WP11_CtsParams cts;            /* AES-CTS parameters                  */
+    #endif
+    #ifdef HAVE_AES_KEYWRAP
+        WP11_KeyWrapParams kw;         /* AES-KW parameters                   */
+    #endif
 #endif
 #ifndef NO_HMAC
         WP11_Hmac hmac;                /* HMAC parameters                     */
 #endif
+        WP11_Digest digest;            /* Digest parameters                   */
+#ifdef HAVE_AESCMAC
+        WP11_Cmac cmac;                /* CMAC parameters                     */
+#endif
+        WP11_TlsMacParams tlsMac;      /* TLS MAC parameters                  */
     } params;
+
+    byte* data;                        /* Held data for one-shot mechs        */
+    word32 dataSz;                     /* Size of held data                   */
 
     int devId;
     WP11_Session* next;                /* Next session for slot               */
@@ -357,6 +453,7 @@ typedef struct WP11_Token {
     int loginState;                    /* Login state of the token            */
     WP11_Object* object;               /* Linked list of token objects        */
     int objCnt;                        /* Count of objects on token           */
+    int tokenFlags;                    /* Flags for token                     */
 } WP11_Token;
 
 struct WP11_Slot {
@@ -366,6 +463,7 @@ struct WP11_Slot {
     WP11_Lock lock;                    /* Lock for access to slot info        */
 
     int devId;
+    int nextObjId;
 #ifdef WOLFPKCS11_TPM
     WOLFTPM2_DEV tpmDev;
     WOLFTPM2_KEY tpmSrk;
@@ -575,6 +673,40 @@ static int wp11_Session_New(WP11_Slot* slot, CK_OBJECT_HANDLE handle,
 }
 
 /**
+ * Check if the slot has an empty user PIN.
+ *
+ * @param  slot     [in]   Slot object.
+ * @return  1 if the slot has an empty user PIN.
+ *          0 if the slot does not have an empty user PIN.
+ */
+int WP11_Slot_Has_Empty_Pin(WP11_Slot* slot)
+{
+    if (slot == NULL)
+        return 0;
+
+    if ((slot->token.tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET) &&
+        (WP11_Slot_CheckUserPin(slot, (char*)"", 0) == 0))
+        return 1;
+
+    return 0;
+}
+
+/**
+ * Check if the slot has an SO PIN set.
+ *
+ * @param  slot     [in]   Slot object.
+ * @return  1 if the slot has an SO PIN set.
+ *          0 if the slot does not have an SO PIN set.
+ */
+int WP11_Slot_SOPin_IsSet(WP11_Slot* slot)
+{
+    if (slot == NULL)
+        return 0;
+
+    return slot->token.tokenFlags & WP11_TOKEN_FLAG_SO_PIN_SET;
+}
+
+/**
  * Add a new session to the token in the slot.
  *
  * @param  slot     [in]   Slot object.
@@ -638,6 +770,12 @@ static void wp11_Session_Final(WP11_Session* session)
         session->init = 0;
     }
 #endif
+#ifdef HAVE_AESCTR
+    if (session->mechanism == CKM_AES_CTR && session->init) {
+        wc_AesFree(&session->params.ctr.aes);
+        session->init = 0;
+    }
+#endif
 #ifdef HAVE_AESGCM
     if (session->mechanism == CKM_AES_GCM) {
         if (session->params.gcm.aad != NULL) {
@@ -648,6 +786,12 @@ static void wp11_Session_Final(WP11_Session* session)
             XFREE(session->params.gcm.enc, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             session->params.gcm.enc = NULL;
         }
+    }
+#endif
+#ifdef HAVE_AESCTS
+    if (session->mechanism == CKM_AES_CTS && session->init) {
+        wc_AesFree(&session->params.cts.aes);
+        session->init = 0;
     }
 #endif
 #ifdef HAVE_AESCCM
@@ -712,6 +856,7 @@ static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
                 FIELD_SIZE(WP11_Token, userFailLoginTimeout) +
                 FIELD_SIZE(WP11_Token, seed) +
                 FIELD_SIZE(WP11_Token, objCnt) +
+                FIELD_SIZE(WP11_Token, tokenFlags) +
                 variableSz /* soPinLen + userPinLen + (objCnt * long) */
             ;
             break;
@@ -723,13 +868,17 @@ static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
                 FIELD_SIZE(WP11_Object, keyGenMech) +
                 1 /* FIELD_SIZE(WP11_Object, onToken) */ +
                 1 /* FIELD_SIZE(WP11_Object, local) */ +
-                FIELD_SIZE(WP11_Object, flag) +
+                4 /* FIELD_SIZE(WP11_Object, flag) */ +
                 FIELD_SIZE(WP11_Object, opFlag) +
                 FIELD_SIZE(WP11_Object, startDate) +
                 FIELD_SIZE(WP11_Object, endDate) +
                 sizeof(word32) + /* keyIdLenSz */
                 sizeof(word32) + /* labelLen */
-                variableSz /* keyIdLen + labelLen */
+                sizeof(word32) + /* issuerLen */
+                sizeof(word32) + /* serialLen */
+                sizeof(word32) + /* subjectLen */
+                FIELD_SIZE(WP11_Object, category) +
+                variableSz /* keyIdLen + labelLen + issuerLen + serialLen + subjectLen */
             ;
             break;
         case WOLFPKCS11_STORE_SYMMKEY:
@@ -740,6 +889,7 @@ static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
         case WOLFPKCS11_STORE_DHKEY_PRIV:
         case WOLFPKCS11_STORE_DHKEY_PUB:
         case WOLFPKCS11_STORE_CERT:
+        case WOLFPKCS11_STORE_TRUST:
             maxSz = sizeof(word32) + variableSz;
             break;
 
@@ -783,6 +933,7 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
 #else
     char name[120] = "\0";
     XFILE file = XBADFILE;
+    char homePath[47]; /* Must fit within name buffer size limit */
 #endif
 
 #ifdef WOLFPKCS11_DEBUG_STORE
@@ -857,12 +1008,58 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
     #endif
 
 #else
+    /* Path order:
+     * 1. Environment variable WOLFPKCS11_TOKEN_PATH
+     * 2. Home directory with .wolfPKCS11 (or APPDIR with wolfPKCS11 for
+     * Windows)
+     * 3. WOLFPKCS11_DEFAULT_TOKEN_PATH, if set
+     * 4. /tmp in Linux, %TEMP% or C:\Windows\Temp in Windows
+     */
     #ifndef WOLFPKCS11_NO_ENV
     str = XGETENV("WOLFPKCS11_TOKEN_PATH");
     #endif
+
     if (str == NULL) {
-        str = "/tmp";
+        const char* homeDir = NULL;
+
+        #if defined(_WIN32) || defined(_MSC_VER)
+        homeDir = XGETENV("%APPDIR%");
+        if (homeDir != NULL && XSTRLEN(homeDir) <= sizeof(homePath) - 13) {
+            int len = XSNPRINTF(homePath, sizeof(homePath), "%s\\wolfPKCS11",
+                               homeDir);
+            if (len > 0 && len < (int)sizeof(homePath)) {
+                str = homePath;
+            }
+        }
+        #else
+        homeDir = XGETENV("HOME");
+        if (homeDir != NULL && XSTRLEN(homeDir) <= sizeof(homePath) - 13) {
+            int len = XSNPRINTF(homePath, sizeof(homePath), "%s/.wolfPKCS11",
+                               homeDir);
+            if (len > 0 && len < (int)sizeof(homePath)) {
+                str = homePath;
+            }
+        }
+        #endif
     }
+
+    #ifdef WOLFPKCS11_DEFAULT_TOKEN_PATH
+    if (str == NULL) {
+        str = WC_STRINGIFY(WOLFPKCS11_DEFAULT_TOKEN_PATH);
+    }
+    #else
+    if (str == NULL) {
+        #if defined(_WIN32) || defined(_MSC_VER)
+        str = XGETENV("%TEMP%");
+        if (str == NULL) {
+            str = "C:\\Windows\\Temp";
+        }
+        #else
+        str = "/tmp";
+        #endif
+    }
+    #endif
+
 
     /* 47 is maximum number of character to a filename and path separator. */
     if (str == NULL || (XSTRLEN(str) > sizeof(name) - 47)) {
@@ -910,6 +1107,11 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
             XSNPRINTF(name, sizeof(name), "%s/wp11_cert_%016lx_%016lx",
                       str, id1, id2);
             break;
+        case WOLFPKCS11_STORE_TRUST:
+            XSNPRINTF(name, sizeof(name), "%s/wp11_trust_%016lx_%016lx",
+                      str, id1, id2);
+            break;
+
         default:
             ret = -1;
             break;
@@ -926,7 +1128,36 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
         else {
             file = XFOPEN(name, "w");
             if (file == NULL) {
-                ret = READ_ONLY_E;
+                /* Try to create directory if it doesn't exist */
+                char* lastSlash = NULL;
+                char dirPath[120];
+                int i;
+
+                /* Find the last directory separator */
+                for (i = 0; name[i] != '\0'; i++) {
+                    if (name[i] == '/' || name[i] == '\\') {
+                        lastSlash = (char*)&name[i];
+                    }
+                }
+
+                if (lastSlash != NULL) {
+                    /* Extract directory path */
+                    int dirLen = (int)(lastSlash - name);
+                    if (dirLen > 0 && dirLen < (int)sizeof(dirPath)) {
+                        XMEMCPY(dirPath, name, dirLen);
+                        dirPath[dirLen] = '\0';
+
+                        /* Try to create the directory */
+                        if (MKDIR(dirPath) == 0 || errno == EEXIST) {
+                            /* Directory created or already exists, try opening file again */
+                            file = XFOPEN(name, "w");
+                        }
+                    }
+                }
+
+                if (file == NULL) {
+                    ret = READ_ONLY_E;
+                }
             }
         }
     }
@@ -1020,6 +1251,18 @@ int wolfPKCS11_Store_Read(void* store, unsigned char* buffer, int len)
     if (ret == 0) {
         tpmStore->offset += readSize;
         ret = readSize;
+    }
+    else {
+        /* calling code expects BUFFER_E if the read is out of range */
+        if (ret == TPM_RC_NV_RANGE)
+            ret = BUFFER_E;
+        else {
+            /* log failure and make negative error code */
+        #ifdef WOLFPKCS11_DEBUG_STORE
+            printf("TPM NV Read Error 0x%x: %s\n", ret, wolfTPM2_GetRCString(ret));
+        #endif
+            ret = -ret;
+        }
     }
 #else
     /* Read from a valid file pointer. */
@@ -1565,6 +1808,19 @@ static int wp11_storage_write_string(void* storage, char* str, int max)
 }
 #endif /* !WOLFPKCS11_NO_STORE */
 
+/* check all length bytes for equality, return 1 on success and 0 on failure */
+int WP11_ConstantCompare(const byte* a, const byte* b, int length)
+{
+    int i;
+    int compareSum = 0;
+
+    for (i = 0; i < length; i++) {
+        compareSum |= a[i] ^ b[i];
+    }
+
+    return compareSum == 0 ? 1 : 0;
+}
+
 /**
  * Create a new Object object.
  *
@@ -1681,6 +1937,38 @@ static int wp11_DecryptData(byte* out, byte* data, int len, byte* key,
 }
 
 /**
+ * "Decode" the certificate.
+ *
+ * Certificates are not encrypted.
+ *
+ * @param [in, out]  object  Certificate object.
+ */
+static void wp11_Object_Decode_Cert(WP11_Object* object)
+{
+    if (object->data.cert.data == NULL) {
+        object->data.cert.data = object->keyData;
+        object->data.cert.len = object->keyDataLen;
+    }
+    object->encoded = 0;
+}
+
+#ifdef WOLFPKCS11_NSS
+/**
+ * "Decode" the trust.
+ *
+ * Trust is not encrypted.
+ *
+ * @param [in, out]  object  Trust object.
+ */
+static void wp11_Object_Decode_Trust(WP11_Object* object)
+{
+    XMEMCPY((unsigned char*)&object->data.trust, object->keyData,
+        object->keyDataLen);
+    object->encoded = 0;
+}
+#endif
+
+/**
  * Load a certificate from storage.
  *
  * @param [in, out]  object   Certificate object.
@@ -1704,10 +1992,45 @@ static int wp11_Object_Load_Cert(WP11_Object* object, int tokenId, int objId)
         ret = wp11_storage_read_alloc_array(storage, &object->keyData,
             &object->keyDataLen);
         wp11_storage_close(storage);
+        /* Decode without login needed */
+        wp11_Object_Decode_Cert(object);
     }
 
     return ret;
 }
+
+#ifdef WOLFPKCS11_NSS
+/**
+ * Load trust object from storage.
+ *
+ * @param [in, out]  object   Trust object.
+ * @param [in]       tokenId  Id of token this cert belongs to.
+ * @param [in]       objId    Id of object for token.
+ * @return  0 on success.
+ * @return  MEMORY_E when dynamic memory allocation fails.
+ * @return  BUFFER_E when loading fails.
+ * @return  NOT_AVAILABLE_E when unable to locate data.
+ */
+static int wp11_Object_Load_Trust(WP11_Object* object, int tokenId, int objId)
+{
+    int ret;
+    void* storage = NULL;
+
+    /* Open access to trust. */
+    ret = wp11_storage_open_readonly(WOLFPKCS11_STORE_TRUST, tokenId, objId,
+        &storage);
+    if (ret == 0) {
+        /* Read trust. */
+        ret = wp11_storage_read_alloc_array(storage, &object->keyData,
+            &object->keyDataLen);
+        wp11_storage_close(storage);
+        wp11_Object_Decode_Trust(object);
+    }
+
+    return ret;
+}
+#endif
+
 
 #ifdef WOLFSSL_MAXQ10XX_CRYPTO
 #ifdef MAXQ10XX_PRODUCTION_KEY
@@ -2016,21 +2339,36 @@ exit:
     return ret;
 }
 
+#ifdef WOLFPKCS11_NSS
 /**
- * "Decode" the certificate.
+ * Store an trust object to storage.
  *
- * Certificates are not encrypted.
- *
- * @param [in, out]  object  Certificate object.
+ * @param [in]  object   Trust object.
+ * @param [in]  tokenId  Id of token this cert belongs to.
+ * @param [in]  objId    Id of object for token.
+ * @return  0 on success.
+ * @return  MEMORY_E when dynamic memory allocation fails.
+ * @return  BUFFER_E when storing fails.
+ * @return  NOT_AVAILABLE_E when unable to write data.
  */
-static void wp11_Object_Decode_Cert(WP11_Object* object)
+static int wp11_Object_Store_Trust(WP11_Object* object, int tokenId, int objId)
 {
-    if (object->data.cert.data == NULL) {
-        object->data.cert.data = object->keyData;
-        object->data.cert.len = object->keyDataLen;
+    int ret;
+    void* storage = NULL;
+
+    /* Open access to trust. */
+    ret = wp11_storage_open(WOLFPKCS11_STORE_TRUST, tokenId, objId,
+        sizeof(WP11_Trust), &storage);
+    if (ret == 0) {
+        /* Write trust to storage. */
+        ret = wp11_storage_write_array(storage,
+            (unsigned char*)&object->data.trust, sizeof(WP11_Trust));
+        wp11_storage_close(storage);
     }
-    object->encoded = 0;
+
+    return ret;
 }
+#endif /* WOLFPKCS11_NSS */
 
 #ifndef NO_RSA
 /**
@@ -2048,7 +2386,7 @@ static int wp11_Object_Decode_RsaKey(WP11_Object* object)
     word32 idx = 0;
 
 #ifdef WOLFPKCS11_TPM
-    if (object->flag & WP11_FLAG_TPM) {
+    if (object->opFlag & WP11_FLAG_TPM) {
         byte pubAreaBuffer[sizeof(TPM2B_PUBLIC)];
         UINT16 pubAreaSize = 0;
 
@@ -2080,6 +2418,11 @@ static int wp11_Object_Decode_RsaKey(WP11_Object* object)
         }
         else {
             ret = BUFFER_E;
+        }
+        if (ret == 0) {
+            /* load public portion into wolf RsaKey structure */
+            ret = wolfTPM2_RsaKey_TpmToWolf(&object->slot->tpmDev,
+                (WOLFTPM2_KEY*)&object->tpmKey, &object->data.rsaKey);
         }
     }
     else
@@ -2202,7 +2545,7 @@ static int wp11_Object_Encode_RsaKey(WP11_Object* object)
         idx += sizeof(UINT16) + object->tpmKey.priv.size;
 
         /* set flag indicating this is TPM based key */
-        object->flag |= WP11_FLAG_TPM;
+        object->opFlag |= WP11_FLAG_TPM;
     }
     else
 #endif
@@ -2406,6 +2749,9 @@ static int wp11_Object_Store_RsaKey(WP11_Object* object, int tokenId, int objId)
         ret = wp11_Object_Encode_RsaKey(object);
     }
 
+    if (ret != 0)
+        return ret;
+
     /* Determine store type - private keys may be encrypted. */
     if (object->objClass == CKO_PRIVATE_KEY)
         storeType = WOLFPKCS11_STORE_RSAKEY_PRIV;
@@ -2601,6 +2947,9 @@ static int wp11_Object_Store_EccKey(WP11_Object* object, int tokenId, int objId)
     if (object->keyData == NULL) {
         ret = wp11_Object_Encode_EccKey(object);
     }
+
+    if (ret != 0)
+        return ret;
 
     /* Determine store type - private keys may be encrypted. */
     if (object->objClass == CKO_PRIVATE_KEY)
@@ -2937,10 +3286,10 @@ static int wp11_Object_Store_DhKey(WP11_Object* object, int tokenId, int objId)
         storeType = WOLFPKCS11_STORE_DHKEY_PUB;
 
     /* Open access to DH key. */
-    if (ret == 0)
+    if (ret == 0) {
         ret = wp11_storage_open(storeType, tokenId, objId,
-                object->keyDataLen + len, &storage);
-
+            object->keyDataLen + len, &storage);
+    }
     if (ret == 0) {
         ret = wp11_storage_write_array(storage, object->keyData,
                                                             object->keyDataLen);
@@ -2968,13 +3317,17 @@ static int wp11_Object_Store_DhKey(WP11_Object* object, int tokenId, int objId)
  */
 static int wp11_Object_Decode_SymmKey(WP11_Object* object)
 {
-    int ret;
+    int ret = 0;
 
-    ret = wp11_DecryptData(object->data.symmKey.data, object->keyData,
+    if (object->keyDataLen - AES_BLOCK_SIZE > WP11_MAX_SYM_KEY_SZ)
+        ret = BUFFER_E;
+    if (ret == 0) {
+        ret = wp11_DecryptData(object->data.symmKey.data, object->keyData,
                                     object->keyDataLen - AES_BLOCK_SIZE,
                                     object->slot->token.key,
                                     sizeof(object->slot->token.key), object->iv,
                                     sizeof(object->iv));
+    }
     if (ret == 0)
         object->data.symmKey.len = object->keyDataLen - AES_BLOCK_SIZE;
     object->encoded = (ret != 0);
@@ -3063,9 +3416,10 @@ static int wp11_Object_Store_SymmKey(WP11_Object* object, int tokenId,
     }
 
     /* Open access to symmetric key. */
-    if (ret == 0)
+    if (ret == 0) {
         ret = wp11_storage_open(WOLFPKCS11_STORE_SYMMKEY, tokenId, objId,
-                            object->keyDataLen, &storage);
+                                object->keyDataLen, &storage);
+    }
     if (ret == 0) {
         /* Write symmetric key to storage. */
         ret = wp11_storage_write_array(storage, object->keyData,
@@ -3081,6 +3435,7 @@ static int wp11_Object_Load_Object(WP11_Object* object, int tokenId, int objId)
 {
     int ret;
     void* storage = NULL;
+    word32 dummy = 0;
 
     /* Open access to key object. */
     ret = wp11_storage_open_readonly(WOLFPKCS11_STORE_OBJECT, tokenId, objId,
@@ -3118,8 +3473,8 @@ static int wp11_Object_Load_Object(WP11_Object* object, int tokenId, int objId)
             }
         }
         if (ret == 0) {
-            /* Read the flags of the object. (4) */
-            ret = wp11_storage_read_word32(storage, &object->flag);
+            /* Unused word32. (4) */
+            ret = wp11_storage_read_word32(storage, &dummy);
         }
         if (ret == 0) {
             /* Read the operational flags of the object. (4) */
@@ -3145,6 +3500,32 @@ static int wp11_Object_Load_Object(WP11_Object* object, int tokenId, int objId)
             /* Read label for the object. (variable labelLen) */
             ret = wp11_storage_read_alloc_array(storage, &object->label,
                                                 &object->labelLen);
+        }
+        if (ret == 0) {
+            /* Read issuer of the object. (variable issuerLen) */
+            ret = wp11_storage_read_alloc_array(storage, &object->issuer,
+                                                &object->issuerLen);
+            if (ret == 0) {
+                /* Read serial number of the object. (variable serialLen) */
+                ret = wp11_storage_read_alloc_array(storage,
+                    &object->serial, &object->serialLen);
+
+                if (ret == 0) {
+                    /* Read subject of the object. (variable subjectLen) */
+                    ret = wp11_storage_read_alloc_array(storage,
+                       &object->subject, &object->subjectLen);
+                }
+                if (ret == 0) {
+                    /* Read the category of the object. (4) */
+                    ret = wp11_storage_read_word32(storage, &object->category);
+                }
+            }
+            else if (ret == BUFFER_E) {
+                /* Older version of the storage format, doesn't have these, so
+                 * skip reading.
+                 */
+                ret = 0;
+            }
         }
 
         wp11_storage_close(storage);
@@ -3172,6 +3553,11 @@ static int wp11_Object_Load(WP11_Object* object, int tokenId, int objId)
         if (object->objClass == CKO_CERTIFICATE) {
             ret = wp11_Object_Load_Cert(object, tokenId, objId);
         }
+#ifdef WOLFPKCS11_NSS
+        else if (object->objClass == CKO_NSS_TRUST) {
+            ret = wp11_Object_Load_Trust(object, tokenId, objId);
+        }
+#endif
         else {
             /* Load separate key data. */
             switch (object->type) {
@@ -3209,7 +3595,9 @@ static int wp11_Object_Store_Object(WP11_Object* object, int tokenId, int objId)
 {
     int ret;
     void* storage = NULL;
-    int variableSz = (object->keyIdLen + object->labelLen);
+    word32 dummy = 0;
+    int variableSz = (object->keyIdLen + object->labelLen +
+        object->issuerLen + object->serialLen + object->subjectLen);
 
     /* Open access to key object. */
     ret = wp11_storage_open(WOLFPKCS11_STORE_OBJECT, tokenId, objId, variableSz,
@@ -3239,8 +3627,8 @@ static int wp11_Object_Store_Object(WP11_Object* object, int tokenId, int objId)
             ret = wp11_storage_write_boolean(storage, object->local);
         }
         if (ret == 0) {
-            /* Write the flags of the object. (4) */
-            ret = wp11_storage_write_word32(storage, object->flag);
+            /* Unused word32. (4) */
+            ret = wp11_storage_write_word32(storage, dummy);
         }
         if (ret == 0) {
             /* Write the operational flags of the object. (4) */
@@ -3266,6 +3654,25 @@ static int wp11_Object_Store_Object(WP11_Object* object, int tokenId, int objId)
             /* Write label of the object. (variable labelLen) */
             ret = wp11_storage_write_array(storage, object->label,
                                                               object->labelLen);
+        }
+        if (ret == 0) {
+            /* Write issuer of the object. (variable issuerLen) */
+            ret = wp11_storage_write_array(storage, object->issuer,
+                                           object->issuerLen);
+        }
+        if (ret == 0) {
+            /* Write serial of the object. (variable serialLen) */
+            ret = wp11_storage_write_array(storage, object->serial,
+                                           object->serialLen);
+        }
+        if (ret == 0) {
+            /* Write subject of the object. (variable subjectLen) */
+            ret = wp11_storage_write_array(storage, object->subject,
+                                           object->subjectLen);
+        }
+        if (ret == 0) {
+            /* Write the category of the object. (4) */
+            ret = wp11_storage_write_word32(storage, object->category);
         }
 
         wp11_storage_close(storage);
@@ -3303,6 +3710,11 @@ static int wp11_Object_Store(WP11_Object* object, int tokenId, int objId)
         if (object->objClass == CKO_CERTIFICATE) {
             ret = wp11_Object_Store_Cert(object, tokenId, objId);
         }
+#ifdef WOLFPKCS11_NSS
+        else if (object->objClass == CKO_NSS_TRUST) {
+            ret = wp11_Object_Store_Trust(object, tokenId, objId);
+        }
+#endif
         else {
             /* Store key data separately. */
             switch (object->type) {
@@ -3354,6 +3766,12 @@ static int wp11_Object_Decode(WP11_Object* object)
         wp11_Object_Decode_Cert(object);
         ret = 0;
     }
+#ifdef WOLFPKCS11_NSS
+    else if (object->objClass == CKO_NSS_TRUST) {
+        wp11_Object_Decode_Trust(object);
+        ret = 0;
+    }
+#endif
     else {
         switch (object->type) {
         #ifndef NO_RSA
@@ -3401,9 +3819,13 @@ static int wp11_Object_Encode(WP11_Object* object, int protect)
 {
     int ret;
 
-    if (object->objClass == CKO_CERTIFICATE) {
+#ifdef WOLFPKCS11_NSS
+    if ((object->objClass == CKO_CERTIFICATE) ||
+        (object->objClass == CKO_NSS_TRUST))
+#else
+    if (object->objClass == CKO_CERTIFICATE)
+#endif
         ret = 0;
-    }
     else {
         switch (object->type) {
         #ifndef NO_RSA
@@ -3660,6 +4082,22 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
                 token->objCnt++;
             }
         }
+        if (ret == 0) {
+            /* Read token flags. This is a new variable, so might not exist on
+             * an upgrade. If not set, it was from a version that doesn't
+             * support empty pins. So, we can calculate it from the pin lengths.
+             */
+            ret = wp11_storage_read_int(storage, &token->tokenFlags);
+            if (ret == BUFFER_E) {
+                if (token->userPinLen > 0) {
+                    token->tokenFlags |= WP11_TOKEN_FLAG_USER_PIN_SET;
+                }
+                if (token->soPinLen > 0) {
+                    token->tokenFlags |= WP11_TOKEN_FLAG_SO_PIN_SET;
+                }
+                ret = 0;
+            }
+        }
 
         wp11_storage_close(storage);
 
@@ -3674,11 +4112,20 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
             /* Set to state of initialized. */
             token->state = WP11_TOKEN_STATE_INITIALIZED;
         }
+
+        /* If there is no pin, there is no login, so decode now */
+        if (WP11_Slot_Has_Empty_Pin(slot)) {
+#ifndef WOLFPKCS11_NO_STORE
+            object = token->object;
+            while (ret == 0 && object != NULL) {
+                ret = wp11_Object_Decode(object);
+                object = object->next;
+            }
+#endif
+        }
+
         if (ret != 0) {
-            /* Failed to load - clear out any data and initialize. */
-            wp11_Token_Final(token);
-            wp11_Token_Init(token, token->label);
-            ret = 0;
+            ret = CKR_DEVICE_ERROR;
         }
     }
     else if (ret == NOT_AVAILABLE_E) {
@@ -3775,6 +4222,11 @@ static int wp11_Token_Store(WP11_Token* token, int tokenId)
              * (variable objCnt * 8) */
             ret = wp11_storage_write_ulong(storage, object->type);
             object = object->next;
+        }
+
+        if (ret == 0) {
+            /* Write token flags. (4) */
+            ret = wp11_storage_write_int(storage, token->tokenFlags);
         }
 
         wp11_storage_close(storage);
@@ -3927,6 +4379,9 @@ static int wp11_Slot_Init(WP11_Slot* slot, int id)
 
     XMEMSET(slot, 0, sizeof(*slot));
     slot->id = id;
+    slot->nextObjId = 1;
+    slot->token.state = WP11_TOKEN_STATE_UNKNOWN;
+    slot->token.tokenFlags = 0;
 
     ret = WP11_Lock_Init(&slot->lock);
     if (ret == 0) {
@@ -3941,7 +4396,6 @@ static int wp11_Slot_Init(WP11_Slot* slot, int id)
         }
         if (ret == 0) {
             ret = wp11_Token_Init(&slot->token, label);
-            slot->token.state = WP11_TOKEN_STATE_UNKNOWN;
         }
 
         if (ret != 0) {
@@ -4000,14 +4454,21 @@ int WP11_Library_Init(void)
     if (libraryInitCount == 0) {
         ret = WP11_Lock_Init(&globalLock);
         if (ret == 0) {
-#ifdef WOLFSSL_MAXQ10XX_CRYPTO
+
             ret = wolfCrypt_Init();
+#ifdef WC_RNG_SEED_CB
             if (ret == 0) {
-                ret = wc_InitRng_ex(&globalRandom, NULL, MAXQ_DEVICE_ID);
+                ret = wc_SetSeed_Cb(wc_GenerateSeed);
             }
-#else
-            ret = wc_InitRng(&globalRandom);
 #endif
+            if (ret == 0) {
+#ifdef WOLFSSL_MAXQ10XX_CRYPTO
+                ret = wc_InitRng_ex(&globalRandom, NULL, MAXQ_DEVICE_ID);
+#else
+                ret = wc_InitRng(&globalRandom);
+#endif
+            }
+
         }
         for (i = 0; (ret == 0) && (i < slotCnt); i++) {
             ret = wp11_Slot_Init(&slotList[i], i + 1);
@@ -4051,6 +4512,7 @@ void WP11_Library_Final(void)
 
         wc_FreeRng(&globalRandom);
         WP11_Lock_Free(&globalLock);
+        wolfCrypt_Cleanup();
     }
 }
 
@@ -4373,8 +4835,15 @@ int WP11_Slot_CheckSOPin(WP11_Slot* slot, char* pin, int pinLen)
 
     WP11_Lock_LockRO(&slot->lock);
     token = &slot->token;
-    if (token->state != WP11_TOKEN_STATE_INITIALIZED || token->soPinLen == 0)
+
+    if (token->state != WP11_TOKEN_STATE_INITIALIZED)
         ret = PIN_NOT_SET_E;
+    /* NSS PK11_InitPin tries to login with an empty pin before setting the pin.
+     * This is effectively a public access, so should be OK.
+     */
+    if (!(token->tokenFlags & WP11_TOKEN_FLAG_SO_PIN_SET) && pinLen > 0)
+        ret = PIN_NOT_SET_E;
+
     if (ret == 0) {
         WP11_Lock_UnlockRO(&slot->lock);
 
@@ -4384,7 +4853,7 @@ int WP11_Slot_CheckSOPin(WP11_Slot* slot, char* pin, int pinLen)
 
         WP11_Lock_LockRO(&slot->lock);
     }
-    if (ret == 0 && XMEMCMP(hash, token->soPin, token->soPinLen) != 0)
+    if (ret == 0 && !WP11_ConstantCompare(hash, token->soPin, token->soPinLen))
         ret = PIN_INVALID_E;
     WP11_Lock_UnlockRO(&slot->lock);
 
@@ -4410,7 +4879,9 @@ int WP11_Slot_CheckUserPin(WP11_Slot* slot, char* pin, int pinLen)
 
     WP11_Lock_LockRO(&slot->lock);
     token = &slot->token;
-    if (token->state != WP11_TOKEN_STATE_INITIALIZED || token->userPinLen == 0)
+    if (token->state != WP11_TOKEN_STATE_INITIALIZED)
+        ret = PIN_NOT_SET_E;
+    if (!(token->tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET))
         ret = PIN_NOT_SET_E;
 
     if (ret == 0) {
@@ -4422,7 +4893,8 @@ int WP11_Slot_CheckUserPin(WP11_Slot* slot, char* pin, int pinLen)
 
         WP11_Lock_LockRO(&slot->lock);
     }
-    if (ret == 0 && XMEMCMP(hash, token->userPin, token->userPinLen) != 0)
+    if (ret == 0 &&
+            !WP11_ConstantCompare(hash, token->userPin, token->userPinLen))
         ret = PIN_INVALID_E;
     WP11_Lock_UnlockRO(&slot->lock);
 
@@ -4444,7 +4916,6 @@ int WP11_Slot_CheckUserPin(WP11_Slot* slot, char* pin, int pinLen)
 int WP11_Slot_SOLogin(WP11_Slot* slot, char* pin, int pinLen)
 {
     int ret = 0;
-    WP11_Session* curr;
 #ifndef WOLFPKCS11_NO_TIME
     time_t now;
     time_t allowed;
@@ -4478,14 +4949,21 @@ int WP11_Slot_SOLogin(WP11_Slot* slot, char* pin, int pinLen)
 #else
     slot->token.soFailedLogin = 0;
 #endif
+#ifndef WOLFPKCS11_NSS
+    /* NSS creates a read-only session at the start and doesn't close this,
+     * so when the RW session is opened for this, it fails.
+     */
     if (ret == 0) {
-        for (curr = slot->session; curr != NULL; curr = curr->next) {
+        WP11_Session* curr;
+        for (curr = slot->session; curr != NULL;
+             curr = curr->next) {
             if (curr->inUse == WP11_SESSION_RO)
                 break;
         }
         if (curr != NULL)
             ret = READ_ONLY_E;
     }
+#endif
     WP11_Lock_UnlockRO(&slot->lock);
 
     if (ret == 0) {
@@ -4652,6 +5130,7 @@ int WP11_Slot_SetSOPin(WP11_Slot* slot, char* pin, int pinLen)
     }
     if (ret == 0) {
         token->soPinLen = sizeof(token->soPin);
+        token->tokenFlags |= WP11_TOKEN_FLAG_SO_PIN_SET;
     #ifndef WOLFPKCS11_NO_STORE
         ret = wp11_Token_Store(token, (int)slot->id);
     #endif
@@ -4705,6 +5184,7 @@ int WP11_Slot_SetUserPin(WP11_Slot* slot, char* pin, int pinLen)
     }
     if (ret == 0) {
         token->userPinLen = sizeof(token->userPin);
+        token->tokenFlags |= WP11_TOKEN_FLAG_USER_PIN_SET;
     #ifndef WOLFPKCS11_NO_STORE
         ret = wp11_Token_Store(token, (int)slot->id);
     #endif
@@ -4757,9 +5237,10 @@ void WP11_Slot_GetTokenLabel(WP11_Slot* slot, char* label)
     WP11_Lock_LockRO(&slot->lock);
     tokenLabel = slot->token.label;
     /* An unset label is all zeros - label is padded with ' ' and no NUL. */
-    if (tokenLabel[0] == '\0')
+    if (tokenLabel[0] == '\0') {
         XMEMSET(label, ' ', LABEL_SZ);
-    else
+        XMEMCPY(label, "wolfPKCS11", 10);
+    } else
         XMEMCPY(label, tokenLabel, LABEL_SZ);
     WP11_Lock_UnlockRO(&slot->lock);
 }
@@ -4824,7 +5305,7 @@ time_t WP11_Slot_TokenFailedExpire(WP11_Slot* slot, int login)
  */
 int WP11_Slot_IsTokenUserPinInitialized(WP11_Slot* slot)
 {
-    return slot->token.userPinLen > 0;
+    return slot->token.tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET;
 }
 
 /**
@@ -4897,7 +5378,12 @@ int WP11_Session_GetState(WP11_Session* session)
  */
 int WP11_Session_IsRW(WP11_Session* session)
 {
+#ifdef WOLFPKCS11_NSS
+    (void) session;
+    return 1;
+#else
     return session->inUse == WP11_SESSION_RW;
+#endif
 }
 
 /**
@@ -4910,7 +5396,179 @@ int WP11_Session_IsRW(WP11_Session* session)
  */
 int WP11_Session_IsOpInitialized(WP11_Session* session, int init)
 {
-    return session->init == init;
+    return (session->init & ~WP11_INIT_DIGEST_MASK) == init;
+}
+
+int WP11_Session_UpdateData(WP11_Session *session, byte *data, word32 dataLen)
+{
+    byte* tmp = (byte*)XREALLOC(session->data, session->dataSz + dataLen, NULL,
+            DYNAMIC_TYPE_TMP_BUFFER);
+    if (tmp == NULL)
+        return MEMORY_E;
+    session->data = tmp;
+    XMEMCPY(session->data + session->dataSz, data, dataLen);
+    session->dataSz += dataLen;
+    return 0;
+}
+
+void WP11_Session_GetData(WP11_Session *session, byte** data, word32* dataLen)
+{
+    *data = session->data;
+    *dataLen = session->dataSz;
+}
+
+void WP11_Session_FreeData(WP11_Session *session)
+{
+    XFREE(session->data, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    session->data = NULL;
+    session->dataSz = 0;
+    session->init = 0;
+}
+
+static int MechanismToHash(int mechanism)
+{
+    switch (mechanism) {
+#ifdef HAVE_ECC
+#ifndef NO_SHA
+        case CKM_ECDSA_SHA1:
+            return WP11_INIT_SHA1;
+#endif
+#ifdef WOLFSSL_SHA224
+        case CKM_ECDSA_SHA224:
+            return WP11_INIT_SHA224;
+#endif
+#ifndef NO_SHA256
+        case CKM_ECDSA_SHA256:
+            return WP11_INIT_SHA256;
+#endif
+#ifdef WOLFSSL_SHA384
+        case CKM_ECDSA_SHA384:
+            return WP11_INIT_SHA384;
+#endif
+#ifdef WOLFSSL_SHA512
+        case CKM_ECDSA_SHA512:
+            return WP11_INIT_SHA512;
+#endif
+#endif
+#ifndef NO_RSA
+#ifdef WOLFSSL_SHA224
+        case CKM_SHA224_RSA_PKCS:
+        case CKM_SHA224_RSA_PKCS_PSS:
+            return WP11_INIT_SHA224;
+#endif
+#ifndef NO_SHA256
+        case CKM_SHA256_RSA_PKCS:
+        case CKM_SHA256_RSA_PKCS_PSS:
+            return WP11_INIT_SHA256;
+#endif
+#ifdef WOLFSSL_SHA384
+        case CKM_SHA384_RSA_PKCS:
+        case CKM_SHA384_RSA_PKCS_PSS:
+            return WP11_INIT_SHA384;
+#endif
+#ifdef WOLFSSL_SHA512
+        case CKM_SHA512_RSA_PKCS:
+        case CKM_SHA512_RSA_PKCS_PSS:
+            return WP11_INIT_SHA512;
+#endif
+#endif
+#ifndef NO_MD5
+        case CKM_MD5:
+        case CKM_MD5_HMAC:
+            return WP11_INIT_MD5;
+#endif
+#ifndef NO_SHA
+        case CKM_SHA1:
+        case CKM_SHA1_HMAC:
+            return WP11_INIT_SHA1;
+#endif
+#ifdef WOLFSSL_SHA224
+        case CKM_SHA224:
+        case CKM_SHA224_HMAC:
+            return WP11_INIT_SHA224;
+#endif
+#ifndef NO_SHA256
+        case CKM_SHA256:
+        case CKM_SHA256_HMAC:
+            return WP11_INIT_SHA256;
+#endif
+#ifdef WOLFSSL_SHA384
+        case CKM_SHA384:
+        case CKM_SHA384_HMAC:
+            return WP11_INIT_SHA384;
+#endif
+#ifdef WOLFSSL_SHA512
+        case CKM_SHA512:
+        case CKM_SHA512_HMAC:
+            return WP11_INIT_SHA512;
+#endif
+#ifdef WOLFSSL_SHA3
+#ifndef WOLFSSL_NOSHA3_224
+        case CKM_SHA3_224:
+        case CKM_SHA3_224_HMAC:
+            return WP11_INIT_SHA3_224;
+#endif
+#ifndef WOLFSSL_NOSHA3_256
+        case CKM_SHA3_256:
+        case CKM_SHA3_256_HMAC:
+            return WP11_INIT_SHA3_256;
+#endif
+#ifndef WOLFSSL_NOSHA3_384
+        case CKM_SHA3_384:
+        case CKM_SHA3_384_HMAC:
+            return WP11_INIT_SHA3_384;
+#endif
+#ifndef WOLFSSL_NOSHA3_512
+        case CKM_SHA3_512:
+        case CKM_SHA3_512_HMAC:
+            return WP11_INIT_SHA3_512;
+#endif
+#endif
+        default:
+            return 0;
+    }
+}
+
+/**
+ * Return whether this session has been initialized for the hash operation.
+ *
+ * @param  session   [in]  Session object.
+ * @param  mechanism [in]  Mechanism to check against.
+ * @return  1 when session is in used.
+ *          0 when session is not in used.
+ */
+int WP11_Session_IsHashOpInitialized(WP11_Session* session, int mechanism)
+{
+    return (session->init & WP11_INIT_DIGEST_MASK) ==
+            MechanismToHash(mechanism);
+}
+
+enum wc_HashType WP11_Session_ToHashType(WP11_Session* session)
+{
+    switch (session->init & WP11_INIT_DIGEST_MASK) {
+#ifndef NO_SHA
+        case WP11_INIT_SHA1:
+            return WC_HASH_TYPE_SHA;
+#endif
+#ifdef WOLFSSL_SHA224
+        case WP11_INIT_SHA224:
+            return WC_HASH_TYPE_SHA224;
+#endif
+#ifndef NO_SHA256
+        case WP11_INIT_SHA256:
+            return WC_HASH_TYPE_SHA256;
+#endif
+#ifdef WOLFSSL_SHA384
+        case WP11_INIT_SHA384:
+            return WC_HASH_TYPE_SHA384;
+#endif
+#ifdef WOLFSSL_SHA512
+        case WP11_INIT_SHA512:
+            return WC_HASH_TYPE_SHA512;
+#endif
+        default:
+            return WC_HASH_TYPE_NONE;
+    }
 }
 
 /**
@@ -4957,8 +5615,8 @@ void WP11_Session_SetMechanism(WP11_Session* session,
     session->mechanism = mechanism;
 }
 
-#ifndef NO_RSA
-#if !defined(WC_NO_RSA_OAEP) || defined(WC_RSA_PSS)
+#if !defined(NO_RSA) || !defined(WC_NO_RSA_OAEP) || defined(WC_RSA_PSS) || \
+    defined(WOLFPKCS11_HKDF)
 /**
  * Convert the digest mechanism to a hash type for wolfCrypt.
  *
@@ -4974,19 +5632,36 @@ static int wp11_hash_type(CK_MECHANISM_TYPE hashMech,
 
     switch (hashMech) {
         case CKM_SHA1:
+        case CKM_SHA1_HMAC:
             *hashType = WC_HASH_TYPE_SHA;
             break;
         case CKM_SHA224:
+        case CKM_SHA224_HMAC:
             *hashType = WC_HASH_TYPE_SHA224;
             break;
         case CKM_SHA256:
+        case CKM_SHA256_HMAC:
             *hashType = WC_HASH_TYPE_SHA256;
             break;
         case CKM_SHA384:
+        case CKM_SHA384_HMAC:
             *hashType = WC_HASH_TYPE_SHA384;
             break;
         case CKM_SHA512:
+        case CKM_SHA512_HMAC:
             *hashType = WC_HASH_TYPE_SHA512;
+            break;
+        case CKM_SHA3_224:
+            *hashType = WC_HASH_TYPE_SHA3_224;
+            break;
+        case CKM_SHA3_256:
+            *hashType = WC_HASH_TYPE_SHA3_256;
+            break;
+        case CKM_SHA3_384:
+            *hashType = WC_HASH_TYPE_SHA3_384;
+            break;
+        case CKM_SHA3_512:
+            *hashType = WC_HASH_TYPE_SHA3_512;
             break;
         default:
             ret = BAD_FUNC_ARG;
@@ -4995,7 +5670,10 @@ static int wp11_hash_type(CK_MECHANISM_TYPE hashMech,
 
     return ret;
 }
+#endif
 
+#if !defined(NO_RSA)
+#if !defined(WC_NO_RSA_OAEP) || defined(WC_RSA_PSS)
 /**
  * Convert the mask generation function id to a wolfCrypt MGF id.
  *
@@ -5142,6 +5820,71 @@ int WP11_Session_SetCbcParams(WP11_Session* session, unsigned char* iv,
 }
 #endif /* HAVE_AES_CBC */
 
+#ifdef HAVE_AESCTR
+/**
+ * Set the parameters to use for an AES-CTR operation.
+ *
+ * @param session       [in]  Session object.
+ * @param ulCounterBits [in]  Number of bits of the counter block. wolfCrypt
+ *                            does not have a way of setting the counter bits.
+ * @param cb            [in]  Counter block.
+ * @param enc           [in]  Whether operation is encryption.
+ * @param object        [in]  AES key object.
+ * @return -ve on failure.
+ *           0 on success.
+ */
+int WP11_Session_SetCtrParams(WP11_Session* session, CK_ULONG ulCounterBits,
+                              CK_BYTE* cb, WP11_Object* object)
+{
+    int ret = 0;
+    WP11_CtrParams* ctr = &session->params.ctr;
+    WP11_Data* key;
+
+    if (ulCounterBits > 128 || ulCounterBits == 0)
+        return BAD_FUNC_ARG;
+
+    ret = wc_AesInit(&ctr->aes, NULL, session->devId);
+    if (ret == 0) {
+        if (object->onToken)
+            WP11_Lock_LockRO(object->lock);
+        key = &object->data.symmKey;
+        ret = wc_AesSetKey(&ctr->aes, key->data, key->len, cb, AES_ENCRYPTION);
+        if (object->onToken)
+            WP11_Lock_UnlockRO(object->lock);
+    }
+
+    return ret;
+}
+#endif /* HAVE_AESCTR */
+
+#ifdef HAVE_AES_KEYWRAP
+int WP11_Session_SetAesWrapParams(WP11_Session* session, byte* iv, word32 ivLen,
+        WP11_Object* object, int enc)
+{
+    int ret = 0;
+    WP11_KeyWrapParams *wrap = &session->params.kw;
+    WP11_Data *key;
+
+    XMEMSET(wrap, 0, sizeof(*wrap));
+    ret = wc_AesInit(&wrap->aes, NULL, session->devId);
+    if (ret == 0) {
+        if (object->onToken)
+            WP11_Lock_LockRO(object->lock);
+        key = &object->data.symmKey;
+        ret = wc_AesSetKey(&wrap->aes, key->data, key->len, NULL,
+                enc ? AES_ENCRYPTION : AES_DECRYPTION);
+        if (object->onToken)
+            WP11_Lock_UnlockRO(object->lock);
+    }
+    if (ret == 0) {
+        XMEMCPY(wrap->iv, iv, ivLen);
+        wrap->ivSz = ivLen;
+    }
+
+    return ret;
+}
+#endif
+
 #ifdef HAVE_AESGCM
 /**
  * Set the parameters to use for an AES-GCM operation.
@@ -5235,6 +5978,31 @@ int WP11_Session_SetCcmParams(WP11_Session* session, int dataSz,
     return ret;
 }
 #endif /* HAVE_AESCCM */
+
+
+#ifdef HAVE_AESCTS
+int WP11_Session_SetCtsParams(WP11_Session* session, unsigned char* iv,
+                              int enc, WP11_Object* object)
+{
+    int ret;
+    WP11_CtsParams* cts = &session->params.cts;
+    WP11_Data* key;
+
+    /* AES object on session. */
+    ret = wc_AesInit(&cts->aes, NULL, session->devId);
+    if (ret == 0) {
+        if (object->onToken)
+            WP11_Lock_LockRO(object->lock);
+        key = &object->data.symmKey;
+        ret = wc_AesSetKey(&cts->aes, key->data, key->len, iv,
+                                         enc ? AES_ENCRYPTION : AES_DECRYPTION);
+        if (object->onToken)
+            WP11_Lock_UnlockRO(object->lock);
+    }
+
+    return ret;
+}
+#endif /* HAVE_AESCTS */
 #endif /* !NO_AES */
 
 /**
@@ -5256,9 +6024,9 @@ int WP11_Session_AddObject(WP11_Session* session, int onToken,
     if (!onToken)
         object->session = session;
 
+    token = &session->slot->token;
+    WP11_Lock_LockRW(&token->lock);
     if (onToken) {
-        token = &session->slot->token;
-        WP11_Lock_LockRW(&token->lock);
         if (token->objCnt >= WP11_TOKEN_OBJECT_CNT_MAX)
             ret = OBJ_COUNT_E;
     #ifndef WOLFPKCS11_NO_STORE
@@ -5271,10 +6039,7 @@ int WP11_Session_AddObject(WP11_Session* session, int onToken,
             /* Get next item in list after this object has been added. */
             next = token->object;
             /* Determine handle value */
-            if (next != NULL)
-                object->handle = next->handle + 1;
-            else
-                object->handle = OBJ_HANDLE(onToken, 1);
+            object->handle = OBJ_HANDLE(onToken, session->slot->nextObjId++);
             object->next = next;
             token->object = object;
         }
@@ -5283,7 +6048,6 @@ int WP11_Session_AddObject(WP11_Session* session, int onToken,
             wp11_Slot_Store(session->slot, (int)session->slotId);
         }
     #endif
-        WP11_Lock_UnlockRW(&token->lock);
     }
     else {
         if (session->objCnt >= WP11_SESSION_OBJECT_CNT_MAX)
@@ -5293,14 +6057,13 @@ int WP11_Session_AddObject(WP11_Session* session, int onToken,
             /* Get next item in list after this object has been added. */
             next = session->object;
             /* Determine handle value */
-            if (next != NULL)
-                object->handle = next->handle + 1;
-            else
-                object->handle = OBJ_HANDLE(onToken, 1);
+            object->handle = OBJ_HANDLE(onToken, session->slot->nextObjId++);
             object->next = next;
             session->object = object;
+            object->session = session;
         }
     }
+    WP11_Lock_UnlockRW(&token->lock);
 
     return ret;
 }
@@ -5316,6 +6079,10 @@ void WP11_Session_RemoveObject(WP11_Session* session, WP11_Object* object)
     WP11_Object** curr;
     WP11_Token* token;
     int id;
+#ifdef WOLFPKCS11_NSS
+    if (object->session && (session != object->session))
+        session = object->session;
+#endif
 
     /* Find the object in list and relink. */
     if (object->onToken) {
@@ -5331,6 +6098,7 @@ void WP11_Session_RemoveObject(WP11_Session* session, WP11_Object* object)
         /* Id of first object in session. */
         id = session->objCnt;
         curr = &session->object;
+        WP11_Lock_LockRW(&session->slot->token.lock);
     }
 
     while (*curr != NULL) {
@@ -5348,6 +6116,9 @@ void WP11_Session_RemoveObject(WP11_Session* session, WP11_Object* object)
         wp11_Slot_Store(session->slot, (int)session->slotId);
 #endif
         WP11_Lock_UnlockRW(object->lock);
+    }
+    else {
+        WP11_Lock_UnlockRW(&session->slot->token.lock);
     }
 }
 
@@ -5437,8 +6208,9 @@ static WP11_Object* wp11_Session_FindNext(WP11_Session* session, int onToken,
         if ((ret->opFlag & WP11_FLAG_PRIVATE) == WP11_FLAG_PRIVATE) {
             if (!onToken)
                 WP11_Lock_LockRO(&session->slot->token.lock);
-            if (session->slot->token.loginState == WP11_APP_STATE_RW_PUBLIC ||
-                  session->slot->token.loginState == WP11_APP_STATE_RO_PUBLIC) {
+            if (!WP11_Slot_Has_Empty_Pin(session->slot) &&
+                (session->slot->token.loginState == WP11_APP_STATE_RW_PUBLIC ||
+                 session->slot->token.loginState == WP11_APP_STATE_RO_PUBLIC)) {
                 object = ret;
                 ret = NULL;
             }
@@ -5556,6 +6328,12 @@ void WP11_Object_Free(WP11_Object* object)
         XFREE(object->label, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     if (object->keyId != NULL)
         XFREE(object->keyId, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    if (object->issuer != NULL)
+        XFREE(object->issuer, NULL, DYNAMIC_TYPE_CERT);
+    if (object->serial != NULL)
+        XFREE(object->serial, NULL, DYNAMIC_TYPE_CERT);
+    if (object->subject != NULL)
+        XFREE(object->subject, NULL, DYNAMIC_TYPE_CERT);
     if (object->objClass == CKO_CERTIFICATE) {
         XFREE(object->data.cert.data, NULL, DYNAMIC_TYPE_CERT);
         certFreed = 1;
@@ -5732,10 +6510,10 @@ int WP11_Object_SetRsaKey(WP11_Object* object, unsigned char** data,
 
 #ifdef HAVE_ECC
 
-#if defined(HAVE_FIPS) || \
+#if defined(HAVE_FIPS) && \
     (defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION <= 2))
 #define USE_LOCAL_CURVE_OID_LOOKUP
-/* this function is not in the FIPS 140-2 version */
+/* This function is not in the FIPS 140-2 version */
 /* ecc_sets is exposed in ecc.h */
 static int ecc_get_curve_id_from_oid(const byte* oid, word32 len)
 {
@@ -5750,7 +6528,8 @@ static int ecc_get_curve_id_from_oid(const byte* oid, word32 len)
             ecc_sets[curve_idx].oid &&
         #endif
             ecc_sets[curve_idx].oidSz == len &&
-                              XMEMCMP(ecc_sets[curve_idx].oid, oid, len) == 0) {
+                XMEMCMP(ecc_sets[curve_idx].oid, oid, len) == 0
+        ) {
             break;
         }
     }
@@ -5871,7 +6650,11 @@ int WP11_Object_SetEcKey(WP11_Object* object, unsigned char** data,
             ret = EcSetParams(key, data[0], (int)len[0]);
         if (ret == 0 && data[1] != NULL) {
             key->type = ECC_PRIVATEKEY_ONLY;
+#if defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION <= 5)
+            ret = SetMPI(&key->k, data[1], (int)len[1]);
+#else
             ret = SetMPI(key->k, data[1], (int)len[1]);
+#endif
         }
         if (ret == 0 && data[2] != NULL) {
             if (key->type == ECC_PRIVATEKEY_ONLY)
@@ -5993,9 +6776,11 @@ int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
     if (ret == 0 && data[1] != NULL) {
         if (key->len == 0)
             key->len = (word32)len[1];
-        else if (len[1] < (CK_ULONG)key->len)
+        else if (len[1] != (CK_ULONG)key->len)
             ret = BUFFER_E;
     }
+    if (ret == 0 && key->len > WP11_MAX_SYM_KEY_SZ)
+        ret = BUFFER_E;
     if (ret == 0 && data[1] != NULL)
         XMEMCPY(key->data, data[1], key->len);
 
@@ -6004,6 +6789,43 @@ int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
 
     return ret;
 }
+
+#ifdef WOLFPKCS11_NSS
+int WP11_Object_SetTrust(WP11_Object* object, unsigned char** data,
+                         CK_ULONG* len)
+{
+    WP11_Trust* trust;
+
+    if (data[0] == NULL && len[0] != WC_SHA_DIGEST_SIZE)
+        return BAD_FUNC_ARG;
+
+    if (data[1] == NULL && len[1] != WC_MD5_DIGEST_SIZE)
+        return BAD_FUNC_ARG;
+
+    if (object->onToken)
+        WP11_Lock_LockRW(object->lock);
+
+    trust = &object->data.trust;
+
+    XMEMCPY(trust->sha1Hash, data[0], WC_SHA_DIGEST_SIZE);
+    XMEMCPY(trust->md5Hash, data[1], WC_MD5_DIGEST_SIZE);
+    if (data[2] != NULL)
+        trust->serverAuth = *(CK_ULONG*)data[2];
+    if (data[3] != NULL)
+        trust->clientAuth = *(CK_ULONG*)data[3];
+    if (data[4] != NULL)
+        trust->emailProtection = *(CK_ULONG*)data[4];
+    if (data[5] != NULL)
+        trust->codeSigning = *(CK_ULONG*)data[5];
+    if (data[6] != NULL)
+        trust->stepUpApproved = *(CK_BBOOL*)data[6];
+
+    if (object->onToken)
+        WP11_Lock_UnlockRW(object->lock);
+
+    return CKR_OK;
+}
+#endif
 
 int WP11_Object_SetCert(WP11_Object* object, unsigned char** data,
                         CK_ULONG* len)
@@ -6079,6 +6901,9 @@ int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
 {
     int ret = BAD_FUNC_ARG;
     WP11_Object* obj;
+#ifdef WOLFPKCS11_NSS
+    WP11_Session* scan;
+#endif
     int onToken = OBJ_HANDLE_ON_TOKEN(objHandle);
 
     if (!onToken) {
@@ -6090,6 +6915,27 @@ int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
             }
             obj = obj->next;
         }
+#ifdef WOLFPKCS11_NSS
+        if (ret == BAD_FUNC_ARG) {
+            /* Token lock is needed in case remove object is run, slot lock is
+             * needed in case remove session is run */
+            WP11_Lock_LockRO(&session->slot->lock);
+            WP11_Lock_LockRO(&session->slot->token.lock);
+            for (scan = session->slot->session; scan != NULL && ret != 0;
+                 scan = scan->next) {
+                if (scan == session)
+                    continue;
+                for (obj = scan->object; obj != NULL; obj = obj->next) {
+                    if (obj->handle == objHandle) {
+                        ret = 0;
+                        break;
+                    }
+                }
+            }
+            WP11_Lock_UnlockRO(&session->slot->token.lock);
+            WP11_Lock_UnlockRO(&session->slot->lock);
+        }
+#endif
     }
     else {
         WP11_Lock_LockRO(&session->slot->token.lock);
@@ -6104,7 +6950,8 @@ int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
         WP11_Lock_UnlockRO(&session->slot->token.lock);
     }
 
-    *object = obj;
+    if (obj && (obj->handle == objHandle))
+        *object = obj;
 
     return ret;
 }
@@ -6236,6 +7083,103 @@ static int GetData(byte* data, CK_ULONG dataLen, byte* out, CK_ULONG* outLen)
     return ret;
 }
 
+static int GetCertAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
+                       CK_ULONG* len)
+{
+    int ret = 0;
+
+    if (object == NULL || len == NULL)
+        return BAD_FUNC_ARG;
+
+    switch (type) {
+        case CKA_VALUE:
+            ret = GetData((byte*)object->data.cert.data, object->data.cert.len,
+                data, len);
+            break;
+        case CKA_ISSUER:
+            ret = GetData(object->issuer, object->issuerLen, data, len);
+            break;
+        case CKA_SERIAL_NUMBER:
+            ret = GetData(object->serial, object->serialLen, data, len);
+            break;
+        case CKA_SUBJECT:
+            ret = GetData(object->subject, object->subjectLen, data, len);
+            break;
+        default:
+            ret = NOT_AVAILABLE_E;
+            break;
+    }
+
+    return ret;
+}
+
+#ifdef WOLFPKCS11_NSS
+static int GetTrustAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
+                        byte* data, CK_ULONG* len)
+{
+    int ret = 0;
+
+    if (object == NULL || len == NULL)
+        return BAD_FUNC_ARG;
+
+    switch (type) {
+        case CKA_CERT_SHA1_HASH:
+            if (*len < WC_SHA_DIGEST_SIZE)
+                return BUFFER_E;
+            *len = WC_SHA_DIGEST_SIZE;
+            if (data != NULL)
+                XMEMCPY(data, &object->data.trust.sha1Hash, WC_SHA_DIGEST_SIZE);
+            break;
+        case CKA_CERT_MD5_HASH:
+            if (*len < WC_MD5_DIGEST_SIZE)
+                return BUFFER_E;
+            *len = WC_MD5_DIGEST_SIZE;
+            if (data != NULL)
+                XMEMCPY(data, &object->data.trust.md5Hash, WC_MD5_DIGEST_SIZE);
+            break;
+        case CKA_TRUST_SERVER_AUTH:
+            *len = sizeof(CK_ULONG);
+            if (data != NULL)
+                ret = GetULong(object->data.trust.serverAuth, data, len);
+            break;
+        case CKA_TRUST_CLIENT_AUTH:
+            *len = sizeof(CK_ULONG);
+            if (data != NULL)
+                ret = GetULong(object->data.trust.clientAuth, data, len);
+            break;
+        case CKA_TRUST_CODE_SIGNING:
+            *len = sizeof(CK_ULONG);
+            if (data != NULL)
+                ret = GetULong(object->data.trust.codeSigning, data, len);
+            break;
+        case CKA_TRUST_EMAIL_PROTECTION:
+            *len = sizeof(CK_ULONG);
+            if (data != NULL)
+                ret = GetULong(object->data.trust.emailProtection, data, len);
+            break;
+        case CKA_TRUST_STEP_UP_APPROVED:
+            *len = sizeof(CK_BBOOL);
+            if (data != NULL)
+                ret = GetBool(object->data.trust.stepUpApproved, data, len);
+            break;
+        case CKA_ISSUER:
+            ret = GetData(object->issuer, object->issuerLen, data, len);
+            break;
+        case CKA_SERIAL_NUMBER:
+            ret = GetData(object->serial, object->serialLen, data, len);
+            break;
+        case CKA_SUBJECT:
+            ret = GetData(object->subject, object->subjectLen, data, len);
+            break;
+        default:
+            ret = NOT_AVAILABLE_E;
+            break;
+    }
+
+    return ret;
+}
+#endif
+
 #ifndef NO_RSA
 /**
  * Get an RSA object's data as an attribute.
@@ -6253,8 +7197,8 @@ static int RsaObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
                              byte* data, CK_ULONG* len)
 {
     int ret = 0;
-    int noPriv = (((object->flag & WP11_FLAG_SENSITIVE) != 0) ||
-                                 ((object->flag & WP11_FLAG_EXTRACTABLE) == 0));
+    int noPriv = (((object->opFlag & WP11_FLAG_SENSITIVE) != 0) ||
+                 ((object->opFlag & WP11_FLAG_EXTRACTABLE) == 0));
 
     if (mp_iszero(&object->data.rsaKey.d))
         noPriv = 1;
@@ -6382,7 +7326,9 @@ static int GetEcPoint(ecc_key* key, byte* data, CK_ULONG* len)
         if (longLen)
             data[i++] = ASN_LONG_LENGTH | 1;
         data[i++] = dataLen;
+        PRIVATE_KEY_UNLOCK();
         ret = wc_ecc_export_x963(key, data + i, &dataLen);
+        PRIVATE_KEY_LOCK();
     }
 
     return ret;
@@ -6404,8 +7350,8 @@ static int EcObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
                             byte* data, CK_ULONG* len)
 {
     int ret = 0;
-    int noPriv = (((object->flag & WP11_FLAG_SENSITIVE) != 0) ||
-                                 ((object->flag & WP11_FLAG_EXTRACTABLE) == 0));
+    int noPriv = (((object->opFlag & WP11_FLAG_SENSITIVE) != 0) ||
+                 ((object->opFlag & WP11_FLAG_EXTRACTABLE) == 0));
     int noPub = 0;
 
     if (object->data.ecKey.type == ECC_PUBLICKEY)
@@ -6421,7 +7367,11 @@ static int EcObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
             if (noPriv)
                 *len = CK_UNAVAILABLE_INFORMATION;
             else
+#if defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION <= 5)
+                ret = GetMPIData(&object->data.ecKey.k, data, len);
+#else
                 ret = GetMPIData(object->data.ecKey.k, data, len);
+#endif
             break;
         case CKA_EC_POINT:
             if (noPub)
@@ -6458,8 +7408,8 @@ static int DhObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
                             byte* data, CK_ULONG* len)
 {
     int ret = 0;
-    int noPriv = (((object->flag & WP11_FLAG_SENSITIVE) != 0) ||
-                                 ((object->flag & WP11_FLAG_EXTRACTABLE) == 0));
+    int noPriv = (((object->opFlag & WP11_FLAG_SENSITIVE) != 0) ||
+                 ((object->opFlag & WP11_FLAG_EXTRACTABLE) == 0));
 
     switch (type) {
         case CKA_PRIME:
@@ -6491,6 +7441,30 @@ static int DhObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
 }
 #endif /* !NO_DH */
 
+int WP11_Generic_SerializeKey(WP11_Object* object, byte* output, word32* poutsz)
+{
+    if (object == NULL || poutsz == NULL)
+        return PARAM_E;
+
+    if (object->type != CKK_AES && object->type != CKK_GENERIC_SECRET)
+        return OBJ_TYPE_E;
+
+    if (object->objClass != CKO_SECRET_KEY)
+        return OBJ_TYPE_E;
+
+    if (output != NULL) {
+        if (*poutsz < object->data.symmKey.len)
+            return PARAM_E;
+        XMEMCPY(output, object->data.symmKey.data, object->data.symmKey.len);
+        *poutsz = object->data.symmKey.len;
+    }
+    else {
+        *poutsz = object->data.symmKey.len;
+    }
+
+    return 0;
+}
+
 /**
  * Get a secret object's data as an attribute.
  *
@@ -6507,13 +7481,15 @@ static int SecretObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
                                 byte* data, CK_ULONG* len)
 {
     int ret = 0;
-    int noPriv = ((object->flag & WP11_FLAG_SENSITIVE) != 0 ||
-                                   (object->flag & WP11_FLAG_EXTRACTABLE) == 0);
+    int noPriv = ((object->opFlag & WP11_FLAG_SENSITIVE) != 0 ||
+                 (object->opFlag & WP11_FLAG_EXTRACTABLE) == 0);
 
     switch (type) {
         case CKA_VALUE:
-            if (noPriv)
+            if (noPriv) {
                 *len = CK_UNAVAILABLE_INFORMATION;
+                ret = CKR_ATTRIBUTE_SENSITIVE;
+            }
             else
                 ret = GetData(object->data.symmKey.data,
                                            object->data.symmKey.len, data, len);
@@ -6530,6 +7506,81 @@ static int SecretObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
 
     return ret;
 }
+
+#ifndef NO_SHA
+static int GetSha1CheckValue(const byte* dataIn, int inLen, byte* dataOut,
+    CK_ULONG* outLen)
+{
+    int ret;
+    byte hash[WC_SHA_DIGEST_SIZE];
+
+    if (dataOut == NULL) {
+        if (outLen != NULL) {
+            *outLen = PKCS11_CHECK_VALUE_SIZE;
+            return CKR_OK;
+        }
+        return BUFFER_E;
+    }
+
+    if (*outLen < PKCS11_CHECK_VALUE_SIZE) {
+        *outLen = PKCS11_CHECK_VALUE_SIZE;
+        return BUFFER_E;
+    }
+
+    ret = wc_Hash(WC_HASH_TYPE_SHA, dataIn, inLen, hash, WC_SHA_DIGEST_SIZE);
+    if (ret == 0) {
+        XMEMCPY(dataOut, hash, PKCS11_CHECK_VALUE_SIZE);
+        *outLen = PKCS11_CHECK_VALUE_SIZE;
+    }
+
+    return CKR_OK;
+}
+#endif
+
+#ifdef HAVE_AESECB
+static int GetEcbCheckValue(WP11_Object* secret, byte* dataOut,
+    CK_ULONG* outLen)
+{
+    int ret;
+    byte* hash;
+    byte* input;
+    word32 inLen;
+    WP11_Data* key = &secret->data.symmKey;
+
+    if (dataOut == NULL) {
+        if (outLen != NULL) {
+            *outLen = PKCS11_CHECK_VALUE_SIZE;
+            return CKR_OK;
+        }
+        return BUFFER_E;
+    }
+
+    if (*outLen < PKCS11_CHECK_VALUE_SIZE) {
+        *outLen = PKCS11_CHECK_VALUE_SIZE;
+        return BUFFER_E;
+    }
+
+    hash = XMALLOC(key->len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    if (!hash)
+        return MEMORY_E;
+    input = XMALLOC(key->len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+
+    inLen = key->len;
+    XMEMSET(input, 0, inLen);
+
+    ret = WP11_AesEcb_Encrypt(input, inLen, hash, &inLen, secret,
+        secret->session);
+
+    if (ret == 0) {
+        XMEMCPY(dataOut, hash, PKCS11_CHECK_VALUE_SIZE);
+        *outLen = PKCS11_CHECK_VALUE_SIZE;
+    }
+
+    XFREE(hash, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+
+    return CKR_OK;
+}
+#endif
 
 /**
  * Get the data for an attribute from the object.
@@ -6639,31 +7690,33 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             break;
 
         case CKA_ENCRYPT:
-            ret = GetOpFlagBool(object->opFlag, CKF_ENCRYPT, data, len);
+            ret = GetOpFlagBool(object->opFlag, WP11_FLAG_ENCRYPT, data, len);
             break;
         case CKA_DECRYPT:
-            ret = GetOpFlagBool(object->opFlag, CKF_DECRYPT, data, len);
+            ret = GetOpFlagBool(object->opFlag, WP11_FLAG_DECRYPT, data, len);
             break;
         case CKA_VERIFY:
-            ret = GetOpFlagBool(object->opFlag, CKF_VERIFY, data, len);
+            ret = GetOpFlagBool(object->opFlag, WP11_FLAG_VERIFY, data, len);
             break;
         case CKA_VERIFY_RECOVER:
-            ret = GetOpFlagBool(object->opFlag, CKF_VERIFY_RECOVER, data, len);
+            ret = GetOpFlagBool(object->opFlag, WP11_FLAG_VERIFY_RECOVER, data,
+                                len);
             break;
         case CKA_SIGN:
-            ret = GetOpFlagBool(object->opFlag, CKF_SIGN, data, len);
+            ret = GetOpFlagBool(object->opFlag, WP11_FLAG_SIGN, data, len);
             break;
         case CKA_SIGN_RECOVER:
-            ret = GetOpFlagBool(object->opFlag, CKF_SIGN_RECOVER, data, len);
+            ret = GetOpFlagBool(object->opFlag, WP11_FLAG_SIGN_RECOVER, data,
+                                len);
             break;
         case CKA_WRAP:
-            ret = GetOpFlagBool(object->opFlag, CKF_WRAP, data, len);
+            ret = GetOpFlagBool(object->opFlag, WP11_FLAG_WRAP, data, len);
             break;
         case CKA_UNWRAP:
-            ret = GetOpFlagBool(object->opFlag, CKF_UNWRAP, data, len);
+            ret = GetOpFlagBool(object->opFlag, WP11_FLAG_UNWRAP, data, len);
             break;
         case CKA_DERIVE:
-            ret = GetOpFlagBool(object->opFlag, CKF_DERIVE, data, len);
+            ret = GetOpFlagBool(object->opFlag, WP11_FLAG_DERIVE, data, len);
             break;
         case CKA_CERTIFICATE_TYPE:
             if (object->objClass == CKO_CERTIFICATE)
@@ -6671,21 +7724,36 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             else
                 ret = CKR_ATTRIBUTE_TYPE_INVALID;
             break;
-
-        case CKA_SUBJECT:
-            /* Not available */
+        case CKA_CHECK_VALUE:
+            if (object->objClass == CKO_CERTIFICATE)
+#ifndef NO_SHA
+                ret = GetSha1CheckValue(object->data.cert.data,
+                    object->data.cert.len, data, len);
+#else
+                ret = NOT_AVAILABLE_E;
+#endif
+            else if (object->objClass == CKO_SECRET_KEY)
+#ifdef HAVE_AESECB
+                ret = GetEcbCheckValue(object, data, len);
+#else
+                ret = NOT_AVAILABLE_E;
+#endif
+            else
+                ret = NOT_AVAILABLE_E;
             break;
 
         default:
             {
                 if (object->objClass == CKO_CERTIFICATE) {
-                    switch (type) {
-                        case CKA_VALUE:
-                            ret = GetData((byte*)object->data.cert.data,
-                                    object->data.cert.len, data, len);
-                            break;
-                    }
+                    ret = GetCertAttr(object, type, data, len);
+                    break;
                 }
+                #if defined(WOLFPKCS11_NSS)
+                else if (object->objClass == CKO_NSS_TRUST) {
+                    ret = GetTrustAttr(object, type, data, len);
+                    break;
+                }
+                #endif
                 else {
                     switch (object->type) {
         #ifndef NO_RSA
@@ -6705,6 +7773,9 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
         #endif
         #ifndef NO_AES
                         case CKK_AES:
+        #endif
+        #ifdef WOLFPKCS11_HKDF
+                        case CKK_HKDF:
         #endif
                         case CKK_GENERIC_SECRET:
                             ret = SecretObject_GetAttr(object, type, data, len);
@@ -6766,46 +7837,32 @@ static int WP11_Object_SetKeyId(WP11_Object* object, unsigned char* keyId,
 }
 
 /**
- * Set the label against the object.
+ * Set the attribute against the object.
  *
- * @param  object    [in]  Object object.
- * @param  label     [in]  Label data.
- * @param  labelLen  [in]  Length of label in bytes.
+ * @param  attribute    [out] Object attribute.
+ * @param  attributeLen [out] Length of attribute in bytes.
+ * @param  data         [in]  Data to be set.
+ * @param  dataLen      [in]  Length of data in bytes.
  * @return  MEMORY_E when dynamic memory allocation fails.
  *          0 on success.
  */
-static int WP11_Object_SetLabel(WP11_Object* object, unsigned char* label,
-                                int labelLen)
+static int WP11_Object_SetData(byte** attribute, int* attributeLen, byte* data,
+                                int dataLen)
 {
     int ret = 0;
 
-    if (object->label != NULL)
-        XFREE(object->label, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-    object->label = (unsigned char*)XMALLOC(labelLen, NULL,
+    if (*attribute != NULL)
+        XFREE(*attribute, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    *attribute = (byte*)XMALLOC(dataLen, NULL,
         DYNAMIC_TYPE_TMP_BUFFER);
-    if (object->label == NULL)
+    if (*attribute == NULL)
         ret = MEMORY_E;
     if (ret == 0) {
-        XMEMCPY(object->label, label, labelLen);
-        object->labelLen = labelLen;
+        XMEMCPY(*attribute, data, dataLen);
+        *attributeLen = dataLen;
     }
 
     return ret;
-}
-
-/**
- * Set the flag against the object.
- *
- * @param  object  [in]  Object object.
- * @param  flags   [in]  Flag value.
- * @param  set     [in]  Whether the flag is to be set (or cleared).
- */
-static void WP11_Object_SetFlag(WP11_Object* object, word32 flag, int set)
-{
-    if (set)
-        object->flag |= flag;
-    else
-        object->flag &= ~flag;
 }
 
 /**
@@ -6876,69 +7933,77 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             object->objClass = *(CK_ULONG*)data;
             break;
         case CKA_DECRYPT:
-            WP11_Object_SetOpFlag(object, CKF_DECRYPT, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_DECRYPT, *(CK_BBOOL*)data);
             break;
         case CKA_ENCRYPT:
-            WP11_Object_SetOpFlag(object, CKF_ENCRYPT, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_ENCRYPT, *(CK_BBOOL*)data);
             break;
         case CKA_SIGN:
-            WP11_Object_SetOpFlag(object, CKF_SIGN, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_SIGN, *(CK_BBOOL*)data);
             break;
         case CKA_VERIFY:
-            WP11_Object_SetOpFlag(object, CKF_VERIFY, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_VERIFY, *(CK_BBOOL*)data);
             break;
         case CKA_SIGN_RECOVER:
-            WP11_Object_SetOpFlag(object, CKF_SIGN_RECOVER, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_SIGN_RECOVER,
+                                  *(CK_BBOOL*)data);
             break;
         case CKA_VERIFY_RECOVER:
-            WP11_Object_SetOpFlag(object, CKF_VERIFY_RECOVER, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_VERIFY_RECOVER,
+                                  *(CK_BBOOL*)data);
             break;
         case CKA_WRAP:
-            WP11_Object_SetOpFlag(object, CKF_WRAP, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_WRAP, *(CK_BBOOL*)data);
             break;
         case CKA_UNWRAP:
-            WP11_Object_SetOpFlag(object, CKF_UNWRAP, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_UNWRAP, *(CK_BBOOL*)data);
             break;
         case CKA_DERIVE:
-            WP11_Object_SetOpFlag(object, CKF_DERIVE, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_DERIVE, *(CK_BBOOL*)data);
             break;
         case CKA_ID:
             ret = WP11_Object_SetKeyId(object, data, (int)len);
             break;
         case CKA_LABEL:
-            ret = WP11_Object_SetLabel(object, data, (int)len);
+            ret = WP11_Object_SetData(&object->label, &object->labelLen, data,
+                                       (int)len);
+            break;
+        case CKA_CERTIFICATE_CATEGORY:
+            object->category = *(word32*)data;
             break;
         case CKA_PRIVATE:
-            WP11_Object_SetFlag(object, WP11_FLAG_PRIVATE, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_PRIVATE, *(CK_BBOOL*)data);
             break;
         case CKA_SENSITIVE:
-            WP11_Object_SetFlag(object, WP11_FLAG_SENSITIVE, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_SENSITIVE,
+                                  *(CK_BBOOL*)data);
             break;
         case CKA_EXTRACTABLE:
-            WP11_Object_SetFlag(object, WP11_FLAG_EXTRACTABLE,
+            WP11_Object_SetOpFlag(object, WP11_FLAG_EXTRACTABLE,
                                                               *(CK_BBOOL*)data);
             break;
         case CKA_MODIFIABLE:
-            WP11_Object_SetFlag(object, WP11_FLAG_MODIFIABLE, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_MODIFIABLE,
+                                  *(CK_BBOOL*)data);
             break;
         case CKA_ALWAYS_SENSITIVE:
-            WP11_Object_SetFlag(object, WP11_FLAG_ALWAYS_SENSITIVE,
-                                                              *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_ALWAYS_SENSITIVE,
+                                  *(CK_BBOOL*)data);
             break;
         case CKA_NEVER_EXTRACTABLE:
-            WP11_Object_SetFlag(object, WP11_FLAG_NEVER_EXTRACTABLE,
-                                                              *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_NEVER_EXTRACTABLE,
+                                  *(CK_BBOOL*)data);
             break;
         case CKA_ALWAYS_AUTHENTICATE:
-            WP11_Object_SetFlag(object, WP11_FLAG_ALWAYS_AUTHENTICATE,
-                                                              *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_ALWAYS_AUTHENTICATE,
+                                  *(CK_BBOOL*)data);
             break;
         case CKA_WRAP_WITH_TRUSTED:
-            WP11_Object_SetFlag(object, WP11_FLAG_WRAP_WITH_TRUSTED,
-                                                              *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_WRAP_WITH_TRUSTED,
+                                  *(CK_BBOOL*)data);
             break;
         case CKA_TRUSTED:
-            WP11_Object_SetFlag(object, WP11_FLAG_TRUSTED, *(CK_BBOOL*)data);
+            WP11_Object_SetOpFlag(object, WP11_FLAG_TRUSTED, *(CK_BBOOL*)data);
             break;
         case CKA_START_DATE:
             ret = WP11_Object_SetStartDate(object, (char*)data, (int)len);
@@ -6982,6 +8047,9 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
 #ifndef NO_AES
                 case CKK_AES:
 #endif
+#ifdef WOLFPKCS11_HKDF
+                case CKK_HKDF:
+#endif
                 case CKK_GENERIC_SECRET:
                     break;
                 default:
@@ -7003,6 +8071,9 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
 #ifndef NO_AES
                 case CKK_AES:
 #endif
+#ifdef WOLFPKCS11_HKDF
+                case CKK_HKDF:
+#endif
                 case CKK_GENERIC_SECRET:
                    break;
                 default:
@@ -7010,19 +8081,38 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                     break;
             }
             break;
+#ifdef WOLFPKCS11_NSS
+        case CKA_CERT_SHA1_HASH:
+        case CKA_CERT_MD5_HASH:
+        case CKA_TRUST_SERVER_AUTH:
+        case CKA_TRUST_CLIENT_AUTH:
+        case CKA_TRUST_EMAIL_PROTECTION:
+        case CKA_TRUST_CODE_SIGNING:
+        case CKA_TRUST_STEP_UP_APPROVED:
+            /* Handled in WP11_Object_SetTrust */
+#endif
+        case CKA_CERTIFICATE_TYPE:
+            /* Handled in WP11_Object_SetCert */
         case CKA_KEY_TYPE:
             /* Handled in layer above */
         case CKA_TOKEN:
             /* Handled in layer above */
-        case CKA_CERTIFICATE_TYPE:
-            /* Handled in WP11_Object_SetCert */
+            break;
+        case CKA_ISSUER:
+            ret = WP11_Object_SetData(&object->issuer, &object->issuerLen,
+                                      data, (int)len);
+            break;
+        case CKA_SERIAL_NUMBER:
+            ret = WP11_Object_SetData(&object->serial, &object->serialLen,
+                                      data, (int)len);
             break;
         case CKA_SUBJECT:
-        case CKA_ISSUER:
-        case CKA_SERIAL_NUMBER:
+            ret = WP11_Object_SetData(&object->subject, &object->subjectLen,
+                                      data, (int)len);
+            break;
+
         case CKA_AC_ISSUER:
         case CKA_ATTR_TYPES:
-        case CKA_CERTIFICATE_CATEGORY:
         case CKA_JAVA_MIDP_SECURITY_DOMAIN:
         case CKA_URL:
         case CKA_HASH_OF_SUBJECT_PUBLIC_KEY:
@@ -7066,14 +8156,14 @@ int WP11_Object_MatchAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
     /* Get the attribute data into the stack buffer if big enough. */
     if (len <= (int)sizeof(attrData)) {
         if (WP11_Object_GetAttr(object, type, attrData, &attrLen) == 0)
-            ret = (attrLen == len) && (XMEMCMP(attrData, data, len) == 0);
+            ret = (attrLen == len) && WP11_ConstantCompare(attrData, data, (int)len);
     }
     else {
         /* Allocate a buffer to hold data and then compare. */
         ptr = (byte*)XMALLOC(len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         if (ptr != NULL) {
             if (WP11_Object_GetAttr(object, type, ptr, &attrLen) == 0)
-                ret = (attrLen == len) && (XMEMCMP(ptr, data, len) == 0);
+                ret = (attrLen == len) && WP11_ConstantCompare(ptr, data, (int)len);
             XFREE(ptr, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         }
     }
@@ -7542,6 +8632,72 @@ int WP11_Rsa_Sign(unsigned char* in, word32 inLen, unsigned char* sig,
 }
 
 /**
+ * RSA verify the signature where the data is recovered from the signature.
+ *
+ * @param  sig     [in]   Signature data.
+ * @param  sigLen  [in]   Length of buffer.
+ * @param  in      [in]   Data to verify.
+ * @param  inLen   [in]   Length of data.
+ * @param  stat    [out]  Status of verification. 1 on success, otherwise 0.
+ * @param  pub     [in]   Public key object.
+ * @return  -ve when verifying fails.
+ *          0 on success.
+ */
+int WP11_Rsa_Verify_Recover(CK_MECHANISM_TYPE mechanism, unsigned char* sig,
+                            word32 sigLen, unsigned char* out,
+                            CK_ULONG_PTR outLen, WP11_Object* pub)
+{
+    int ret;
+    byte* data_out = NULL;
+
+    switch (mechanism) {
+        case CKM_RSA_PKCS:
+            ret = wc_RsaSSL_VerifyInline(sig, sigLen, &data_out,
+                                         &pub->data.rsaKey);
+            if (ret < 0)
+                return ret;
+
+            *outLen = ret;
+            if (out == NULL) {
+                return CKR_OK;
+            }
+            else {
+                if (*outLen < (CK_ULONG)ret) {
+                    return CKR_BUFFER_TOO_SMALL;
+                }
+                else {
+                    XMEMCPY(out, data_out, ret);
+                }
+            }
+            break;
+
+        case CKM_RSA_X_509:
+            ret =  wc_RsaDirect(sig, sigLen, out, (word32*)outLen,
+                                &pub->data.rsaKey, RSA_PUBLIC_DECRYPT, NULL);
+            if (ret < 0)
+                return ret;
+            /* Result is front padded with 0x00 */
+            for (byte* pos = out; pos < out + *outLen; pos++) {
+                if (*pos != 0x00) {
+                    data_out = pos;
+                    break;
+                }
+            }
+            if (data_out != NULL) {
+                *outLen = (out + *outLen) - data_out;
+                XMEMMOVE(out, data_out, *outLen);
+            }
+            break;
+
+        default:
+            /* Should never happen */
+            return CKR_FUNCTION_FAILED;
+    }
+
+    return CKR_OK;
+}
+
+/**
  * RSA verify data with public key.
  *
  * @param  sig     [in]   Signature data.
@@ -7559,15 +8715,14 @@ int WP11_Rsa_Verify(unsigned char* sig, word32 sigLen, unsigned char* in,
     byte decSig[RSA_MAX_SIZE / 8];
     word32 decSigLen;
     int ret = 0;
-    byte bits;
-    word32 i;
-    word32 j;
 
     *stat = 0;
 
     if (pub->onToken)
         WP11_Lock_LockRO(pub->lock);
     decSigLen = wc_RsaEncryptSize(&pub->data.rsaKey);
+    if (inLen > decSigLen)
+        return BUFFER_E;
     ret = wc_RsaDirect(sig, sigLen, decSig, &decSigLen, &pub->data.rsaKey,
                        RSA_PUBLIC_DECRYPT, NULL);
     if (pub->onToken)
@@ -7576,18 +8731,8 @@ int WP11_Rsa_Verify(unsigned char* sig, word32 sigLen, unsigned char* in,
     if (ret > 0)
         ret = 0;
 
-    if (ret == 0) {
-        bits = 0;
-        if (inLen < decSigLen) {
-            for (i = 0; (bits == 0) && (i < decSigLen - inLen); i++) {
-                bits |= decSigLen;
-            }
-        }
-        for (j=0,i=decSigLen - inLen; (bits == 0) && (i < decSigLen); i++,j++) {
-            bits |= (in[j] ^ decSig[i]);
-        }
-        *stat = (bits == 0);
-    }
+    if (ret == 0)
+        *stat = WP11_ConstantCompare(in, decSig + (decSigLen - inLen), inLen);
 
     return ret;
 }
@@ -7665,7 +8810,7 @@ int WP11_RsaPkcs15_Verify(unsigned char* sig, word32 sigLen,
 
     if (ret == 0) {
         *stat = encHashLen == decSigLen &&
-                                       XMEMCMP(encHash, decSig, decSigLen) == 0;
+                WP11_ConstantCompare(encHash, decSig, decSigLen);
     }
 
     return ret;
@@ -7976,7 +9121,7 @@ static int Pkcs11ECDSASig_Decode(const byte* in, word32 inSz, byte* sig,
  */
 int WP11_Ec_SigLen(WP11_Object* key)
 {
-    return key->data.ecKey.dp->size * 2;
+    return wc_ecc_size(&key->data.ecKey) * 2;
 }
 
 /**
@@ -8095,7 +9240,13 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
 
     ret = wc_ecc_init_ex(&pubKey, NULL, priv->slot->devId);
     if (ret == 0) {
-        ret = wc_ecc_import_x963(point, pointLen, &pubKey);
+        if (priv->data.ecKey.dp) {
+            ret = wc_ecc_import_x963_ex(point, pointLen, &pubKey,
+                                        priv->data.ecKey.dp->id);
+        }
+        else {
+            ret = wc_ecc_import_x963(point, pointLen, &pubKey);
+        }
     }
 #if defined(ECC_TIMING_RESISTANT) && (!defined(HAVE_FIPS) || \
     (defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION > 2)))
@@ -8107,7 +9258,9 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
     if (ret == 0) {
         if (priv->onToken)
             WP11_Lock_LockRO(priv->lock);
+        PRIVATE_KEY_UNLOCK();
         ret = wc_ecc_shared_secret(&priv->data.ecKey, &pubKey, key, &keyLen);
+        PRIVATE_KEY_LOCK();
         if (priv->onToken)
             WP11_Lock_UnlockRO(priv->lock);
 #if defined(ECC_TIMING_RESISTANT) && (!defined(HAVE_FIPS) || \
@@ -8121,6 +9274,109 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
     return ret;
 }
 #endif /* HAVE_ECC */
+
+#if defined(WOLFPKCS11_HKDF) || !defined(NO_AES)
+/**
+ * Generate a secret key.
+ *
+ * @param  secret  [in]  Secret object.
+ * @param  slot    [in]  Slot operation is performed on.
+ * @return  -ve on random number generation failure.
+ *          0 on success.
+ */
+int WP11_GenerateRandomKey(WP11_Object* secret, WP11_Slot* slot)
+{
+    int ret;
+    WP11_Data* key = &secret->data.symmKey;
+
+    WP11_Lock_LockRW(&slot->token.rngLock);
+    ret = wc_RNG_GenerateBlock(&slot->token.rng, key->data, key->len);
+    WP11_Lock_UnlockRW(&slot->token.rngLock);
+
+    return ret;
+}
+#endif /* WOLFPKCS11_HKDF || !NO_AES */
+
+#ifdef WOLFPKCS11_HKDF
+
+/**
+ * Derive the secret from the private key with HKDF.
+ *
+ * @param  params     [in]  The salt and info parameters.
+ * @param  key        [in]  Buffer to hold the secret key.
+ * @param  keyLen     [in]  Buffer length in bytes.
+ * @param  priv       [in]  The private key.
+ * @return  -ve when derivation fails.
+ *          0 on success
+ */
+
+int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
+                    unsigned char* key, word32* keyLen, WP11_Object* priv)
+{
+    int ret = 0;
+    byte* salt = NULL;
+    unsigned long saltLen = 0;
+    WP11_Object* saltKey = NULL;
+    enum wc_HashType hashType;
+    word32 hashLen;
+
+    ret = wp11_hash_type(params->prfHashMechanism, &hashType);
+
+    if (ret != 0) {
+        return CKR_MECHANISM_PARAM_INVALID;
+    }
+
+    hashLen = wc_HashGetDigestSize(hashType);
+
+    if (params->bExtract) {
+        switch (params->ulSaltType) {
+            case CKF_HKDF_SALT_NULL:
+                break;
+
+            case CKF_HKDF_SALT_DATA:
+                salt = params->pSalt;
+                saltLen = params->ulSaltLen;
+                break;
+
+            case CKF_HKDF_SALT_KEY:
+                ret = WP11_Object_Find(session, params->hSaltKey, &saltKey);
+                if (ret != 0)
+                    return CKR_OBJECT_HANDLE_INVALID;
+                salt = saltKey->data.symmKey.data;
+                saltLen = saltKey->data.symmKey.len;
+                break;
+
+            default:
+                return CKR_MECHANISM_PARAM_INVALID;
+                break;
+        }
+    }
+
+    PRIVATE_KEY_UNLOCK();
+    if (params->bExtract && !params->bExpand) {
+        ret = wc_HKDF_Extract(hashType, salt, (word32)saltLen,
+            priv->data.symmKey.data, priv->data.symmKey.len, key);
+
+        if (!ret)
+            *keyLen = hashLen;
+    }
+    else if (!params->bExtract && params->bExpand) {
+        ret = wc_HKDF_Expand(hashType, priv->data.symmKey.data,
+            priv->data.symmKey.len, params->pInfo, (word32)params->ulInfoLen,
+            key, *keyLen);
+    }
+    else {
+        /* Both */
+        ret = wc_HKDF(hashType, priv->data.symmKey.data,priv->data.symmKey.len,
+            salt, (word32)saltLen, params->pInfo, (word32)params->ulInfoLen,
+            key, *keyLen);
+    }
+    PRIVATE_KEY_LOCK();
+
+    return ret;
+}
+
+#endif
 
 #ifndef NO_DH
 /**
@@ -8147,9 +9403,11 @@ int WP11_Dh_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
         if (ret == 0) {
             priv->data.dhKey.len = (word32)sizeof(priv->data.dhKey.key);
             pub->data.dhKey.len = (word32)sizeof(pub->data.dhKey.key);
+            PRIVATE_KEY_UNLOCK();
             ret = wc_DhGenerateKeyPair(&pub->data.dhKey.params, &rng,
                                     priv->data.dhKey.key, &priv->data.dhKey.len,
                                     pub->data.dhKey.key, &pub->data.dhKey.len);
+            PRIVATE_KEY_LOCK();
             Rng_Free(&rng);
         }
     }
@@ -8181,8 +9439,10 @@ int WP11_Dh_Derive(unsigned char* pub, word32 pubLen, unsigned char* key,
 
     if (priv->onToken)
         WP11_Lock_LockRO(priv->lock);
+    PRIVATE_KEY_UNLOCK();
     ret = wc_DhAgree(&priv->data.dhKey.params, key, keyLen,
                        priv->data.dhKey.key, priv->data.dhKey.len, pub, pubLen);
+    PRIVATE_KEY_LOCK();
     if (priv->onToken)
         WP11_Lock_UnlockRO(priv->lock);
 
@@ -8191,25 +9451,6 @@ int WP11_Dh_Derive(unsigned char* pub, word32 pubLen, unsigned char* key,
 #endif /* !NO_DH */
 
 #ifndef NO_AES
-/**
- * Generate an AES secret key.
- *
- * @param  secret  [in]  Secret object.
- * @param  slot    [in]  Slot operation is performed on.
- * @return  -ve on random number generation failure.
- *          0 on success.
- */
-int WP11_AesGenerateKey(WP11_Object* secret, WP11_Slot* slot)
-{
-    int ret;
-    WP11_Data* key = &secret->data.symmKey;
-
-    WP11_Lock_LockRW(&slot->token.rngLock);
-    ret = wc_RNG_GenerateBlock(&slot->token.rng, key->data, key->len);
-    WP11_Lock_UnlockRW(&slot->token.rngLock);
-
-    return ret;
-}
 
 #ifdef HAVE_AES_CBC
 /**
@@ -8224,6 +9465,129 @@ int WP11_AesCbc_PartLen(WP11_Session* session)
 
     return cbc->partialSz;
 }
+
+
+int WP11_AesCbc_DeriveKey(unsigned char* plain, word32 plainSz,
+                        unsigned char* enc, byte* iv,
+                        WP11_Object* key)
+{
+    Aes aes;
+    int ret = 0;
+
+    if (key->type != CKK_AES && key->type != CKK_GENERIC_SECRET)
+        return BAD_FUNC_ARG;
+
+    XMEMSET(&aes, 0, sizeof(aes));
+    ret = wc_AesInit(&aes, NULL, key->slot->devId);
+    if (ret == 0) {
+        ret = wc_AesSetKey(&aes, key->data.symmKey.data, key->data.symmKey.len,
+                iv, AES_ENCRYPTION);
+    }
+    if (ret == 0)
+        ret = wc_AesCbcEncrypt(&aes, enc, plain, plainSz);
+    wc_AesFree(&aes);
+
+    return ret;
+}
+
+/* Used for wc_PRF_TLS, less than sha256_mac not possible */
+static enum wc_MACAlgorithm MechToMac(CK_MECHANISM_TYPE mech)
+{
+    switch (mech)
+    {
+        case CKM_SHA256:
+        case CKM_SHA256_HMAC:
+            return sha256_mac;
+        case CKM_SHA384:
+        case CKM_SHA384_HMAC:
+            return sha384_mac;
+        case CKM_SHA512:
+        case CKM_SHA512_HMAC:
+            return sha512_mac;
+        default:
+            return no_mac;
+    }
+}
+
+#ifdef WOLFSSL_HAVE_PRF
+int WP11_Tls12_Master_Key_Derive(CK_SSL3_RANDOM_DATA* random,
+                                 CK_MECHANISM_TYPE mech, const char* label,
+                                 CK_ULONG ulLabelLen, byte* enc,
+                                 CK_ULONG encLen, CK_BBOOL clientFirst,
+                                 WP11_Object* key)
+{
+    int ret = 0;
+    CK_ULONG ulSeedLen = 0;
+    byte* pSeed = NULL;
+    enum wc_MACAlgorithm macType;
+
+    macType = MechToMac(mech);
+
+    if (macType == no_mac) {
+        return BAD_FUNC_ARG;
+    }
+
+    ulSeedLen = random->ulClientRandomLen + random->ulServerRandomLen;
+    if (ulSeedLen == 0) {
+        return CKR_MECHANISM_PARAM_INVALID;
+    }
+    pSeed = (byte*)XMALLOC(ulSeedLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    if (pSeed == NULL) {
+        return CKR_HOST_MEMORY;
+    }
+    if (clientFirst) {
+        XMEMCPY(pSeed, random->pClientRandom, random->ulClientRandomLen);
+        XMEMCPY(pSeed + random->ulClientRandomLen, random->pServerRandom,
+                random->ulServerRandomLen);
+    }
+    else {
+        XMEMCPY(pSeed, random->pServerRandom, random->ulServerRandomLen);
+        XMEMCPY(pSeed + random->ulServerRandomLen, random->pClientRandom,
+                random->ulClientRandomLen);
+    }
+
+    PRIVATE_KEY_UNLOCK();
+    ret = wc_PRF_TLS(enc, (word32)encLen, key->data.symmKey.data,
+                     key->data.symmKey.len, (const byte*)label,
+                     (word32)ulLabelLen, pSeed, (word32)ulSeedLen,
+                     1, macType, NULL, 0);
+    PRIVATE_KEY_LOCK();
+
+    if (pSeed) {
+        XFREE(pSeed, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        pSeed = NULL;
+    }
+
+
+    return ret;
+}
+#ifdef WOLFPKCS11_NSS
+int WP11_Nss_Tls12_Master_Key_Derive(CK_BYTE_PTR pSessionHash,
+                                     CK_ULONG ulSessionHashLen,
+                                     CK_MECHANISM_TYPE mech, const char* label,
+                                     CK_ULONG ulLabelLen, byte* enc,
+                                     CK_ULONG encLen, WP11_Object* key)
+{
+    int ret = 0;
+    enum wc_MACAlgorithm macType;
+
+    macType = MechToMac(mech);
+
+    if (macType == no_mac) {
+        return BAD_FUNC_ARG;
+    }
+
+    PRIVATE_KEY_UNLOCK();
+    ret = wc_PRF_TLS(enc, (word32)encLen, key->data.symmKey.data,
+                     key->data.symmKey.len, (const byte*)label,
+                     (word32)ulLabelLen, pSessionHash, (word32)ulSessionHashLen,
+                     1, macType, NULL, 0);
+    PRIVATE_KEY_LOCK();
+
+    return ret;
+}
+#endif
+#endif
 
 /**
  * Encrypt plain text with AES-CBC.
@@ -8660,6 +10024,79 @@ int WP11_AesCbcPad_DecryptFinal(unsigned char* dec, word32* decSz,
     return ret;
 }
 #endif /* HAVE_AES_CBC */
+
+#ifdef HAVE_AESCTR
+/**
+ * Encrypt or decrypt data with AES-CTR.
+ * Output buffer must be large enough to hold all data.
+ *
+ * @param  in     [in]      Input data (plain text for encryption, encrypted
+ *                          text for decryption).
+ * @param  inSz   [in]      Length of input data in bytes.
+ * @param  out    [out]     Buffer to hold output data (encrypted or decrypted).
+ * @param  outSz  [in,out]  On in, length of buffer in bytes. On out, length of
+ *                          output data in bytes.
+ * @param  session[in]      Session object holding CTR parameters.
+ * @return  -ve on encryption/decryption failure.
+ *          0 on success.
+ */
+int WP11_AesCtr_Do(unsigned char* in, word32 inSz, unsigned char* out,
+        word32* outSz, WP11_Session* session)
+{
+    int ret = 0;
+    WP11_CtrParams* ctr = &session->params.ctr;
+
+    ret = WP11_AesCtr_Update(in, inSz, out, outSz, session);
+
+    wc_AesFree(&ctr->aes);
+    session->init = 0;
+    return ret;
+}
+
+/**
+ * Encrypt or decrypt more data with AES-CTR.
+ *
+ * @param  in     [in]      Input data (plain text for encryption, encrypted
+ *                          text for decryption).
+ * @param  inSz   [in]      Length of input data in bytes.
+ * @param  out    [out]     Buffer to hold output data (encrypted or decrypted).
+ * @param  outSz  [in,out]  On in, length of buffer in bytes. On out, length of
+ *                          output data in bytes.
+ * @param  session[in]      Session object holding CTR parameters.
+ * @return  BUFFER_E when out buffer is too small.
+ *          0 on success.
+ */
+int WP11_AesCtr_Update(unsigned char* in, word32 inSz, unsigned char* out,
+        word32* outSz, WP11_Session* session)
+{
+    int ret = 0;
+    WP11_CtrParams* ctr = &session->params.ctr;
+
+    if (*outSz < inSz)
+        return BUFFER_E;
+    ret = wc_AesCtrEncrypt(&ctr->aes, out, in, inSz);
+    if (ret == 0)
+        *outSz = inSz;
+
+    return ret;
+}
+
+/**
+ * Finalize encryption or decryption with AES-CTR.
+ *
+ * @param  session[in]      Session object holding CTR parameters.
+ * @return  0 on success.
+ */
+int WP11_AesCtr_Final(WP11_Session* session)
+{
+    WP11_CtrParams* ctr = &session->params.ctr;
+
+    wc_AesFree(&ctr->aes);
+    session->init = 0;
+
+    return 0;
+}
+#endif /* HAVE_AESCTR */
 
 #ifdef HAVE_AESGCM
 /**
@@ -9182,7 +10619,515 @@ int WP11_AesEcb_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
     return ret;
 }
 #endif /* HAVE_AESECB */
+
+#ifdef HAVE_AES_KEYWRAP
+int WP11_AesKeyWrap_Encrypt(unsigned char* plain, word32 plainSz,
+        unsigned char* enc, word32* encSz, WP11_Session* session)
+{
+    int ret = 0;
+    WP11_KeyWrapParams *wrap = &session->params.kw;
+
+    ret = wc_AesKeyWrap_ex(&wrap->aes, plain, plainSz, enc, *encSz,
+            wrap->ivSz != 0 ? wrap->iv : NULL);
+    session->init = 0;
+    if (ret < 0)
+        return ret;
+    *encSz = ret;
+    return 0;
+}
+
+int WP11_AesKeyWrap_Decrypt(unsigned char* enc, word32 encSz,
+        unsigned char* dec, word32* decSz, WP11_Session* session)
+{
+    int ret = 0;
+    WP11_KeyWrapParams *wrap = &session->params.kw;
+
+    ret = wc_AesKeyUnWrap_ex(&wrap->aes, enc, encSz, dec, *decSz,
+            wrap->ivSz != 0 ? wrap->iv : NULL);
+    session->init = 0;
+    if (ret < 0)
+        return ret;
+    *decSz = ret;
+    return 0;
+}
+#endif /* HAVE_AES_KEYWRAP */
+
+#ifdef HAVE_AESCTS
+/**
+ * Encrypt plain text with AES-CTS.
+ * Output buffer must be large enough to hold all data.
+ *
+ * @param  plain    [in]      Plain text.
+ * @param  plainSz  [in]      Length of plain text in bytes.
+ * @param  enc      [in]      Buffer to hold encrypted data.
+ * @param  encSz    [in,out]  On in, length of buffer in bytes.
+ *                            On out, length of encrypted data in bytes.
+ * @param  session  [in]      Session object holding Aes object.
+ * @return  -ve on encryption failure.
+ *          0 on success.
+ */
+int WP11_AesCts_Encrypt(unsigned char* plain, word32 plainSz,
+                        unsigned char* enc, word32* encSz,
+                        WP11_Session* session)
+{
+    int ret = 0;
+    WP11_CtsParams* cts = &session->params.cts;
+    word32 outSz = 0;
+    word32 tmpSz = *encSz;
+
+    ret = wc_AesCtsEncryptUpdate(&cts->aes, enc, &tmpSz, plain, plainSz);
+    if (ret == 0) {
+        outSz += tmpSz;
+        tmpSz = *encSz - outSz;
+        ret = wc_AesCtsEncryptFinal(&cts->aes, enc + outSz, &tmpSz);
+    }
+    if (ret == 0)
+        *encSz = outSz + tmpSz;
+
+    wc_AesFree(&cts->aes);
+    session->init = 0;
+    return ret;
+}
+
+/**
+ * Encrypt more plain text with AES-CTS.
+ *
+ * @param  plain    [in]      Plain text.
+ * @param  plainSz  [in]      Length of plain text in bytes.
+ * @param  enc      [in]      Buffer to hold encrypted data.
+ * @param  encSz    [in,out]  On in, length of buffer in bytes.
+ *                            On out, length of encrypted data in bytes.
+ * @param  session  [in]      Session object holding Aes object.
+ * @return  -ve on encryption failure.
+ *          0 on success.
+ */
+int WP11_AesCts_EncryptUpdate(unsigned char* plain, word32 plainSz,
+                              unsigned char* enc, word32* encSz,
+                              WP11_Session* session)
+{
+    WP11_CtsParams* cts = &session->params.cts;
+
+    return wc_AesCtsEncryptUpdate(&cts->aes, enc, encSz, plain, plainSz);
+}
+
+/**
+ * Finalize encryption with AES-CTS.
+ *
+ * @param  enc      [in]      Buffer to hold encrypted data.
+ * @param  encSz    [in,out]  On in, length of buffer in bytes.
+ *                            On out, length of encrypted data in bytes.
+ * @param  session  [in]      Session object holding Aes object.
+ * @return  0 on success.
+ */
+int WP11_AesCts_EncryptFinal(unsigned char* enc, word32* encSz,
+                             WP11_Session* session)
+{
+    int ret = 0;
+    WP11_CtsParams* cts = &session->params.cts;
+
+    ret = wc_AesCtsEncryptFinal(&cts->aes, enc, encSz);
+
+    wc_AesFree(&cts->aes);
+    session->init = 0;
+
+    return ret;
+}
+
+/**
+ * Decrypt data with AES-CTS.
+ * Output buffer must be large enough to hold all data.
+ *
+ * @param  enc      [in]      Encrypted data.
+ * @param  encSz    [in]      Length of encrypted data in bytes.
+ * @param  dec      [in]      Buffer to hold decrypted data.
+ * @param  decSz    [in,out]  On in, length of buffer in bytes.
+ *                            On out, length of decrypted data in bytes.
+ * @param  session  [in]      Session object holding Aes object.
+ * @return  -ve on encryption failure.
+ *          0 on success.
+ */
+int WP11_AesCts_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
+                        word32* decSz, WP11_Session* session)
+{
+    int ret = 0;
+    WP11_CtsParams* cts = &session->params.cts;
+    word32 outSz = 0;
+    word32 tmpSz = *decSz;
+
+    ret = wc_AesCtsDecryptUpdate(&cts->aes, dec, &tmpSz, enc, encSz);
+    if (ret == 0) {
+        outSz += tmpSz;
+        tmpSz = *decSz - outSz;
+        ret = wc_AesCtsDecryptFinal(&cts->aes, dec + outSz, &tmpSz);
+    }
+    if (ret == 0)
+        *decSz = outSz + tmpSz;
+
+    wc_AesFree(&cts->aes);
+    session->init = 0;
+    return ret;
+}
+
+/**
+ * Decrypt more data with AES-CTS.
+ *
+ * @param  enc      [in]      Encrypted data.
+ * @param  encSz    [in]      Length of encrypted data in bytes.
+ * @param  dec      [in]      Buffer to hold decrypted data.
+ * @param  decSz    [in,out]  On in, length of buffer in bytes.
+ *                            On out, length of decrypted data in bytes.
+ * @param  session  [in]      Session object holding Aes object.
+ * @return  -ve on encryption failure.
+ *          0 on success.
+ */
+int WP11_AesCts_DecryptUpdate(unsigned char* enc, word32 encSz,
+                              unsigned char* dec, word32* decSz,
+                              WP11_Session* session)
+{
+    WP11_CtsParams* cts = &session->params.cts;
+
+    return wc_AesCtsDecryptUpdate(&cts->aes, dec, decSz, enc, encSz);
+}
+
+/**
+ * Finalize decryption with AES-CTS.
+ * No decrypted data is returned as no check for padding is performed.
+ *
+ * @param  dec      [in]      Buffer to hold decrypted data.
+ * @param  decSz    [in,out]  On in, length of buffer in bytes.
+ *                            On out, length of decrypted data in bytes.
+ * @param  session  [in]      Session object holding Aes object.
+ * @return  0 on success.
+ */
+int WP11_AesCts_DecryptFinal(unsigned char* dec, word32* decSz,
+                             WP11_Session* session)
+{
+    int ret = 0;
+    WP11_CtsParams* cts = &session->params.cts;
+
+    ret = wc_AesCtsDecryptFinal(&cts->aes, dec, decSz);
+
+    wc_AesFree(&cts->aes);
+    session->init = 0;
+
+    return ret;
+}
+#endif /* HAVE_AESCTS */
+
+#ifdef HAVE_AESCMAC
+int WP11_Aes_Cmac_Init(WP11_Object* secret, WP11_Session* session,
+        word32 sigLen)
+{
+    int ret;
+    WP11_Cmac* cmac = &session->params.cmac;
+    WP11_Data* key;
+
+    if (sigLen > WC_CMAC_TAG_MAX_SZ || sigLen < WC_CMAC_TAG_MIN_SZ)
+        return BAD_FUNC_ARG;
+    cmac->sigLen = (byte)sigLen;
+    if (secret->onToken)
+        WP11_Lock_LockRO(secret->lock);
+    key = &secret->data.symmKey;
+    ret = wc_InitCmac_ex(&cmac->cmac, key->data, key->len, WC_CMAC_AES, NULL,
+            NULL, secret->slot->devId);
+    if (secret->onToken)
+        WP11_Lock_UnlockRO(secret->lock);
+
+    return ret;
+}
+
+int WP11_Aes_Cmac_Check_Len(CK_BYTE_PTR pSignature,
+        CK_ULONG_PTR pulSignatureLen, WP11_Session* session)
+{
+    WP11_Cmac* cmac = &session->params.cmac;
+
+    if (pSignature == NULL) {
+        *pulSignatureLen = cmac->sigLen;
+        return CKR_OK;
+    }
+    if (*pulSignatureLen < cmac->sigLen)
+        return CKR_BUFFER_TOO_SMALL;
+
+    return CKR_OK;
+}
+
+int WP11_Aes_Cmac_Sign(unsigned char* data, word32 dataLen, unsigned char* sig,
+        word32* sigLen, WP11_Session* session)
+{
+    int ret = 0;
+    WP11_Cmac* cmac = &session->params.cmac;
+    int doFree = 1;
+
+    if (*sigLen < cmac->sigLen)
+        return BAD_FUNC_ARG;
+    *sigLen = (word32)cmac->sigLen;
+    ret = wc_CmacUpdate(&cmac->cmac, data, dataLen);
+    if (ret == 0) {
+        ret = wc_CmacFinal(&cmac->cmac, sig, sigLen);
+        doFree = 0;
+    }
+    if (doFree) {
+#if (!defined(HAVE_FIPS) || FIPS_VERSION_GE(5, 3))
+        (void)wc_CmacFree(&cmac->cmac);
+#endif
+    }
+    session->init = 0;
+
+    return ret;
+}
+
+int WP11_Aes_Cmac_Sign_Update(unsigned char* data, word32 dataLen,
+        WP11_Session* session)
+{
+    WP11_Cmac* cmac = &session->params.cmac;
+
+    return wc_CmacUpdate(&cmac->cmac, data, dataLen);
+}
+
+int WP11_Aes_Cmac_Sign_Final(unsigned char* sig, word32* sigLen,
+        WP11_Session* session)
+{
+    int ret = 0;
+    WP11_Cmac* cmac = &session->params.cmac;
+
+    if (*sigLen < cmac->sigLen)
+        return BAD_FUNC_ARG;
+    *sigLen = (word32)cmac->sigLen;
+    ret = wc_CmacFinal(&cmac->cmac, sig, sigLen);
+    session->init = 0;
+
+    return ret;
+}
+
+int WP11_Aes_Cmac_Verify(unsigned char* data, word32 dataLen,
+        unsigned char* sig, word32 sigLen, int* stat, WP11_Session* session)
+{
+    byte resSig[WC_CMAC_TAG_MAX_SZ];
+    word32 resSigLen = sigLen;
+    int ret = 0;
+    WP11_Cmac* cmac = &session->params.cmac;
+
+    if (sigLen != (word32)cmac->sigLen || sigLen > sizeof(resSig))
+        ret = BUFFER_E;
+    if (ret == 0)
+        ret = WP11_Aes_Cmac_Sign(data, dataLen, resSig, &resSigLen, session);
+    if (ret == 0)
+        *stat = resSigLen == sigLen && WP11_ConstantCompare(resSig, sig, sigLen);
+
+    return ret;
+}
+
+int WP11_Aes_Cmac_Verify_Final(unsigned char* sig, word32 sigLen, int* stat,
+        WP11_Session* session)
+{
+    int ret = 0;
+    byte resSig[WC_CMAC_TAG_MAX_SZ];
+    word32 resSigLen = sigLen;
+    WP11_Cmac* cmac = &session->params.cmac;
+
+    if (sigLen != (word32)cmac->sigLen || sigLen > sizeof(resSig))
+        ret = BUFFER_E;
+    if (ret == 0)
+        ret = WP11_Aes_Cmac_Sign_Final(resSig, &resSigLen, session);
+    if (ret == 0)
+        *stat = resSigLen == sigLen && WP11_ConstantCompare(resSig, sig, sigLen);
+
+    return ret;
+}
+#endif /* HAVE_AESCMAC */
 #endif /* !NO_AES */
+
+/**
+ * Convert the Digest mechanism to a wolfCrypt hash type.
+ *
+ * @param  digestMech  [in]   Digest mechanism.
+ * @param  hashType    [out]  Hash type.
+ * @return  BAD_FUNC_ARG when mechanism is not supported.
+ *          0 on success.
+ */
+static int wp11_digest_hash_type(CK_MECHANISM_TYPE digestMech, int* hashType)
+{
+    int ret = 0;
+
+    switch (digestMech) {
+        case CKM_MD5:
+            *hashType = WC_HASH_TYPE_MD5;
+            break;
+        case CKM_SHA1:
+            *hashType = WC_HASH_TYPE_SHA;
+            break;
+        case CKM_SHA224:
+            *hashType = WC_HASH_TYPE_SHA224;
+            break;
+        case CKM_SHA256:
+            *hashType = WC_HASH_TYPE_SHA256;
+            break;
+        case CKM_SHA384:
+            *hashType = WC_HASH_TYPE_SHA384;
+            break;
+        case CKM_SHA512:
+            *hashType = WC_HASH_TYPE_SHA512;
+            break;
+        case CKM_SHA3_224:
+            *hashType = WC_HASH_TYPE_SHA3_224;
+            break;
+        case CKM_SHA3_256:
+            *hashType = WC_HASH_TYPE_SHA3_256;
+            break;
+        case CKM_SHA3_384:
+            *hashType = WC_HASH_TYPE_SHA3_384;
+            break;
+        case CKM_SHA3_512:
+            *hashType = WC_HASH_TYPE_SHA3_512;
+            break;
+        default:
+            ret = CKR_MECHANISM_INVALID;
+            break;
+    }
+
+    return ret;
+}
+
+
+/**
+ * Initialize the Digest operation
+ *
+ * @param mechanism   [in] Digest mechanism.
+ * @param session     [in] Session object with the Digest object.
+ * @return CKR_MECHANISM_INVALID when the mechanism is not supported.
+ *         Other -ve value when initialization fails.
+ *         0 on success.
+ */
+int WP11_Digest_Init(CK_MECHANISM_TYPE mechanism, WP11_Session* session)
+{
+    int ret = 0;
+    int hashType = WC_HASH_TYPE_NONE;
+
+    WP11_Digest* digest = &session->params.digest;
+
+    ret = wp11_digest_hash_type(mechanism, &hashType);
+
+    if (ret == 0) {
+        digest->hashType = hashType;
+        ret = wc_HashInit(&digest->hash, hashType);
+    }
+
+    return ret;
+}
+
+/**
+* Update Digest operation with more data.
+*
+* @param  data     [in]  Data to be digested.
+* @param  dataLen  [in]  Length of data in bytes.
+* @param  session  [in]  Session object with the Digest object.
+* @return  -ve on failure.
+*          0 on success.
+*/
+int WP11_Digest_Update(unsigned char* data, word32 dataLen,
+                       WP11_Session* session)
+{
+    int ret;
+    WP11_Digest* digest = &session->params.digest;
+
+    ret = wc_HashUpdate(&digest->hash, digest->hashType, data, dataLen);
+
+    return ret;
+}
+
+/**
+* Update Digest operation with secret key data.
+*
+* @param  key      [in]  Key to be digested.
+* @param  session  [in]  Session object with the Digest object.
+* @return  -ve on failure.
+*          0 on success.
+*/
+int WP11_Digest_Key(WP11_Object* key, WP11_Session* session)
+{
+    int ret;
+#ifndef WOLFPKCS11_NO_STORE
+    WP11_Digest* digest = &session->params.digest;
+    ret = wc_HashUpdate(&digest->hash, digest->hashType, key->keyData,
+                        key->keyDataLen);
+#else
+    (void) session;
+    (void) key;
+    ret = CKR_FUNCTION_NOT_SUPPORTED;
+#endif
+    return ret;
+}
+
+/**
+ * Finalize the Digest operation and get output.
+ *
+ * @param  data     [in]       Output data.
+ * @param  dataLen  [in, out]  Length of data in bytes.
+ * @param  session  [in]       Session object with the Digest object.
+ * @return  -ve on failure.
+ *          0 on success.
+ */
+int WP11_Digest_Final(unsigned char* data, word32* dataLen,
+                      WP11_Session* session)
+{
+    int ret;
+    int blockLen;
+    WP11_Digest* digest = &session->params.digest;
+
+    blockLen = wc_HashGetDigestSize(digest->hashType);
+
+    /* If a NULL is provided, callee wants the expected output length only */
+    if (data == NULL) {
+        *dataLen = blockLen;
+        return CKR_OK;
+    }
+
+    if (*dataLen < (word32)blockLen) {
+        return BUFFER_E;
+    }
+
+    ret = wc_HashFinal(&digest->hash, digest->hashType, data);
+    *dataLen = blockLen;
+    wc_HashFree(&digest->hash, digest->hashType);
+
+    return ret;
+}
+
+/**
+ * Single Digest operation.
+ *
+ * @param  data        [in]       Input data to be digested.
+ * @param  dataLen     [in]       Length of data in bytes.
+ * @param  dataOut     [in]       Output data.
+ * @param  dataOutLen  [in, out]  Lenget of dataOut in bytes.
+ * @param  session     [in]       Session object with the Digest object.
+ * @return  -ve on failure.
+ *          0 on success.
+ */
+
+int WP11_Digest_Single(unsigned char* data, word32 dataLen,
+                       unsigned char* dataOut, word32* dataOutLen,
+                       WP11_Session* session)
+{
+    int ret;
+    int blockLen;
+    WP11_Digest* digest = &session->params.digest;
+
+    blockLen = wc_HashGetDigestSize(digest->hashType);
+
+    if (data == NULL) {
+        *dataOutLen = (word32)blockLen;
+        return CKR_OK;
+    }
+    if (*dataOutLen < (word32)blockLen) {
+        return BUFFER_E;
+    }
+    ret = wc_Hash(digest->hashType, data, dataLen, dataOut, *dataOutLen);
+
+    wc_HashFree(&digest->hash, digest->hashType);
+
+    return ret;
+}
 
 #ifndef NO_HMAC
 /**
@@ -9216,6 +11161,18 @@ static int wp11_hmac_hash_type(CK_MECHANISM_TYPE hmacMech, int* hashType)
         case CKM_SHA512_HMAC:
             *hashType = WC_SHA512;
             break;
+        case CKM_SHA3_224_HMAC:
+            *hashType = WC_SHA3_224;
+            break;
+        case CKM_SHA3_256_HMAC:
+            *hashType = WC_SHA3_256;
+            break;
+        case CKM_SHA3_384_HMAC:
+            *hashType = WC_SHA3_384;
+            break;
+        case CKM_SHA3_512_HMAC:
+            *hashType = WC_SHA3_512;
+            break;
         default:
             ret = BAD_FUNC_ARG;
             break;
@@ -9236,6 +11193,7 @@ int WP11_Hmac_SigLen(WP11_Session* session)
 
     return hmac->hmacSz;
 }
+
 
 /**
  * Initialize the HMAC operation.
@@ -9326,7 +11284,7 @@ int WP11_Hmac_Verify(unsigned char* sig, word32 sigLen, unsigned char* data,
     if (ret == 0)
         ret = WP11_Hmac_Sign(data, dataLen, genSig, &genSigLen, session);
     if (ret == 0)
-        *stat = genSigLen == sigLen && XMEMCMP(sig, genSig, sigLen) == 0;
+        *stat = genSigLen == sigLen && WP11_ConstantCompare(sig, genSig, sigLen);
 
     return ret;
 }
@@ -9397,11 +11355,113 @@ int WP11_Hmac_VerifyFinal(unsigned char* sig, word32 sigLen, int* stat,
 
     ret = WP11_Hmac_SignFinal(genSig, &genSigLen, session);
     if (ret == 0)
-        *stat = genSigLen == sigLen && XMEMCMP(sig, genSig, sigLen) == 0;
+        *stat = genSigLen == sigLen && WP11_ConstantCompare(sig, genSig, sigLen);
 
     return ret;
 }
 #endif /* !NO_HMAC */
+
+#ifdef WOLFSSL_HAVE_PRF
+int WP11_TLS_MAC_init(unsigned long hashType, unsigned long macLen, byte server,
+                      CK_OBJECT_HANDLE hKey, WP11_Session *session)
+{
+    int ret = 0;
+    WP11_TlsMacParams *mac = &session->params.tlsMac;
+
+    XMEMSET(mac, 0, sizeof(*mac));
+    if (hashType == CKM_TLS_PRF) {
+        mac->isTlsPrf = 1;
+    }
+    else {
+        if ((mac->mac = MechToMac(hashType)) == no_mac)
+            return BAD_FUNC_ARG;
+    }
+    mac->server = server;
+    mac->macSz = (word32)macLen;
+    mac->key = hKey;
+
+
+    return ret;
+}
+
+
+word32 WP11_TLS_MAC_get_len(WP11_Session *session)
+{
+    WP11_TlsMacParams *mac = &session->params.tlsMac;
+
+    return mac->macSz;
+}
+
+int WP11_TLS_MAC_sign(byte* data, word32 dataLen, byte* sig, word32* sigLen,
+                      WP11_Session *session)
+{
+    int ret = 0;
+    WP11_TlsMacParams *mac = &session->params.tlsMac;
+    const byte* label = (const byte*)(mac->server ?
+            "server finished" : "client finished");
+    WP11_Data* key = NULL;
+    WP11_Object* secret = NULL;
+
+    if (mac->macSz > *sigLen)
+        return BAD_FUNC_ARG;
+
+    ret = WP11_Object_Find(session, mac->key, &secret);
+    if (ret != 0)
+        return BAD_FUNC_ARG;
+    if (secret->type != CKK_GENERIC_SECRET)
+        return BAD_FUNC_ARG;
+
+    if (secret->onToken)
+        WP11_Lock_LockRO(secret->lock);
+    key = &secret->data.symmKey;
+
+    PRIVATE_KEY_UNLOCK();
+    if (mac->isTlsPrf) {
+        ret = wc_PRF_TLSv1(sig, mac->macSz, key->data, key->len, label, 15,
+                data, dataLen, NULL, secret->slot->devId);
+    }
+    else {
+        ret = wc_PRF_TLS(sig, mac->macSz, key->data, key->len, label, 15,
+                data, dataLen, 1, mac->mac, NULL, secret->slot->devId);
+    }
+    PRIVATE_KEY_LOCK();
+
+    if (secret->onToken)
+        WP11_Lock_UnlockRO(secret->lock);
+
+    if (ret == 0)
+        *sigLen = mac->macSz;
+
+    session->init = 0;
+    return ret;
+}
+
+int WP11_TLS_MAC_verify(byte* data, word32 dataLen, byte* sig, word32 sigLen,
+        int* stat, WP11_Session *session)
+{
+    int ret = 0;
+    byte* genSig;
+    word32 genSigLen = sigLen;
+    WP11_TlsMacParams *mac = &session->params.tlsMac;
+
+    if (sigLen != mac->macSz)
+        return BUFFER_E;
+
+    genSig = (byte*)XMALLOC(genSigLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    if (genSig == NULL)
+        return MEMORY_E;
+
+    ret = WP11_TLS_MAC_sign(data, dataLen, genSig, &genSigLen, session);
+    if (ret == 0) {
+        *stat = genSigLen == sigLen
+                && WP11_ConstantCompare(sig, genSig, sigLen);
+    }
+
+    XFREE(genSig, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    session->init = 0;
+    return ret;
+}
+#endif /* WOLFSSL_HAVE_PRF */
 
 /**
  * Seed the random number generator of the token in the slot.
@@ -9442,4 +11502,181 @@ int WP11_Slot_GenerateRandom(WP11_Slot* slot, unsigned char* data, int len)
     WP11_Lock_UnlockRW(&slot->token.rngLock);
 
     return ret;
+}
+
+int WP11_GetOperationState(WP11_Session* session, unsigned char* stateData,
+                           unsigned long* stateDataLen)
+{
+    unsigned long bufferAvailable = *stateDataLen;
+    unsigned long mechSize = 0;
+
+    *stateDataLen = sizeof(session->mechanism);
+
+    switch (session->mechanism) {
+#ifndef NO_SHA
+        case CKM_SHA1:
+            mechSize = sizeof(wc_Sha);
+            break;
+#endif
+#ifdef WOLFSSL_SHA224
+        case CKM_SHA224:
+            mechSize = sizeof(wc_Sha224);
+            break;
+#endif
+#ifndef NO_SHA256
+        case CKM_SHA256:
+            mechSize = sizeof(wc_Sha256);
+            break;
+#endif
+#ifdef WOLFSSL_SHA384
+        case CKM_SHA384:
+            mechSize = sizeof(wc_Sha384);
+            break;
+#endif
+#ifdef WOLFSSL_SHA512
+        case CKM_SHA512:
+            mechSize = sizeof(wc_Sha512);
+            break;
+#endif
+        default:
+            return CKR_STATE_UNSAVEABLE;
+    }
+    *stateDataLen += mechSize;
+
+    if (bufferAvailable < *stateDataLen)
+        return CKR_BUFFER_TOO_SMALL;
+
+    if (stateData == NULL)
+        return CKR_OK;
+
+    XMEMCPY(stateData, &session->mechanism, sizeof(session->mechanism));
+    stateData += sizeof(session->mechanism);
+
+    switch (session->mechanism) {
+#ifndef NO_SHA
+        case CKM_SHA1:
+            wc_ShaCopy(&session->params.digest.hash.alg.sha,
+                (wc_Sha*)stateData);
+            break;
+#endif
+#ifdef WOLFSSL_SHA224
+        case CKM_SHA224:
+            wc_Sha224Copy(&session->params.digest.hash.alg.sha224,
+                (wc_Sha224*)stateData);
+            break;
+#endif
+#ifndef NO_SHA256
+        case CKM_SHA256:
+            wc_Sha256Copy(&session->params.digest.hash.alg.sha256,
+                (wc_Sha256*)stateData);
+            break;
+#endif
+#ifdef WOLFSSL_SHA384
+        case CKM_SHA384:
+            wc_Sha384Copy(&session->params.digest.hash.alg.sha384,
+                (wc_Sha384*)stateData);
+            break;
+#endif
+#ifdef WOLFSSL_SHA512
+        case CKM_SHA512:
+            wc_Sha512Copy(&session->params.digest.hash.alg.sha512,
+                (wc_Sha512*)stateData);
+            break;
+#endif
+    }
+
+    return CKR_OK;
+}
+
+int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
+                           unsigned long stateDataLen)
+{
+    unsigned long mechSize = 0;
+    int hashType = WC_HASH_TYPE_NONE;
+    int ret;
+
+    if (stateDataLen < sizeof(session->mechanism))
+        return CKR_SAVED_STATE_INVALID;
+
+    XMEMCPY(&session->mechanism, stateData, sizeof(session->mechanism));
+    switch (session->mechanism) {
+#ifndef NO_SHA
+        case CKM_SHA1:
+            mechSize = sizeof(wc_Sha);
+            break;
+#endif
+#ifdef WOLFSSL_SHA224
+        case CKM_SHA224:
+            mechSize = sizeof(wc_Sha224);
+            break;
+#endif
+#ifndef NO_SHA256
+        case CKM_SHA256:
+            mechSize = sizeof(wc_Sha256);
+            break;
+#endif
+#ifdef WOLFSSL_SHA384
+        case CKM_SHA384:
+            mechSize = sizeof(wc_Sha384);
+            break;
+#endif
+#ifdef WOLFSSL_SHA512
+        case CKM_SHA512:
+            mechSize = sizeof(wc_Sha512);
+            break;
+#endif
+        default:
+            return CKR_SAVED_STATE_INVALID;
+    }
+
+    if (stateDataLen < (sizeof(session->mechanism) + mechSize))
+        return CKR_SAVED_STATE_INVALID;
+
+    stateData += sizeof(session->mechanism);
+
+    ret = wp11_digest_hash_type(session->mechanism, &hashType);
+
+    if (ret != CKR_OK)
+        return ret;
+
+    session->params.digest.hashType = hashType;
+    ret = wc_HashInit(&session->params.digest.hash, hashType);
+
+    if (ret != CKR_OK)
+        return ret;
+
+    switch (session->mechanism) {
+#ifndef NO_SHA
+        case CKM_SHA1:
+            wc_ShaCopy((wc_Sha*)stateData,
+                &session->params.digest.hash.alg.sha);
+            break;
+#endif
+#ifdef WOLFSSL_SHA224
+        case CKM_SHA224:
+            wc_Sha224Copy((wc_Sha224*)stateData,
+                &session->params.digest.hash.alg.sha224);
+            break;
+#endif
+#ifndef NO_SHA256
+        case CKM_SHA256:
+            wc_Sha256Copy((wc_Sha256*)stateData,
+                &session->params.digest.hash.alg.sha256);
+            break;
+#endif
+#ifdef WOLFSSL_SHA384
+        case CKM_SHA384:
+            wc_Sha384Copy((wc_Sha384*)stateData,
+                &session->params.digest.hash.alg.sha384);
+            break;
+#endif
+#ifdef WOLFSSL_SHA512
+        case CKM_SHA512:
+            wc_Sha512Copy((wc_Sha512*)stateData,
+                &session->params.digest.hash.alg.sha512);
+            break;
+#endif
+    }
+
+    return CKR_OK;
 }

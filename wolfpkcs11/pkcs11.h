@@ -43,6 +43,20 @@ extern "C" {
     #endif
 #endif
 
+
+#define CKM_VENDOR_DEFINED 0x80000000UL
+#define CKO_VENDOR_DEFINED 0x80000000UL
+#define CKK_VENDOR_DEFINED 0x80000000UL
+#define CKA_VENDOR_DEFINED 0x80000000UL
+
+#ifdef WOLFPKCS11_NSS
+#define CK_VENDOR_NSS 0x4E534350UL
+#define CKM_NSS (CKM_VENDOR_DEFINED | CK_VENDOR_NSS)
+#define CKO_NSS (CKO_VENDOR_DEFINED | CK_VENDOR_NSS)
+#define CKK_NSS (CKK_VENDOR_DEFINED | CK_VENDOR_NSS)
+#define CKA_NSS (CKA_VENDOR_DEFINED | CK_VENDOR_NSS)
+#endif
+
 #ifndef NULL_PTR
 #define NULL_PTR        0
 #endif
@@ -128,6 +142,9 @@ extern "C" {
 #define CKO_PRIVATE_KEY                       0x00000003UL
 #define CKO_SECRET_KEY                        0x00000004UL
 
+#ifdef WOLFPKCS11_NSS
+#define CKO_NSS_TRUST                         (CKO_NSS + 3)
+#endif
 
 #define CKK_RSA                               0x00000000UL
 #define CKK_DH                                0x00000002UL
@@ -135,6 +152,12 @@ extern "C" {
 #define CKK_GENERIC_SECRET                    0x00000010UL
 #define CKK_AES                               0x0000001FUL
 #define CKK_DES3                              0x00000015UL /* not supported */
+#define CKK_HKDF                              0x00000042UL
+
+#ifdef WOLFPKCS11_NSS
+/* Not defined by NSS, but we need one */
+#define CKK_NSS_TRUST                         (CKK_NSS + 512)
+#endif
 
 #define CKA_CLASS                             0x00000000UL
 #define CKA_TOKEN                             0x00000001UL
@@ -208,6 +231,28 @@ extern "C" {
 #define CKA_DERIVE_TEMPLATE                   0x40000213UL
 #define CKA_ALLOWED_MECHANISMS                0x40000600UL
 
+#ifdef WOLFPKCS11_NSS
+#define CKA_TRUST                             (CKA_NSS + 0x2000)
+#define CKA_TRUST_DIGITAL_SIGNATURE           (CKA_TRUST + 1)
+#define CKA_TRUST_NON_REPUDIATION             (CKA_TRUST + 2)
+#define CKA_TRUST_KEY_ENCIPHERMENT            (CKA_TRUST + 3)
+#define CKA_TRUST_DATA_ENCIPHERMENT           (CKA_TRUST + 4)
+#define CKA_TRUST_KEY_AGREEMENT               (CKA_TRUST + 5)
+#define CKA_TRUST_KEY_CERT_SIGN               (CKA_TRUST + 6)
+#define CKA_TRUST_CRL_SIGN                    (CKA_TRUST + 7)
+#define CKA_TRUST_SERVER_AUTH                 (CKA_TRUST + 8)
+#define CKA_TRUST_CLIENT_AUTH                 (CKA_TRUST + 9)
+#define CKA_TRUST_CODE_SIGNING                (CKA_TRUST + 10)
+#define CKA_TRUST_EMAIL_PROTECTION            (CKA_TRUST + 11)
+#define CKA_TRUST_IPSEC_END_SYSTEM            (CKA_TRUST + 12)
+#define CKA_TRUST_IPSEC_TUNNEL                (CKA_TRUST + 13)
+#define CKA_TRUST_IPSEC_USER                  (CKA_TRUST + 14)
+#define CKA_TRUST_TIME_STAMPING               (CKA_TRUST + 15)
+#define CKA_TRUST_STEP_UP_APPROVED            (CKA_TRUST + 16)
+#define CKA_CERT_SHA1_HASH                    (CKA_TRUST + 100)
+#define CKA_CERT_MD5_HASH                     (CKA_TRUST + 101)
+#endif
+
 #define CKM_RSA_PKCS_KEY_PAIR_GEN             0x00000000UL
 #define CKM_RSA_PKCS                          0x00000001UL
 #define CKM_RSA_X_509                         0x00000003UL
@@ -215,6 +260,15 @@ extern "C" {
 #define CKM_RSA_PKCS_PSS                      0x0000000DUL
 #define CKM_DH_PKCS_KEY_PAIR_GEN              0x00000020UL
 #define CKM_DH_PKCS_DERIVE                    0x00000021UL
+#define CKM_SHA256_RSA_PKCS                   0x00000040UL
+#define CKM_SHA384_RSA_PKCS                   0x00000041UL
+#define CKM_SHA512_RSA_PKCS                   0x00000042UL
+#define CKM_SHA256_RSA_PKCS_PSS               0x00000043UL
+#define CKM_SHA384_RSA_PKCS_PSS               0x00000044UL
+#define CKM_SHA512_RSA_PKCS_PSS               0x00000045UL
+#define CKM_SHA224_RSA_PKCS                   0x00000046UL
+#define CKM_SHA224_RSA_PKCS_PSS               0x00000047UL
+#define CKM_MD5                               0x00000210UL
 #define CKM_MD5_HMAC                          0x00000211UL
 #define CKM_SHA1                              0x00000220UL
 #define CKM_SHA1_HMAC                         0x00000221UL
@@ -226,17 +280,51 @@ extern "C" {
 #define CKM_SHA384_HMAC                       0x00000261UL
 #define CKM_SHA512                            0x00000270UL
 #define CKM_SHA512_HMAC                       0x00000271UL
+#define CKM_SHA3_256                          0x000002B0UL
+#define CKM_SHA3_256_HMAC                     0x000002B1UL
+#define CKM_SHA3_224                          0x000002B5UL
+#define CKM_SHA3_224_HMAC                     0x000002B6UL
+#define CKM_SHA3_384                          0x000002C0UL
+#define CKM_SHA3_384_HMAC                     0x000002C1UL
+#define CKM_SHA3_512                          0x000002D0UL
+#define CKM_SHA3_512_HMAC                     0x000002D1UL
 #define CKM_GENERIC_SECRET_KEY_GEN            0x00000350UL
+#define CKM_SSL3_MASTER_KEY_DERIVE            0x00000371UL
+#define CKM_TLS_PRF                           0x00000378UL
+#define CKM_TLS12_MASTER_KEY_DERIVE           0x000003E0UL
+#define CKM_TLS12_KEY_AND_MAC_DERIVE          0x000003E1UL
+#define CKM_TLS12_MASTER_KEY_DERIVE_DH        0x000003E2UL
+#define CKM_TLS_MAC                           0x000003E4UL
 #define CKM_EC_KEY_PAIR_GEN                   0x00001040UL
 #define CKM_ECDSA                             0x00001041UL
+#define CKM_ECDSA_SHA1                        0x00001042UL
+#define CKM_ECDSA_SHA224                      0x00001043UL
+#define CKM_ECDSA_SHA256                      0x00001044UL
+#define CKM_ECDSA_SHA384                      0x00001045UL
+#define CKM_ECDSA_SHA512                      0x00001046UL
 #define CKM_ECDH1_DERIVE                      0x00001050UL
 #define CKM_ECDH1_COFACTOR_DERIVE             0x00001051UL
 #define CKM_AES_KEY_GEN                       0x00001080UL
+#define CKM_AES_ECB                           0x00001081UL
 #define CKM_AES_CBC                           0x00001082UL
 #define CKM_AES_CBC_PAD                       0x00001085UL
+#define CKM_AES_CTR                           0x00001086UL
 #define CKM_AES_GCM                           0x00001087UL
 #define CKM_AES_CCM                           0x00001088UL
-#define CKM_AES_ECB                           0x000001081L
+#define CKM_AES_CTS                           0x00001089UL
+#define CKM_AES_CMAC                          0x0000108AUL
+#define CKM_AES_CMAC_GENERAL                  0x0000108BUL
+#define CKM_AES_CBC_ENCRYPT_DATA              0x00001105UL
+#define CKM_AES_KEY_WRAP                      0x00002109UL
+#define CKM_AES_KEY_WRAP_PAD                  0x0000210AUL
+#define CKM_HKDF_DERIVE                       0x0000402AUL
+#define CKM_HKDF_DATA                         0x0000402BUL
+#define CKM_HKDF_KEY_GEN                      0x0000402CUL
+
+#ifdef WOLFPKCS11_NSS
+#define CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE    (CKM_NSS + 25)
+#define CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_DH (CKM_NSS + 26)
+#endif
 
 #define CKR_OK                                0x00000000UL
 #define CKR_CANCEL                            0x00000001UL
@@ -341,6 +429,10 @@ extern "C" {
 #define CKC_X_509_ATTR_CERT                   0x00000001UL
 #define CKC_WTLS                              0x00000002UL
 #define CKC_VENDOR_DEFINED                    0x80000000UL
+
+#define CKF_HKDF_SALT_NULL                    0x00000001UL
+#define CKF_HKDF_SALT_DATA                    0x00000002UL
+#define CKF_HKDF_SALT_KEY                     0x00000004UL
 
 typedef unsigned char     CK_BYTE;
 typedef CK_BYTE           CK_CHAR;
@@ -532,6 +624,34 @@ typedef struct CK_ECDH1_DERIVE_PARAMS {
 } CK_ECDH1_DERIVE_PARAMS;
 typedef CK_ECDH1_DERIVE_PARAMS* CK_ECDH1_DERIVE_PARAMS_PTR;
 
+typedef struct CK_AES_CBC_ENCRYPT_DATA_PARAMS {
+    CK_BYTE      iv[16];
+    CK_BYTE_PTR  pData;
+    CK_ULONG     length;
+} CK_AES_CBC_ENCRYPT_DATA_PARAMS;
+typedef CK_AES_CBC_ENCRYPT_DATA_PARAMS* CK_AES_CBC_ENCRYPT_DATA_PARAMS_PTR;
+
+typedef CK_ULONG CK_MAC_GENERAL_PARAMS;
+typedef CK_MAC_GENERAL_PARAMS* CK_MAC_GENERAL_PARAMS_PTR;
+
+typedef struct CK_HKDF_PARAMS {
+    CK_BBOOL bExtract;
+    CK_BBOOL bExpand;
+    CK_MECHANISM_TYPE prfHashMechanism;
+    CK_ULONG ulSaltType;
+    CK_BYTE_PTR pSalt;
+    CK_ULONG ulSaltLen;
+    CK_OBJECT_HANDLE hSaltKey;
+    CK_BYTE_PTR pInfo;
+    CK_ULONG ulInfoLen;
+} CK_HKDF_PARAMS;
+typedef CK_HKDF_PARAMS* CK_HKDF_PARAMS_PTR;
+
+typedef struct CK_AES_CTR_PARAMS {
+    CK_ULONG ulCounterBits;
+    CK_BYTE cb[16];
+} CK_AES_CTR_PARAMS;
+typedef CK_AES_CTR_PARAMS* CK_AES_CTR_PARAMS_PTR;
 
 typedef struct CK_GCM_PARAMS {
     CK_BYTE_PTR       pIv;
@@ -554,6 +674,56 @@ typedef struct CK_CCM_PARAMS {
 } CK_CCM_PARAMS;
 typedef CK_CCM_PARAMS* CK_CCM_PARAMS_PTR;
 
+typedef struct CK_SSL3_RANDOM_DATA {
+    CK_BYTE_PTR pClientRandom;
+    CK_ULONG ulClientRandomLen;
+    CK_BYTE_PTR pServerRandom;
+    CK_ULONG ulServerRandomLen;
+} CK_SSL3_RANDOM_DATA;
+
+typedef struct CK_TLS12_MASTER_KEY_DERIVE_PARAMS {
+    CK_SSL3_RANDOM_DATA RandomInfo;
+    CK_VERSION_PTR pVersion;
+    CK_MECHANISM_TYPE prfHashMechanism;
+} CK_TLS12_MASTER_KEY_DERIVE_PARAMS;
+typedef CK_TLS12_MASTER_KEY_DERIVE_PARAMS*
+    CK_TLS12_MASTER_KEY_DERIVE_PARAMS_PTR;
+
+typedef struct CK_SSL3_KEY_MAT_OUT {
+    CK_OBJECT_HANDLE hClientMacSecret;
+    CK_OBJECT_HANDLE hServerMacSecret;
+    CK_OBJECT_HANDLE hClientKey;
+    CK_OBJECT_HANDLE hServerKey;
+    CK_BYTE_PTR pIVClient;
+    CK_BYTE_PTR pIVServer;
+} CK_SSL3_KEY_MAT_OUT;
+typedef CK_SSL3_KEY_MAT_OUT* CK_SSL3_KEY_MAT_OUT_PTR;
+
+typedef struct CK_TLS12_KEY_MAT_PARAMS {
+    CK_ULONG ulMacSizeInBits;
+    CK_ULONG ulKeySizeInBits;
+    CK_ULONG ulIVSizeInBits;
+    CK_BBOOL bIsExport; /* Always CK_FALSE. */
+    CK_SSL3_RANDOM_DATA RandomInfo;
+    CK_SSL3_KEY_MAT_OUT_PTR pReturnedKeyMaterial;
+    CK_MECHANISM_TYPE prfHashMechanism;
+} CK_TLS12_KEY_MAT_PARAMS;
+
+#ifdef WOLFPKCS11_NSS
+typedef struct CK_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_PARAMS {
+    CK_MECHANISM_TYPE prfHashMechanism;
+    CK_BYTE_PTR pSessionHash;
+    CK_ULONG ulSessionHashLen;
+    CK_VERSION_PTR pVersion;
+} CK_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_PARAMS;
+#endif
+
+typedef struct CK_TLS_MAC_PARAMS {
+    CK_MECHANISM_TYPE prfHashMechanism;
+    CK_ULONG ulMacLength;
+    CK_ULONG ulServerOrClient;
+} CK_TLS_MAC_PARAMS;
+typedef CK_TLS_MAC_PARAMS* CK_TLS_MAC_PARAMS_PTR;
 
 /* Function list types. */
 typedef struct CK_FUNCTION_LIST CK_FUNCTION_LIST;
@@ -930,4 +1100,3 @@ struct CK_FUNCTION_LIST {
 #endif
 
 #endif /* _PKCS11_H_ */
-

@@ -150,7 +150,7 @@ static CK_RV test_op_state(void* args)
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_RV ret;
     byte data;
-    CK_ULONG len;
+    CK_ULONG len = 0;
 
     ret = funcList->C_GetOperationState(CK_INVALID_HANDLE, NULL, &len);
     CHECK_CKR_FAIL(ret, CKR_SESSION_HANDLE_INVALID,
@@ -159,16 +159,6 @@ static CK_RV test_op_state(void* args)
         ret = funcList->C_GetOperationState(session, &data, NULL);
         CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD,
                                              "Get Operation State - no length");
-    }
-    if (ret == CKR_OK) {
-        ret = funcList->C_GetOperationState(session, NULL, &len);
-        CHECK_CKR_FAIL(ret, CKR_STATE_UNSAVEABLE,
-                                         "Get Operation State - not available");
-    }
-    if (ret == CKR_OK) {
-        ret = funcList->C_GetOperationState(session, NULL, &len);
-        CHECK_CKR_FAIL(ret, CKR_STATE_UNSAVEABLE,
-                                         "Get Operation State - not available");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_SetOperationState(CK_INVALID_HANDLE, &data, len, 0,
@@ -443,6 +433,7 @@ static CK_RV test_object(void* args)
                                                                     &sessionRO);
         CHECK_CKR(ret, "Open Session - read-only");
     }
+#ifndef WOLFPKCS11_NSS
     if (ret == CKR_OK) {
         ret = funcList->C_CreateObject(sessionRO, tmpl, tmplCnt, &obj);
         CHECK_CKR_FAIL(ret, CKR_SESSION_READ_ONLY,
@@ -459,6 +450,7 @@ static CK_RV test_object(void* args)
         CHECK_CKR_FAIL(ret, CKR_SESSION_READ_ONLY,
                                          "Destroy object in read-only session");
     }
+#endif
     if (ret == CKR_OK) {
         ret = funcList->C_DestroyObject(session, objOnToken);
         CHECK_CKR(ret, "Destroy Object");
@@ -719,7 +711,6 @@ static CK_RV test_attribute_types(void* args)
         { CKA_WRAP_TEMPLATE,       NULL,                0                     },
         { CKA_UNWRAP_TEMPLATE,     NULL,                0                     },
         { CKA_ALLOWED_MECHANISMS,  NULL,                0                     },
-        { CKA_SUBJECT,             NULL,                0                     },
     };
     CK_ULONG badAttrsTmplCnt = sizeof(badAttrsTmpl) / sizeof(*badAttrsTmpl);
     CK_DATE startDate = { {'2','0','1','8'}, {'0','1'}, {'0','1'} };
@@ -830,7 +821,8 @@ static CK_RV test_attributes_secret(void* args)
     ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE, &key);
     if (ret == CKR_OK) {
         ret = funcList->C_GetAttributeValue(session, key, tmpl, tmplCnt);
-        CHECK_CKR(ret, "Get Attributes Secret Key");
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_SENSITIVE,
+                       "Get Attributes Secret Key");
     }
     if (ret == CKR_OK) {
         for (i = 0; i < (int)badTmplCnt; i++) {
@@ -1259,31 +1251,6 @@ static CK_RV test_digest(void* args)
         CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD, "Digest Final no hash size");
     }
 
-    if (ret == CKR_OK) {
-        ret = funcList->C_DigestInit(session, &mech);
-        CHECK_CKR_FAIL(ret, CKR_MECHANISM_INVALID, "Digest Init not supported");
-    }
-    if (ret == CKR_OK) {
-        ret = funcList->C_Digest(session, data, dataSz, hash, &hashSz);
-        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
-                                                      "Digest not initialized");
-    }
-    if (ret == CKR_OK) {
-        ret = funcList->C_DigestUpdate(session, data, dataSz);
-        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
-                                               "Digest Update not initialized");
-    }
-    if (ret == CKR_OK) {
-        ret = funcList->C_DigestKey(session, key);
-        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
-                                                  "Digest Key not initialized");
-    }
-    if (ret == CKR_OK) {
-        ret = funcList->C_DigestFinal(session, hash, &hashSz);
-        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
-                                                "Digest Final not initialized");
-    }
-
     funcList->C_DestroyObject(session, key);
 
     return ret;
@@ -1555,8 +1522,13 @@ static CK_RV test_recover(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyRecover(session, sig, sigSz, data, &dataSz);
+#ifndef NO_RSA
         CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
                                               "Verify Recover not initialized");
+#else
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_INVALID,
+                                              "Verify Recover not initialized");
+#endif
     }
 
     funcList->C_DestroyObject(session, key);
@@ -1832,13 +1804,17 @@ static CK_RV test_wrap_unwrap_key(void* args)
     CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
     byte wrappedKey[32], wrappingKeyData[32], keyData[32];
     CK_ULONG wrappedKeyLen;
+    CK_KEY_TYPE  keyType = CKK_GENERIC_SECRET;
     CK_ATTRIBUTE tmpl[] = {
-      {CKA_VALUE, CK_NULL_PTR, 0}
+      {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+      {CKA_KEY_TYPE, &keyType, sizeof(keyType)},
+      {CKA_VALUE, CK_NULL_PTR, 0},
     };
     CK_ULONG     tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
 
     memset(wrappingKeyData, 9, sizeof(wrappingKeyData));
     memset(keyData, 7, sizeof(keyData));
+    memset(&mech, 0, sizeof(mech));
     wrappedKeyLen = sizeof(wrappedKey);
 
     ret = get_generic_key(session, wrappingKeyData, sizeof(wrappingKeyData),
@@ -1878,8 +1854,13 @@ static CK_RV test_wrap_unwrap_key(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_WrapKey(session, &mech, wrappingKey, key, wrappedKey,
                                                                 &wrappedKeyLen);
+#ifndef WOLFPKCS11_NO_STORE
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_INVALID,
+                                            "Wrap Key mechanism not supported");
+#else
         CHECK_CKR_FAIL(ret, CKR_KEY_NOT_WRAPPABLE,
                                             "Wrap Key mechanism not supported");
+#endif
     }
 
     /* done with key, destroy now, since uwrap returns new handle */
@@ -1938,6 +1919,7 @@ static CK_RV test_wrap_unwrap_key(void* args)
     return ret;
 }
 
+#ifndef NO_DH
 static CK_RV test_derive_key(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -2003,6 +1985,7 @@ static CK_RV test_derive_key(void* args)
 
     return ret;
 }
+#endif
 
 #if !defined(NO_RSA) || defined(HAVE_ECC)
 static CK_RV test_pubkey_sig_fail(CK_SESSION_HANDLE session, CK_MECHANISM* mech,
@@ -4884,6 +4867,7 @@ static CK_RV test_aes_cbc_fixed_key(void* args)
     CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
 
     (void)aes_128_cbc_pad_exp;
+    (void)aes_128_cbc_encrypt_exp;
 
     ret = get_aes_128_key(session, NULL, 0, &key);
     if (ret == CKR_OK)
@@ -5509,6 +5493,303 @@ static CK_RV test_aes_gcm_gen_key_id(void* args)
         ret = test_aes_gcm_encdec(session, NULL, 0, 128, NULL, NULL, key);
     if (ret == CKR_OK)
         ret = test_aes_gcm_update(session, NULL, 0, 128, NULL, NULL, key);
+
+    funcList->C_DestroyObject(session, key);
+
+    return ret;
+}
+#endif
+
+#ifdef HAVE_AESCTS
+static CK_RV test_aes_cts_encdec(CK_SESSION_HANDLE session, unsigned char* exp,
+                                 CK_OBJECT_HANDLE key)
+{
+    CK_RV ret;
+    byte plain[32], enc[32], dec[32], iv[16];
+    CK_ULONG plainSz, encSz, decSz, ivSz;
+    CK_MECHANISM mech;
+
+    memset(plain, 9, sizeof(plain));
+    memset(iv, 9, sizeof(iv));
+    plainSz = sizeof(plain);
+    encSz = sizeof(enc);
+    decSz = sizeof(dec);
+    ivSz = sizeof(iv);
+
+    mech.mechanism      = CKM_AES_CTS;
+    mech.ulParameterLen = ivSz;
+    mech.pParameter     = iv;
+
+    ret = funcList->C_EncryptInit(session, &mech, key);
+    CHECK_CKR(ret, "AES-CTS Encrypt Init");
+    if (ret == CKR_OK) {
+        encSz = 0;
+        ret = funcList->C_Encrypt(session, plain, plainSz, NULL, &encSz);
+        CHECK_CKR(ret, "AES-CTS Encrypt no enc");
+    }
+    if (ret == CKR_OK && encSz != plainSz) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-CTS Encrypt encrypted length");
+    }
+    if (ret == CKR_OK) {
+        encSz = 0;
+        ret = funcList->C_Encrypt(session, plain, plainSz, enc, &encSz);
+        CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
+                                               "AES-CTS Encrypt zero enc size");
+        encSz = sizeof(enc);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Encrypt(session, plain, plainSz, enc, &encSz);
+        CHECK_CKR(ret, "AES-CTS Encrypt");
+    }
+    if (ret == CKR_OK && exp != NULL) {
+        if (encSz != plainSz || XMEMCMP(enc, exp, encSz) != 0)
+            ret = -1;
+        CHECK_CKR(ret, "AES-CTS Encrypt Result not matching expected");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DecryptInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CTS Decrypt Init");
+    }
+    if (ret == CKR_OK) {
+        decSz = 0;
+        ret = funcList->C_Decrypt(session, enc, encSz, NULL, &decSz);
+        CHECK_CKR(ret, "AES-CTS Decrypt");
+    }
+    if (ret == CKR_OK && decSz != encSz) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-CTS Decrypt decrypted length");
+    }
+    if (ret == CKR_OK) {
+        decSz = 0;
+        ret = funcList->C_Decrypt(session, enc, encSz, dec, &decSz);
+        CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
+                                               "AES-CTS Decrypt zero dec size");
+        decSz = sizeof(dec);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Decrypt(session, enc, encSz, dec, &decSz);
+        CHECK_CKR(ret, "AES-CTS Decrypt");
+    }
+    if (ret == CKR_OK) {
+        if (decSz != plainSz || XMEMCMP(plain, dec, decSz) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "AES-CTS Decrypted data match plain text");
+        }
+    }
+
+
+    return ret;
+}
+
+static CK_RV test_aes_cts_update(CK_SESSION_HANDLE session, unsigned char* exp,
+                                 CK_OBJECT_HANDLE key, CK_ULONG inc)
+{
+    CK_RV ret;
+    byte plain[32], enc[32], dec[32], iv[16];
+    byte* pIn;
+    byte* pOut;
+    CK_ULONG plainSz, encSz, decSz, ivSz, remSz, cumSz, partSz, inRemSz;
+    CK_MECHANISM mech;
+
+    memset(plain, 9, sizeof(plain));
+    memset(iv, 9, sizeof(iv));
+    memset(enc, 0, sizeof(enc));
+    memset(dec, 0, sizeof(dec));
+    plainSz = sizeof(plain);
+    encSz = sizeof(enc);
+    decSz = sizeof(dec);
+    ivSz = sizeof(iv);
+    remSz = encSz;
+    cumSz = 0;
+
+    mech.mechanism      = CKM_AES_CTS;
+    mech.ulParameterLen = ivSz;
+    mech.pParameter     = iv;
+
+    ret = funcList->C_EncryptInit(session, &mech, key);
+    CHECK_CKR(ret, "AES-CTS Encrypt Init");
+    if (ret == CKR_OK) {
+        encSz = 1;
+        ret = funcList->C_EncryptUpdate(session, plain, 1, NULL, &encSz);
+        CHECK_CKR(ret, "AES-CTS Encrypt Update");
+    }
+    if (ret == CKR_OK && encSz != 33) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-CTS Encrypt Update encrypted size");
+    }
+    if (ret == CKR_OK) {
+        encSz = 0;
+        ret = funcList->C_EncryptUpdate(session, plain, 16, NULL, &encSz);
+        CHECK_CKR(ret, "AES-CTS Encrypt Update");
+    }
+    if (ret == CKR_OK && encSz != 48) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-CTS Encrypt Update encrypted size");
+    }
+    if (ret == CKR_OK) {
+        encSz = 0;
+        ret = funcList->C_EncryptUpdate(session, plain, 16, enc, &encSz);
+        CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
+                                        "AES-CTS Encrypt Update zero enc size");
+        encSz = sizeof(enc);
+    }
+    if (ret == CKR_OK) {
+        pIn = plain;
+        pOut = enc;
+        inRemSz = plainSz;
+        partSz = inc;
+        while (ret == CKR_OK && inRemSz > 0) {
+            if (inc > inRemSz)
+                partSz = inRemSz;
+            ret = funcList->C_EncryptUpdate(session, pIn, partSz, pOut, &encSz);
+            CHECK_CKR(ret, "AES-CTS Encrypt Update");
+            pIn += partSz;
+            inRemSz -= partSz;
+            pOut += encSz;
+            cumSz += encSz;
+            encSz = (remSz -= encSz);
+        }
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_EncryptFinal(session, pOut, &encSz);
+        CHECK_CKR(ret, "AES-CTS Encrypt Final");
+    }
+    if (ret == CKR_OK && encSz != 32) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-CTS Encrypt Final encrypted size");
+    }
+    if (ret == CKR_OK && exp != NULL) {
+        if (encSz != plainSz || XMEMCMP(enc, exp, encSz) != 0)
+            ret = -1;
+        CHECK_CKR(ret, "AES-CTS Encrypt Update Result not matching expected");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DecryptInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CTS Decrypt Init");
+    }
+    if (ret == CKR_OK) {
+        decSz = 1;
+        ret = funcList->C_DecryptUpdate(session, enc, 1, NULL, &decSz);
+        CHECK_CKR(ret, "AES-CTS Decrypt Update");
+    }
+    if (ret == CKR_OK && decSz != 33) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-CTS Decrypt Update encrypted size");
+    }
+    if (ret == CKR_OK) {
+        decSz = 0;
+        ret = funcList->C_DecryptUpdate(session, enc, 16, NULL, &decSz);
+        CHECK_CKR(ret, "AES-CTS Decrypt Update");
+    }
+    if (ret == CKR_OK && decSz != 48) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-CTS Decrypt Update encrypted size");
+    }
+    if (ret == CKR_OK) {
+        decSz = 0;
+        ret = funcList->C_DecryptUpdate(session, enc, 16, dec, &decSz);
+        CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
+                                        "AES-CTS Encrypt Update zero dec size");
+        decSz = sizeof(dec);
+    }
+    if (ret == CKR_OK) {
+        pIn = enc;
+        pOut = dec;
+        cumSz = 0;
+        remSz = decSz;
+        inRemSz = encSz;
+        partSz = inc;
+        while (ret == CKR_OK && inRemSz > 0) {
+            if (inc > inRemSz)
+                partSz = inRemSz;
+            ret = funcList->C_DecryptUpdate(session, pIn, partSz, pOut, &decSz);
+            CHECK_CKR(ret, "AES-CTS Decrypt Update");
+            pIn += partSz;
+            inRemSz -= partSz;
+            pOut += decSz;
+            cumSz += decSz;
+            decSz = (remSz -= decSz);
+        }
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DecryptFinal(session, pOut, &decSz);
+        CHECK_CKR(ret, "AES-CTS Decrypt Final");
+    }
+    if (ret == CKR_OK && decSz != 32) {
+        ret = -1;
+        CHECK_CKR(ret, "AES-CTS Decrypt Final decrypted size");
+    }
+    if (ret == CKR_OK) {
+        if (decSz != plainSz) {
+            ret = -1;
+            CHECK_CKR(ret, "AES-CTS Decrypted data length match");
+        }
+        else if (XMEMCMP(plain, dec, decSz) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "AES-CTS Decrypted data match plain text");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_EncryptInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CTS Encrypt Init");
+    }
+    if (ret == CKR_OK) {
+        encSz = sizeof(enc);
+        ret = funcList->C_EncryptUpdate(session, plain, 1, enc, &encSz);
+        CHECK_CKR(ret, "AES-CTS Encrypt Update");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(encSz == 0, ret,
+                             "AES-CTS Encrypt Update less than block out size");
+    }
+    if (ret == CKR_OK) {
+        encSz = sizeof(enc);
+        ret = funcList->C_EncryptFinal(session, enc, &encSz);
+        CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED,
+                                  "AES-CTS Encrypt Final less than two blocks");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DecryptInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CTS Decrypt Init");
+    }
+    if (ret == CKR_OK) {
+        decSz = sizeof(dec);
+        ret = funcList->C_DecryptUpdate(session, enc, 1, dec, &decSz);
+        CHECK_CKR(ret, "AES-CTS Decrypt Update");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(decSz == 0, ret,
+                             "AES-CTS Decrypt Update less than block out size");
+    }
+    if (ret == CKR_OK) {
+        decSz = sizeof(dec);
+        ret = funcList->C_DecryptFinal(session, dec, &decSz);
+        CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED,
+                                  "AES-CTS Decrypt Final less than two blocks");
+    }
+
+    return ret;
+}
+
+static CK_RV test_aes_cts_fixed_key(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+
+    ret = get_aes_128_key(session, NULL, 0, &key);
+    if (ret == CKR_OK)
+        ret = test_aes_cts_encdec(session, aes_128_cts_exp, key);
+    if (ret == CKR_OK)
+        ret = test_aes_cts_update(session, aes_128_cts_exp, key, 16);
+    if (ret == CKR_OK)
+        ret = test_aes_cts_update(session, aes_128_cts_exp, key, 1);
+    if (ret == CKR_OK)
+        ret = test_aes_cts_update(session, aes_128_cts_exp, key, 5);
+    if (ret == CKR_OK)
+        ret = test_aes_cts_update(session, aes_128_cts_exp, key, 18);
 
     funcList->C_DestroyObject(session, key);
 
@@ -6295,7 +6576,9 @@ static TEST_FUNC testFunc[] = {
     PKCS11MTT_CASE(test_generate_key_pair),
 #endif
     PKCS11MTT_CASE(test_wrap_unwrap_key),
+#ifndef NO_DH
     PKCS11MTT_CASE(test_derive_key),
+#endif
 #ifndef NO_RSA
     PKCS11MTT_CASE(test_rsa_fixed_keys_raw),
     PKCS11MTT_CASE(test_rsa_fixed_keys_pkcs15_enc),
@@ -6346,6 +6629,9 @@ static TEST_FUNC testFunc[] = {
     PKCS11MTT_CASE(test_aes_gcm_fail),
     PKCS11MTT_CASE(test_aes_gcm_gen_key),
     PKCS11MTT_CASE(test_aes_gcm_gen_key_id),
+#endif
+#ifdef HAVE_AESCTS
+    PKCS11MTT_CASE(test_aes_cts_fixed_key),
 #endif
 #endif
 #ifndef NO_HMAC

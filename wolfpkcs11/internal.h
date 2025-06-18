@@ -48,9 +48,21 @@
 C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #endif
 
+#if defined(WOLFPKCS11_HKDF) && (!defined(HAVE_HKDF) || defined(NO_HMAC))
+#error Compiling with HKDF requires HMAC and wolfSSL to be compiled with HKDF.
+#endif
 
 #ifdef __cplusplus
 extern "C" {
+#endif
+
+/* We need the next two for NSS, just for storage, even if we have no algos */
+#ifndef WC_MD5_DIGEST_SIZE
+#define WC_MD5_DIGEST_SIZE 16
+#endif
+
+#ifndef WC_SHA_DIGEST_SIZE
+#define WC_SHA_DIGEST_SIZE 20
 #endif
 
 /* Crypto-Ki supported version information. */
@@ -60,7 +72,11 @@ extern "C" {
 
 /* Maximum number of sessions allocated per slot/token. */
 #ifndef WP11_SESSION_CNT_MAX
+#ifdef WOLFPKCS11_NSS
+#define WP11_SESSION_CNT_MAX           7000
+#else
 #define WP11_SESSION_CNT_MAX           70
+#endif
 #endif
 /* Minimum number of sessions allocated per slot/token. */
 #ifndef WP11_SESSION_CNT_MIN
@@ -73,7 +89,11 @@ extern "C" {
 
 /* Maximum number of objects in a session. */
 #ifndef WP11_SESSION_OBJECT_CNT_MAX
+#ifdef WOLFPKCS11_NSS
+#define WP11_SESSION_OBJECT_CNT_MAX    6400
+#else
 #define WP11_SESSION_OBJECT_CNT_MAX    8
+#endif
 #endif
 
 /* Maximum number of objects in a token. */
@@ -106,18 +126,31 @@ extern "C" {
 #endif
 
 /* Flags for object. */
-#define WP11_FLAG_PRIVATE              0x0001
-#define WP11_FLAG_SENSITIVE            0x0002
-#define WP11_FLAG_EXTRACTABLE          0x0004
-#define WP11_FLAG_MODIFIABLE           0x0008
-#define WP11_FLAG_ALWAYS_SENSITIVE     0x0010
-#define WP11_FLAG_NEVER_EXTRACTABLE    0x0020
-#define WP11_FLAG_ALWAYS_AUTHENTICATE  0x0040
-#define WP11_FLAG_WRAP_WITH_TRUSTED    0x0080
-#define WP11_FLAG_TRUSTED              0x0100
+#define WP11_FLAG_PRIVATE              0x00000001
+#define WP11_FLAG_SENSITIVE            0x00000002
+#define WP11_FLAG_EXTRACTABLE          0x00000004
+#define WP11_FLAG_MODIFIABLE           0x00000008
+#define WP11_FLAG_ALWAYS_SENSITIVE     0x00000010
+#define WP11_FLAG_NEVER_EXTRACTABLE    0x00000020
+#define WP11_FLAG_ALWAYS_AUTHENTICATE  0x00000040
+#define WP11_FLAG_WRAP_WITH_TRUSTED    0x00000080
+#define WP11_FLAG_TRUSTED              0x00000100
 #ifdef WOLFPKCS11_TPM
-#define WP11_FLAG_TPM                  0x0200
+#define WP11_FLAG_TPM                  0x00000200
 #endif
+#define WP11_FLAG_DECRYPT              0x00000400
+#define WP11_FLAG_ENCRYPT              0x00000800
+#define WP11_FLAG_SIGN                 0x00001000
+#define WP11_FLAG_VERIFY               0x00002000
+#define WP11_FLAG_SIGN_RECOVER         0x00004000
+#define WP11_FLAG_VERIFY_RECOVER       0x00008000
+#define WP11_FLAG_UNWRAP               0x00010000
+#define WP11_FLAG_WRAP                 0x00020000
+#define WP11_FLAG_DERIVE               0x00040000
+
+/* Flags for token. */
+#define WP11_TOKEN_FLAG_USER_PIN_SET   0x00000001
+#define WP11_TOKEN_FLAG_SO_PIN_SET     0x00000002
 
 /* Operation session has initialized for. */
 #define WP11_INIT_AES_CBC_ENC          0x0001
@@ -130,8 +163,13 @@ extern "C" {
 #define WP11_INIT_AES_CCM_DEC          0x0008
 #define WP11_INIT_AES_ECB_ENC          0x0009
 #define WP11_INIT_AES_ECB_DEC          0x000A
+#define WP11_INIT_AES_CTS_ENC          0x000B
+#define WP11_INIT_AES_CTS_DEC          0x000C
+#define WP11_INIT_AES_CTR_ENC          0x000D
+#define WP11_INIT_AES_CTR_DEC          0x000E
 #define WP11_INIT_HMAC_SIGN            0x0010
 #define WP11_INIT_HMAC_VERIFY          0x0011
+#define WP11_INIT_DIGEST               0x0012
 #define WP11_INIT_RSA_X_509_ENC        0x0020
 #define WP11_INIT_RSA_X_509_DEC        0x0021
 #define WP11_INIT_RSA_PKCS_ENC         0x0022
@@ -144,8 +182,30 @@ extern "C" {
 #define WP11_INIT_RSA_PKCS_PSS_VERIFY  0x0033
 #define WP11_INIT_RSA_X_509_SIGN       0x0034
 #define WP11_INIT_RSA_X_509_VERIFY     0x0035
+#define WP11_INIT_RSA_PKCS_VERIFY_RECOVER 0x0036
+#define WP11_INIT_RSA_X_509_VERIFY_RECOVER 0x0037
 #define WP11_INIT_ECDSA_SIGN           0x0040
 #define WP11_INIT_ECDSA_VERIFY         0x0041
+#define WP11_INIT_AES_CMAC_SIGN        0x0050
+#define WP11_INIT_AES_CMAC_VERIFY      0x0051
+#define WP11_INIT_AES_KEYWRAP_ENC      0x0060
+#define WP11_INIT_AES_KEYWRAP_DEC      0x0061
+#define WP11_INIT_TLS_MAC_SIGN         0x0070
+#define WP11_INIT_TLS_MAC_VERIFY       0x0071
+/* Some operations can have an additional hashing step before the sign/verify */
+#define WP11_INIT_DIGEST_SHIFT         12
+#define WP11_INIT_DIGEST_MASK          (0xF << WP11_INIT_DIGEST_SHIFT)
+#define WP11_INIT_SHA1                 (0x1 << WP11_INIT_DIGEST_SHIFT)
+#define WP11_INIT_SHA224               (0x2 << WP11_INIT_DIGEST_SHIFT)
+#define WP11_INIT_SHA256               (0x3 << WP11_INIT_DIGEST_SHIFT)
+#define WP11_INIT_SHA384               (0x4 << WP11_INIT_DIGEST_SHIFT)
+#define WP11_INIT_SHA512               (0x5 << WP11_INIT_DIGEST_SHIFT)
+#define WP11_INIT_SHA3_224             (0x6 << WP11_INIT_DIGEST_SHIFT)
+#define WP11_INIT_SHA3_256             (0x7 << WP11_INIT_DIGEST_SHIFT)
+#define WP11_INIT_SHA3_384             (0x8 << WP11_INIT_DIGEST_SHIFT)
+#define WP11_INIT_SHA3_512             (0x9 << WP11_INIT_DIGEST_SHIFT)
+#define WP11_INIT_MD5                  (0xA << WP11_INIT_DIGEST_SHIFT)
+
 
 /* scrypt parameters when generating hash from PIN. */
 #ifndef WP11_HASH_PIN_COST
@@ -160,7 +220,11 @@ extern "C" {
 
 /* PIN length constraints. */
 #ifndef WP11_MIN_PIN_LEN
+#ifdef WOLFPKCS11_NSS
+#define WP11_MIN_PIN_LEN               0
+#else
 #define WP11_MIN_PIN_LEN               4
+#endif
 #endif
 #ifndef WP11_MAX_PIN_LEN
 #define WP11_MAX_PIN_LEN               32
@@ -218,6 +282,8 @@ void WP11_Slot_CloseSessions(WP11_Slot* slot);
 int WP11_Slot_HasSession(WP11_Slot* slot);
 int WP11_Slot_CheckSOPin(WP11_Slot* slot, char* pin, int pinLen);
 int WP11_Slot_CheckUserPin(WP11_Slot* slot, char* pin, int pinLen);
+int WP11_Slot_Has_Empty_Pin(WP11_Slot* slot);
+int WP11_Slot_SOPin_IsSet(WP11_Slot* slot);
 int WP11_Slot_SOLogin(WP11_Slot* slot, char* pin, int pinLen);
 int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen);
 void WP11_Slot_Logout(WP11_Slot* slot);
@@ -235,6 +301,11 @@ int WP11_Session_Get(CK_SESSION_HANDLE sessionHandle, WP11_Session** session);
 int WP11_Session_GetState(WP11_Session* session);
 int WP11_Session_IsRW(WP11_Session* session);
 int WP11_Session_IsOpInitialized(WP11_Session* session, int init);
+int WP11_Session_UpdateData(WP11_Session *session, byte *data, word32 dataLen);
+void WP11_Session_GetData(WP11_Session *session, byte** data, word32* dataLen);
+void WP11_Session_FreeData(WP11_Session *session);
+int WP11_Session_IsHashOpInitialized(WP11_Session* session, int mechanism);
+enum wc_HashType WP11_Session_ToHashType(WP11_Session* session);
 void WP11_Session_SetOpInitialized(WP11_Session* session, int init);
 WP11_Slot* WP11_Session_GetSlot(WP11_Session* session);
 CK_MECHANISM_TYPE WP11_Session_GetMechanism(WP11_Session* session);
@@ -246,6 +317,10 @@ int WP11_Session_SetOaepParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
                                CK_MECHANISM_TYPE mgf, byte* label, int labelSz);
 int WP11_Session_SetCbcParams(WP11_Session* session, unsigned char* iv, int enc,
                               WP11_Object* object);
+int WP11_Session_SetCtrParams(WP11_Session* session, CK_ULONG ulCounterBits,
+                              CK_BYTE* cb, WP11_Object* object);
+int WP11_Session_SetAesWrapParams(WP11_Session* session, byte* iv, word32 ivLen,
+                                  WP11_Object* object, int enc);
 int WP11_Session_SetGcmParams(WP11_Session* session, unsigned char* iv,
                               int ivSz, unsigned char* aad, int aadLen,
                               int tagBits);
@@ -253,6 +328,8 @@ int WP11_Session_SetCcmParams(WP11_Session* session, int dataSz,
                               unsigned char* iv, int ivSz,
                               unsigned char* aad, int aadSz,
                               int macSz);
+int WP11_Session_SetCtsParams(WP11_Session* session, unsigned char* iv,
+                              int enc, WP11_Object* object);
 int WP11_Session_AddObject(WP11_Session* session, int onToken,
                            WP11_Object* object);
 void WP11_Session_RemoveObject(WP11_Session* session, WP11_Object* object);
@@ -265,6 +342,7 @@ void WP11_Session_Find(WP11_Session* session, int onToken,
 int WP11_Session_FindGet(WP11_Session* session, CK_OBJECT_HANDLE* id);
 void WP11_Session_FindFinal(WP11_Session* session);
 
+int WP11_ConstantCompare(const byte* a, const byte* b, int length);
 
 int WP11_Object_New(WP11_Session* session, CK_KEY_TYPE type,
                     WP11_Object** object);
@@ -287,6 +365,11 @@ int WP11_Object_SetCert(WP11_Object* object, unsigned char** data,
 int WP11_Object_SetClass(WP11_Object* object, CK_OBJECT_CLASS objClass);
 CK_OBJECT_CLASS WP11_Object_GetClass(WP11_Object* object);
 
+#ifdef WOLFPKCS11_NSS
+int WP11_Object_SetTrust(WP11_Object* object, unsigned char** data,
+                         CK_ULONG* len);
+#endif
+
 int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
                      WP11_Object** object);
 int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
@@ -295,6 +378,7 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                         CK_ULONG len);
 int WP11_Object_MatchAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
                           byte* data, CK_ULONG len);
+int WP11_Generic_SerializeKey(WP11_Object* object, byte* output, word32* poutsz);
 
 int WP11_Rsa_SerializeKey(WP11_Object* object, byte* output, word32* poutsz);
 
@@ -341,6 +425,9 @@ int WP11_RsaPKCSPSS_Sign(unsigned char* hash, word32 hashLen,
 int WP11_RsaPKCSPSS_Verify(unsigned char* sig, word32 sigLen,
                            unsigned char* hash, word32 hashLen, int* stat,
                            WP11_Object* pub, WP11_Session* session);
+int WP11_Rsa_Verify_Recover(CK_MECHANISM_TYPE mechanism, unsigned char* sig,
+                            word32 sigLen, unsigned char* out,
+                            CK_ULONG_PTR outLen, WP11_Object* pub);
 
 int WP11_Ec_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
                             WP11_Slot* slot);
@@ -357,8 +444,28 @@ int WP11_Dh_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
 int WP11_Dh_Derive(unsigned char* pub, word32 pubLen, unsigned char* key,
                    word32* keyLen, WP11_Object* priv);
 
+int WP11_GenerateRandomKey(WP11_Object* secret, WP11_Slot* slot);
+
+int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
+                    unsigned char* key, word32* keyLen, WP11_Object* priv);
+
+int WP11_Tls12_Master_Key_Derive(CK_SSL3_RANDOM_DATA* random,
+                                 CK_MECHANISM_TYPE mech, const char* label,
+                                 CK_ULONG ulLabelLen, byte* enc,
+                                 CK_ULONG encLen, CK_BBOOL clientFirst,
+                                 WP11_Object* key);
+
+int WP11_Nss_Tls12_Master_Key_Derive(CK_BYTE_PTR pSessionHash,
+                                     CK_ULONG ulSessionHashLen,
+                                     CK_MECHANISM_TYPE mech, const char* label,
+                                     CK_ULONG ulLabelLen, byte* enc,
+                                     CK_ULONG encLen, WP11_Object* key);
+
 int WP11_AesGenerateKey(WP11_Object* secret, WP11_Slot* slot);
 
+int WP11_AesCbc_DeriveKey(unsigned char* plain, word32 plainSz,
+                        unsigned char* enc, byte* iv,
+                        WP11_Object* key);
 int WP11_AesCbc_PartLen(WP11_Session* session);
 int WP11_AesCbc_Encrypt(unsigned char* plain, word32 plainSz,
                         unsigned char* enc, word32* encSz,
@@ -388,6 +495,13 @@ int WP11_AesCbcPad_DecryptUpdate(unsigned char* enc, word32 encSz,
                                  WP11_Session* session);
 int WP11_AesCbcPad_DecryptFinal(unsigned char* dec, word32* decSz,
                                 WP11_Session* session);
+
+
+int WP11_AesCtr_Do(unsigned char* in, word32 inSz, unsigned char* out,
+        word32* outSz, WP11_Session* session);
+int WP11_AesCtr_Update(unsigned char* in, word32 inSz, unsigned char* out,
+        word32* outSz, WP11_Session* session);
+int WP11_AesCtr_Final(WP11_Session* session);
 
 int WP11_AesGcm_GetTagBits(WP11_Session* session);
 int WP11_AesGcm_EncDataLen(WP11_Session* session);
@@ -422,6 +536,42 @@ int WP11_AesEcb_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
                         word32* decSz, WP11_Object* secret,
                         WP11_Session* session);
 
+int WP11_AesKeyWrap_Encrypt(unsigned char* plain, word32 plainSz,
+        unsigned char* enc, word32* encSz, WP11_Session* session);
+int WP11_AesKeyWrap_Decrypt(unsigned char* enc, word32 encSz,
+        unsigned char* dec, word32* decSz, WP11_Session* session);
+
+int WP11_AesCts_Encrypt(unsigned char* plain, word32 plainSz,
+                        unsigned char* enc, word32* encSz,
+                        WP11_Session* session);
+int WP11_AesCts_EncryptUpdate(unsigned char* plain, word32 plainSz,
+                              unsigned char* enc, word32* encSz,
+                              WP11_Session* session);
+int WP11_AesCts_EncryptFinal(unsigned char* enc, word32* encSz,
+                             WP11_Session* session);
+int WP11_AesCts_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
+                        word32* decSz, WP11_Session* session);
+int WP11_AesCts_DecryptUpdate(unsigned char* enc, word32 encSz,
+                              unsigned char* dec, word32* decSz,
+                              WP11_Session* session);
+int WP11_AesCts_DecryptFinal(unsigned char* dec, word32* decSz,
+                             WP11_Session* session);
+
+int WP11_Aes_Cmac_Init(WP11_Object* secret, WP11_Session* session,
+        word32 sigLen);
+int WP11_Aes_Cmac_Check_Len(CK_BYTE_PTR pSignature,
+        CK_ULONG_PTR pulSignatureLen, WP11_Session* session);
+int WP11_Aes_Cmac_Sign(unsigned char* data, word32 dataLen, unsigned char* sig,
+        word32* sigLen, WP11_Session* session);
+int WP11_Aes_Cmac_Sign_Update(unsigned char* data, word32 dataLen,
+        WP11_Session* session);
+int WP11_Aes_Cmac_Sign_Final(unsigned char* sig, word32* sigLen,
+        WP11_Session* session);
+int WP11_Aes_Cmac_Verify(unsigned char* data, word32 dataLen,
+        unsigned char* sig, word32 sigLen, int* stat, WP11_Session* session);
+int WP11_Aes_Cmac_Verify_Final(unsigned char* sig, word32 sigLen, int* stat,
+        WP11_Session* session);
+
 int WP11_Hmac_SigLen(WP11_Session* session);
 int WP11_Hmac_Init(CK_MECHANISM_TYPE mechanism, WP11_Object* secret,
                    WP11_Session* session);
@@ -436,8 +586,32 @@ int WP11_Hmac_SignFinal(unsigned char* sig, word32* sigLen,
 int WP11_Hmac_VerifyFinal(unsigned char* sig, word32 sigLen, int* stat,
                           WP11_Session* session);
 
+int WP11_TLS_MAC_init(unsigned long hashType, unsigned long macLen, byte server,
+                      CK_OBJECT_HANDLE hKey, WP11_Session *session);
+word32 WP11_TLS_MAC_get_len(WP11_Session *session);
+int WP11_TLS_MAC_sign(byte* data, word32 dataLen, byte* sig, word32* sigLen,
+                      WP11_Session *session);
+int WP11_TLS_MAC_verify(byte* data, word32 dataLen, byte* sig, word32 sigLen,
+        int* stat, WP11_Session *session);
+
+int WP11_Digest_Init(CK_MECHANISM_TYPE mechanism, WP11_Session* session);
+int WP11_Digest_Update(unsigned char* data, word32 dataLen,
+                       WP11_Session* session);
+int WP11_Digest_Final(unsigned char* data, word32* dataLen,
+                      WP11_Session* session);
+int WP11_Digest_Single(unsigned char* data, word32 dataLen,
+                       unsigned char* dataOut, word32* dataOutLen,
+                       WP11_Session* session);
+int WP11_Digest_Key(WP11_Object* key, WP11_Session* session);
+
 int WP11_Slot_SeedRandom(WP11_Slot* slot, unsigned char* seed, int seedLen);
 int WP11_Slot_GenerateRandom(WP11_Slot* slot, unsigned char* data, int len);
+
+int WP11_GetOperationState(WP11_Session* session, unsigned char* stateData,
+                           unsigned long* stateDataLen);
+
+int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
+                           unsigned long stateDataLen);
 
 #ifdef __cplusplus
 }

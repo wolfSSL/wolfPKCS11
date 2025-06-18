@@ -29,6 +29,19 @@ on:
 jobs:
   clang-tidy:
     runs-on: ubuntu-latest
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - name: "Standard Build"
+            configure_flags: ""
+          - name: "NSS Build" 
+            configure_flags: "--enable-nss"
+          - name: "TPM Build"
+            configure_flags: "--enable-tpm"
+          - name: "NSS+TPM Build"
+            configure_flags: "--enable-nss --enable-tpm"
 
     steps:
     # Checkout wolfPKCS11
@@ -46,7 +59,9 @@ jobs:
           clang \
           clang-tidy \
           pkg-config \
-          git
+          git \
+          libnss3-dev \
+          libnspr4-dev
 
     # Build and install wolfSSL
     - name: Build and install wolfSSL
@@ -61,20 +76,47 @@ jobs:
         sudo ldconfig
         cd ..
 
+    # Setup IBM Software TPM (only if TPM enabled)
+    - name: Setup IBM Software TPM
+      if: contains(matrix.config.configure_flags, '--enable-tpm')
+      run: |
+        git clone https://github.com/kgoldman/ibmswtpm2.git
+        cd ibmswtpm2/src
+        make
+        ./tpm_server &
+        cd ../..
+
+    # Build and install wolfTPM (only if TPM enabled)
+    - name: Build and install wolfTPM
+      if: contains(matrix.config.configure_flags, '--enable-tpm')
+      run: |
+        git clone https://github.com/wolfSSL/wolftpm.git
+        cd wolftpm
+        ./autogen.sh
+        ./configure --enable-swtpm
+        make -j$(nproc)
+        sudo make install
+        sudo ldconfig
+        cd ..
+
     # Install bear to generate compilation database
     - name: Install bear
       run: |
         sudo apt-get install -y bear
 
     # Configure and build wolfPKCS11 to generate compilation database
-    - name: Configure and build wolfPKCS11
+    - name: Configure and build wolfPKCS11 (${{ matrix.config.name }})
       run: |
         ./autogen.sh
-        CC=clang CXX=clang++ ./configure --enable-all --enable-debug
+        if [ -n "${{ matrix.config.configure_flags }}" ]; then
+          CC=clang CXX=clang++ ./configure --enable-all --enable-debug ${{ matrix.config.configure_flags }}
+        else
+          CC=clang CXX=clang++ ./configure --enable-all --enable-debug
+        fi
         bear -- make -j$(nproc)
 
     # Run clang-tidy analysis
-    - name: Run clang-tidy
+    - name: Run clang-tidy (${{ matrix.config.name }})
       run: |
         # Find source files to analyze (prioritize main source files)
         echo "Finding source files to analyze..."
@@ -129,7 +171,7 @@ jobs:
         echo "Notes: $NOTES"
 
         # Create a summary for the build
-        echo "Configuration: Standard Build" >> clang-tidy-summary.txt
+        echo "Configuration: ${{ matrix.config.name }}" >> clang-tidy-summary.txt
         echo "Files analyzed: $FILES_ANALYZED" >> clang-tidy-summary.txt
         echo "Warnings: $WARNINGS" >> clang-tidy-summary.txt
         echo "Errors: $ERRORS" >> clang-tidy-summary.txt
@@ -156,7 +198,7 @@ jobs:
       if: failure()
       uses: actions/upload-artifact@v4
       with:
-        name: test-logs
+        name: test-logs-${{ matrix.config.name }}
         path: |
           clang-tidy-summary.txt
           clang-tidy-report.txt

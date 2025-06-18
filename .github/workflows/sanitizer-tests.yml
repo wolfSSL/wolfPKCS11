@@ -11,17 +11,35 @@ jobs:
     runs-on: ubuntu-latest
 
     strategy:
+      fail-fast: false
       matrix:
         # msan disabled due to too many failures
         # tsan disabled due to weird failures
         sanitizer: [asan, ubsan]
-        tpm: [false, true]
+        config:
+          - name: "Standard Build"
+            configure_flags: ""
+          - name: "NSS Build" 
+            configure_flags: "--enable-nss"
+          - name: "TPM Build"
+            configure_flags: "--enable-tpm"
+          - name: "NSS+TPM Build"
+            configure_flags: "--enable-nss --enable-tpm"
 
     steps:
 #pull wolfPKCS11
     - uses: actions/checkout@v4
       with:
         submodules: true
+
+#install dependencies
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          libnss3-dev \
+          libnspr4-dev
 
 #setup wolfssl
     - uses: actions/checkout@v4
@@ -54,7 +72,7 @@ jobs:
             export LDFLAGS="-fsanitize=undefined"
             ;;
         esac
-        ./configure --enable-cryptocb --enable-aescfb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt \
+        ./configure --enable-cryptocb --enable-aescfb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt --enable-debug \
             C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
     - name: wolfssl make
       working-directory: ./wolfssl
@@ -68,12 +86,12 @@ jobs:
 
 #setup ibmswtpm2 (only if TPM enabled)
     - uses: actions/checkout@v4
-      if: matrix.tpm
+      if: contains(matrix.config.configure_flags, '--enable-tpm')
       with:
         repository: kgoldman/ibmswtpm2
         path: ibmswtpm2
     - name: ibmswtpm2 make
-      if: matrix.tpm
+      if: contains(matrix.config.configure_flags, '--enable-tpm')
       working-directory: ./ibmswtpm2/src
       run: |
           make
@@ -81,16 +99,16 @@ jobs:
 
 #setup wolftpm (only if TPM enabled)
     - uses: actions/checkout@v4
-      if: matrix.tpm
+      if: contains(matrix.config.configure_flags, '--enable-tpm')
       with:
         repository: wolfssl/wolftpm
         path: wolftpm
     - name: wolftpm autogen
-      if: matrix.tpm
+      if: contains(matrix.config.configure_flags, '--enable-tpm')
       working-directory: ./wolftpm
       run: ./autogen.sh
     - name: wolftpm configure with ${{ matrix.sanitizer }}
-      if: matrix.tpm
+      if: contains(matrix.config.configure_flags, '--enable-tpm')
       working-directory: ./wolftpm
       run: |
         export CC=clang
@@ -113,14 +131,14 @@ jobs:
             export LDFLAGS="-fsanitize=undefined"
             ;;
         esac
-        ./configure --enable-swtpm
+        ./configure --enable-swtpm --enable-debug
     - name: wolftpm make
-      if: matrix.tpm
+      if: contains(matrix.config.configure_flags, '--enable-tpm')
       working-directory: ./wolftpm
       run: |
         make
     - name: wolftpm make install
-      if: matrix.tpm
+      if: contains(matrix.config.configure_flags, '--enable-tpm')
       working-directory: ./wolftpm
       run: |
           sudo make install
@@ -129,7 +147,7 @@ jobs:
 #setup wolfPKCS11
     - name: wolfpkcs11 autogen
       run: ./autogen.sh
-    - name: wolfpkcs11 configure with ${{ matrix.sanitizer }}
+    - name: wolfpkcs11 configure with ${{ matrix.sanitizer }} (${{ matrix.config.name }})
       run: |
         export CC=clang
         export CXX=clang++
@@ -151,21 +169,8 @@ jobs:
             export LDFLAGS="-fsanitize=undefined"
             ;;
         esac
-        if [ "${{ matrix.tpm }}" = "true" ]; then
-          case "${{ matrix.sanitizer }}" in
-            "asan")
-              ./configure --enable-singlethreaded --enable-wolftpm --disable-dh C_EXTRA_FLAGS="-DWOLFPKCS11_TPM_STORE"
-              ;;
-            "msan")
-              ./configure --enable-singlethreaded --enable-wolftpm --disable-dh C_EXTRA_FLAGS="-DWOLFPKCS11_TPM_STORE"
-              ;;
-            "tsan")
-              ./configure --enable-singlethreaded --enable-wolftpm --disable-dh C_EXTRA_FLAGS="-DWOLFPKCS11_TPM_STORE"
-              ;;
-            "ubsan")
-              ./configure --enable-singlethreaded --enable-wolftpm --disable-dh C_EXTRA_FLAGS="-DWOLFPKCS11_TPM_STORE"
-              ;;
-          esac
+        if [ -n "${{ matrix.config.configure_flags }}" ]; then
+          ./configure ${{ matrix.config.configure_flags }}
         else
           ./configure
         fi
@@ -177,7 +182,7 @@ jobs:
         if [ "${{ matrix.sanitizer }}" = "tsan" ]; then
           export TSAN_OPTIONS="suppressions=$PWD/tsan_suppressions.txt"
         fi
-        if [ "${{ matrix.tpm }}" = "true" ]; then
+        if [[ "${{ matrix.config.configure_flags }}" == *"--enable-tpm"* ]]; then
           ./tests/pkcs11str && ./tests/pkcs11test
         else
           make check
@@ -188,7 +193,7 @@ jobs:
       if: failure() || cancelled()
       uses: actions/upload-artifact@v4
       with:
-        name: wolfpkcs11-${{ matrix.sanitizer }}-${{ matrix.tpm && 'tpm' || 'notpm' }}-test-logs
+        name: wolfpkcs11-${{ matrix.sanitizer }}-${{ matrix.config.name }}-test-logs
         path: |
           test-suite.log
         retention-days: 5

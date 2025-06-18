@@ -68,7 +68,8 @@ CK_RV C_GetSlotList(CK_BBOOL tokenPresent, CK_SLOT_ID_PTR pSlotList,
 static CK_SLOT_INFO slotInfoTemplate = {
     "wolfSSL HSM slot ID xx",
     "wolfpkcs11",
-    CKF_TOKEN_PRESENT,
+    CKF_TOKEN_PRESENT
+    ,
     { WOLFPKCS11_MAJOR_VERSION, WOLFPKCS11_MINOR_VERSION },
     { WOLFPKCS11_MAJOR_VERSION, WOLFPKCS11_MINOR_VERSION }
 };
@@ -97,6 +98,17 @@ CK_RV C_GetSlotInfo(CK_SLOT_ID slotID, CK_SLOT_INFO_PTR pInfo)
     pInfo->slotDescription[SLOT_ID_IDX + 0] = ((slotID / 10) % 10) + '0';
     pInfo->slotDescription[SLOT_ID_IDX + 1] = ((slotID     ) % 10) + '0';
 
+    return CKR_OK;
+}
+
+static CK_RV checkPinLen(CK_ULONG pinLen)
+{
+#if (WP11_MIN_PIN_LEN > 0)
+    if (pinLen > WP11_MAX_PIN_LEN || pinLen < WP11_MIN_PIN_LEN)
+#else
+    if (pinLen > WP11_MAX_PIN_LEN)
+#endif
+        return CKR_PIN_INCORRECT;
     return CKR_OK;
 }
 
@@ -158,6 +170,10 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
     WP11_Slot_GetTokenLabel(slot, (char*)pInfo->label);
     pInfo->serialNumber[14] = ((slotID / 10) % 10) + '0';
     pInfo->serialNumber[15] = ((slotID /  1) % 10) + '0';
+    if (WP11_Slot_Has_Empty_Pin(slot) ||
+        !WP11_Slot_IsTokenUserPinInitialized(slot)) {
+        pInfo->flags &= ~(CKF_LOGIN_REQUIRED);
+    }
 
 #ifndef WOLFPKCS11_NO_TIME
     now = XTIME(0);
@@ -228,26 +244,78 @@ static CK_MECHANISM_TYPE mechanismList[] = {
 #endif
     CKM_RSA_X_509,
     CKM_RSA_PKCS,
+#ifdef WOLFSSL_SHA224
+    CKM_SHA224_RSA_PKCS,
+#endif
+#ifndef NO_SHA256
+    CKM_SHA256_RSA_PKCS,
+#endif
+#ifdef WOLFSSL_SHA384
+    CKM_SHA384_RSA_PKCS,
+#endif
+#ifdef WOLFSSL_SHA512
+    CKM_SHA512_RSA_PKCS,
+#endif
 #ifndef WC_NO_RSA_OAEP
     CKM_RSA_PKCS_OAEP,
 #endif
 #ifdef WC_RSA_PSS
     CKM_RSA_PKCS_PSS,
+#ifdef WOLFSSL_SHA224
+    CKM_SHA224_RSA_PKCS_PSS,
+#endif
+#ifndef NO_SHA256
+    CKM_SHA256_RSA_PKCS_PSS,
+#endif
+#ifdef WOLFSSL_SHA384
+    CKM_SHA384_RSA_PKCS_PSS,
+#endif
+#ifdef WOLFSSL_SHA512
+    CKM_SHA512_RSA_PKCS_PSS,
+#endif
 #endif
 #endif
 #ifdef HAVE_ECC
     CKM_EC_KEY_PAIR_GEN,
     CKM_ECDSA,
+#ifndef NO_SHA
+    CKM_ECDSA_SHA1,
+#endif
+#ifdef WOLFSSL_SHA224
+    CKM_ECDSA_SHA224,
+#endif
+#ifndef NO_SHA256
+    CKM_ECDSA_SHA256,
+#endif
+#ifdef WOLFSSL_SHA384
+    CKM_ECDSA_SHA384,
+#endif
+#ifdef WOLFSSL_SHA512
+    CKM_ECDSA_SHA512,
+#endif
     CKM_ECDH1_DERIVE,
+#endif
+#ifdef WOLFPKCS11_HKDF
+    CKM_HKDF_DERIVE,
+    CKM_HKDF_DATA,
 #endif
 #ifndef NO_DH
     CKM_DH_PKCS_KEY_PAIR_GEN,
     CKM_DH_PKCS_DERIVE,
 #endif
 #ifndef NO_AES
+    CKM_AES_KEY_GEN,
+#ifdef HAVE_AES_KEY_WRAP
+    CKM_AES_KEY_WRAP,
+    CKM_AES_KEY_WRAP_PAD,
+#endif
 #ifdef HAVE_AES_CBC
     CKM_AES_CBC,
     CKM_AES_CBC_PAD,
+    CKM_AES_CBC_ENCRYPT_DATA,
+#endif
+#ifdef HAVE_AESCTR
+    CKM_AES_CTR,
 #endif
 #ifdef HAVE_AESGCM
     CKM_AES_GCM,
@@ -258,27 +326,75 @@ static CK_MECHANISM_TYPE mechanismList[] = {
 #ifdef HAVE_AESECB
     CKM_AES_ECB,
 #endif
+#ifdef HAVE_AESCTS
+    CKM_AES_CTS,
+#endif
+#ifdef HAVE_AESCMAC
+    CKM_AES_CMAC,
+    CKM_AES_CMAC_GENERAL,
+#endif
 #endif
 #ifndef NO_HMAC
 #ifndef NO_MD5
     CKM_MD5_HMAC,
+    CKM_MD5,
 #endif
 #ifndef NO_SHA
     CKM_SHA1_HMAC,
+    CKM_SHA1,
 #endif
 #ifdef WOLFSSL_SHA224
     CKM_SHA224_HMAC,
+    CKM_SHA224,
 #endif
 #ifndef NO_SHA256
     CKM_SHA256_HMAC,
+    CKM_SHA256,
 #endif
 #ifdef WOLFSSL_SHA384
     CKM_SHA384_HMAC,
+    CKM_SHA384,
 #endif
 #ifdef WOLFSSL_SHA512
     CKM_SHA512_HMAC,
+    CKM_SHA512,
+#endif
+#ifdef WOLFSSL_SHA3
+#ifndef WOLFSSL_NOSHA3_224
+    CKM_SHA3_224_HMAC,
+    CKM_SHA3_224,
+#endif
+#ifndef WOLFSSL_NOSHA3_256
+    CKM_SHA3_256_HMAC,
+    CKM_SHA3_256,
+#endif
+#ifndef WOLFSSL_NOSHA3_384
+    CKM_SHA3_384_HMAC,
+    CKM_SHA3_384,
+#endif
+#ifndef WOLFSSL_NOSHA3_512
+    CKM_SHA3_512_HMAC,
+    CKM_SHA3_512,
 #endif
 #endif
+#endif
+#ifndef NO_KDF
+    CKM_TLS12_KEY_AND_MAC_DERIVE,
+    CKM_TLS12_MASTER_KEY_DERIVE,
+    CKM_TLS12_MASTER_KEY_DERIVE_DH,
+#ifdef WOLFPKCS11_NSS
+    CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE,
+    CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_DH,
+#endif
+#endif
+#ifdef WOLFPKCS11_NSS
+    /* Only advertise CKM_SSL3_MASTER_KEY_DERIVE. Not implemented. */
+    CKM_SSL3_MASTER_KEY_DERIVE,
+#endif
+#ifdef WOLFSSL_HAVE_PRF
+    CKM_TLS_MAC,
+#endif
+    CKM_GENERIC_SECRET_KEY_GEN,
 };
 
 /* Count of mechanisms in list. */
@@ -355,6 +471,11 @@ static CK_MECHANISM_INFO rsaPssMechInfo = {
     256, 521, CKF_SIGN | CKF_VERIFY
 };
 #endif
+#ifndef NO_SHA256
+static CK_MECHANISM_INFO shaRsaPkcsMechInfo = {
+    1024, 4096, CKF_SIGN | CKF_VERIFY
+};
+#endif
 #endif
 #ifdef HAVE_ECC
 /* Info on EC key generation mechanism. */
@@ -365,9 +486,42 @@ static CK_MECHANISM_INFO ecKgMechInfo = {
 static CK_MECHANISM_INFO ecdsaMechInfo = {
     256, 521, CKF_SIGN | CKF_VERIFY
 };
+#ifndef NO_SHA
+static CK_MECHANISM_INFO ecdsaSha1MechInfo = {
+    256, 521, CKF_SIGN | CKF_VERIFY
+};
+#endif
+#ifdef WOLFSSL_SHA224
+static CK_MECHANISM_INFO ecdsaSha224MechInfo = {
+    256, 521, CKF_SIGN | CKF_VERIFY
+};
+#endif
+#ifndef NO_SHA256
+static CK_MECHANISM_INFO ecdsaSha256MechInfo = {
+    256, 521, CKF_SIGN | CKF_VERIFY
+};
+#endif
+#ifdef WOLFSSL_SHA384
+static CK_MECHANISM_INFO ecdsaSha384MechInfo = {
+    256, 521, CKF_SIGN | CKF_VERIFY
+};
+#endif
+#ifdef WOLFSSL_SHA512
+static CK_MECHANISM_INFO ecdsaSha512MechInfo = {
+    256, 521, CKF_SIGN | CKF_VERIFY
+};
+#endif
 /* Info on ECDH mechanism. */
 static CK_MECHANISM_INFO ecdhMechInfo = {
     256, 521, CKF_DERIVE
+};
+#endif
+#ifdef WOLFPKCS11_HKDF
+static CK_MECHANISM_INFO hkdfMechInfo = {
+    1, 16320, CKF_DERIVE
+};
+static CK_MECHANISM_INFO hkdfDatMechInfo = {
+    1, 16320, CKF_DERIVE
 };
 #endif
 #ifndef NO_DH
@@ -380,10 +534,54 @@ static CK_MECHANISM_INFO dhPkcsMechInfo = {
     1024, 4096, CKF_DERIVE
 };
 #endif
+#ifndef NO_KDF
+static CK_MECHANISM_INFO tls12MasterKeyDeriveDhInfo = {
+    8, 128, CKF_DERIVE
+};
+static CK_MECHANISM_INFO tls12MasterKeyDeriveInfo = {
+    48, 48, CKF_DERIVE
+};
+static CK_MECHANISM_INFO tls12KeyAndMacDeriveInfo = {
+    48, 48, CKF_DERIVE
+};
+#ifdef WOLFPKCS11_NSS
+static CK_MECHANISM_INFO nssTls12MasterKeyDeriveDhInfo = {
+    48, 128, CKF_DERIVE
+};
+static CK_MECHANISM_INFO nssTls12MasterKeyDeriveInfo = {
+    48, 128, CKF_DERIVE
+};
+#endif
+#endif
+#ifdef WOLFPKCS11_NSS
+static CK_MECHANISM_INFO ssl3MasterKeyDeriveInfo = {
+    48, 48, CKF_DERIVE
+};
+#endif
+static CK_MECHANISM_INFO tlsMacMechInfo = {
+    0, 512, CKF_SIGN | CKF_VERIFY
+};
 #ifndef NO_AES
+static CK_MECHANISM_INFO aesKeyGenMechInfo = {
+    16, 32, CKF_GENERATE
+};
+#ifdef HAVE_AES_KEY_WRAP
+static CK_MECHANISM_INFO aesKeyWrapMechInfo = {
+    16, 32, CKF_ENCRYPT | CKF_DECRYPT | CKF_WRAP | CKF_UNWRAP
+};
+#endif
 #ifdef HAVE_AES_CBC
 /* Info on AES-CBC mechanism. */
 static CK_MECHANISM_INFO aesCbcMechInfo = {
+    16, 32, CKF_ENCRYPT | CKF_DECRYPT
+};
+static CK_MECHANISM_INFO aesCbcEncryptDataMechInfo = {
+    1, 32, CKF_DERIVE
+};
+#endif
+#ifdef HAVE_AESCTR
+/* Info on AES-CTR mechanism. */
+static CK_MECHANISM_INFO aesCtrMechInfo = {
     16, 32, CKF_ENCRYPT | CKF_DECRYPT
 };
 #endif
@@ -405,6 +603,17 @@ static CK_MECHANISM_INFO aesEcbMechInfo = {
     16, 32, CKF_ENCRYPT | CKF_DECRYPT
 };
 #endif
+#ifdef HAVE_AESCTS
+/* Info on AES-CTS mechanism. */
+static CK_MECHANISM_INFO aesCtsMechInfo = {
+    16, 32, CKF_ENCRYPT | CKF_DECRYPT
+};
+#endif
+#ifdef HAVE_AESCMAC
+static CK_MECHANISM_INFO aesCbcSigVerMechInfo = {
+    16, 32, CKF_SIGN | CKF_VERIFY
+};
+#endif
 #endif
 #ifndef NO_HMAC
 #ifndef NO_MD5
@@ -412,11 +621,17 @@ static CK_MECHANISM_INFO aesEcbMechInfo = {
 static CK_MECHANISM_INFO hmacMd5MechInfo = {
     16, 512, CKF_SIGN | CKF_VERIFY
 };
+static CK_MECHANISM_INFO md5MechInfo = {
+    0, 0, CKF_DIGEST
+};
 #endif
 #ifndef NO_SHA
 /* Info on HMAC-SHA1 mechanism. */
 static CK_MECHANISM_INFO hmacSha1MechInfo = {
     20, 512, CKF_SIGN | CKF_VERIFY
+};
+static CK_MECHANISM_INFO sha1MechInfo = {
+    0, 0, CKF_DIGEST
 };
 #endif
 #ifdef WOLFSSL_SHA224
@@ -424,11 +639,17 @@ static CK_MECHANISM_INFO hmacSha1MechInfo = {
 static CK_MECHANISM_INFO hmacSha224MechInfo = {
     28, 512, CKF_SIGN | CKF_VERIFY
 };
+static CK_MECHANISM_INFO sha224MechInfo = {
+    0, 0, CKF_DIGEST
+};
 #endif
 #ifndef NO_SHA256
 /* Info on HMAC-SHA256 mechanism. */
 static CK_MECHANISM_INFO hmacSha256MechInfo = {
     32, 512, CKF_SIGN | CKF_VERIFY
+};
+static CK_MECHANISM_INFO sha256MechInfo = {
+    0, 0, CKF_DIGEST
 };
 #endif
 #ifdef WOLFSSL_SHA384
@@ -436,14 +657,48 @@ static CK_MECHANISM_INFO hmacSha256MechInfo = {
 static CK_MECHANISM_INFO hmacSha384MechInfo = {
     48, 512, CKF_SIGN | CKF_VERIFY
 };
+static CK_MECHANISM_INFO sha384MechInfo = {
+    0, 0, CKF_DIGEST
+};
 #endif
 #ifdef WOLFSSL_SHA512
 /* Info on HMAC-SHA512 mechanism. */
 static CK_MECHANISM_INFO hmacSha512MechInfo = {
     64, 512, CKF_SIGN | CKF_VERIFY
 };
+static CK_MECHANISM_INFO sha512MechInfo = {
+    0, 0, CKF_DIGEST
+};
+#endif
+#ifdef WOLFSSL_SHA3
+#ifndef WOLFSSL_NOSHA3_224
+static CK_MECHANISM_INFO hmacSha3224MechInfo = {
+    28, 512, CKF_SIGN | CKF_VERIFY
+};
+#endif
+#ifndef WOLFSSL_NOSHA3_256
+static CK_MECHANISM_INFO hmacSha3256MechInfo = {
+    32, 512, CKF_SIGN | CKF_VERIFY
+};
+#endif
+#ifndef WOLFSSL_NOSHA3_384
+static CK_MECHANISM_INFO hmacSha3384MechInfo = {
+    48, 512, CKF_SIGN | CKF_VERIFY
+};
+#endif
+#ifndef WOLFSSL_NOSHA3_512
+static CK_MECHANISM_INFO hmacSha3512MechInfo = {
+    64, 512, CKF_SIGN | CKF_VERIFY
+};
+#endif
+static CK_MECHANISM_INFO sha3MechInfo = {
+    0, 0, CKF_DIGEST
+};
 #endif
 #endif
+static CK_MECHANISM_INFO genSecKeyGenMechInfo = {
+    1, 32, CKF_GENERATE
+};
 
 /**
  * Get information on a mechanism.
@@ -485,9 +740,37 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
             XMEMCPY(pInfo, &rsaOaepMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
     #endif
+    #ifndef NO_SHA256
+        case CKM_SHA256_RSA_PKCS:
+    #endif
+    #ifdef WOLFSSL_SHA224
+        case CKM_SHA224_RSA_PKCS:
+    #endif
+    #ifdef WOLFSSL_SHA384
+        case CKM_SHA384_RSA_PKCS:
+    #endif
+    #ifdef WOLFSSL_SHA512
+        case CKM_SHA512_RSA_PKCS:
+    #endif
+            XMEMCPY(pInfo, &shaRsaPkcsMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
     #ifdef WC_RSA_PSS
         case CKM_RSA_PKCS_PSS:
             XMEMCPY(pInfo, &rsaPssMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+        #ifndef NO_SHA256
+        case CKM_SHA256_RSA_PKCS_PSS:
+        #endif
+        #ifdef WOLFSSL_SHA224
+        case CKM_SHA224_RSA_PKCS_PSS:
+        #endif
+        #ifdef WOLFSSL_SHA384
+        case CKM_SHA384_RSA_PKCS_PSS:
+        #endif
+        #ifdef WOLFSSL_SHA512
+        case CKM_SHA512_RSA_PKCS_PSS:
+        #endif
+            XMEMCPY(pInfo, &shaRsaPkcsMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
     #endif
 #endif
@@ -498,8 +781,41 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
         case CKM_ECDSA:
             XMEMCPY(pInfo, &ecdsaMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
+#ifndef NO_SHA
+        case CKM_ECDSA_SHA1:
+            XMEMCPY(pInfo, &ecdsaSha1MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifdef WOLFSSL_SHA224
+        case CKM_ECDSA_SHA224:
+            XMEMCPY(pInfo, &ecdsaSha224MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifndef NO_SHA256
+        case CKM_ECDSA_SHA256:
+            XMEMCPY(pInfo, &ecdsaSha256MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifdef WOLFSSL_SHA384
+        case CKM_ECDSA_SHA384:
+            XMEMCPY(pInfo, &ecdsaSha384MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifdef WOLFSSL_SHA512
+        case CKM_ECDSA_SHA512:
+            XMEMCPY(pInfo, &ecdsaSha512MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
         case CKM_ECDH1_DERIVE:
             XMEMCPY(pInfo, &ecdhMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifdef WOLFPKCS11_HKDF
+        case CKM_HKDF_DERIVE:
+            XMEMCPY(pInfo, &hkdfMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+        case CKM_HKDF_DATA:
+            XMEMCPY(pInfo, &hkdfDatMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
 #endif
 #ifndef NO_DH
@@ -511,10 +827,28 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
             break;
 #endif
 #ifndef NO_AES
+        case CKM_AES_KEY_GEN:
+            XMEMCPY(pInfo, &aesKeyGenMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#ifdef HAVE_AES_KEY_WRAP
+        case CKM_AES_KEY_WRAP:
+        case CKM_AES_KEY_WRAP_PAD:
+            XMEMCPY(pInfo, &aesKeyWrapMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
 #ifdef HAVE_AES_CBC
         case CKM_AES_CBC_PAD:
         case CKM_AES_CBC:
             XMEMCPY(pInfo, &aesCbcMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+        case CKM_AES_CBC_ENCRYPT_DATA:
+            XMEMCPY(pInfo, &aesCbcEncryptDataMechInfo,
+                    sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifdef HAVE_AESCTR
+        case CKM_AES_CTR:
+            XMEMCPY(pInfo, &aesCtrMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
 #endif
 #ifdef HAVE_AESGCM
@@ -532,39 +866,145 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
             XMEMCPY(pInfo, &aesEcbMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
 #endif
+#ifdef HAVE_AESCTS
+        case CKM_AES_CTS:
+            XMEMCPY(pInfo, &aesCtsMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifdef HAVE_AESCMAC
+        case CKM_AES_CMAC:
+        case CKM_AES_CMAC_GENERAL:
+            XMEMCPY(pInfo, &aesCbcSigVerMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
 #endif
 #ifndef NO_HMAC
 #ifndef NO_MD5
         case CKM_MD5_HMAC:
             XMEMCPY(pInfo, &hmacMd5MechInfo, sizeof(CK_MECHANISM_INFO));
             break;
+        case CKM_MD5:
+            XMEMCPY(pInfo, &md5MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
 #endif
 #ifndef NO_SHA
         case CKM_SHA1_HMAC:
             XMEMCPY(pInfo, &hmacSha1MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+        case CKM_SHA1:
+            XMEMCPY(pInfo, &sha1MechInfo, sizeof(CK_MECHANISM_INFO));
             break;
 #endif
 #ifdef WOLFSSL_SHA224
         case CKM_SHA224_HMAC:
             XMEMCPY(pInfo, &hmacSha224MechInfo, sizeof(CK_MECHANISM_INFO));
             break;
+        case CKM_SHA224:
+            XMEMCPY(pInfo, &sha224MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
 #endif
 #ifndef NO_SHA256
         case CKM_SHA256_HMAC:
             XMEMCPY(pInfo, &hmacSha256MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+        case CKM_SHA256:
+            XMEMCPY(pInfo, &sha256MechInfo, sizeof(CK_MECHANISM_INFO));
             break;
 #endif
 #ifdef WOLFSSL_SHA384
         case CKM_SHA384_HMAC:
             XMEMCPY(pInfo, &hmacSha384MechInfo, sizeof(CK_MECHANISM_INFO));
             break;
+        case CKM_SHA384:
+            XMEMCPY(pInfo, &sha384MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
 #endif
 #ifdef WOLFSSL_SHA512
         case CKM_SHA512_HMAC:
             XMEMCPY(pInfo, &hmacSha512MechInfo, sizeof(CK_MECHANISM_INFO));
             break;
+        case CKM_SHA512:
+            XMEMCPY(pInfo, &sha512MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifdef WOLFSSL_SHA3
+#ifndef WOLFSSL_NOSHA3_224
+        case CKM_SHA3_224_HMAC:
+            XMEMCPY(pInfo, &hmacSha3224MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifndef WOLFSSL_NOSHA3_256
+        case CKM_SHA3_256_HMAC:
+            XMEMCPY(pInfo, &hmacSha3256MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifndef WOLFSSL_NOSHA3_384
+        case CKM_SHA3_384_HMAC:
+            XMEMCPY(pInfo, &hmacSha3384MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifndef WOLFSSL_NOSHA3_512
+        case CKM_SHA3_512_HMAC:
+            XMEMCPY(pInfo, &hmacSha3512MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifndef WOLFSSL_NOSHA3_224
+        case CKM_SHA3_224:
+#endif
+#ifndef WOLFSSL_NOSHA3_256
+        case CKM_SHA3_256:
+#endif
+#ifndef WOLFSSL_NOSHA3_384
+        case CKM_SHA3_384:
+#endif
+#ifndef WOLFSSL_NOSHA3_512
+        case CKM_SHA3_512:
+#endif
+            XMEMCPY(pInfo, &sha3MechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
 #endif
 #endif
+#ifndef NO_KDF
+        case CKM_TLS12_KEY_AND_MAC_DERIVE:
+            XMEMCPY(pInfo, &tls12KeyAndMacDeriveInfo,
+                    sizeof(CK_MECHANISM_INFO));
+            break;
+        case CKM_TLS12_MASTER_KEY_DERIVE:
+            XMEMCPY(pInfo, &tls12MasterKeyDeriveInfo,
+                    sizeof(CK_MECHANISM_INFO));
+            break;
+        case CKM_TLS12_MASTER_KEY_DERIVE_DH:
+            XMEMCPY(pInfo, &tls12MasterKeyDeriveDhInfo,
+                    sizeof(CK_MECHANISM_INFO));
+            break;
+#ifdef WOLFPKCS11_NSS
+        case CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE:
+            XMEMCPY(pInfo, &nssTls12MasterKeyDeriveInfo,
+                    sizeof(CK_MECHANISM_INFO));
+            break;
+        case CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_DH:
+            XMEMCPY(pInfo, &nssTls12MasterKeyDeriveDhInfo,
+                    sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#endif
+#ifdef WOLFPKCS11_NSS
+        /* Only advertise CKM_SSL3_MASTER_KEY_DERIVE. Not implemented. */
+        case CKM_SSL3_MASTER_KEY_DERIVE:
+            XMEMCPY(pInfo, &ssl3MasterKeyDeriveInfo,
+                    sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifdef WOLFSSL_HAVE_PRF
+        case CKM_TLS_MAC:
+            XMEMCPY(pInfo, &tlsMacMechInfo,
+                    sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+        case CKM_GENERIC_SECRET_KEY_GEN:
+            XMEMCPY(pInfo, &genSecKeyGenMechInfo,
+                    sizeof(CK_MECHANISM_INFO));
+            break;
         default:
             return CKR_MECHANISM_INVALID;
     }
@@ -601,15 +1041,17 @@ CK_RV C_InitToken(CK_SLOT_ID slotID, CK_UTF8CHAR_PTR pPin,
     if (pPin == NULL || pLabel == NULL)
         return CKR_ARGUMENTS_BAD;
 
-    if (ulPinLen < WP11_MIN_PIN_LEN || ulPinLen > WP11_MAX_PIN_LEN)
+    if (checkPinLen(ulPinLen) != CKR_OK)
         return CKR_PIN_INCORRECT;
 
     if (WP11_Slot_IsTokenInitialized(slot)) {
         if (WP11_Slot_HasSession(slot))
             return CKR_SESSION_EXISTS;
-        ret = WP11_Slot_CheckSOPin(slot, (char*)pPin, (int)ulPinLen);
-        if (ret != 0)
-            return CKR_PIN_INCORRECT;
+        if (WP11_Slot_SOPin_IsSet(slot)) {
+            ret = WP11_Slot_CheckSOPin(slot, (char*)pPin, (int)ulPinLen);
+            if (ret != 0)
+                return CKR_PIN_INCORRECT;
+        }
     }
 
     ret = WP11_Slot_TokenReset(slot, (char*)pPin, (int)ulPinLen, (char*)pLabel);
@@ -644,12 +1086,12 @@ CK_RV C_InitPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pPin,
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     if (WP11_Session_Get(hSession, &session) != 0)
         return CKR_SESSION_HANDLE_INVALID;
-    if (pPin == NULL)
+    if (pPin == NULL && ulPinLen > 0)
         return CKR_ARGUMENTS_BAD;
     if (WP11_Session_GetState(session) != WP11_APP_STATE_RW_SO)
         return CKR_USER_NOT_LOGGED_IN;
 
-    if (ulPinLen < WP11_MIN_PIN_LEN || ulPinLen > WP11_MAX_PIN_LEN)
+    if (checkPinLen(ulPinLen) != CKR_OK)
         return CKR_PIN_INCORRECT;
 
     slot = WP11_Session_GetSlot(session);
@@ -693,9 +1135,9 @@ CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
         return CKR_SESSION_HANDLE_INVALID;
     if (pOldPin == NULL || pNewPin == NULL)
         return CKR_ARGUMENTS_BAD;
-    if (ulOldLen < WP11_MIN_PIN_LEN || ulOldLen > WP11_MAX_PIN_LEN)
+    if (checkPinLen(ulOldLen) != CKR_OK)
         return CKR_PIN_INCORRECT;
-    if (ulNewLen < WP11_MIN_PIN_LEN || ulNewLen > WP11_MAX_PIN_LEN)
+    if (checkPinLen(ulNewLen) != CKR_OK)
         return CKR_PIN_INCORRECT;
 
     state = WP11_Session_GetState(session);
@@ -855,7 +1297,7 @@ CK_RV C_GetSessionInfo(CK_SESSION_HANDLE hSession,
 
 /**
  * Get the state of the current operation.
- * Not supported.
+ * Only intended for Digest state.
  *
  * @param  hSession            [in]      Session handle.
  * @param  pOperationState     [in]      Buffer to hold operation state.
@@ -866,7 +1308,7 @@ CK_RV C_GetSessionInfo(CK_SESSION_HANDLE hSession,
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pulOperationStateLen is NULL.
- *          CKR_STATE_UNSAVEABLE indicating function not supported.
+ *          CKR_STATE_UNSAVEABLE indicating the state is not saveable.
  */
 CK_RV C_GetOperationState(CK_SESSION_HANDLE hSession,
                           CK_BYTE_PTR pOperationState,
@@ -881,14 +1323,13 @@ CK_RV C_GetOperationState(CK_SESSION_HANDLE hSession,
     if (pulOperationStateLen == NULL)
         return CKR_ARGUMENTS_BAD;
 
-    (void)pOperationState;
-
-    return CKR_STATE_UNSAVEABLE;
+    return WP11_GetOperationState(session, pOperationState,
+        pulOperationStateLen);
 }
 
 /**
  * Get the state of the current operation.
- * Not supported.
+ * Only intended for Digest state.
  *
  * @param  hSession             [in]  Session handle.
  * @param  pOperationState      [in]  Serialized state.
@@ -898,7 +1339,7 @@ CK_RV C_GetOperationState(CK_SESSION_HANDLE hSession,
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pOperationState is NULL.
- *          CKR_SAVED_STATE_INVALID indicating function not supported.
+ *          CKR_SAVED_STATE_INVALID indicating the state is not valid.
  */
 CK_RV C_SetOperationState(CK_SESSION_HANDLE hSession,
                           CK_BYTE_PTR pOperationState,
@@ -915,11 +1356,11 @@ CK_RV C_SetOperationState(CK_SESSION_HANDLE hSession,
     if (pOperationState == NULL)
         return CKR_ARGUMENTS_BAD;
 
-    (void)ulOperationStateLen;
     (void)hEncryptionKey;
     (void)hAuthenticationKey;
 
-    return CKR_SAVED_STATE_INVALID;
+    return WP11_SetOperationState(session, pOperationState,
+        ulOperationStateLen);
 }
 
 /**
@@ -957,7 +1398,7 @@ CK_RV C_Login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
     if (pPin == NULL)
         return CKR_ARGUMENTS_BAD;
 
-    if (ulPinLen < WP11_MIN_PIN_LEN || ulPinLen > WP11_MAX_PIN_LEN)
+    if (checkPinLen(ulPinLen) != CKR_OK)
         return CKR_PIN_INCORRECT;
 
     slot = WP11_Session_GetSlot(session);

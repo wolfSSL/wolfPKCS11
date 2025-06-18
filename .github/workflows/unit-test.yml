@@ -77,7 +77,11 @@ jobs:
   no_hmac:
     uses: ./.github/workflows/build-workflow.yml
     with:
-      config: --disable-hmac
+      config: --disable-hmac --disable-hkdf
+  with_nss:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --enable-nss
 
   #TODO: --disable-aes            Enable AES (default: enabled)
   #TODO: --disable-aescbc         Enable AES-CBC (default: enabled)

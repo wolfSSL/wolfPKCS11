@@ -214,6 +214,18 @@ else
     DISABLE_DEFS="$DISABLE_DEFS -DNO_AES"
 fi
 
+AC_ARG_ENABLE([aeskeywrap],
+    [AS_HELP_STRING([--enable-aeskeywrap],[Enable AES key wrap (default: disabled)])],
+    [ ENABLED_AESKEYWRAP=$enableval ],
+    [ ENABLED_AESKEYWRAP=no ]
+    )
+if test "$ENABLED_AESKEYWRAP" = "yes"
+then
+    AM_CFLAGS="$AM_CFLAGS -DHAVE_AES_KEY_WRAP"
+else
+    DISABLE_DEFS="$DISABLE_DEFS -DHAVE_AES_KEY_WRAP"
+fi
+
 AC_ARG_ENABLE([aescbc],
     [AS_HELP_STRING([--enable-aescbc],[Enable AES-CBC (default: enabled)])],
     [ ENABLED_AESCBC=$enableval ],
@@ -236,6 +248,18 @@ then
     AM_CFLAGS="$AM_CFLAGS -DHAVE_AESGCM"
 else
     DISABLE_DEFS="$DISABLE_DEFS -DHAVE_AESGCM"
+fi
+
+AC_ARG_ENABLE([aesctr],
+    [AS_HELP_STRING([--enable-aesctr],[Enable AES-CTR (default: disabled)])],
+    [ ENABLED_AESCTR=$enableval ],
+    [ ENABLED_AESCTR=no ]
+    )
+if test "$ENABLED_AES" = "yes" && test "$ENABLED_AESCTR" = "yes"
+then
+    AM_CFLAGS="$AM_CFLAGS -DHAVE_AESCTR"
+else
+    DISABLE_DEFS="$DISABLE_DEFS -DHAVE_AESCTR"
 fi
 
 AC_ARG_ENABLE([aesccm],
@@ -262,6 +286,30 @@ else
     DISABLE_DEFS="$DISABLE_DEFS -DHAVE_AESECB"
 fi
 
+AC_ARG_ENABLE([aescts],
+    [AS_HELP_STRING([--enable-aescts],[Enable AES-CTS (default: disabled)])],
+    [ ENABLED_AESCTS=$enableval ],
+    [ ENABLED_AESCTS=no ]
+    )
+if test "$ENABLED_AES" = "yes" && test "$ENABLED_AESCTS" = "yes"
+then
+    AM_CFLAGS="$AM_CFLAGS -DHAVE_AESCTS"
+else
+    DISABLE_DEFS="$DISABLE_DEFS -DHAVE_AESCTS"
+fi
+
+AC_ARG_ENABLE([aescmac],
+    [AS_HELP_STRING([--enable-aescmac],[Enable AES-CMAC (default: disabled)])],
+    [ ENABLED_AESCMAC=$enableval ],
+    [ ENABLED_AESCMAC=no ]
+    )
+if test "$ENABLED_AES" = "yes" && test "$ENABLED_AESCMAC" = "yes"
+then
+    AM_CFLAGS="$AM_CFLAGS -DHAVE_AESCMAC"
+else
+    DISABLE_DEFS="$DISABLE_DEFS -DHAVE_AESCMAC"
+fi
+
 AC_ARG_ENABLE([hmac],
     [AS_HELP_STRING([--enable-hmac],[Enable HMAC (default: enabled)])],
     [ ENABLED_HMAC=$enableval ],
@@ -272,6 +320,16 @@ then
     AM_CFLAGS="$AM_CFLAGS -DNO_HMAC"
 else
     DISABLE_DEFS="$DISABLE_DEFS -DNO_HMAC"
+fi
+
+AC_ARG_ENABLE([hkdf],
+    [AS_HELP_STRING([--enable-hkdf],[Enable HKDF (default: enabled)])],
+    [ ENABLED_HKDF=$enableval ],
+    [ ENABLED_HKDF=yes]
+    )
+if test "$ENABLED_HKDF" = "yes"
+then
+    AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_HKDF"
 fi
 
 AC_ARG_ENABLE([md5],
@@ -369,6 +427,25 @@ then
     AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_TPM"
 fi
 
+AC_ARG_ENABLE([nss],
+    [AS_HELP_STRING([--enable-nss],[Enable NSS specific modifications (default: disabled)])],
+    [ ENABLED_NSS=$enableval ],
+    [ ENABLED_NSS=no ]
+    )
+if test "$ENABLED_NSS" = "yes"
+then
+    AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_NSS"
+fi
+
+AC_ARG_WITH([default-token-path],
+    [AS_HELP_STRING([--with-default-token-path=PATH],[Set default token storage path (default: none)])],
+    [ WOLFPKCS11_DEFAULT_TOKEN_PATH=$withval ],
+    [ WOLFPKCS11_DEFAULT_TOKEN_PATH="" ]
+    )
+if test "x$WOLFPKCS11_DEFAULT_TOKEN_PATH" != "x"
+then
+    AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_DEFAULT_TOKEN_PATH=\"$WOLFPKCS11_DEFAULT_TOKEN_PATH\""
+fi
 
 
 AM_CONDITIONAL([BUILD_STATIC],[test "x$enable_shared" = "xno"])
@@ -525,8 +602,11 @@ echo "   * Single threaded:            $ENABLED_SINGLETHREADED"
 echo "   * AES:                        $ENABLED_AES"
 echo "   * AES-CBC:                    $ENABLED_AESCBC"
 echo "   * AES-GCM:                    $ENABLED_AESGCM"
+echo "   * AES-CTR:                    $ENABLED_AESCTR"
 echo "   * AES-CCM:                    $ENABLED_AESCCM"
 echo "   * AES-ECB:                    $ENABLED_AESECB"
+echo "   * AES-CTS:                    $ENABLED_AESCTS"
+echo "   * AES-CMAC:                   $ENABLED_AESCMAC"
 echo "   * MD5:                        $ENABLED_MD5"
 echo "   * SHA:                        $ENABLED_SHA1"
 echo "   * SHA-224:                    $ENABLED_SHA224"
@@ -539,3 +619,6 @@ echo "   * RSA-OAEP:                   $ENABLED_RSAOAEP"
 echo "   * RSA-PSS:                    $ENABLED_RSAPSS"
 echo "   * DH:                         $ENABLED_DH"
 echo "   * ECC:                        $ENABLED_ECC"
+echo "   * HKDF:                       $ENABLED_HKDF"
+echo "   * NSS modifications:          $ENABLED_NSS"
+echo "   * Default token path:         $WOLFPKCS11_DEFAULT_TOKEN_PATH"

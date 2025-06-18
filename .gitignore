@@ -7,6 +7,7 @@ aclocal.m4
 libtool.m4
 lt*.m4
 configure
+configure~
 Makefile.in
 aminclude.am
 config.*
@@ -47,6 +48,10 @@ store/wp11*
 test/*
 *.gcda
 *.gcno
+.cproject
+.project
+.settings
+add_cert_file
 
 tests/wp11_rsakey_*
 tests/wp11_dhkey_*
@@ -54,5 +59,6 @@ tests/wp11_ecckey_*
 tests/wp11_symmkey_*
 tests/wp11_token_*
 tests/wp11_obj_*
+tests/token_path_test
 
 IDE/VisualStudio/.vs
