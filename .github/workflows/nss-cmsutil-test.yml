@@ -1,0 +1,370 @@
+name: wolfPKCS11 NSS cmsutil Test
+
+on:
+  push:
+    branches: [ main, master, nss ]
+  pull_request:
+    branches: [ main, master, nss ]
+  workflow_dispatch:
+
+env:
+  NSPR_VERSION: NSPR_4_36_BRANCH
+  NSS_VERSION: NSS_3_112_RTM
+  WOLFSSL_VERSION: v5.8.0-stable
+  NSS_DEBUG_PKCS11_MODULE: wolfPKCS11
+  NSPR_LOG_MODULES: all:5
+  NSPR_LOG_FILE: /logs/nss.log
+  NSS_OUTPUT_FILE: /logs/stats.log
+  NSS_STRICT_NOFORK: 1
+  NSS_DEBUG: all
+
+jobs:
+  nss-cmsutil-test:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+          mercurial \
+          python3 \
+          python-is-python3 \
+          python3-pip \
+          gyp \
+          ninja-build \
+          build-essential \
+          automake \
+          libtool \
+          git \
+          pkg-config \
+          poppler-utils \
+          wget \
+          enscript \
+          ghostscript \
+          gdb \
+          vim \
+          hexedit \
+          openssl \
+          ca-certificates
+
+    - name: Cache NSPR
+      id: cache-nspr
+      uses: actions/cache@v4
+      with:
+        path: /tmp/src/nspr
+        key: nspr-${{ env.NSPR_VERSION }}
+
+    - name: Clone and build NSPR
+      if: steps.cache-nspr.outputs.cache-hit != 'true'
+      run: |
+        mkdir -p /tmp/src
+        cd /tmp/src
+        hg clone https://hg.mozilla.org/projects/nspr -r ${{ env.NSPR_VERSION }}
+
+    - name: Cache NSS source and patches
+      id: cache-nss-source
+      uses: actions/cache@v4
+      with:
+        path: |
+          /tmp/src/nss
+          /tmp/src/osp
+        key: nss-source-${{ env.NSS_VERSION }}-latest
+
+    - name: Cache NSS build artifacts
+      id: cache-nss-build
+      uses: actions/cache@v4
+      with:
+        path: /tmp/src/dist
+        key: nss-build-${{ env.NSS_VERSION }}-latest
+
+    - name: Clone NSS and apply wolfSSL patches
+      if: steps.cache-nss-source.outputs.cache-hit != 'true'
+      run: |
+        mkdir -p /tmp/src
+        cd /tmp/src
+
+        # Clone official Mozilla NSS with specific tag
+        hg clone https://hg.mozilla.org/projects/nss -r ${{ env.NSS_VERSION }}
+
+        # Clone wolfSSL OSP repository for patches
+        git clone https://github.com/wolfSSL/osp.git
+
+        cd nss
+
+        # Apply patches from wolfSSL/osp/nss directory
+        echo "Applying wolfSSL NSS patches..."
+        if [ -d "../osp/nss" ]; then
+          for patch in ../osp/nss/*.patch; do
+            if [ -f "$patch" ]; then
+              echo "Applying patch: $(basename $patch)"
+              patch -p1 < "$patch" || {
+                echo "Warning: Patch $(basename $patch) failed to apply cleanly"
+                echo "Attempting to apply with --reject-file option..."
+                patch -p1 --reject-file=/tmp/$(basename $patch).rej < "$patch" || true
+              }
+            fi
+          done
+        else
+          echo "No patches found in wolfSSL/osp/nss directory"
+        fi
+
+    - name: Build NSS
+      if: steps.cache-nss-build.outputs.cache-hit != 'true'
+      run: |
+        cd /tmp/src/nss
+
+        # Set NSS build environment
+        export USE_64=1
+        export NSS_ENABLE_WERROR=0
+        export BUILD_OPT=0
+
+        # Build NSS with debug mode enabled
+        ./build.sh -v
+
+    - name: Copy NSS headers and libraries
+      run: |
+        # Create directories for headers
+        sudo mkdir -p /usr/local/include/nss
+        sudo mkdir -p /usr/local/include/nspr
+        sudo mkdir -p /usr/local/lib
+
+        # Copy NSS headers from dist directory
+        sudo cp -r /tmp/src/dist/public/nss/* /usr/local/include/nss/
+
+        # Copy NSS library and headers
+        sudo cp -r /tmp/src/dist/Debug/* /usr/local/
+
+        # Copy NSS and NSPR libraries
+        sudo find /tmp/src/nspr/Debug -name "*.so" -exec cp {} /usr/local/lib/ \;
+
+        # Update library cache
+        sudo ldconfig
+
+    - name: Cache wolfSSL
+      id: cache-wolfssl
+      uses: actions/cache@v4
+      with:
+        path: /tmp/wolfssl
+        key: wolfssl-${{ env.WOLFSSL_VERSION }}
+
+    - name: Clone and build wolfSSL
+      if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+      run: |
+        cd /tmp
+        git clone https://github.com/wolfSSL/wolfssl.git --branch ${{ env.WOLFSSL_VERSION }} --depth 1
+        cd wolfssl
+        ./autogen.sh
+        ./configure --enable-aescfb --enable-cryptocb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt --enable-cmac --enable-aesctr --enable-aesccm C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT -DHAVE_AES_ECB -D_GNU_SOURCE"
+        make
+
+    - name: Install wolfSSL
+      run: |
+        cd /tmp/wolfssl
+        sudo make install
+        sudo ldconfig
+
+    - name: Build wolfPKCS11
+      run: |
+        ./autogen.sh
+        ./configure --enable-debug --enable-nss --enable-aesecb --enable-aesctr --enable-aesccm --enable-aescmac CFLAGS="-D_GNU_SOURCE"
+        make
+        sudo make install
+        sudo ldconfig
+
+    - name: Configure NSS database
+      run: |
+        sudo mkdir -p /nss-test/nssdb
+        sudo chmod -R 777 /nss-test
+        sudo mkdir -p /logs
+
+        # Configure NSS to use wolfPKCS11
+        cat > /nss-test/pkcs11.txt << 'EOF'
+        library=/usr/local/lib/libwolfpkcs11.so
+        name=wolfPKCS11
+        NSS=Flags=internal,critical,fips cipherOrder=100 slotParams={0x00000001=[slotFlags=ECC,RSA,DSA,DH,RC2,RC4,DES,RANDOM,SHA1,MD5,MD2,SSL,TLS,AES,Camellia,SEED,SHA256,SHA512] }
+        EOF
+
+        # Initialize NSS database
+        certutil -N -d /nss-test/nssdb/ --empty-password
+
+    - name: Run NSS cmsutil tests
+      run: |
+        cd /nss-test
+        set -e
+
+        echo "=== NSS cmsutil Test Script ==="
+        echo "NSS Database location: /nss-test/nssdb"
+        echo
+
+        # Create test data
+        echo "1. Creating test data file:"
+        echo "This is test data for CMS signing and encryption" > test-data.txt
+        cat test-data.txt
+        echo
+
+        # Generate a test certificate and key
+        echo "2. Generating CA and user certificates:"
+
+        # Step 1: Create a CA certificate
+        echo "   Creating CA certificate..."
+        cat > ca-openssl.conf << 'CAEOF'
+        [req]
+        distinguished_name = req_distinguished_name
+        req_extensions = v3_ca
+        prompt = no
+
+        [req_distinguished_name]
+        CN = Test CA
+        O = NSS Test CA
+        C = US
+
+        [v3_ca]
+        keyUsage = critical, keyCertSign, cRLSign
+        basicConstraints = critical, CA:true
+        subjectKeyIdentifier = hash
+        authorityKeyIdentifier = keyid:always,issuer
+        CAEOF
+
+        # Create CA certificate and key
+        openssl req -x509 -newkey rsa:2048 -keyout ca-key.pem -out ca-cert.pem -days 365 -nodes \
+        -config ca-openssl.conf -extensions v3_ca
+
+        # Import CA certificate into NSS database
+        certutil -A -n "TestCA" -i ca-cert.pem -t "CT,C,C" -d /nss-test/nssdb
+
+        # Step 2: Create user certificate signed by CA
+        echo "   Creating user certificate signed by CA..."
+        cat > user-openssl.conf << 'USEREOF'
+        [req]
+        distinguished_name = req_distinguished_name
+        prompt = no
+
+        [req_distinguished_name]
+        CN = Test User
+        O = NSS Test
+        C = US
+        emailAddress = test@example.com
+
+        [v3_user]
+        keyUsage = critical, digitalSignature, keyEncipherment
+        extendedKeyUsage = critical, emailProtection
+        basicConstraints = critical, CA:false
+        subjectKeyIdentifier = hash
+        subjectAltName = email:test@example.com
+        USEREOF
+
+        # Create user certificate request (without authority key identifier)
+        openssl req -new -newkey rsa:2048 -keyout user-key.pem -out user-req.pem -nodes \
+        -config user-openssl.conf
+
+        # Create signing config with authority key identifier
+        cat > signing.conf << 'SIGNEOF'
+        [v3_user_sign]
+        keyUsage = critical, digitalSignature, keyEncipherment
+        extendedKeyUsage = critical, emailProtection
+        basicConstraints = critical, CA:false
+        subjectKeyIdentifier = hash
+        authorityKeyIdentifier = keyid:always,issuer:always
+        subjectAltName = email:test@example.com
+        SIGNEOF
+
+        # Sign user certificate with CA
+        openssl x509 -req -in user-req.pem -CA ca-cert.pem -CAkey ca-key.pem -CAcreateserial \
+        -out user-cert.pem -days 365 -extensions v3_user_sign -extfile signing.conf
+
+        # Convert user certificate to PKCS#12 format
+        openssl pkcs12 -export -in user-cert.pem -inkey user-key.pem -out user-cert.p12 \
+        -name "testcert" -passout pass:
+
+        # Import user certificate into NSS database
+        echo "   Importing user certificate into NSS database..."
+        pk12util -i user-cert.p12 -d /nss-test/nssdb -W ""
+
+        # Set proper trust attributes
+        certutil -M -n "testcert" -t "u,u,u" -d /nss-test/nssdb
+
+        echo "   ✓ CA and user certificates created successfully"
+
+        echo "3. Listing certificates in NSS database:"
+        certutil -L -d /nss-test/nssdb
+        echo
+        echo "Private keys in NSS database:"
+        certutil -K -d /nss-test/nssdb
+        echo
+        echo "Certificate details:"
+        if certutil -L -n "testcert" -d /nss-test/nssdb >/dev/null 2>&1; then
+        echo "User certificate 'testcert':"
+        certutil -L -n "testcert" -d /nss-test/nssdb
+        echo
+        fi
+        if certutil -L -n "TestCA" -d /nss-test/nssdb >/dev/null 2>&1; then
+        echo "CA certificate 'TestCA':"
+        certutil -L -n "TestCA" -d /nss-test/nssdb
+        fi
+
+        echo "4. Testing CMS operations with cmsutil:"
+
+        # Test CMS signing with additional options to handle trust
+        echo "   a) Signing data with CMS:"
+        cmsutil -S -N "testcert" -i test-data.txt -o signed-data.p7s -d /nss-test/nssdb -p "" -G
+
+        if [ -f signed-data.p7s ]; then
+        echo "   ✓ CMS signing successful - created signed-data.p7s"
+        ls -la signed-data.p7s
+        else
+        echo "   ✗ CMS signing failed"
+        fi
+
+        # Test CMS verification
+        echo "   b) Verifying CMS signature:"
+        openssl smime -verify -in signed-data.p7s -CAfile test-cert.pem -inform DER -noverify 2>/dev/null && echo "   ✓ OpenSSL verification successful"
+
+        # Test CMS encryption (envelope)
+        echo "   c) Creating CMS encrypted envelope:"
+        cmsutil -E -r "testcert" -i test-data.txt -o encrypted-data.p7e -d /nss-test/nssdb
+        if [ -f encrypted-data.p7e ]; then
+        echo "   ✓ CMS encryption successful - created encrypted-data.p7e"
+        ls -la encrypted-data.p7e
+        else
+        echo "   ✗ CMS encryption failed"
+        fi
+
+        # Test CMS decryption
+        echo "   d) Decrypting CMS envelope:"
+        cmsutil -D -i encrypted-data.p7e -o decrypted-data.txt -d /nss-test/nssdb -p ""
+        if [ -f decrypted-data.txt ]; then
+        echo "   ✓ CMS decryption successful"
+        echo "   Original data:"
+        cat test-data.txt
+        echo "   Decrypted data:"
+        cat decrypted-data.txt
+        echo "   Data match:" $(cmp -s test-data.txt decrypted-data.txt && echo "YES" || echo "NO")
+        else
+        echo "   ✗ CMS decryption failed"
+        fi
+
+        echo
+        echo "=== cmsutil Test Complete ==="
+        echo "Files created:"
+        ls -la *.p7s *.p7e *.txt *.pem *.p12 2>/dev/null || echo "No files found"
+
+        # Create tar archive with all test artifacts
+        sudo mkdir -p /tmp/artifacts
+        sudo cp -r /logs /tmp/artifacts/ 2>/dev/null || true
+        sudo cp -r /nss-test /tmp/artifacts/ 2>/dev/null || true
+        sudo tar -czf /tmp/nss-cmsutil-test-artifacts.tar.gz -C /tmp/artifacts . 2>/dev/null || true
+
+        # Fix permissions for artifact upload
+        sudo chown $USER:$USER /tmp/nss-cmsutil-test-artifacts.tar.gz 2>/dev/null || true
+
+    - name: Upload test artifacts
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: nss-cmsutil-test-artifacts
+        path: /tmp/nss-cmsutil-test-artifacts.tar.gz
+        retention-days: 30
