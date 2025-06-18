@@ -19,7 +19,6 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
-#include "wolfpkcs11/pkcs11.h"
 #ifdef HAVE_CONFIG_H
     #include <wolfpkcs11/config.h>
 #endif
@@ -2421,8 +2420,20 @@ static int wp11_Object_Decode_RsaKey(WP11_Object* object)
         }
         if (ret == 0) {
             /* load public portion into wolf RsaKey structure */
+            object->slot->tpmCtx.rsaKey = (WOLFTPM2_KEY*)&object->tpmKey;
             ret = wolfTPM2_RsaKey_TpmToWolf(&object->slot->tpmDev,
                 (WOLFTPM2_KEY*)&object->tpmKey, &object->data.rsaKey);
+        }
+        if (ret == 0) {
+            /* load key into TPM (get handle) */
+            if (object->tpmKey.priv.size == 0) {
+                ret = wolfTPM2_LoadPublicKey(&object->slot->tpmDev,
+                    (WOLFTPM2_KEY*)&object->tpmKey, &object->tpmKey.pub);
+            }
+            else {
+                ret = wolfTPM2_LoadKey(&object->slot->tpmDev, &object->tpmKey,
+                    &object->slot->tpmCtx.storageKey->handle);
+            }
         }
     }
     else
@@ -8243,7 +8254,7 @@ int WP11_Rsa_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
 {
     int ret = 0;
     unsigned char eData[sizeof(long)];
-    int i;
+    int i, eSz;
     long e = 0;
     WC_RNG rng;
 
@@ -8251,13 +8262,14 @@ int WP11_Rsa_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
     if (!mp_iszero(&pub->data.rsaKey.e)) {
         XMEMSET(eData, 0, sizeof(eData));
         /* Public exponent must be size of a long for API. */
-        if (mp_unsigned_bin_size(&pub->data.rsaKey.e) > (int)sizeof(eData))
+        eSz = mp_unsigned_bin_size(&pub->data.rsaKey.e);
+        if (eSz > (int)sizeof(eData))
             ret = BAD_FUNC_ARG;
         if (ret == 0)
-            ret = mp_to_unsigned_bin(&pub->data.rsaKey.e, eData);
+            ret = mp_to_unsigned_bin_len(&pub->data.rsaKey.e, eData, eSz);
         if (ret == 0) {
             /* Convert big-endian data into number. */
-            for (i = sizeof(eData) - 1; i >= 0; i--) {
+            for (i = eSz - 1; i >= 0; i--) {
                 e <<= 8;
                 e |= eData[i];
             }
