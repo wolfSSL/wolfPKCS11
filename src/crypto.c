@@ -1011,7 +1011,9 @@ CK_RV C_CreateObject(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate,
     WOLFPKCS11_ENTER("C_CreateObject");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        printf("  hSession=%lu, ulCount=%lu\n", (unsigned long)hSession, (unsigned long)ulCount);
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulCount=%lu", (unsigned long)hSession, (unsigned long)ulCount);
+        WOLFPKCS11_MSG(paramStr);
     }
     #endif
 
@@ -1085,14 +1087,35 @@ CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
     CK_KEY_TYPE keyType;
     int onToken = 0;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pTemplate == NULL || phNewObject == NULL)
-        return CKR_ARGUMENTS_BAD;
-    if (!WP11_Session_IsRW(session))
-        return CKR_SESSION_READ_ONLY;
+    WOLFPKCS11_ENTER("C_CopyObject");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hObject=%lu, ulCount=%lu", (unsigned long)hSession, (unsigned long)hObject, (unsigned long)ulCount);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_CopyObject", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_CopyObject", rv);
+        return rv;
+    }
+    if (pTemplate == NULL || phNewObject == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_CopyObject", rv);
+        return rv;
+    }
+    if (!WP11_Session_IsRW(session)) {
+        rv = CKR_SESSION_READ_ONLY;
+        WOLFPKCS11_LEAVE("C_CopyObject", rv);
+        return rv;
+    }
 
     /* Need key type and whether object is to be on the token to create a new
      * object. Get the object type from original object and where to store
@@ -1163,7 +1186,9 @@ CK_RV C_DestroyObject(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_DestroyObject");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        printf("  hSession=%lu, hObject=%lu\n", (unsigned long)hSession, (unsigned long)hObject);
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hObject=%lu", (unsigned long)hSession, (unsigned long)hObject);
+        WOLFPKCS11_MSG(paramStr);
     }
     #endif
 
@@ -1216,24 +1241,48 @@ CK_RV C_DestroyObject(CK_SESSION_HANDLE hSession,
 CK_RV C_GetObjectSize(CK_SESSION_HANDLE hSession,
                       CK_OBJECT_HANDLE hObject, CK_ULONG_PTR pulSize)
 {
+    CK_RV rv;
     int ret;
     WP11_Session* session;
     WP11_Object* obj = NULL;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pulSize == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_GetObjectSize");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hObject=%lu", (unsigned long)hSession, (unsigned long)hObject);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_GetObjectSize", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_GetObjectSize", rv);
+        return rv;
+    }
+    if (pulSize == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_GetObjectSize", rv);
+        return rv;
+    }
 
     ret = WP11_Object_Find(session, hObject, &obj);
-    if (ret != 0)
-        return CKR_OBJECT_HANDLE_INVALID;
+    if (ret != 0) {
+        rv = CKR_OBJECT_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_GetObjectSize", rv);
+        return rv;
+    }
 
     *pulSize = CK_UNAVAILABLE_INFORMATION;
 
-    return CKR_OK;
+    rv = CKR_OK;
+    WOLFPKCS11_LEAVE("C_GetObjectSize", rv);
+    return rv;
 }
 
 
@@ -1266,39 +1315,75 @@ CK_RV C_GetAttributeValue(CK_SESSION_HANDLE hSession,
     CK_ATTRIBUTE* attr;
     int i;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pTemplate == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_GetAttributeValue");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hObject=%lu, ulCount=%lu", (unsigned long)hSession, (unsigned long)hObject, (unsigned long)ulCount);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_GetAttributeValue", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_GetAttributeValue", rv);
+        return rv;
+    }
+    if (pTemplate == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_GetAttributeValue", rv);
+        return rv;
+    }
 
     ret = WP11_Object_Find(session, hObject, &obj);
-    if (ret != 0)
-        return CKR_OBJECT_HANDLE_INVALID;
+    if (ret != 0) {
+        rv = CKR_OBJECT_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_GetAttributeValue", rv);
+        return rv;
+    }
 
     /* Check the value and lengths of attributes based on data type. */
     rv = CheckAttributes(pTemplate, ulCount, 0);
-    if (rv != CKR_OK)
+    if (rv != CKR_OK) {
+        WOLFPKCS11_LEAVE("C_GetAttributeValue", rv);
         return rv;
+    }
 
     for (i = 0; i < (int)ulCount; i++) {
         attr = &pTemplate[i];
 
         ret = WP11_Object_GetAttr(obj, attr->type, (byte*)attr->pValue,
                                                              &attr->ulValueLen);
-        if (ret == BAD_FUNC_ARG)
-            return CKR_ATTRIBUTE_TYPE_INVALID;
-        else if (ret == BUFFER_E)
-            return CKR_BUFFER_TOO_SMALL;
-        else if (ret == NOT_AVAILABLE_E)
-            return CK_UNAVAILABLE_INFORMATION;
+        if (ret == BAD_FUNC_ARG) {
+            rv = CKR_ATTRIBUTE_TYPE_INVALID;
+            WOLFPKCS11_LEAVE("C_GetAttributeValue", rv);
+            return rv;
+        }
+        else if (ret == BUFFER_E) {
+            rv = CKR_BUFFER_TOO_SMALL;
+            WOLFPKCS11_LEAVE("C_GetAttributeValue", rv);
+            return rv;
+        }
+        else if (ret == NOT_AVAILABLE_E) {
+            rv = CK_UNAVAILABLE_INFORMATION;
+            WOLFPKCS11_LEAVE("C_GetAttributeValue", rv);
+            return rv;
+        }
         else if (ret == CKR_ATTRIBUTE_SENSITIVE)
             rv = ret;
-        else if (ret != 0)
-            return CKR_FUNCTION_FAILED;
+        else if (ret != 0) {
+            rv = CKR_FUNCTION_FAILED;
+            WOLFPKCS11_LEAVE("C_GetAttributeValue", rv);
+            return rv;
+        }
     }
 
+    WOLFPKCS11_LEAVE("C_GetAttributeValue", rv);
     return rv;
 }
 
@@ -1327,24 +1412,51 @@ CK_RV C_SetAttributeValue(CK_SESSION_HANDLE hSession,
                           CK_OBJECT_HANDLE hObject,
                           CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount)
 {
+    CK_RV rv;
     int ret;
     WP11_Session* session;
     WP11_Object* obj;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pTemplate == NULL)
-        return CKR_ARGUMENTS_BAD;
-    if (!WP11_Session_IsRW(session))
-        return CKR_SESSION_READ_ONLY;
+    WOLFPKCS11_ENTER("C_SetAttributeValue");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hObject=%lu, ulCount=%lu", (unsigned long)hSession, (unsigned long)hObject, (unsigned long)ulCount);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_SetAttributeValue", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_SetAttributeValue", rv);
+        return rv;
+    }
+    if (pTemplate == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_SetAttributeValue", rv);
+        return rv;
+    }
+    if (!WP11_Session_IsRW(session)) {
+        rv = CKR_SESSION_READ_ONLY;
+        WOLFPKCS11_LEAVE("C_SetAttributeValue", rv);
+        return rv;
+    }
 
     ret = WP11_Object_Find(session, hObject, &obj);
-    if (ret != 0)
-        return CKR_OBJECT_HANDLE_INVALID;
+    if (ret != 0) {
+        rv = CKR_OBJECT_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_SetAttributeValue", rv);
+        return rv;
+    }
 
-    return SetAttributeValue(session, obj, pTemplate, ulCount, CK_FALSE);
+    rv = SetAttributeValue(session, obj, pTemplate, ulCount, CK_FALSE);
+    WOLFPKCS11_LEAVE("C_SetAttributeValue", rv);
+    return rv;
 }
 
 /**
@@ -1366,32 +1478,62 @@ CK_RV C_SetAttributeValue(CK_SESSION_HANDLE hSession,
 CK_RV C_FindObjectsInit(CK_SESSION_HANDLE hSession,
                         CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount)
 {
+    CK_RV rv;
     WP11_Session* session;
     CK_ATTRIBUTE* attr;
     int onToken = 1;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pTemplate == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_FindObjectsInit");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulCount=%lu", (unsigned long)hSession, (unsigned long)ulCount);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
 
-    if (WP11_Session_FindInit(session) != 0)
-        return CKR_OPERATION_ACTIVE;
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_FindObjectsInit", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_FindObjectsInit", rv);
+        return rv;
+    }
+    if (pTemplate == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_FindObjectsInit", rv);
+        return rv;
+    }
+
+    if (WP11_Session_FindInit(session) != 0) {
+        rv = CKR_OPERATION_ACTIVE;
+        WOLFPKCS11_LEAVE("C_FindObjectsInit", rv);
+        return rv;
+    }
 
     FindAttributeType(pTemplate, ulCount, CKA_TOKEN, &attr);
     if (attr != NULL) {
-        if (attr->pValue == NULL)
-            return CKR_ATTRIBUTE_VALUE_INVALID;
-        if (attr->ulValueLen != sizeof(CK_BBOOL))
-            return CKR_ATTRIBUTE_VALUE_INVALID;
+        if (attr->pValue == NULL) {
+            rv = CKR_ATTRIBUTE_VALUE_INVALID;
+            WOLFPKCS11_LEAVE("C_FindObjectsInit", rv);
+            return rv;
+        }
+        if (attr->ulValueLen != sizeof(CK_BBOOL)) {
+            rv = CKR_ATTRIBUTE_VALUE_INVALID;
+            WOLFPKCS11_LEAVE("C_FindObjectsInit", rv);
+            return rv;
+        }
         onToken = *(CK_BBOOL*)attr->pValue;
     }
 
     WP11_Session_Find(session, onToken, pTemplate, ulCount);
 
-    return CKR_OK;
+    rv = CKR_OK;
+    WOLFPKCS11_LEAVE("C_FindObjectsInit", rv);
+    return rv;
 }
 
 /**
@@ -1413,16 +1555,35 @@ CK_RV C_FindObjects(CK_SESSION_HANDLE hSession,
                     CK_ULONG ulMaxObjectCount,
                     CK_ULONG_PTR pulObjectCount)
 {
+    CK_RV rv;
     int i;
     CK_OBJECT_HANDLE handle;
     WP11_Session* session;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (phObject == NULL || pulObjectCount == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_FindObjects");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulMaxObjectCount=%lu", (unsigned long)hSession, (unsigned long)ulMaxObjectCount);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_FindObjects", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_FindObjects", rv);
+        return rv;
+    }
+    if (phObject == NULL || pulObjectCount == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_FindObjects", rv);
+        return rv;
+    }
 
     for (i = 0; i < (int)ulMaxObjectCount; i++) {
         if (WP11_Session_FindGet(session, &handle) == FIND_NO_MORE_E)
@@ -1431,7 +1592,9 @@ CK_RV C_FindObjects(CK_SESSION_HANDLE hSession,
     }
     *pulObjectCount = i;
 
-    return CKR_OK;
+    rv = CKR_OK;
+    WOLFPKCS11_LEAVE("C_FindObjects", rv);
+    return rv;
 }
 
 /**
@@ -1445,16 +1608,34 @@ CK_RV C_FindObjects(CK_SESSION_HANDLE hSession,
  */
 CK_RV C_FindObjectsFinal(CK_SESSION_HANDLE hSession)
 {
+    CK_RV rv;
     WP11_Session* session;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
+    WOLFPKCS11_ENTER("C_FindObjectsFinal");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu", (unsigned long)hSession);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_FindObjectsFinal", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_FindObjectsFinal", rv);
+        return rv;
+    }
 
     WP11_Session_FindFinal(session);
 
-    return CKR_OK;
+    rv = CKR_OK;
+    WOLFPKCS11_LEAVE("C_FindObjectsFinal", rv);
+    return rv;
 }
 
 
@@ -1481,22 +1662,44 @@ CK_RV C_FindObjectsFinal(CK_SESSION_HANDLE hSession)
 CK_RV C_EncryptInit(CK_SESSION_HANDLE hSession,
                     CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
 {
+    CK_RV rv;
     int ret;
     WP11_Session* session;
     WP11_Object* obj = NULL;
     CK_KEY_TYPE type;
     int init;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pMechanism == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_EncryptInit");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hKey=%lu", (unsigned long)hSession, (unsigned long)hKey);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_EncryptInit", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_EncryptInit", rv);
+        return rv;
+    }
+    if (pMechanism == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_EncryptInit", rv);
+        return rv;
+    }
 
     ret = WP11_Object_Find(session, hKey, &obj);
-    if (ret != 0)
-        return CKR_OBJECT_HANDLE_INVALID;
+    if (ret != 0) {
+        rv = CKR_OBJECT_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_EncryptInit", rv);
+        return rv;
+    }
 
     type = WP11_Object_GetType(obj);
     switch (pMechanism->mechanism) {
@@ -1745,18 +1948,37 @@ CK_RV C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 CK_ULONG ulDataLen, CK_BYTE_PTR pEncryptedData,
                 CK_ULONG_PTR pulEncryptedDataLen)
 {
+    CK_RV rv;
     int ret;
     WP11_Session* session;
     WP11_Object* obj = NULL;
     word32 encDataLen;
     CK_MECHANISM_TYPE mechanism;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pData == NULL || pulEncryptedDataLen == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_Encrypt");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulDataLen=%lu", (unsigned long)hSession, (unsigned long)ulDataLen);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_Encrypt", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_Encrypt", rv);
+        return rv;
+    }
+    if (pData == NULL || pulEncryptedDataLen == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_Encrypt", rv);
+        return rv;
+    }
 
     /* Key the key for the encryption operation. */
     WP11_Session_GetObject(session, &obj);
@@ -2068,13 +2290,33 @@ CK_RV C_EncryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
     WP11_Object* obj = NULL;
     word32 encPartLen;
     CK_MECHANISM_TYPE mechanism;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pPart == NULL || pulEncryptedPartLen == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_EncryptUpdate");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulPartLen=%lu", 
+                 (unsigned long)hSession, (unsigned long)ulPartLen);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_EncryptUpdate", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_EncryptUpdate", rv);
+        return rv;
+    }
+    if (pPart == NULL || pulEncryptedPartLen == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_EncryptUpdate", rv);
+        return rv;
+    }
 
     WP11_Session_GetObject(session, &obj);
     if (obj == NULL)
@@ -2085,23 +2327,34 @@ CK_RV C_EncryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
 #ifndef NO_AES
     #ifdef HAVE_AES_CBC
         case CKM_AES_CBC:
-            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CBC_ENC))
-                return CKR_OPERATION_NOT_INITIALIZED;
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CBC_ENC)) {
+                rv = CKR_OPERATION_NOT_INITIALIZED;
+                WOLFPKCS11_LEAVE("C_EncryptUpdate", rv);
+                return rv;
+            }
 
             encPartLen = (word32)ulPartLen + WP11_AesCbc_PartLen(session);
             encPartLen &= ~0xf;
             if (pEncryptedPart == NULL) {
                 *pulEncryptedPartLen = encPartLen;
-                return CKR_OK;
+                rv = CKR_OK;
+                WOLFPKCS11_LEAVE("C_EncryptUpdate", rv);
+                return rv;
             }
-            if (encPartLen > (word32)*pulEncryptedPartLen)
-                return CKR_BUFFER_TOO_SMALL;
+            if (encPartLen > (word32)*pulEncryptedPartLen) {
+                rv = CKR_BUFFER_TOO_SMALL;
+                WOLFPKCS11_LEAVE("C_EncryptUpdate", rv);
+                return rv;
+            }
 
             ret = WP11_AesCbc_EncryptUpdate(pPart, (int)ulPartLen,
                                                     pEncryptedPart, &encPartLen,
                                                     session);
-            if (ret < 0)
-                return CKR_FUNCTION_FAILED;
+            if (ret < 0) {
+                rv = CKR_FUNCTION_FAILED;
+                WOLFPKCS11_LEAVE("C_EncryptUpdate", rv);
+                return rv;
+            }
             *pulEncryptedPartLen = encPartLen;
             break;
         case CKM_AES_CBC_PAD:
@@ -2193,10 +2446,14 @@ CK_RV C_EncryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
             (void)ret;
             (void)ulPartLen;
             (void)pEncryptedPart;
-            return CKR_MECHANISM_INVALID;
+            rv = CKR_MECHANISM_INVALID;
+            WOLFPKCS11_LEAVE("C_EncryptUpdate", rv);
+            return rv;
     }
 
-    return CKR_OK;
+    rv = CKR_OK;
+    WOLFPKCS11_LEAVE("C_EncryptUpdate", rv);
+    return rv;
 }
 
 /**
@@ -2227,9 +2484,23 @@ CK_RV C_EncryptFinal(CK_SESSION_HANDLE hSession,
     WP11_Object* obj = NULL;
     word32 encPartLen;
     CK_MECHANISM_TYPE mechanism;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    WOLFPKCS11_ENTER("C_EncryptFinal");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu", 
+                 (unsigned long)hSession);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_EncryptFinal", rv);
+        return rv;
+    }
     if (WP11_Session_Get(hSession, &session) != 0)
         return CKR_SESSION_HANDLE_INVALID;
     if (pulLastEncryptedPartLen == NULL)
@@ -2375,9 +2646,23 @@ CK_RV C_DecryptInit(CK_SESSION_HANDLE hSession,
     WP11_Object* obj = NULL;
     CK_KEY_TYPE type;
     int init;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    WOLFPKCS11_ENTER("C_DecryptInit");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hKey=%lu", 
+                 (unsigned long)hSession, (unsigned long)hKey);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_DecryptInit", rv);
+        return rv;
+    }
     if (WP11_Session_Get(hSession, &session) != 0)
         return CKR_SESSION_HANDLE_INVALID;
     if (pMechanism == NULL)
@@ -2633,9 +2918,23 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
     WP11_Object* obj = NULL;
     word32 decDataLen;
     CK_MECHANISM_TYPE mechanism;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    WOLFPKCS11_ENTER("C_Decrypt");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulEncryptedDataLen=%lu", 
+                 (unsigned long)hSession, (unsigned long)ulEncryptedDataLen);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_Decrypt", rv);
+        return rv;
+    }
     if (WP11_Session_Get(hSession, &session) != 0)
         return CKR_SESSION_HANDLE_INVALID;
     if (pEncryptedData == NULL || pulDataLen == NULL)
@@ -2935,9 +3234,23 @@ CK_RV C_DecryptUpdate(CK_SESSION_HANDLE hSession,
     WP11_Object* obj = NULL;
     word32 decPartLen;
     CK_MECHANISM_TYPE mechanism;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    WOLFPKCS11_ENTER("C_DecryptUpdate");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulEncryptedPartLen=%lu", 
+                 (unsigned long)hSession, (unsigned long)ulEncryptedPartLen);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_DecryptUpdate", rv);
+        return rv;
+    }
     if (WP11_Session_Get(hSession, &session) != 0)
         return CKR_SESSION_HANDLE_INVALID;
     if (pEncryptedPart == NULL || pulPartLen == NULL)
@@ -3094,9 +3407,23 @@ CK_RV C_DecryptFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastPart,
     WP11_Object* obj = NULL;
     word32 decPartLen;
     CK_MECHANISM_TYPE mechanism;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    WOLFPKCS11_ENTER("C_DecryptFinal");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu", 
+                 (unsigned long)hSession);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_DecryptFinal", rv);
+        return rv;
+    }
     if (WP11_Session_Get(hSession, &session) != 0)
         return CKR_SESSION_HANDLE_INVALID;
     if (pulLastPartLen == NULL)
@@ -3230,21 +3557,41 @@ CK_RV C_DecryptFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastPart,
 CK_RV C_DigestInit(CK_SESSION_HANDLE hSession,
                    CK_MECHANISM_PTR pMechanism)
 {
+    CK_RV rv;
     int ret;
     int init;
     WP11_Session* session;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pMechanism == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_DigestInit");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu", (unsigned long)hSession);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_DigestInit", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_DigestInit", rv);
+        return rv;
+    }
+    if (pMechanism == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_DigestInit", rv);
+        return rv;
+    }
 
     if (pMechanism->pParameter != NULL ||
         pMechanism->ulParameterLen != 0) {
-
-        return CKR_MECHANISM_PARAM_INVALID;
+        rv = CKR_MECHANISM_PARAM_INVALID;
+        WOLFPKCS11_LEAVE("C_DigestInit", rv);
+        return rv;
     }
     init = WP11_INIT_DIGEST;
     ret = WP11_Digest_Init(pMechanism->mechanism, session);
@@ -3254,7 +3601,9 @@ CK_RV C_DigestInit(CK_SESSION_HANDLE hSession,
         WP11_Session_SetOpInitialized(session, init);
     }
 
-    return ret;
+    rv = ret;
+    WOLFPKCS11_LEAVE("C_DigestInit", rv);
+    return rv;
 }
 
 /**
@@ -3281,9 +3630,23 @@ CK_RV C_Digest(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
     word32 hashLen;
     int ret;
     WP11_Session* session;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    WOLFPKCS11_ENTER("C_Digest");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulDataLen=%lu", 
+                 (unsigned long)hSession, (unsigned long)ulDataLen);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_Digest", rv);
+        return rv;
+    }
     if (WP11_Session_Get(hSession, &session) != 0)
         return CKR_SESSION_HANDLE_INVALID;
     if (pData == NULL || ulDataLen == 0 || pulDigestLen == NULL)
@@ -3315,9 +3678,23 @@ CK_RV C_DigestUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
 {
     int ret;
     WP11_Session* session;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    WOLFPKCS11_ENTER("C_DigestUpdate");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulPartLen=%lu", 
+                 (unsigned long)hSession, (unsigned long)ulPartLen);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_DigestUpdate", rv);
+        return rv;
+    }
     if (WP11_Session_Get(hSession, &session) != 0)
         return CKR_SESSION_HANDLE_INVALID;
     if (pPart == NULL || ulPartLen == 0)
@@ -3347,9 +3724,23 @@ CK_RV C_DigestKey(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hKey)
     int ret;
     WP11_Session* session;
     WP11_Object* obj = NULL;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    WOLFPKCS11_ENTER("C_DigestKey");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hKey=%lu", 
+                 (unsigned long)hSession, (unsigned long)hKey);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_DigestKey", rv);
+        return rv;
+    }
     if (WP11_Session_Get(hSession, &session) != 0)
         return CKR_SESSION_HANDLE_INVALID;
 
@@ -3383,9 +3774,23 @@ CK_RV C_DigestFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pDigest,
     int ret;
     word32 hashLen;
     WP11_Session* session;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    WOLFPKCS11_ENTER("C_DigestFinal");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu", 
+                 (unsigned long)hSession);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_DigestFinal", rv);
+        return rv;
+    }
     if (WP11_Session_Get(hSession, &session) != 0)
         return CKR_SESSION_HANDLE_INVALID;
     if (pulDigestLen == NULL)
@@ -3461,9 +3866,23 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
     WP11_Object* obj = NULL;
     CK_KEY_TYPE type;
     int init = 0;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    WOLFPKCS11_ENTER("C_SignInit");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hKey=%lu", 
+                 (unsigned long)hSession, (unsigned long)hKey);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_SignInit", rv);
+        return rv;
+    }
     if (WP11_Session_Get(hSession, &session) != 0)
         return CKR_SESSION_HANDLE_INVALID;
     if (pMechanism == NULL)
@@ -3764,9 +4183,23 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
     WP11_Object* obj = NULL;
     word32 sigLen;
     CK_MECHANISM_TYPE mechanism;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    WOLFPKCS11_ENTER("C_Sign");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulDataLen=%lu", 
+                 (unsigned long)hSession, (unsigned long)ulDataLen);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_Sign", rv);
+        return rv;
+    }
     if (WP11_Session_Get(hSession, &session) != 0)
         return CKR_SESSION_HANDLE_INVALID;
     if (pData == NULL || pulSignatureLen == NULL)
@@ -4080,9 +4513,23 @@ CK_RV C_SignUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
     WP11_Session* session;
     WP11_Object* obj = NULL;
     CK_MECHANISM_TYPE mechanism;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    WOLFPKCS11_ENTER("C_SignUpdate");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulPartLen=%lu", 
+                 (unsigned long)hSession, (unsigned long)ulPartLen);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_SignUpdate", rv);
+        return rv;
+    }
     if (WP11_Session_Get(hSession, &session) != 0)
         return CKR_SESSION_HANDLE_INVALID;
     if (pPart == NULL)
@@ -4193,9 +4640,23 @@ CK_RV C_SignFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature,
     WP11_Object* obj = NULL;
     CK_MECHANISM_TYPE mechanism;
     word32 sigLen;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    WOLFPKCS11_ENTER("C_SignFinal");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu", 
+                 (unsigned long)hSession);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_SignFinal", rv);
+        return rv;
+    }
     if (WP11_Session_Get(hSession, &session) != 0)
         return CKR_SESSION_HANDLE_INVALID;
     if (pulSignatureLen == NULL)
@@ -4325,19 +4786,44 @@ CK_RV C_SignRecoverInit(CK_SESSION_HANDLE hSession,
     int ret;
     WP11_Session* session;
     WP11_Object* obj;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pMechanism == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_SignRecoverInit");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hKey=%lu", 
+                 (unsigned long)hSession, (unsigned long)hKey);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_SignRecoverInit", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_SignRecoverInit", rv);
+        return rv;
+    }
+    if (pMechanism == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_SignRecoverInit", rv);
+        return rv;
+    }
 
     ret = WP11_Object_Find(session, hKey, &obj);
-    if (ret != 0)
-        return CKR_OBJECT_HANDLE_INVALID;
+    if (ret != 0) {
+        rv = CKR_OBJECT_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_SignRecoverInit", rv);
+        return rv;
+    }
 
-    return CKR_MECHANISM_INVALID;
+    rv = CKR_MECHANISM_INVALID;
+    WOLFPKCS11_LEAVE("C_SignRecoverInit", rv);
+    return rv;
 }
 
 /**
@@ -4362,17 +4848,39 @@ CK_RV C_SignRecover(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                     CK_ULONG_PTR pulSignatureLen)
 {
     WP11_Session* session;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pData == NULL || ulDataLen == 0 || pulSignatureLen == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_SignRecover");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulDataLen=%lu", 
+                 (unsigned long)hSession, (unsigned long)ulDataLen);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_SignRecover", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_SignRecover", rv);
+        return rv;
+    }
+    if (pData == NULL || ulDataLen == 0 || pulSignatureLen == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_SignRecover", rv);
+        return rv;
+    }
 
     (void)pSignature;
 
-    return CKR_OPERATION_NOT_INITIALIZED;
+    rv = CKR_OPERATION_NOT_INITIALIZED;
+    WOLFPKCS11_LEAVE("C_SignRecover", rv);
+    return rv;
 }
 
 /**
@@ -4402,17 +4910,40 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
     WP11_Object* obj = NULL;
     CK_KEY_TYPE type;
     int init = 0;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pMechanism == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_VerifyInit");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hKey=%lu", 
+                 (unsigned long)hSession, (unsigned long)hKey);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_VerifyInit", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_VerifyInit", rv);
+        return rv;
+    }
+    if (pMechanism == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_VerifyInit", rv);
+        return rv;
+    }
 
     ret = WP11_Object_Find(session, hKey, &obj);
-    if (ret != 0)
-        return CKR_OBJECT_HANDLE_INVALID;
+    if (ret != 0) {
+        rv = CKR_OBJECT_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_VerifyInit", rv);
+        return rv;
+    }
 
     type = WP11_Object_GetType(obj);
     switch (pMechanism->mechanism) {
@@ -4686,13 +5217,33 @@ CK_RV C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
     WP11_Session* session = NULL;
     WP11_Object* obj = NULL;
     CK_MECHANISM_TYPE mechanism = 0;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pData == NULL || pSignature == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_Verify");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulDataLen=%lu, ulSignatureLen=%lu", 
+                 (unsigned long)hSession, (unsigned long)ulDataLen, (unsigned long)ulSignatureLen);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_Verify", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_Verify", rv);
+        return rv;
+    }
+    if (pData == NULL || pSignature == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_Verify", rv);
+        return rv;
+    }
 
     WP11_Session_GetObject(session, &obj);
     if (obj == NULL)
@@ -4944,13 +5495,33 @@ CK_RV C_VerifyUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
     WP11_Session* session;
     WP11_Object* obj = NULL;
     CK_MECHANISM_TYPE mechanism;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pPart == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_VerifyUpdate");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulPartLen=%lu", 
+                 (unsigned long)hSession, (unsigned long)ulPartLen);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_VerifyUpdate", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_VerifyUpdate", rv);
+        return rv;
+    }
+    if (pPart == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_VerifyUpdate", rv);
+        return rv;
+    }
 
     WP11_Session_GetObject(session, &obj);
     if (obj == NULL)
@@ -5045,13 +5616,33 @@ CK_RV C_VerifyFinal(CK_SESSION_HANDLE hSession,
     WP11_Session* session = NULL;
     WP11_Object* obj = NULL;
     CK_MECHANISM_TYPE mechanism = 0;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pSignature == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_VerifyFinal");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulSignatureLen=%lu", 
+                 (unsigned long)hSession, (unsigned long)ulSignatureLen);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_VerifyFinal", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_VerifyFinal", rv);
+        return rv;
+    }
+    if (pSignature == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_VerifyFinal", rv);
+        return rv;
+    }
 
     WP11_Session_GetObject(session, &obj);
     if (obj == NULL)
@@ -5149,15 +5740,38 @@ CK_RV C_VerifyRecoverInit(CK_SESSION_HANDLE hSession,
     WP11_Object* obj;
     CK_BBOOL getVar;
     CK_ULONG getVarLen = sizeof(CK_BBOOL);
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pMechanism == NULL)
-        return CKR_ARGUMENTS_BAD;
-    if (hKey == 0)
-        return CKR_OBJECT_HANDLE_INVALID;
+    WOLFPKCS11_ENTER("C_VerifyRecoverInit");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hKey=%lu", 
+                 (unsigned long)hSession, (unsigned long)hKey);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_VerifyRecoverInit", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_VerifyRecoverInit", rv);
+        return rv;
+    }
+    if (pMechanism == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_VerifyRecoverInit", rv);
+        return rv;
+    }
+    if (hKey == 0) {
+        rv = CKR_OBJECT_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_VerifyRecoverInit", rv);
+        return rv;
+    }
 
     switch(pMechanism->mechanism) {
         case CKM_RSA_PKCS:
@@ -5229,13 +5843,33 @@ CK_RV C_VerifyRecover(CK_SESSION_HANDLE hSession,
     word32 decDataLen;
     CK_MECHANISM_TYPE mechanism;
 #endif
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pSignature == NULL || ulSignatureLen == 0 || pulDataLen == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_VerifyRecover");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulSignatureLen=%lu", 
+                 (unsigned long)hSession, (unsigned long)ulSignatureLen);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_VerifyRecover", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_VerifyRecover", rv);
+        return rv;
+    }
+    if (pSignature == NULL || ulSignatureLen == 0 || pulDataLen == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_VerifyRecover", rv);
+        return rv;
+    }
 
 #ifdef NO_RSA
     (void) pData;
@@ -5307,17 +5941,39 @@ CK_RV C_DigestEncryptUpdate(CK_SESSION_HANDLE hSession,
                             CK_ULONG_PTR pulEncryptedPartLen)
 {
     WP11_Session* session;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pPart == NULL || ulPartLen == 0 || pulEncryptedPartLen == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_DigestEncryptUpdate");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulPartLen=%lu", 
+                 (unsigned long)hSession, (unsigned long)ulPartLen);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_DigestEncryptUpdate", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_DigestEncryptUpdate", rv);
+        return rv;
+    }
+    if (pPart == NULL || ulPartLen == 0 || pulEncryptedPartLen == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_DigestEncryptUpdate", rv);
+        return rv;
+    }
 
     (void)pEncryptedPart;
 
-    return CKR_OPERATION_NOT_INITIALIZED;
+    rv = CKR_OPERATION_NOT_INITIALIZED;
+    WOLFPKCS11_LEAVE("C_DigestEncryptUpdate", rv);
+    return rv;
 }
 
 /**
@@ -5343,19 +5999,40 @@ CK_RV C_DecryptDigestUpdate(CK_SESSION_HANDLE hSession,
                             CK_BYTE_PTR pPart, CK_ULONG_PTR pulPartLen)
 {
     WP11_Session* session;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
+    WOLFPKCS11_ENTER("C_DecryptDigestUpdate");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulEncryptedPartLen=%lu", 
+                 (unsigned long)hSession, (unsigned long)ulEncryptedPartLen);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_DecryptDigestUpdate", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_DecryptDigestUpdate", rv);
+        return rv;
+    }
     if (pEncryptedPart == NULL || ulEncryptedPartLen == 0 ||
                                                            pulPartLen == NULL) {
-        return CKR_ARGUMENTS_BAD;
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_DecryptDigestUpdate", rv);
+        return rv;
     }
 
     (void)pPart;
 
-    return CKR_OPERATION_NOT_INITIALIZED;
+    rv = CKR_OPERATION_NOT_INITIALIZED;
+    WOLFPKCS11_LEAVE("C_DecryptDigestUpdate", rv);
+    return rv;
 }
 
 /**
@@ -5382,17 +6059,39 @@ CK_RV C_SignEncryptUpdate(CK_SESSION_HANDLE hSession,
                           CK_ULONG_PTR pulEncryptedPartLen)
 {
     WP11_Session* session;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pPart == NULL || ulPartLen == 0 || pulEncryptedPartLen == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_SignEncryptUpdate");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulPartLen=%lu", 
+                 (unsigned long)hSession, (unsigned long)ulPartLen);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_SignEncryptUpdate", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_SignEncryptUpdate", rv);
+        return rv;
+    }
+    if (pPart == NULL || ulPartLen == 0 || pulEncryptedPartLen == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_SignEncryptUpdate", rv);
+        return rv;
+    }
 
     (void)pEncryptedPart;
 
-    return CKR_OPERATION_NOT_INITIALIZED;
+    rv = CKR_OPERATION_NOT_INITIALIZED;
+    WOLFPKCS11_LEAVE("C_SignEncryptUpdate", rv);
+    return rv;
 }
 
 /**
@@ -5418,19 +6117,40 @@ CK_RV C_DecryptVerifyUpdate(CK_SESSION_HANDLE hSession,
                             CK_BYTE_PTR pPart, CK_ULONG_PTR pulPartLen)
 {
     WP11_Session* session;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
+    WOLFPKCS11_ENTER("C_DecryptVerifyUpdate");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulEncryptedPartLen=%lu", 
+                 (unsigned long)hSession, (unsigned long)ulEncryptedPartLen);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_DecryptVerifyUpdate", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_DecryptVerifyUpdate", rv);
+        return rv;
+    }
     if (pEncryptedPart == NULL || ulEncryptedPartLen == 0 ||
                                                            pulPartLen == NULL) {
-        return CKR_ARGUMENTS_BAD;
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_DecryptVerifyUpdate", rv);
+        return rv;
     }
 
     (void)pPart;
 
-    return CKR_OPERATION_NOT_INITIALIZED;
+    rv = CKR_OPERATION_NOT_INITIALIZED;
+    WOLFPKCS11_LEAVE("C_DecryptVerifyUpdate", rv);
+    return rv;
 }
 
 /**
@@ -5467,12 +6187,31 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
     CK_ULONG getVarLen = sizeof(CK_BBOOL);
     CK_KEY_TYPE keyType;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pMechanism == NULL || pTemplate == NULL || phKey == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_GenerateKey");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulCount=%lu", 
+                 (unsigned long)hSession, (unsigned long)ulCount);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_GenerateKey", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_GenerateKey", rv);
+        return rv;
+    }
+    if (pMechanism == NULL || pTemplate == NULL || phKey == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_GenerateKey", rv);
+        return rv;
+    }
 
     switch (pMechanism->mechanism) {
 #ifndef NO_AES
@@ -5593,14 +6332,32 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
     WP11_Object* pub = NULL;
     WP11_Object* priv = NULL;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
+    WOLFPKCS11_ENTER("C_GenerateKeyPair");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulPublicKeyAttributeCount=%lu, ulPrivateKeyAttributeCount=%lu", 
+                 (unsigned long)hSession, (unsigned long)ulPublicKeyAttributeCount, (unsigned long)ulPrivateKeyAttributeCount);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_GenerateKeyPair", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_GenerateKeyPair", rv);
+        return rv;
+    }
     if (pMechanism == NULL || pPublicKeyTemplate == NULL ||
                            pPrivateKeyTemplate == NULL || phPublicKey == NULL ||
                            phPrivateKey == NULL) {
-        return CKR_ARGUMENTS_BAD;
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_GenerateKeyPair", rv);
+        return rv;
     }
 
     switch (pMechanism->mechanism) {
@@ -5760,12 +6517,31 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
     word32 serialSize = 0;
     byte* serialBuff = NULL;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pMechanism == NULL || pulWrappedKeyLen == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_WrapKey");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hWrappingKey=%lu, hKey=%lu", 
+                 (unsigned long)hSession, (unsigned long)hWrappingKey, (unsigned long)hKey);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_WrapKey", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_WrapKey", rv);
+        return rv;
+    }
+    if (pMechanism == NULL || pulWrappedKeyLen == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_WrapKey", rv);
+        return rv;
+    }
 
     if (! WP11_Session_IsRW(session))
         return CKR_SESSION_READ_ONLY;
@@ -5914,17 +6690,38 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
     byte* workBuffer = NULL;
     CK_ULONG ulUnwrappedLen = ulWrappedKeyLen;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
+    WOLFPKCS11_ENTER("C_UnwrapKey");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hUnwrappingKey=%lu, ulWrappedKeyLen=%lu, ulAttributeCount=%lu", 
+                 (unsigned long)hSession, (unsigned long)hUnwrappingKey, (unsigned long)ulWrappedKeyLen, (unsigned long)ulAttributeCount);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
 
-    if (!WP11_Session_IsRW(session))
-        return CKR_SESSION_READ_ONLY;
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_UnwrapKey", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_UnwrapKey", rv);
+        return rv;
+    }
+
+    if (!WP11_Session_IsRW(session)) {
+        rv = CKR_SESSION_READ_ONLY;
+        WOLFPKCS11_LEAVE("C_UnwrapKey", rv);
+        return rv;
+    }
 
     if (pMechanism == NULL || pWrappedKey == NULL || ulWrappedKeyLen == 0 ||
                                            pTemplate == NULL || phKey == NULL) {
-        return CKR_ARGUMENTS_BAD;
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_UnwrapKey", rv);
+        return rv;
     }
 
     *phKey = CK_INVALID_HANDLE;
@@ -6263,16 +7060,38 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
     CK_ULONG secretKeyLen[2] = { 0, 0 };
 #endif
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pMechanism == NULL || pTemplate == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_DeriveKey");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hBaseKey=%lu, ulAttributeCount=%lu", 
+                 (unsigned long)hSession, (unsigned long)hBaseKey, (unsigned long)ulAttributeCount);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_DeriveKey", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_DeriveKey", rv);
+        return rv;
+    }
+    if (pMechanism == NULL || pTemplate == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_DeriveKey", rv);
+        return rv;
+    }
     /* phKey can be NULL for CKM_TLS12_KEY_AND_MAC_DERIVE as it is ignored */
     if ((phKey == NULL) &&
-        (pMechanism->mechanism != CKM_TLS12_KEY_AND_MAC_DERIVE))
-        return CKR_ARGUMENTS_BAD;
+        (pMechanism->mechanism != CKM_TLS12_KEY_AND_MAC_DERIVE)) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_DeriveKey", rv);
+        return rv;
+    }
 
     ret = WP11_Object_Find(session, hBaseKey, &obj);
     if (ret != 0)
@@ -6564,22 +7383,50 @@ CK_RV C_SeedRandom(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSeed,
     int ret;
     WP11_Session* session;
     WP11_Slot* slot;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pSeed == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_SeedRandom");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulSeedLen=%lu", 
+                 (unsigned long)hSession, (unsigned long)ulSeedLen);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_SeedRandom", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_SeedRandom", rv);
+        return rv;
+    }
+    if (pSeed == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_SeedRandom", rv);
+        return rv;
+    }
 
     slot = WP11_Session_GetSlot(session);
     ret = WP11_Slot_SeedRandom(slot, pSeed, (int)ulSeedLen);
-    if (ret == MEMORY_E)
-        return CKR_DEVICE_MEMORY;
-    if (ret != 0)
-        return CKR_FUNCTION_FAILED;
+    if (ret == MEMORY_E) {
+        rv = CKR_DEVICE_MEMORY;
+        WOLFPKCS11_LEAVE("C_SeedRandom", rv);
+        return rv;
+    }
+    if (ret != 0) {
+        rv = CKR_FUNCTION_FAILED;
+        WOLFPKCS11_LEAVE("C_SeedRandom", rv);
+        return rv;
+    }
 
-    return CKR_OK;
+    rv = CKR_OK;
+    WOLFPKCS11_LEAVE("C_SeedRandom", rv);
+    return rv;
 }
 
 /**
@@ -6601,20 +7448,48 @@ CK_RV C_GenerateRandom(CK_SESSION_HANDLE hSession,
     int ret;
     WP11_Session* session;
     WP11_Slot* slot;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pRandomData == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_GenerateRandom");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        char paramStr[256];
+        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulRandomLen=%lu", 
+                 (unsigned long)hSession, (unsigned long)ulRandomLen);
+        WOLFPKCS11_MSG(paramStr);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_GenerateRandom", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_GenerateRandom", rv);
+        return rv;
+    }
+    if (pRandomData == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_GenerateRandom", rv);
+        return rv;
+    }
 
     slot = WP11_Session_GetSlot(session);
     ret = WP11_Slot_GenerateRandom(slot, pRandomData, (int)ulRandomLen);
-    if (ret == MEMORY_E)
-        return CKR_DEVICE_MEMORY;
-    if (ret != 0)
-        return CKR_FUNCTION_FAILED;
+    if (ret == MEMORY_E) {
+        rv = CKR_DEVICE_MEMORY;
+        WOLFPKCS11_LEAVE("C_GenerateRandom", rv);
+        return rv;
+    }
+    if (ret != 0) {
+        rv = CKR_FUNCTION_FAILED;
+        WOLFPKCS11_LEAVE("C_GenerateRandom", rv);
+        return rv;
+    }
 
-    return CKR_OK;
+    rv = CKR_OK;
+    WOLFPKCS11_LEAVE("C_GenerateRandom", rv);
+    return rv;
 }
