@@ -75,7 +75,7 @@ AC_CHECK_SIZEOF([long long], 8)
 AC_CHECK_SIZEOF([long], 4)
 
 # Check headers/libs
-AC_CHECK_FUNCS([gethostbyname getaddrinfo gettimeofday inet_ntoa memset socket])
+AC_CHECK_FUNCS([gethostbyname getaddrinfo gettimeofday inet_ntoa memset socket getpid])
 AC_CHECK_LIB([network],[socket])
 
 # DEBUG
