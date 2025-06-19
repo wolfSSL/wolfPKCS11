@@ -109,12 +109,19 @@ static CK_FUNCTION_LIST wolfpkcs11FunctionList = {
  */
 CK_RV C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList)
 {
-    if (ppFunctionList == NULL)
-        return CKR_ARGUMENTS_BAD;
+    CK_RV ret;
+    WOLFPKCS11_ENTER("C_GetFunctionList");
+    
+    if (ppFunctionList == NULL) {
+        ret = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_GetFunctionList", ret);
+        return ret;
+    }
 
     *ppFunctionList = &wolfpkcs11FunctionList;
-
-    return CKR_OK;
+    ret = CKR_OK;
+    WOLFPKCS11_LEAVE("C_GetFunctionList", ret);
+    return ret;
 }
 
 /**
@@ -126,12 +133,19 @@ CK_RV C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList)
  */
 CK_RV C_Initialize(CK_VOID_PTR pInitArgs)
 {
-    if (WP11_Library_Init() != 0)
-        return CKR_FUNCTION_FAILED;
+    CK_RV ret;
+    WOLFPKCS11_ENTER("C_Initialize");
+    
+    if (WP11_Library_Init() != 0) {
+        ret = CKR_FUNCTION_FAILED;
+        WOLFPKCS11_LEAVE("C_Initialize", ret);
+        return ret;
+    }
 
     (void)pInitArgs;
-
-    return CKR_OK;
+    ret = CKR_OK;
+    WOLFPKCS11_LEAVE("C_Initialize", ret);
+    return ret;
 }
 
 /**
@@ -142,11 +156,15 @@ CK_RV C_Initialize(CK_VOID_PTR pInitArgs)
  */
 CK_RV C_Finalize(CK_VOID_PTR pReserved)
 {
+    CK_RV ret;
+    WOLFPKCS11_ENTER("C_Finalize");
+    
     WP11_Library_Final();
 
     (void)pReserved;
-
-    return CKR_OK;
+    ret = CKR_OK;
+    WOLFPKCS11_LEAVE("C_Finalize", ret);
+    return ret;
 }
 
 /* Information about the Crypto-Ki library. */
@@ -168,13 +186,23 @@ static CK_INFO wolfpkcs11Info = {
  */
 CK_RV C_GetInfo(CK_INFO_PTR pInfo)
 {
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (pInfo == NULL)
-        return CKR_ARGUMENTS_BAD;
+    CK_RV ret;
+    WOLFPKCS11_ENTER("C_GetInfo");
+    
+    if (!WP11_Library_IsInitialized()) {
+        ret = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_GetInfo", ret);
+        return ret;
+    }
+    if (pInfo == NULL) {
+        ret = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_GetInfo", ret);
+        return ret;
+    }
 
     XMEMCPY(pInfo, &wolfpkcs11Info, sizeof(wolfpkcs11Info));
-
-    return CKR_OK;
+    ret = CKR_OK;
+    WOLFPKCS11_LEAVE("C_GetInfo", ret);
+    return ret;
 }
 

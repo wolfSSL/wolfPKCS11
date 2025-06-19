@@ -613,6 +613,23 @@ int WP11_GetOperationState(WP11_Session* session, unsigned char* stateData,
 int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
                            unsigned long stateDataLen);
 
+#ifdef DEBUG_WOLFPKCS11
+extern int wolfpkcs11_debugging;
+void wolfPKCS11_Debugging_On(void);
+void wolfPKCS11_Debugging_Off(void);
+
+#define WOLFPKCS11_ENTER(funcName) \
+    do { if (wolfpkcs11_debugging) printf("WOLFPKCS11 ENTER: %s\n", funcName); } while(0)
+#define WOLFPKCS11_LEAVE(funcName, ret) \
+    do { if (wolfpkcs11_debugging) printf("WOLFPKCS11 LEAVE: %s, returning %lu\n", funcName, (unsigned long)ret); } while(0)
+#define WOLFPKCS11_MSG(msg) \
+    do { if (wolfpkcs11_debugging) printf("WOLFPKCS11: %s\n", msg); } while(0)
+#else
+#define WOLFPKCS11_ENTER(funcName)
+#define WOLFPKCS11_LEAVE(funcName, ret)
+#define WOLFPKCS11_MSG(msg)
+#endif
+
 #ifdef __cplusplus
 }
 #endif

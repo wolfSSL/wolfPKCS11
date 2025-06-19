@@ -1008,22 +1008,44 @@ CK_RV C_CreateObject(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate,
     WP11_Session* session;
     WP11_Object* object;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pTemplate == NULL || phObject == NULL)
-        return CKR_ARGUMENTS_BAD;
-    if (!WP11_Session_IsRW(session))
-        return CKR_SESSION_READ_ONLY;
+    WOLFPKCS11_ENTER("C_CreateObject");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        printf("  hSession=%lu, ulCount=%lu\n", (unsigned long)hSession, (unsigned long)ulCount);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_CreateObject", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_CreateObject", rv);
+        return rv;
+    }
+    if (pTemplate == NULL || phObject == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_CreateObject", rv);
+        return rv;
+    }
+    if (!WP11_Session_IsRW(session)) {
+        rv = CKR_SESSION_READ_ONLY;
+        WOLFPKCS11_LEAVE("C_CreateObject", rv);
+        return rv;
+    }
 
     rv = CreateObject(session, pTemplate, ulCount, &object);
-    if (rv != CKR_OK)
+    if (rv != CKR_OK) {
+        WOLFPKCS11_LEAVE("C_CreateObject", rv);
         return rv;
+    }
     rv = AddObject(session, object, pTemplate, ulCount, phObject);
     if (rv != CKR_OK)
         WP11_Object_Free(object);
 
+    WOLFPKCS11_LEAVE("C_CreateObject", rv);
     return rv;
 }
 
@@ -1134,24 +1156,46 @@ CK_RV C_DestroyObject(CK_SESSION_HANDLE hSession,
                       CK_OBJECT_HANDLE hObject)
 {
     int ret;
+    CK_RV rv;
     WP11_Session* session;
     WP11_Object* obj = NULL;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (!WP11_Session_IsRW(session))
-        return CKR_SESSION_READ_ONLY;
+    WOLFPKCS11_ENTER("C_DestroyObject");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        printf("  hSession=%lu, hObject=%lu\n", (unsigned long)hSession, (unsigned long)hObject);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_DestroyObject", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_DestroyObject", rv);
+        return rv;
+    }
+    if (!WP11_Session_IsRW(session)) {
+        rv = CKR_SESSION_READ_ONLY;
+        WOLFPKCS11_LEAVE("C_DestroyObject", rv);
+        return rv;
+    }
 
     ret = WP11_Object_Find(session, hObject, &obj);
-    if (ret != 0)
-        return CKR_OBJECT_HANDLE_INVALID;
+    if (ret != 0) {
+        rv = CKR_OBJECT_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_DestroyObject", rv);
+        return rv;
+    }
 
     WP11_Session_RemoveObject(session, obj);
     WP11_Object_Free(obj);
 
-    return CKR_OK;
+    rv = CKR_OK;
+    WOLFPKCS11_LEAVE("C_DestroyObject", rv);
+    return rv;
 }
 
 /**
