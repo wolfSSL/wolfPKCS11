@@ -4,7 +4,6 @@
 #include "wolfpkcs11/pkcs11.h"
 
 #ifdef DEBUG_WOLFPKCS11
-static int debug_output_detected = 0;
 static FILE* original_stdout = NULL;
 static FILE* capture_file = NULL;
 
@@ -41,7 +40,7 @@ static int check_debug_output(void) {
 }
 #endif
 
-int main() {
+int main(void) {
     CK_RV rv;
     CK_FUNCTION_LIST_PTR pFunctionList;
     
