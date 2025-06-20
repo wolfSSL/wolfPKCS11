@@ -41,14 +41,13 @@ static int check_debug_output(void) {
 #endif
 
 int main(void) {
-    CK_RV rv;
-    CK_FUNCTION_LIST_PTR pFunctionList;
-    
 #ifndef DEBUG_WOLFPKCS11
     printf("Debug mode is DISABLED (DEBUG_WOLFPKCS11 not defined)\n");
     printf("Skipping debug test - returning code 77\n");
     return 77;
 #else
+    CK_RV rv;
+    CK_FUNCTION_LIST_PTR pFunctionList;
     
     printf("=== wolfPKCS11 Debug Test Program ===\n");
     printf("Debug mode is ENABLED (DEBUG_WOLFPKCS11 defined)\n");
