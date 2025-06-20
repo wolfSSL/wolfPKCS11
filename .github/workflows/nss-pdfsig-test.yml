@@ -312,4 +312,4 @@ jobs:
           /tmp/test.pdf
           /tmp/signed.pdf
           /tmp/*.log
-        retention-days: 7
+        retention-days: 5

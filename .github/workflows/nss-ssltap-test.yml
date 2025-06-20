@@ -340,7 +340,7 @@ jobs:
         echo "========================================"
 
     - name: Upload test logs
-      if: always()
+      if: failure()
       uses: actions/upload-artifact@v4
       with:
         name: nss-ssltap-test-logs
