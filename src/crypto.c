@@ -1011,9 +1011,7 @@ CK_RV C_CreateObject(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate,
     WOLFPKCS11_ENTER("C_CreateObject");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulCount=%lu", (unsigned long)hSession, (unsigned long)ulCount);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulCount=%lu", (unsigned long)hSession, (unsigned long)ulCount);
     }
     #endif
 
@@ -1090,9 +1088,7 @@ CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
     WOLFPKCS11_ENTER("C_CopyObject");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hObject=%lu, ulCount=%lu", (unsigned long)hSession, (unsigned long)hObject, (unsigned long)ulCount);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, hObject=%lu, ulCount=%lu", (unsigned long)hSession, (unsigned long)hObject, (unsigned long)ulCount);
     }
     #endif
 
@@ -1186,9 +1182,7 @@ CK_RV C_DestroyObject(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_DestroyObject");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hObject=%lu", (unsigned long)hSession, (unsigned long)hObject);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, hObject=%lu", (unsigned long)hSession, (unsigned long)hObject);
     }
     #endif
 
@@ -1249,9 +1243,7 @@ CK_RV C_GetObjectSize(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_GetObjectSize");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hObject=%lu", (unsigned long)hSession, (unsigned long)hObject);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, hObject=%lu", (unsigned long)hSession, (unsigned long)hObject);
     }
     #endif
 
@@ -1318,9 +1310,7 @@ CK_RV C_GetAttributeValue(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_GetAttributeValue");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hObject=%lu, ulCount=%lu", (unsigned long)hSession, (unsigned long)hObject, (unsigned long)ulCount);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, hObject=%lu, ulCount=%lu", (unsigned long)hSession, (unsigned long)hObject, (unsigned long)ulCount);
     }
     #endif
 
@@ -1420,9 +1410,7 @@ CK_RV C_SetAttributeValue(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_SetAttributeValue");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hObject=%lu, ulCount=%lu", (unsigned long)hSession, (unsigned long)hObject, (unsigned long)ulCount);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, hObject=%lu, ulCount=%lu", (unsigned long)hSession, (unsigned long)hObject, (unsigned long)ulCount);
     }
     #endif
 
@@ -1486,9 +1474,7 @@ CK_RV C_FindObjectsInit(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_FindObjectsInit");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulCount=%lu", (unsigned long)hSession, (unsigned long)ulCount);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulCount=%lu", (unsigned long)hSession, (unsigned long)ulCount);
     }
     #endif
 
@@ -1563,9 +1549,7 @@ CK_RV C_FindObjects(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_FindObjects");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulMaxObjectCount=%lu", (unsigned long)hSession, (unsigned long)ulMaxObjectCount);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulMaxObjectCount=%lu", (unsigned long)hSession, (unsigned long)ulMaxObjectCount);
     }
     #endif
 
@@ -1614,9 +1598,7 @@ CK_RV C_FindObjectsFinal(CK_SESSION_HANDLE hSession)
     WOLFPKCS11_ENTER("C_FindObjectsFinal");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu", (unsigned long)hSession);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu", (unsigned long)hSession);
     }
     #endif
 
@@ -1672,9 +1654,7 @@ CK_RV C_EncryptInit(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_EncryptInit");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hKey=%lu", (unsigned long)hSession, (unsigned long)hKey);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, hKey=%lu", (unsigned long)hSession, (unsigned long)hKey);
     }
     #endif
 
@@ -1958,9 +1938,7 @@ CK_RV C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
     WOLFPKCS11_ENTER("C_Encrypt");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulDataLen=%lu", (unsigned long)hSession, (unsigned long)ulDataLen);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulDataLen=%lu", (unsigned long)hSession, (unsigned long)ulDataLen);
     }
     #endif
 
@@ -2295,10 +2273,7 @@ CK_RV C_EncryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
     WOLFPKCS11_ENTER("C_EncryptUpdate");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulPartLen=%lu", 
-                 (unsigned long)hSession, (unsigned long)ulPartLen);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulPartLen=%lu", (unsigned long)hSession, (unsigned long)ulPartLen);
     }
     #endif
 
@@ -2489,10 +2464,7 @@ CK_RV C_EncryptFinal(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_EncryptFinal");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu", 
-                 (unsigned long)hSession);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu", (unsigned long)hSession);
     }
     #endif
 
@@ -2651,10 +2623,7 @@ CK_RV C_DecryptInit(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_DecryptInit");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hKey=%lu", 
-                 (unsigned long)hSession, (unsigned long)hKey);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, hKey=%lu", (unsigned long)hSession, (unsigned long)hKey);
     }
     #endif
 
@@ -2923,10 +2892,7 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
     WOLFPKCS11_ENTER("C_Decrypt");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulEncryptedDataLen=%lu", 
-                 (unsigned long)hSession, (unsigned long)ulEncryptedDataLen);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulEncryptedDataLen=%lu", (unsigned long)hSession, (unsigned long)ulEncryptedDataLen);
     }
     #endif
 
@@ -3239,10 +3205,7 @@ CK_RV C_DecryptUpdate(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_DecryptUpdate");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulEncryptedPartLen=%lu", 
-                 (unsigned long)hSession, (unsigned long)ulEncryptedPartLen);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulEncryptedPartLen=%lu", (unsigned long)hSession, (unsigned long)ulEncryptedPartLen);
     }
     #endif
 
@@ -3412,10 +3375,7 @@ CK_RV C_DecryptFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastPart,
     WOLFPKCS11_ENTER("C_DecryptFinal");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu", 
-                 (unsigned long)hSession);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu", (unsigned long)hSession);
     }
     #endif
 
@@ -3565,9 +3525,7 @@ CK_RV C_DigestInit(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_DigestInit");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu", (unsigned long)hSession);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu", (unsigned long)hSession);
     }
     #endif
 
@@ -3635,10 +3593,7 @@ CK_RV C_Digest(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
     WOLFPKCS11_ENTER("C_Digest");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulDataLen=%lu", 
-                 (unsigned long)hSession, (unsigned long)ulDataLen);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulDataLen=%lu", (unsigned long)hSession, (unsigned long)ulDataLen);
     }
     #endif
 
@@ -3683,10 +3638,7 @@ CK_RV C_DigestUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
     WOLFPKCS11_ENTER("C_DigestUpdate");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulPartLen=%lu", 
-                 (unsigned long)hSession, (unsigned long)ulPartLen);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulPartLen=%lu", (unsigned long)hSession, (unsigned long)ulPartLen);
     }
     #endif
 
@@ -3729,10 +3681,7 @@ CK_RV C_DigestKey(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hKey)
     WOLFPKCS11_ENTER("C_DigestKey");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hKey=%lu", 
-                 (unsigned long)hSession, (unsigned long)hKey);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, hKey=%lu", (unsigned long)hSession, (unsigned long)hKey);
     }
     #endif
 
@@ -3779,10 +3728,7 @@ CK_RV C_DigestFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pDigest,
     WOLFPKCS11_ENTER("C_DigestFinal");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu", 
-                 (unsigned long)hSession);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu", (unsigned long)hSession);
     }
     #endif
 
@@ -3871,10 +3817,7 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
     WOLFPKCS11_ENTER("C_SignInit");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hKey=%lu", 
-                 (unsigned long)hSession, (unsigned long)hKey);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, hKey=%lu", (unsigned long)hSession, (unsigned long)hKey);
     }
     #endif
 
@@ -4188,10 +4131,7 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
     WOLFPKCS11_ENTER("C_Sign");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulDataLen=%lu", 
-                 (unsigned long)hSession, (unsigned long)ulDataLen);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulDataLen=%lu", (unsigned long)hSession, (unsigned long)ulDataLen);
     }
     #endif
 
@@ -4518,10 +4458,7 @@ CK_RV C_SignUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
     WOLFPKCS11_ENTER("C_SignUpdate");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulPartLen=%lu", 
-                 (unsigned long)hSession, (unsigned long)ulPartLen);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulPartLen=%lu", (unsigned long)hSession, (unsigned long)ulPartLen);
     }
     #endif
 
@@ -4645,10 +4582,7 @@ CK_RV C_SignFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature,
     WOLFPKCS11_ENTER("C_SignFinal");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu", 
-                 (unsigned long)hSession);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu", (unsigned long)hSession);
     }
     #endif
 
@@ -4791,10 +4725,7 @@ CK_RV C_SignRecoverInit(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_SignRecoverInit");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hKey=%lu", 
-                 (unsigned long)hSession, (unsigned long)hKey);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, hKey=%lu", (unsigned long)hSession, (unsigned long)hKey);
     }
     #endif
 
@@ -4853,10 +4784,7 @@ CK_RV C_SignRecover(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
     WOLFPKCS11_ENTER("C_SignRecover");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulDataLen=%lu", 
-                 (unsigned long)hSession, (unsigned long)ulDataLen);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulDataLen=%lu", (unsigned long)hSession, (unsigned long)ulDataLen);
     }
     #endif
 
@@ -4915,10 +4843,7 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_VerifyInit");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hKey=%lu", 
-                 (unsigned long)hSession, (unsigned long)hKey);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, hKey=%lu", (unsigned long)hSession, (unsigned long)hKey);
     }
     #endif
 
@@ -5222,10 +5147,7 @@ CK_RV C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
     WOLFPKCS11_ENTER("C_Verify");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulDataLen=%lu, ulSignatureLen=%lu", 
-                 (unsigned long)hSession, (unsigned long)ulDataLen, (unsigned long)ulSignatureLen);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulDataLen=%lu, ulSignatureLen=%lu", (unsigned long)hSession, (unsigned long)ulDataLen, (unsigned long)ulSignatureLen);
     }
     #endif
 
@@ -5500,10 +5422,7 @@ CK_RV C_VerifyUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
     WOLFPKCS11_ENTER("C_VerifyUpdate");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulPartLen=%lu", 
-                 (unsigned long)hSession, (unsigned long)ulPartLen);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulPartLen=%lu", (unsigned long)hSession, (unsigned long)ulPartLen);
     }
     #endif
 
@@ -5621,10 +5540,7 @@ CK_RV C_VerifyFinal(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_VerifyFinal");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulSignatureLen=%lu", 
-                 (unsigned long)hSession, (unsigned long)ulSignatureLen);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulSignatureLen=%lu", (unsigned long)hSession, (unsigned long)ulSignatureLen);
     }
     #endif
 
@@ -5745,10 +5661,7 @@ CK_RV C_VerifyRecoverInit(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_VerifyRecoverInit");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hKey=%lu", 
-                 (unsigned long)hSession, (unsigned long)hKey);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, hKey=%lu", (unsigned long)hSession, (unsigned long)hKey);
     }
     #endif
 
@@ -5848,10 +5761,7 @@ CK_RV C_VerifyRecover(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_VerifyRecover");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulSignatureLen=%lu", 
-                 (unsigned long)hSession, (unsigned long)ulSignatureLen);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulSignatureLen=%lu", (unsigned long)hSession, (unsigned long)ulSignatureLen);
     }
     #endif
 
@@ -5946,10 +5856,7 @@ CK_RV C_DigestEncryptUpdate(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_DigestEncryptUpdate");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulPartLen=%lu", 
-                 (unsigned long)hSession, (unsigned long)ulPartLen);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulPartLen=%lu", (unsigned long)hSession, (unsigned long)ulPartLen);
     }
     #endif
 
@@ -6004,10 +5911,7 @@ CK_RV C_DecryptDigestUpdate(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_DecryptDigestUpdate");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulEncryptedPartLen=%lu", 
-                 (unsigned long)hSession, (unsigned long)ulEncryptedPartLen);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulEncryptedPartLen=%lu", (unsigned long)hSession, (unsigned long)ulEncryptedPartLen);
     }
     #endif
 
@@ -6064,10 +5968,7 @@ CK_RV C_SignEncryptUpdate(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_SignEncryptUpdate");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulPartLen=%lu", 
-                 (unsigned long)hSession, (unsigned long)ulPartLen);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulPartLen=%lu", (unsigned long)hSession, (unsigned long)ulPartLen);
     }
     #endif
 
@@ -6122,10 +6023,7 @@ CK_RV C_DecryptVerifyUpdate(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_DecryptVerifyUpdate");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulEncryptedPartLen=%lu", 
-                 (unsigned long)hSession, (unsigned long)ulEncryptedPartLen);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulEncryptedPartLen=%lu", (unsigned long)hSession, (unsigned long)ulEncryptedPartLen);
     }
     #endif
 
@@ -6190,10 +6088,7 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_GenerateKey");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulCount=%lu", 
-                 (unsigned long)hSession, (unsigned long)ulCount);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulCount=%lu", (unsigned long)hSession, (unsigned long)ulCount);
     }
     #endif
 
@@ -6335,10 +6230,7 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_GenerateKeyPair");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulPublicKeyAttributeCount=%lu, ulPrivateKeyAttributeCount=%lu", 
-                 (unsigned long)hSession, (unsigned long)ulPublicKeyAttributeCount, (unsigned long)ulPrivateKeyAttributeCount);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulPublicKeyAttributeCount=%lu, ulPrivateKeyAttributeCount=%lu", (unsigned long)hSession, (unsigned long)ulPublicKeyAttributeCount, (unsigned long)ulPrivateKeyAttributeCount);
     }
     #endif
 
@@ -6520,10 +6412,7 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_WrapKey");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hWrappingKey=%lu, hKey=%lu", 
-                 (unsigned long)hSession, (unsigned long)hWrappingKey, (unsigned long)hKey);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, hWrappingKey=%lu, hKey=%lu", (unsigned long)hSession, (unsigned long)hWrappingKey, (unsigned long)hKey);
     }
     #endif
 
@@ -6693,10 +6582,7 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_UnwrapKey");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hUnwrappingKey=%lu, ulWrappedKeyLen=%lu, ulAttributeCount=%lu", 
-                 (unsigned long)hSession, (unsigned long)hUnwrappingKey, (unsigned long)ulWrappedKeyLen, (unsigned long)ulAttributeCount);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, hUnwrappingKey=%lu, ulWrappedKeyLen=%lu, ulAttributeCount=%lu", (unsigned long)hSession, (unsigned long)hUnwrappingKey, (unsigned long)ulWrappedKeyLen, (unsigned long)ulAttributeCount);
     }
     #endif
 
@@ -7063,10 +6949,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_DeriveKey");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, hBaseKey=%lu, ulAttributeCount=%lu", 
-                 (unsigned long)hSession, (unsigned long)hBaseKey, (unsigned long)ulAttributeCount);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, hBaseKey=%lu, ulAttributeCount=%lu", (unsigned long)hSession, (unsigned long)hBaseKey, (unsigned long)ulAttributeCount);
     }
     #endif
 
@@ -7388,10 +7271,7 @@ CK_RV C_SeedRandom(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSeed,
     WOLFPKCS11_ENTER("C_SeedRandom");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulSeedLen=%lu", 
-                 (unsigned long)hSession, (unsigned long)ulSeedLen);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulSeedLen=%lu", (unsigned long)hSession, (unsigned long)ulSeedLen);
     }
     #endif
 
@@ -7453,10 +7333,7 @@ CK_RV C_GenerateRandom(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_GenerateRandom");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulRandomLen=%lu", 
-                 (unsigned long)hSession, (unsigned long)ulRandomLen);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulRandomLen=%lu", (unsigned long)hSession, (unsigned long)ulRandomLen);
     }
     #endif
 

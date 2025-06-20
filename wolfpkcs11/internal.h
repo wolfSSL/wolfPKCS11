@@ -628,7 +628,7 @@ void wolfPKCS11_Debugging_Off(void);
 #endif
 #ifndef WOLFPKCS11_MSG
 #define WOLFPKCS11_MSG(fmt, ...) \
-    do { if (wolfpkcs11_debugging) printf("WOLFPKCS11: " fmt "\n", ##__VA_ARGS__); } while(0)
+    do { if (wolfpkcs11_debugging) printf("WOLFPKCS11: " fmt "\n", __VA_ARGS__); } while(0)
 #endif
 #else
 #define WOLFPKCS11_ENTER(funcName)
