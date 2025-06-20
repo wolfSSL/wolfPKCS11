@@ -627,13 +627,13 @@ void wolfPKCS11_Debugging_Off(void);
     do { if (wolfpkcs11_debugging) printf("WOLFPKCS11 LEAVE: %s, returning %lu\n", funcName, (unsigned long)ret); } while(0)
 #endif
 #ifndef WOLFPKCS11_MSG
-#define WOLFPKCS11_MSG(msg) \
-    do { if (wolfpkcs11_debugging) printf("WOLFPKCS11: %s\n", msg); } while(0)
+#define WOLFPKCS11_MSG(fmt, ...) \
+    do { if (wolfpkcs11_debugging) printf("WOLFPKCS11: " fmt "\n", ##__VA_ARGS__); } while(0)
 #endif
 #else
 #define WOLFPKCS11_ENTER(funcName)
 #define WOLFPKCS11_LEAVE(funcName, ret)
-#define WOLFPKCS11_MSG(msg)
+#define WOLFPKCS11_MSG(fmt, ...)
 #endif
 
 #ifdef __cplusplus

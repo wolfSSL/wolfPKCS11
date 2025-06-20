@@ -51,7 +51,7 @@ CK_RV C_GetSlotList(CK_BBOOL tokenPresent, CK_SLOT_ID_PTR pSlotList,
     WOLFPKCS11_ENTER("C_GetSlotList");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        printf("  tokenPresent=%s\n", tokenPresent ? "TRUE" : "FALSE");
+        WOLFPKCS11_MSG("  tokenPresent=%s", tokenPresent ? "TRUE" : "FALSE");
     }
     #endif
 
@@ -113,7 +113,7 @@ CK_RV C_GetSlotInfo(CK_SLOT_ID slotID, CK_SLOT_INFO_PTR pInfo)
     WOLFPKCS11_ENTER("C_GetSlotInfo");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        printf("  slotID=%lu\n", (unsigned long)slotID);
+        WOLFPKCS11_MSG("  slotID=%lu", (unsigned long)slotID);
     }
     #endif
 
@@ -205,9 +205,7 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
     WOLFPKCS11_ENTER("C_GetTokenInfo");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  slotID=%lu", (unsigned long)slotID);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  slotID=%lu", (unsigned long)slotID);
     }
     #endif
 
@@ -489,9 +487,7 @@ CK_RV C_GetMechanismList(CK_SLOT_ID slotID,
     WOLFPKCS11_ENTER("C_GetMechanismList");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  slotID=%lu", (unsigned long)slotID);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  slotID=%lu", (unsigned long)slotID);
     }
     #endif
 
@@ -809,9 +805,7 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
     WOLFPKCS11_ENTER("C_GetMechanismInfo");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  slotID=%lu, type=%lu", (unsigned long)slotID, (unsigned long)type);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  slotID=%lu, type=%lu", (unsigned long)slotID, (unsigned long)type);
     }
     #endif
 
@@ -1147,9 +1141,7 @@ CK_RV C_InitToken(CK_SLOT_ID slotID, CK_UTF8CHAR_PTR pPin,
     WOLFPKCS11_ENTER("C_InitToken");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  slotID=%lu, ulPinLen=%lu", (unsigned long)slotID, (unsigned long)ulPinLen);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  slotID=%lu, ulPinLen=%lu", (unsigned long)slotID, (unsigned long)ulPinLen);
     }
     #endif
 
@@ -1228,9 +1220,7 @@ CK_RV C_InitPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pPin,
     WOLFPKCS11_ENTER("C_InitPIN");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulPinLen=%lu", (unsigned long)hSession, (unsigned long)ulPinLen);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulPinLen=%lu", (unsigned long)hSession, (unsigned long)ulPinLen);
     }
     #endif
 
@@ -1305,10 +1295,8 @@ CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
     WOLFPKCS11_ENTER("C_SetPIN");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulOldLen=%lu, ulNewLen=%lu", 
-                 (unsigned long)hSession, (unsigned long)ulOldLen, (unsigned long)ulNewLen);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulOldLen=%lu, ulNewLen=%lu", 
+                       (unsigned long)hSession, (unsigned long)ulOldLen, (unsigned long)ulNewLen);
     }
     #endif
 
@@ -1425,9 +1413,7 @@ CK_RV C_OpenSession(CK_SLOT_ID slotID, CK_FLAGS flags,
     WOLFPKCS11_ENTER("C_OpenSession");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  slotID=%lu, flags=%lu", (unsigned long)slotID, (unsigned long)flags);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  slotID=%lu, flags=%lu", (unsigned long)slotID, (unsigned long)flags);
     }
     #endif
 
@@ -1486,9 +1472,7 @@ CK_RV C_CloseSession(CK_SESSION_HANDLE hSession)
     WOLFPKCS11_ENTER("C_CloseSession");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu", (unsigned long)hSession);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu", (unsigned long)hSession);
     }
     #endif
 
@@ -1527,9 +1511,7 @@ CK_RV C_CloseAllSessions(CK_SLOT_ID slotID)
     WOLFPKCS11_ENTER("C_CloseAllSessions");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  slotID=%lu", (unsigned long)slotID);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  slotID=%lu", (unsigned long)slotID);
     }
     #endif
 
@@ -1569,9 +1551,7 @@ CK_RV C_GetSessionInfo(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_GetSessionInfo");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu", (unsigned long)hSession);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu", (unsigned long)hSession);
     }
     #endif
 
@@ -1627,9 +1607,7 @@ CK_RV C_GetOperationState(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_GetOperationState");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu", (unsigned long)hSession);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu", (unsigned long)hSession);
     }
     #endif
 
@@ -1680,10 +1658,8 @@ CK_RV C_SetOperationState(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_SetOperationState");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, ulOperationStateLen=%lu", 
-                 (unsigned long)hSession, (unsigned long)ulOperationStateLen);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, ulOperationStateLen=%lu", 
+                       (unsigned long)hSession, (unsigned long)ulOperationStateLen);
     }
     #endif
 
@@ -1743,10 +1719,8 @@ CK_RV C_Login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
     WOLFPKCS11_ENTER("C_Login");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu, userType=%lu, ulPinLen=%lu", 
-                 (unsigned long)hSession, (unsigned long)userType, (unsigned long)ulPinLen);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu, userType=%lu, ulPinLen=%lu", 
+                       (unsigned long)hSession, (unsigned long)userType, (unsigned long)ulPinLen);
     }
     #endif
 
@@ -1847,9 +1821,7 @@ CK_RV C_Logout(CK_SESSION_HANDLE hSession)
     WOLFPKCS11_ENTER("C_Logout");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu", (unsigned long)hSession);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu", (unsigned long)hSession);
     }
     #endif
 
@@ -1888,9 +1860,7 @@ CK_RV C_GetFunctionStatus(CK_SESSION_HANDLE hSession)
     WOLFPKCS11_ENTER("C_GetFunctionStatus");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu", (unsigned long)hSession);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu", (unsigned long)hSession);
     }
     #endif
 
@@ -1925,9 +1895,7 @@ CK_RV C_CancelFunction(CK_SESSION_HANDLE hSession)
     WOLFPKCS11_ENTER("C_CancelFunction");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  hSession=%lu", (unsigned long)hSession);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  hSession=%lu", (unsigned long)hSession);
     }
     #endif
 
@@ -1963,9 +1931,7 @@ CK_RV C_WaitForSlotEvent(CK_FLAGS flags, CK_SLOT_ID_PTR pSlot,
     WOLFPKCS11_ENTER("C_WaitForSlotEvent");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        char paramStr[256];
-        snprintf(paramStr, sizeof(paramStr), "  flags=%lu", (unsigned long)flags);
-        WOLFPKCS11_MSG(paramStr);
+        WOLFPKCS11_MSG("  flags=%lu", (unsigned long)flags);
     }
     #endif
 
