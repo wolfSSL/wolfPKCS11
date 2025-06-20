@@ -178,6 +178,14 @@ void wolfPKCS11_Debugging_Off(void)
     WOLFPKCS11_MSG("debug logging disabled");
     wolfpkcs11_debugging = 0;
 }
+#else
+void wolfPKCS11_Debugging_On(void)
+{
+}
+
+void wolfPKCS11_Debugging_Off(void)
+{
+}
 #endif
 
 
