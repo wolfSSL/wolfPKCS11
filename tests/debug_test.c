@@ -1,3 +1,25 @@
+/* debug_test.c
+ *
+ * Copyright (C) 2006-2025 wolfSSL Inc.
+ *
+ * This file is part of wolfPKCS11.
+ *
+ * wolfPKCS11 is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * wolfPKCS11 is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
+ */
+
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -7,7 +29,8 @@
 static FILE* original_stdout = NULL;
 static FILE* capture_file = NULL;
 
-static void setup_output_capture(void) {
+static void setup_output_capture(void)
+{
     original_stdout = stdout;
     capture_file = tmpfile();
     if (capture_file) {
@@ -15,7 +38,8 @@ static void setup_output_capture(void) {
     }
 }
 
-static int check_debug_output(void) {
+static int check_debug_output(void)
+{
     char buffer[1024];
     int found_debug = 0;
     
@@ -40,7 +64,8 @@ static int check_debug_output(void) {
 }
 #endif
 
-int main(void) {
+int main(void)
+{
 #ifndef DEBUG_WOLFPKCS11
     printf("Debug mode is DISABLED (DEBUG_WOLFPKCS11 not defined)\n");
     printf("Skipping debug test - returning code 77\n");
@@ -48,6 +73,7 @@ int main(void) {
 #else
     CK_RV rv;
     CK_FUNCTION_LIST_PTR pFunctionList;
+    int debug_found;
     
     printf("=== wolfPKCS11 Debug Test Program ===\n");
     printf("Debug mode is ENABLED (DEBUG_WOLFPKCS11 defined)\n");
@@ -78,7 +104,7 @@ int main(void) {
         }
     }
     
-    int debug_found = check_debug_output();
+    debug_found = check_debug_output();
     
     printf("C_GetFunctionList returned: %lu\n", (unsigned long)rv);
     printf("Debug output detection: %s\n", debug_found ? "PASS" : "FAIL");

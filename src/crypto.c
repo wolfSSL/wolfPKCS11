@@ -1,6 +1,6 @@
 /* crypto.c
  *
- * Copyright (C) 2006-2023 wolfSSL Inc.
+ * Copyright (C) 2006-2025 wolfSSL Inc.
  *
  * This file is part of wolfPKCS11.
  *
@@ -1088,7 +1088,9 @@ CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
     WOLFPKCS11_ENTER("C_CopyObject");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        WOLFPKCS11_MSG("  hSession=%lu, hObject=%lu, ulCount=%lu", (unsigned long)hSession, (unsigned long)hObject, (unsigned long)ulCount);
+        WOLFPKCS11_MSG("  hSession=%lu, hObject=%lu, ulCount=%lu", 
+                       (unsigned long)hSession, (unsigned long)hObject, 
+                       (unsigned long)ulCount);
     }
     #endif
 
@@ -1310,7 +1312,9 @@ CK_RV C_GetAttributeValue(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_GetAttributeValue");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        WOLFPKCS11_MSG("  hSession=%lu, hObject=%lu, ulCount=%lu", (unsigned long)hSession, (unsigned long)hObject, (unsigned long)ulCount);
+        WOLFPKCS11_MSG("  hSession=%lu, hObject=%lu, ulCount=%lu", 
+                       (unsigned long)hSession, (unsigned long)hObject, 
+                       (unsigned long)ulCount);
     }
     #endif
 
@@ -1410,7 +1414,9 @@ CK_RV C_SetAttributeValue(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_SetAttributeValue");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        WOLFPKCS11_MSG("  hSession=%lu, hObject=%lu, ulCount=%lu", (unsigned long)hSession, (unsigned long)hObject, (unsigned long)ulCount);
+        WOLFPKCS11_MSG("  hSession=%lu, hObject=%lu, ulCount=%lu", 
+                       (unsigned long)hSession, (unsigned long)hObject, 
+                       (unsigned long)ulCount);
     }
     #endif
 
