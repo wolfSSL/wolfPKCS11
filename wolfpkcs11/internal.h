@@ -613,10 +613,11 @@ int WP11_GetOperationState(WP11_Session* session, unsigned char* stateData,
 int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
                            unsigned long stateDataLen);
 
-#ifdef DEBUG_WOLFPKCS11
-extern int wolfpkcs11_debugging;
 void wolfPKCS11_Debugging_On(void);
 void wolfPKCS11_Debugging_Off(void);
+
+#ifdef DEBUG_WOLFPKCS11
+extern int wolfpkcs11_debugging;
 
 #ifndef WOLFPKCS11_ENTER
 #define WOLFPKCS11_ENTER(funcName) \
