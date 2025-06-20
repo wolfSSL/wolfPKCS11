@@ -1095,6 +1095,12 @@ struct CK_FUNCTION_LIST {
 
 };
 
+#ifdef DEBUG_WOLFPKCS11
+/* Debug control functions */
+WP11_API void wolfPKCS11_Debugging_On(void);
+WP11_API void wolfPKCS11_Debugging_Off(void);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

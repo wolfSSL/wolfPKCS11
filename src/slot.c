@@ -46,19 +46,41 @@ CK_RV C_GetSlotList(CK_BBOOL tokenPresent, CK_SLOT_ID_PTR pSlotList,
                     CK_ULONG_PTR pulCount)
 {
     int ret;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (tokenPresent != CK_FALSE && tokenPresent != CK_TRUE)
-        return CKR_ARGUMENTS_BAD;
-    if (pulCount == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_GetSlotList");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        WOLFPKCS11_MSG("  tokenPresent=%s", tokenPresent ? "TRUE" : "FALSE");
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_GetSlotList", rv);
+        return rv;
+    }
+    if (tokenPresent != CK_FALSE && tokenPresent != CK_TRUE) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_GetSlotList", rv);
+        return rv;
+    }
+    if (pulCount == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_GetSlotList", rv);
+        return rv;
+    }
 
     ret = WP11_GetSlotList(tokenPresent, pSlotList, pulCount);
-    if (ret == BUFFER_E)
-        return CKR_BUFFER_TOO_SMALL;
+    if (ret == BUFFER_E) {
+        rv = CKR_BUFFER_TOO_SMALL;
+        WOLFPKCS11_LEAVE("C_GetSlotList", rv);
+        return rv;
+    }
 
-    return CKR_OK;
+    rv = CKR_OK;
+    WOLFPKCS11_LEAVE("C_GetSlotList", rv);
+    return rv;
 }
 
 /* Index into slot id string to place number. */
@@ -86,19 +108,39 @@ static CK_SLOT_INFO slotInfoTemplate = {
  */
 CK_RV C_GetSlotInfo(CK_SLOT_ID slotID, CK_SLOT_INFO_PTR pInfo)
 {
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (!WP11_SlotIdValid(slotID))
-        return CKR_SLOT_ID_INVALID;
-    if (pInfo == NULL)
-        return CKR_ARGUMENTS_BAD;
+    CK_RV rv;
+
+    WOLFPKCS11_ENTER("C_GetSlotInfo");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        WOLFPKCS11_MSG("  slotID=%lu", (unsigned long)slotID);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_GetSlotInfo", rv);
+        return rv;
+    }
+    if (!WP11_SlotIdValid(slotID)) {
+        rv = CKR_SLOT_ID_INVALID;
+        WOLFPKCS11_LEAVE("C_GetSlotInfo", rv);
+        return rv;
+    }
+    if (pInfo == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_GetSlotInfo", rv);
+        return rv;
+    }
 
     XMEMCPY(pInfo, &slotInfoTemplate, sizeof(slotInfoTemplate));
     /* Put in the slot id value as two decimal digits. */
     pInfo->slotDescription[SLOT_ID_IDX + 0] = ((slotID / 10) % 10) + '0';
     pInfo->slotDescription[SLOT_ID_IDX + 1] = ((slotID     ) % 10) + '0';
 
-    return CKR_OK;
+    rv = CKR_OK;
+    WOLFPKCS11_LEAVE("C_GetSlotInfo", rv);
+    return rv;
 }
 
 static CK_RV checkPinLen(CK_ULONG pinLen)
@@ -152,6 +194,7 @@ static CK_TOKEN_INFO tokenInfoTemplate = {
  */
 CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
 {
+    CK_RV rv;
 #ifndef WOLFPKCS11_NO_TIME
     time_t now, expire;
     struct tm nowTM;
@@ -159,12 +202,28 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
     WP11_Slot* slot;
     int cnt;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Slot_Get(slotID, &slot) != 0)
-        return CKR_SLOT_ID_INVALID;
-    if (pInfo == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_GetTokenInfo");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        WOLFPKCS11_MSG("  slotID=%lu", (unsigned long)slotID);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_GetTokenInfo", rv);
+        return rv;
+    }
+    if (WP11_Slot_Get(slotID, &slot) != 0) {
+        rv = CKR_SLOT_ID_INVALID;
+        WOLFPKCS11_LEAVE("C_GetTokenInfo", rv);
+        return rv;
+    }
+    if (pInfo == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_GetTokenInfo", rv);
+        return rv;
+    }
 
     XMEMCPY(pInfo, &tokenInfoTemplate, sizeof(tokenInfoTemplate));
     WP11_Slot_GetTokenLabel(slot, (char*)pInfo->label);
@@ -422,26 +481,52 @@ CK_RV C_GetMechanismList(CK_SLOT_ID slotID,
                          CK_MECHANISM_TYPE_PTR pMechanismList,
                          CK_ULONG_PTR pulCount)
 {
+    CK_RV rv;
     int i;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (!WP11_SlotIdValid(slotID))
-        return CKR_SLOT_ID_INVALID;
-    if (pulCount == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_GetMechanismList");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        WOLFPKCS11_MSG("  slotID=%lu", (unsigned long)slotID);
+    }
+    #endif
 
-    if (pMechanismList == NULL)
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_GetMechanismList", rv);
+        return rv;
+    }
+    if (!WP11_SlotIdValid(slotID)) {
+        rv = CKR_SLOT_ID_INVALID;
+        WOLFPKCS11_LEAVE("C_GetMechanismList", rv);
+        return rv;
+    }
+    if (pulCount == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_GetMechanismList", rv);
+        return rv;
+    }
+
+    if (pMechanismList == NULL) {
         *pulCount = mechanismCnt;
-    else if (*pulCount < (CK_ULONG)mechanismCnt)
-        return CKR_BUFFER_TOO_SMALL;
+        rv = CKR_OK;
+        WOLFPKCS11_LEAVE("C_GetMechanismList", rv);
+        return rv;
+    }
+    else if (*pulCount < (CK_ULONG)mechanismCnt) {
+        rv = CKR_BUFFER_TOO_SMALL;
+        WOLFPKCS11_LEAVE("C_GetMechanismList", rv);
+        return rv;
+    }
     else {
         for (i = 0; i < mechanismCnt; i++)
             pMechanismList[i] = mechanismList[i];
         *pulCount = mechanismCnt;
     }
 
-    return CKR_OK;
+    rv = CKR_OK;
+    WOLFPKCS11_LEAVE("C_GetMechanismList", rv);
+    return rv;
 }
 
 #ifndef NO_RSA
@@ -715,12 +800,30 @@ static CK_MECHANISM_INFO genSecKeyGenMechInfo = {
 CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
                          CK_MECHANISM_INFO_PTR pInfo)
 {
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (!WP11_SlotIdValid(slotID))
-        return CKR_SLOT_ID_INVALID;
-    if (pInfo == NULL)
-        return CKR_ARGUMENTS_BAD;
+    CK_RV rv;
+
+    WOLFPKCS11_ENTER("C_GetMechanismInfo");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        WOLFPKCS11_MSG("  slotID=%lu, type=%lu", (unsigned long)slotID, (unsigned long)type);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_GetMechanismInfo", rv);
+        return rv;
+    }
+    if (!WP11_SlotIdValid(slotID)) {
+        rv = CKR_SLOT_ID_INVALID;
+        WOLFPKCS11_LEAVE("C_GetMechanismInfo", rv);
+        return rv;
+    }
+    if (pInfo == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_GetMechanismInfo", rv);
+        return rv;
+    }
 
     switch (type) {
 #ifndef NO_RSA
@@ -1031,34 +1134,65 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
 CK_RV C_InitToken(CK_SLOT_ID slotID, CK_UTF8CHAR_PTR pPin,
                   CK_ULONG ulPinLen, CK_UTF8CHAR_PTR pLabel)
 {
+    CK_RV rv;
     int ret;
     WP11_Slot* slot;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Slot_Get(slotID, &slot) != 0)
-        return CKR_SLOT_ID_INVALID;
-    if (pPin == NULL || pLabel == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_InitToken");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        WOLFPKCS11_MSG("  slotID=%lu, ulPinLen=%lu", (unsigned long)slotID, (unsigned long)ulPinLen);
+    }
+    #endif
 
-    if (checkPinLen(ulPinLen) != CKR_OK)
-        return CKR_PIN_INCORRECT;
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_InitToken", rv);
+        return rv;
+    }
+    if (WP11_Slot_Get(slotID, &slot) != 0) {
+        rv = CKR_SLOT_ID_INVALID;
+        WOLFPKCS11_LEAVE("C_InitToken", rv);
+        return rv;
+    }
+    if (pPin == NULL || pLabel == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_InitToken", rv);
+        return rv;
+    }
+
+    if (checkPinLen(ulPinLen) != CKR_OK) {
+        rv = CKR_PIN_INCORRECT;
+        WOLFPKCS11_LEAVE("C_InitToken", rv);
+        return rv;
+    }
 
     if (WP11_Slot_IsTokenInitialized(slot)) {
-        if (WP11_Slot_HasSession(slot))
-            return CKR_SESSION_EXISTS;
+        if (WP11_Slot_HasSession(slot)) {
+            rv = CKR_SESSION_EXISTS;
+            WOLFPKCS11_LEAVE("C_InitToken", rv);
+            return rv;
+        }
         if (WP11_Slot_SOPin_IsSet(slot)) {
             ret = WP11_Slot_CheckSOPin(slot, (char*)pPin, (int)ulPinLen);
-            if (ret != 0)
-                return CKR_PIN_INCORRECT;
+            if (ret != 0) {
+                rv = CKR_PIN_INCORRECT;
+                WOLFPKCS11_LEAVE("C_InitToken", rv);
+                return rv;
+            }
         }
     }
 
     ret = WP11_Slot_TokenReset(slot, (char*)pPin, (int)ulPinLen, (char*)pLabel);
-    if (ret != 0)
-        return CKR_FUNCTION_FAILED;
+    if (ret != 0) {
+        rv = CKR_FUNCTION_FAILED;
+        WOLFPKCS11_LEAVE("C_InitToken", rv);
+        return rv;
+    }
 
-    return CKR_OK;
+    rv = CKR_OK;
+    WOLFPKCS11_LEAVE("C_InitToken", rv);
+    return rv;
 }
 
 /**
@@ -1078,28 +1212,56 @@ CK_RV C_InitToken(CK_SLOT_ID slotID, CK_UTF8CHAR_PTR pPin,
 CK_RV C_InitPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pPin,
                 CK_ULONG ulPinLen)
 {
+    CK_RV rv;
     int ret;
     WP11_Slot* slot;
     WP11_Session* session;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pPin == NULL && ulPinLen > 0)
-        return CKR_ARGUMENTS_BAD;
-    if (WP11_Session_GetState(session) != WP11_APP_STATE_RW_SO)
-        return CKR_USER_NOT_LOGGED_IN;
+    WOLFPKCS11_ENTER("C_InitPIN");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        WOLFPKCS11_MSG("  hSession=%lu, ulPinLen=%lu", (unsigned long)hSession, (unsigned long)ulPinLen);
+    }
+    #endif
 
-    if (checkPinLen(ulPinLen) != CKR_OK)
-        return CKR_PIN_INCORRECT;
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_InitPIN", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_InitPIN", rv);
+        return rv;
+    }
+    if (pPin == NULL && ulPinLen > 0) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_InitPIN", rv);
+        return rv;
+    }
+    if (WP11_Session_GetState(session) != WP11_APP_STATE_RW_SO) {
+        rv = CKR_USER_NOT_LOGGED_IN;
+        WOLFPKCS11_LEAVE("C_InitPIN", rv);
+        return rv;
+    }
+
+    if (checkPinLen(ulPinLen) != CKR_OK) {
+        rv = CKR_PIN_INCORRECT;
+        WOLFPKCS11_LEAVE("C_InitPIN", rv);
+        return rv;
+    }
 
     slot = WP11_Session_GetSlot(session);
     ret = WP11_Slot_SetUserPin(slot, (char*)pPin, (int)ulPinLen);
-    if (ret != 0)
-        return CKR_FUNCTION_FAILED;
+    if (ret != 0) {
+        rv = CKR_FUNCTION_FAILED;
+        WOLFPKCS11_LEAVE("C_InitPIN", rv);
+        return rv;
+    }
 
-    return CKR_OK;
+    rv = CKR_OK;
+    WOLFPKCS11_LEAVE("C_InitPIN", rv);
+    return rv;
 }
 
 /**
@@ -1128,49 +1290,95 @@ CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
     int state;
     WP11_Slot* slot;
     WP11_Session* session;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pOldPin == NULL || pNewPin == NULL)
-        return CKR_ARGUMENTS_BAD;
-    if (checkPinLen(ulOldLen) != CKR_OK)
-        return CKR_PIN_INCORRECT;
-    if (checkPinLen(ulNewLen) != CKR_OK)
-        return CKR_PIN_INCORRECT;
+    WOLFPKCS11_ENTER("C_SetPIN");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        WOLFPKCS11_MSG("  hSession=%lu, ulOldLen=%lu, ulNewLen=%lu", 
+                       (unsigned long)hSession, (unsigned long)ulOldLen, (unsigned long)ulNewLen);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_SetPIN", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_SetPIN", rv);
+        return rv;
+    }
+    if (pOldPin == NULL || pNewPin == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_SetPIN", rv);
+        return rv;
+    }
+    if (checkPinLen(ulOldLen) != CKR_OK) {
+        rv = CKR_PIN_INCORRECT;
+        WOLFPKCS11_LEAVE("C_SetPIN", rv);
+        return rv;
+    }
+    if (checkPinLen(ulNewLen) != CKR_OK) {
+        rv = CKR_PIN_INCORRECT;
+        WOLFPKCS11_LEAVE("C_SetPIN", rv);
+        return rv;
+    }
 
     state = WP11_Session_GetState(session);
     if (state != WP11_APP_STATE_RW_SO && state != WP11_APP_STATE_RW_USER &&
                                             state != WP11_APP_STATE_RW_PUBLIC) {
-        return CKR_SESSION_READ_ONLY;
+        rv = CKR_SESSION_READ_ONLY;
+        WOLFPKCS11_LEAVE("C_SetPIN", rv);
+        return rv;
     }
 
     slot = WP11_Session_GetSlot(session);
     if (state == WP11_APP_STATE_RW_SO) {
         ret = WP11_Slot_CheckSOPin(slot, (char*)pOldPin, (int)ulOldLen);
-        if (ret == PIN_NOT_SET_E)
-            return CKR_USER_PIN_NOT_INITIALIZED;
-        if (ret != 0)
-            return CKR_PIN_INCORRECT;
+        if (ret == PIN_NOT_SET_E) {
+            rv = CKR_USER_PIN_NOT_INITIALIZED;
+            WOLFPKCS11_LEAVE("C_SetPIN", rv);
+            return rv;
+        }
+        if (ret != 0) {
+            rv = CKR_PIN_INCORRECT;
+            WOLFPKCS11_LEAVE("C_SetPIN", rv);
+            return rv;
+        }
 
         ret = WP11_Slot_SetSOPin(slot, (char*)pNewPin, (int)ulNewLen);
-        if (ret != 0)
-            return CKR_FUNCTION_FAILED;
+        if (ret != 0) {
+            rv = CKR_FUNCTION_FAILED;
+            WOLFPKCS11_LEAVE("C_SetPIN", rv);
+            return rv;
+        }
     }
     else {
         ret = WP11_Slot_CheckUserPin(slot, (char*)pOldPin, (int)ulOldLen);
-        if (ret == PIN_NOT_SET_E)
-            return CKR_USER_PIN_NOT_INITIALIZED;
-        if (ret != 0)
-            return CKR_PIN_INCORRECT;
+        if (ret == PIN_NOT_SET_E) {
+            rv = CKR_USER_PIN_NOT_INITIALIZED;
+            WOLFPKCS11_LEAVE("C_SetPIN", rv);
+            return rv;
+        }
+        if (ret != 0) {
+            rv = CKR_PIN_INCORRECT;
+            WOLFPKCS11_LEAVE("C_SetPIN", rv);
+            return rv;
+        }
 
         ret = WP11_Slot_SetUserPin(slot, (char*)pNewPin, (int)ulNewLen);
-        if (ret != 0)
-            return CKR_FUNCTION_FAILED;
+        if (ret != 0) {
+            rv = CKR_FUNCTION_FAILED;
+            WOLFPKCS11_LEAVE("C_SetPIN", rv);
+            return rv;
+        }
     }
 
-    return CKR_OK;
+    rv = CKR_OK;
+    WOLFPKCS11_LEAVE("C_SetPIN", rv);
+    return rv;
 }
 
 /**
@@ -1198,25 +1406,53 @@ CK_RV C_OpenSession(CK_SLOT_ID slotID, CK_FLAGS flags,
                     CK_VOID_PTR pApplication, CK_NOTIFY Notify,
                     CK_SESSION_HANDLE_PTR phSession)
 {
+    CK_RV rv;
     WP11_Slot* slot;
     int ret;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Slot_Get(slotID, &slot) != 0)
-        return CKR_SLOT_ID_INVALID;
-    if ((flags & CKF_SERIAL_SESSION) == 0)
-        return CKR_SESSION_PARALLEL_NOT_SUPPORTED;
-    if (phSession == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_OpenSession");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        WOLFPKCS11_MSG("  slotID=%lu, flags=%lu", (unsigned long)slotID, (unsigned long)flags);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_OpenSession", rv);
+        return rv;
+    }
+    if (WP11_Slot_Get(slotID, &slot) != 0) {
+        rv = CKR_SLOT_ID_INVALID;
+        WOLFPKCS11_LEAVE("C_OpenSession", rv);
+        return rv;
+    }
+    if ((flags & CKF_SERIAL_SESSION) == 0) {
+        rv = CKR_SESSION_PARALLEL_NOT_SUPPORTED;
+        WOLFPKCS11_LEAVE("C_OpenSession", rv);
+        return rv;
+    }
+    if (phSession == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_OpenSession", rv);
+        return rv;
+    }
 
     ret = WP11_Slot_OpenSession(slot, flags, pApplication, Notify, phSession);
-    if (ret == SESSION_EXISTS_E)
-        return CKR_SESSION_READ_WRITE_SO_EXISTS;
-    if (ret == SESSION_COUNT_E)
-        return CKR_SESSION_COUNT;
+    if (ret == SESSION_EXISTS_E) {
+        rv = CKR_SESSION_READ_WRITE_SO_EXISTS;
+        WOLFPKCS11_LEAVE("C_OpenSession", rv);
+        return rv;
+    }
+    if (ret == SESSION_COUNT_E) {
+        rv = CKR_SESSION_COUNT;
+        WOLFPKCS11_LEAVE("C_OpenSession", rv);
+        return rv;
+    }
 
-    return CKR_OK;
+    rv = CKR_OK;
+    WOLFPKCS11_LEAVE("C_OpenSession", rv);
+    return rv;
 }
 
 /**
@@ -1229,18 +1465,34 @@ CK_RV C_OpenSession(CK_SLOT_ID slotID, CK_FLAGS flags,
  */
 CK_RV C_CloseSession(CK_SESSION_HANDLE hSession)
 {
+    CK_RV rv;
     WP11_Slot* slot;
     WP11_Session* session;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
+    WOLFPKCS11_ENTER("C_CloseSession");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        WOLFPKCS11_MSG("  hSession=%lu", (unsigned long)hSession);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_CloseSession", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_CloseSession", rv);
+        return rv;
+    }
 
     slot = WP11_Session_GetSlot(session);
     WP11_Slot_CloseSession(slot, session);
 
-    return CKR_OK;
+    rv = CKR_OK;
+    WOLFPKCS11_LEAVE("C_CloseSession", rv);
+    return rv;
 }
 
 /**
@@ -1253,15 +1505,31 @@ CK_RV C_CloseSession(CK_SESSION_HANDLE hSession)
  */
 CK_RV C_CloseAllSessions(CK_SLOT_ID slotID)
 {
+    CK_RV rv;
     WP11_Slot* slot;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Slot_Get(slotID, &slot) != 0)
-        return CKR_SLOT_ID_INVALID;
+    WOLFPKCS11_ENTER("C_CloseAllSessions");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        WOLFPKCS11_MSG("  slotID=%lu", (unsigned long)slotID);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_CloseAllSessions", rv);
+        return rv;
+    }
+    if (WP11_Slot_Get(slotID, &slot) != 0) {
+        rv = CKR_SLOT_ID_INVALID;
+        WOLFPKCS11_LEAVE("C_CloseAllSessions", rv);
+        return rv;
+    }
     WP11_Slot_CloseSessions(slot);
 
-    return CKR_OK;
+    rv = CKR_OK;
+    WOLFPKCS11_LEAVE("C_CloseAllSessions", rv);
+    return rv;
 }
 
 /**
@@ -1277,14 +1545,31 @@ CK_RV C_CloseAllSessions(CK_SLOT_ID slotID)
 CK_RV C_GetSessionInfo(CK_SESSION_HANDLE hSession,
                        CK_SESSION_INFO_PTR pInfo)
 {
+    CK_RV rv;
     WP11_Session* session;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pInfo == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_GetSessionInfo");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        WOLFPKCS11_MSG("  hSession=%lu", (unsigned long)hSession);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_GetSessionInfo", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_GetSessionInfo", rv);
+        return rv;
+    }
+    if (pInfo == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_GetSessionInfo", rv);
+        return rv;
+    }
 
     pInfo->state = WP11_Session_GetState(session);
     pInfo->flags = CKF_SERIAL_SESSION;
@@ -1292,7 +1577,9 @@ CK_RV C_GetSessionInfo(CK_SESSION_HANDLE hSession,
         pInfo->flags |= CKF_RW_SESSION;
     pInfo->ulDeviceError = 0;
 
-    return CKR_OK;
+    rv = CKR_OK;
+    WOLFPKCS11_LEAVE("C_GetSessionInfo", rv);
+    return rv;
 }
 
 /**
@@ -1315,16 +1602,34 @@ CK_RV C_GetOperationState(CK_SESSION_HANDLE hSession,
                           CK_ULONG_PTR pulOperationStateLen)
 {
     WP11_Session* session;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pulOperationStateLen == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_GetOperationState");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        WOLFPKCS11_MSG("  hSession=%lu", (unsigned long)hSession);
+    }
+    #endif
 
-    return WP11_GetOperationState(session, pOperationState,
-        pulOperationStateLen);
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_GetOperationState", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_GetOperationState", rv);
+        return rv;
+    }
+    if (pulOperationStateLen == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_GetOperationState", rv);
+        return rv;
+    }
+
+    rv = WP11_GetOperationState(session, pOperationState, pulOperationStateLen);
+    WOLFPKCS11_LEAVE("C_GetOperationState", rv);
+    return rv;
 }
 
 /**
@@ -1348,19 +1653,38 @@ CK_RV C_SetOperationState(CK_SESSION_HANDLE hSession,
                           CK_OBJECT_HANDLE hAuthenticationKey)
 {
     WP11_Session* session;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pOperationState == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_SetOperationState");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        WOLFPKCS11_MSG("  hSession=%lu, ulOperationStateLen=%lu", 
+                       (unsigned long)hSession, (unsigned long)ulOperationStateLen);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_SetOperationState", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_SetOperationState", rv);
+        return rv;
+    }
+    if (pOperationState == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_SetOperationState", rv);
+        return rv;
+    }
 
     (void)hEncryptionKey;
     (void)hAuthenticationKey;
 
-    return WP11_SetOperationState(session, pOperationState,
-        ulOperationStateLen);
+    rv = WP11_SetOperationState(session, pOperationState, ulOperationStateLen);
+    WOLFPKCS11_LEAVE("C_SetOperationState", rv);
+    return rv;
 }
 
 /**
@@ -1388,47 +1712,96 @@ CK_RV C_Login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
               CK_UTF8CHAR_PTR pPin, CK_ULONG ulPinLen)
 {
     int ret;
+    CK_RV rv;
     WP11_Slot* slot;
     WP11_Session* session;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    if (pPin == NULL)
-        return CKR_ARGUMENTS_BAD;
+    WOLFPKCS11_ENTER("C_Login");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        WOLFPKCS11_MSG("  hSession=%lu, userType=%lu, ulPinLen=%lu", 
+                       (unsigned long)hSession, (unsigned long)userType, (unsigned long)ulPinLen);
+    }
+    #endif
 
-    if (checkPinLen(ulPinLen) != CKR_OK)
-        return CKR_PIN_INCORRECT;
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_Login", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_Login", rv);
+        return rv;
+    }
+    if (pPin == NULL) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_Login", rv);
+        return rv;
+    }
+
+    if (checkPinLen(ulPinLen) != CKR_OK) {
+        rv = CKR_PIN_INCORRECT;
+        WOLFPKCS11_LEAVE("C_Login", rv);
+        return rv;
+    }
 
     slot = WP11_Session_GetSlot(session);
     if (userType == CKU_SO) {
         ret = WP11_Slot_SOLogin(slot, (char*)pPin, (int)ulPinLen);
-        if (ret == LOGGED_IN_E)
-            return CKR_USER_ALREADY_LOGGED_IN;
-        if (ret == READ_ONLY_E)
-            return CKR_SESSION_READ_ONLY_EXISTS;
-        if (ret == PIN_NOT_SET_E)
-            return CKR_USER_PIN_NOT_INITIALIZED;
-        if (ret != 0)
-            return CKR_PIN_INCORRECT;
-
+        if (ret == LOGGED_IN_E) {
+            rv = CKR_USER_ALREADY_LOGGED_IN;
+            WOLFPKCS11_LEAVE("C_Login", rv);
+            return rv;
+        }
+        if (ret == READ_ONLY_E) {
+            rv = CKR_SESSION_READ_ONLY_EXISTS;
+            WOLFPKCS11_LEAVE("C_Login", rv);
+            return rv;
+        }
+        if (ret == PIN_NOT_SET_E) {
+            rv = CKR_USER_PIN_NOT_INITIALIZED;
+            WOLFPKCS11_LEAVE("C_Login", rv);
+            return rv;
+        }
+        if (ret != 0) {
+            rv = CKR_PIN_INCORRECT;
+            WOLFPKCS11_LEAVE("C_Login", rv);
+            return rv;
+        }
     }
     else if (userType == CKU_USER) {
         ret = WP11_Slot_UserLogin(slot, (char*)pPin, (int)ulPinLen);
-        if (ret == LOGGED_IN_E)
-            return CKR_USER_ALREADY_LOGGED_IN;
-        if (ret == PIN_NOT_SET_E)
-            return CKR_USER_PIN_NOT_INITIALIZED;
-        if (ret != 0)
-            return CKR_PIN_INCORRECT;
+        if (ret == LOGGED_IN_E) {
+            rv = CKR_USER_ALREADY_LOGGED_IN;
+            WOLFPKCS11_LEAVE("C_Login", rv);
+            return rv;
+        }
+        if (ret == PIN_NOT_SET_E) {
+            rv = CKR_USER_PIN_NOT_INITIALIZED;
+            WOLFPKCS11_LEAVE("C_Login", rv);
+            return rv;
+        }
+        if (ret != 0) {
+            rv = CKR_PIN_INCORRECT;
+            WOLFPKCS11_LEAVE("C_Login", rv);
+            return rv;
+        }
     }
-    else if (userType == CKU_CONTEXT_SPECIFIC)
-        return CKR_OPERATION_NOT_INITIALIZED;
-    else
-        return CKR_USER_TYPE_INVALID;
+    else if (userType == CKU_CONTEXT_SPECIFIC) {
+        rv = CKR_OPERATION_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_Login", rv);
+        return rv;
+    }
+    else {
+        rv = CKR_USER_TYPE_INVALID;
+        WOLFPKCS11_LEAVE("C_Login", rv);
+        return rv;
+    }
 
-    return CKR_OK;
+    rv = CKR_OK;
+    WOLFPKCS11_LEAVE("C_Login", rv);
+    return rv;
 }
 
 /**
@@ -1441,18 +1814,34 @@ CK_RV C_Login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
  */
 CK_RV C_Logout(CK_SESSION_HANDLE hSession)
 {
+    CK_RV rv;
     WP11_Slot* slot;
     WP11_Session* session;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
+    WOLFPKCS11_ENTER("C_Logout");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        WOLFPKCS11_MSG("  hSession=%lu", (unsigned long)hSession);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_Logout", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_Logout", rv);
+        return rv;
+    }
 
     slot = WP11_Session_GetSlot(session);
     WP11_Slot_Logout(slot);
 
-    return CKR_OK;
+    rv = CKR_OK;
+    WOLFPKCS11_LEAVE("C_Logout", rv);
+    return rv;
 }
 
 /**
@@ -1466,12 +1855,28 @@ CK_RV C_Logout(CK_SESSION_HANDLE hSession)
 CK_RV C_GetFunctionStatus(CK_SESSION_HANDLE hSession)
 {
     WP11_Session* session;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    return CKR_FUNCTION_NOT_PARALLEL;
+    WOLFPKCS11_ENTER("C_GetFunctionStatus");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        WOLFPKCS11_MSG("  hSession=%lu", (unsigned long)hSession);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_GetFunctionStatus", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_GetFunctionStatus", rv);
+        return rv;
+    }
+    rv = CKR_FUNCTION_NOT_PARALLEL;
+    WOLFPKCS11_LEAVE("C_GetFunctionStatus", rv);
+    return rv;
 }
 
 /**
@@ -1485,12 +1890,28 @@ CK_RV C_GetFunctionStatus(CK_SESSION_HANDLE hSession)
 CK_RV C_CancelFunction(CK_SESSION_HANDLE hSession)
 {
     WP11_Session* session;
+    CK_RV rv;
 
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return CKR_SESSION_HANDLE_INVALID;
-    return CKR_FUNCTION_NOT_PARALLEL;
+    WOLFPKCS11_ENTER("C_CancelFunction");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        WOLFPKCS11_MSG("  hSession=%lu", (unsigned long)hSession);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_CancelFunction", rv);
+        return rv;
+    }
+    if (WP11_Session_Get(hSession, &session) != 0) {
+        rv = CKR_SESSION_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_CancelFunction", rv);
+        return rv;
+    }
+    rv = CKR_FUNCTION_NOT_PARALLEL;
+    WOLFPKCS11_LEAVE("C_CancelFunction", rv);
+    return rv;
 }
 
 /**
@@ -1505,12 +1926,26 @@ CK_RV C_CancelFunction(CK_SESSION_HANDLE hSession)
 CK_RV C_WaitForSlotEvent(CK_FLAGS flags, CK_SLOT_ID_PTR pSlot,
                          CK_VOID_PTR pReserved)
 {
-    if (!WP11_Library_IsInitialized())
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    CK_RV rv;
+
+    WOLFPKCS11_ENTER("C_WaitForSlotEvent");
+    #ifdef DEBUG_WOLFPKCS11
+    if (wolfpkcs11_debugging) {
+        WOLFPKCS11_MSG("  flags=%lu", (unsigned long)flags);
+    }
+    #endif
+
+    if (!WP11_Library_IsInitialized()) {
+        rv = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_WaitForSlotEvent", rv);
+        return rv;
+    }
 
     (void)pSlot;
     (void)flags;
     (void)pReserved;
 
-    return CKR_FUNCTION_NOT_SUPPORTED;
+    rv = CKR_FUNCTION_NOT_SUPPORTED;
+    WOLFPKCS11_LEAVE("C_WaitForSlotEvent", rv);
+    return rv;
 }

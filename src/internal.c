@@ -164,6 +164,30 @@ typedef struct WP11_Lock {
 } WP11_Lock;
 #endif
 
+#ifdef DEBUG_WOLFPKCS11
+int wolfpkcs11_debugging = 0;
+
+void wolfPKCS11_Debugging_On(void)
+{
+    wolfpkcs11_debugging = 1;
+    WOLFPKCS11_MSG("debug logging enabled");
+}
+
+void wolfPKCS11_Debugging_Off(void)
+{
+    WOLFPKCS11_MSG("debug logging disabled");
+    wolfpkcs11_debugging = 0;
+}
+#else
+void wolfPKCS11_Debugging_On(void)
+{
+}
+
+void wolfPKCS11_Debugging_Off(void)
+{
+}
+#endif
+
 
 /* Symmetric key data. */
 typedef struct WP11_Data {
