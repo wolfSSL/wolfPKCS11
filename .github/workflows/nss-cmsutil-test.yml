@@ -367,4 +367,4 @@ jobs:
       with:
         name: nss-cmsutil-test-artifacts
         path: /tmp/nss-cmsutil-test-artifacts.tar.gz
-        retention-days: 30
+        retention-days: 5
