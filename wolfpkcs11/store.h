@@ -48,7 +48,7 @@
  * @return  -4 when data not available.
  * @return  Other value to indicate failure.
  */
-int wolfPKCS11_Store_Open(int type, CK_ULONG id1, CK_ULONG id2, int read,
+WP11_LOCAL int wolfPKCS11_Store_Open(int type, CK_ULONG id1, CK_ULONG id2, int read,
     void** store);
 
 /*
@@ -64,7 +64,7 @@ int wolfPKCS11_Store_Open(int type, CK_ULONG id1, CK_ULONG id2, int read,
  * @return  -4 when data not available.
  * @return  Other value to indicate failure.
  */
-int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
+WP11_LOCAL int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
     int variableSz, void** store);
 
 /*
@@ -73,7 +73,7 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
  *
  * @param [in]  store  Context for operation.
  */
-void wolfPKCS11_Store_Close(void* store);
+WP11_LOCAL void wolfPKCS11_Store_Close(void* store);
 
 /*
  * Reads a specific number of bytes into buffer.
@@ -84,7 +84,7 @@ void wolfPKCS11_Store_Close(void* store);
  * @return  Length of data read into buffer.
  * @return  -ve to indicate failure.
  */
-int wolfPKCS11_Store_Read(void* store, unsigned char* buffer, int len);
+WP11_LOCAL int wolfPKCS11_Store_Read(void* store, unsigned char* buffer, int len);
 
 /*
  * Writes a specific number of bytes from buffer.
@@ -95,6 +95,6 @@ int wolfPKCS11_Store_Read(void* store, unsigned char* buffer, int len);
  * @return  Length of data written into buffer.
  * @return  -ve to indicate failure.
  */
-int wolfPKCS11_Store_Write(void* store, unsigned char* buffer, int len);
+WP11_LOCAL int wolfPKCS11_Store_Write(void* store, unsigned char* buffer, int len);
 
 #endif /* WOLFPKCS11_STORE */
