@@ -266,355 +266,355 @@ typedef struct WP11_Session WP11_Session;
 typedef struct WP11_Slot WP11_Slot;
 
 
-int WP11_Library_Init(void);
-void WP11_Library_Final(void);
-int WP11_Library_IsInitialized(void);
+WP11_LOCAL int WP11_Library_Init(void);
+WP11_LOCAL void WP11_Library_Final(void);
+WP11_LOCAL int WP11_Library_IsInitialized(void);
 
-int WP11_SlotIdValid(CK_SLOT_ID slotId);
+WP11_LOCAL int WP11_SlotIdValid(CK_SLOT_ID slotId);
 
-int WP11_GetSlotList(int tokenIn, CK_SLOT_ID* slotList, CK_ULONG* count);
+WP11_LOCAL int WP11_GetSlotList(int tokenIn, CK_SLOT_ID* slotList, CK_ULONG* count);
 
-int WP11_Slot_Get(CK_SLOT_ID slotId, WP11_Slot** slot);
-int WP11_Slot_OpenSession(WP11_Slot* slot, unsigned long flags, void* app,
+WP11_LOCAL int WP11_Slot_Get(CK_SLOT_ID slotId, WP11_Slot** slot);
+WP11_LOCAL int WP11_Slot_OpenSession(WP11_Slot* slot, unsigned long flags, void* app,
                           CK_NOTIFY notify, CK_SESSION_HANDLE* session);
-void WP11_Slot_CloseSession(WP11_Slot* slot, WP11_Session* session);
-void WP11_Slot_CloseSessions(WP11_Slot* slot);
-int WP11_Slot_HasSession(WP11_Slot* slot);
-int WP11_Slot_CheckSOPin(WP11_Slot* slot, char* pin, int pinLen);
-int WP11_Slot_CheckUserPin(WP11_Slot* slot, char* pin, int pinLen);
-int WP11_Slot_Has_Empty_Pin(WP11_Slot* slot);
-int WP11_Slot_SOPin_IsSet(WP11_Slot* slot);
-int WP11_Slot_SOLogin(WP11_Slot* slot, char* pin, int pinLen);
-int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen);
-void WP11_Slot_Logout(WP11_Slot* slot);
-int WP11_Slot_SetSOPin(WP11_Slot* slot, char* pin, int pinLen);
-int WP11_Slot_SetUserPin(WP11_Slot* slot, char* pin, int pinLen);
-int WP11_Slot_TokenReset(WP11_Slot* slot, char* pin, int pinLen,
+WP11_LOCAL void WP11_Slot_CloseSession(WP11_Slot* slot, WP11_Session* session);
+WP11_LOCAL void WP11_Slot_CloseSessions(WP11_Slot* slot);
+WP11_LOCAL int WP11_Slot_HasSession(WP11_Slot* slot);
+WP11_LOCAL int WP11_Slot_CheckSOPin(WP11_Slot* slot, char* pin, int pinLen);
+WP11_LOCAL int WP11_Slot_CheckUserPin(WP11_Slot* slot, char* pin, int pinLen);
+WP11_LOCAL int WP11_Slot_Has_Empty_Pin(WP11_Slot* slot);
+WP11_LOCAL int WP11_Slot_SOPin_IsSet(WP11_Slot* slot);
+WP11_LOCAL int WP11_Slot_SOLogin(WP11_Slot* slot, char* pin, int pinLen);
+WP11_LOCAL int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen);
+WP11_LOCAL void WP11_Slot_Logout(WP11_Slot* slot);
+WP11_LOCAL int WP11_Slot_SetSOPin(WP11_Slot* slot, char* pin, int pinLen);
+WP11_LOCAL int WP11_Slot_SetUserPin(WP11_Slot* slot, char* pin, int pinLen);
+WP11_LOCAL int WP11_Slot_TokenReset(WP11_Slot* slot, char* pin, int pinLen,
                          char* label);
-void WP11_Slot_GetTokenLabel(WP11_Slot* slot, char* label);
-int WP11_Slot_IsTokenInitialized(WP11_Slot* slot);
-int WP11_Slot_TokenFailedLogin(WP11_Slot* slot, int login);
-time_t WP11_Slot_TokenFailedExpire(WP11_Slot* slot, int login);
-int WP11_Slot_IsTokenUserPinInitialized(WP11_Slot* slot);
+WP11_LOCAL void WP11_Slot_GetTokenLabel(WP11_Slot* slot, char* label);
+WP11_LOCAL int WP11_Slot_IsTokenInitialized(WP11_Slot* slot);
+WP11_LOCAL int WP11_Slot_TokenFailedLogin(WP11_Slot* slot, int login);
+WP11_LOCAL time_t WP11_Slot_TokenFailedExpire(WP11_Slot* slot, int login);
+WP11_LOCAL int WP11_Slot_IsTokenUserPinInitialized(WP11_Slot* slot);
 
-int WP11_Session_Get(CK_SESSION_HANDLE sessionHandle, WP11_Session** session);
-int WP11_Session_GetState(WP11_Session* session);
-int WP11_Session_IsRW(WP11_Session* session);
-int WP11_Session_IsOpInitialized(WP11_Session* session, int init);
-int WP11_Session_UpdateData(WP11_Session *session, byte *data, word32 dataLen);
-void WP11_Session_GetData(WP11_Session *session, byte** data, word32* dataLen);
-void WP11_Session_FreeData(WP11_Session *session);
-int WP11_Session_IsHashOpInitialized(WP11_Session* session, int mechanism);
-enum wc_HashType WP11_Session_ToHashType(WP11_Session* session);
-void WP11_Session_SetOpInitialized(WP11_Session* session, int init);
-WP11_Slot* WP11_Session_GetSlot(WP11_Session* session);
-CK_MECHANISM_TYPE WP11_Session_GetMechanism(WP11_Session* session);
-void WP11_Session_SetMechanism(WP11_Session* session,
+WP11_LOCAL int WP11_Session_Get(CK_SESSION_HANDLE sessionHandle, WP11_Session** session);
+WP11_LOCAL int WP11_Session_GetState(WP11_Session* session);
+WP11_LOCAL int WP11_Session_IsRW(WP11_Session* session);
+WP11_LOCAL int WP11_Session_IsOpInitialized(WP11_Session* session, int init);
+WP11_LOCAL int WP11_Session_UpdateData(WP11_Session *session, byte *data, word32 dataLen);
+WP11_LOCAL void WP11_Session_GetData(WP11_Session *session, byte** data, word32* dataLen);
+WP11_LOCAL void WP11_Session_FreeData(WP11_Session *session);
+WP11_LOCAL int WP11_Session_IsHashOpInitialized(WP11_Session* session, int mechanism);
+WP11_LOCAL enum wc_HashType WP11_Session_ToHashType(WP11_Session* session);
+WP11_LOCAL void WP11_Session_SetOpInitialized(WP11_Session* session, int init);
+WP11_LOCAL WP11_Slot* WP11_Session_GetSlot(WP11_Session* session);
+WP11_LOCAL CK_MECHANISM_TYPE WP11_Session_GetMechanism(WP11_Session* session);
+WP11_LOCAL void WP11_Session_SetMechanism(WP11_Session* session,
                                CK_MECHANISM_TYPE mechanism);
-int WP11_Session_SetPssParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
+WP11_LOCAL int WP11_Session_SetPssParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
                               CK_MECHANISM_TYPE mgf, int sLen);
-int WP11_Session_SetOaepParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
+WP11_LOCAL int WP11_Session_SetOaepParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
                                CK_MECHANISM_TYPE mgf, byte* label, int labelSz);
-int WP11_Session_SetCbcParams(WP11_Session* session, unsigned char* iv, int enc,
+WP11_LOCAL int WP11_Session_SetCbcParams(WP11_Session* session, unsigned char* iv, int enc,
                               WP11_Object* object);
-int WP11_Session_SetCtrParams(WP11_Session* session, CK_ULONG ulCounterBits,
+WP11_LOCAL int WP11_Session_SetCtrParams(WP11_Session* session, CK_ULONG ulCounterBits,
                               CK_BYTE* cb, WP11_Object* object);
-int WP11_Session_SetAesWrapParams(WP11_Session* session, byte* iv, word32 ivLen,
+WP11_LOCAL int WP11_Session_SetAesWrapParams(WP11_Session* session, byte* iv, word32 ivLen,
                                   WP11_Object* object, int enc);
-int WP11_Session_SetGcmParams(WP11_Session* session, unsigned char* iv,
+WP11_LOCAL int WP11_Session_SetGcmParams(WP11_Session* session, unsigned char* iv,
                               int ivSz, unsigned char* aad, int aadLen,
                               int tagBits);
-int WP11_Session_SetCcmParams(WP11_Session* session, int dataSz,
+WP11_LOCAL int WP11_Session_SetCcmParams(WP11_Session* session, int dataSz,
                               unsigned char* iv, int ivSz,
                               unsigned char* aad, int aadSz,
                               int macSz);
-int WP11_Session_SetCtsParams(WP11_Session* session, unsigned char* iv,
+WP11_LOCAL int WP11_Session_SetCtsParams(WP11_Session* session, unsigned char* iv,
                               int enc, WP11_Object* object);
-int WP11_Session_AddObject(WP11_Session* session, int onToken,
+WP11_LOCAL int WP11_Session_AddObject(WP11_Session* session, int onToken,
                            WP11_Object* object);
-void WP11_Session_RemoveObject(WP11_Session* session, WP11_Object* object);
-void WP11_Session_GetObject(WP11_Session* session, WP11_Object** object);
-void WP11_Session_SetObject(WP11_Session* session, WP11_Object* object);
+WP11_LOCAL void WP11_Session_RemoveObject(WP11_Session* session, WP11_Object* object);
+WP11_LOCAL void WP11_Session_GetObject(WP11_Session* session, WP11_Object** object);
+WP11_LOCAL void WP11_Session_SetObject(WP11_Session* session, WP11_Object* object);
 
-int WP11_Session_FindInit(WP11_Session* session);
-void WP11_Session_Find(WP11_Session* session, int onToken,
+WP11_LOCAL int WP11_Session_FindInit(WP11_Session* session);
+WP11_LOCAL void WP11_Session_Find(WP11_Session* session, int onToken,
                        CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount);
-int WP11_Session_FindGet(WP11_Session* session, CK_OBJECT_HANDLE* id);
-void WP11_Session_FindFinal(WP11_Session* session);
+WP11_LOCAL int WP11_Session_FindGet(WP11_Session* session, CK_OBJECT_HANDLE* id);
+WP11_LOCAL void WP11_Session_FindFinal(WP11_Session* session);
 
-int WP11_ConstantCompare(const byte* a, const byte* b, int length);
+WP11_LOCAL int WP11_ConstantCompare(const byte* a, const byte* b, int length);
 
-int WP11_Object_New(WP11_Session* session, CK_KEY_TYPE type,
+WP11_LOCAL int WP11_Object_New(WP11_Session* session, CK_KEY_TYPE type,
                     WP11_Object** object);
-void WP11_Object_Free(WP11_Object* object);
+WP11_LOCAL void WP11_Object_Free(WP11_Object* object);
 
-CK_OBJECT_HANDLE WP11_Object_GetHandle(WP11_Object* object);
-CK_KEY_TYPE WP11_Object_GetType(WP11_Object* object);
+WP11_LOCAL CK_OBJECT_HANDLE WP11_Object_GetHandle(WP11_Object* object);
+WP11_LOCAL CK_KEY_TYPE WP11_Object_GetType(WP11_Object* object);
 
-int WP11_Object_SetRsaKey(WP11_Object* object, unsigned char** data,
+WP11_LOCAL int WP11_Object_SetRsaKey(WP11_Object* object, unsigned char** data,
                           CK_ULONG* len);
-int WP11_Object_SetEcKey(WP11_Object* object, unsigned char** data,
+WP11_LOCAL int WP11_Object_SetEcKey(WP11_Object* object, unsigned char** data,
                          CK_ULONG* len);
-int WP11_Object_SetDhKey(WP11_Object* object, unsigned char** data,
+WP11_LOCAL int WP11_Object_SetDhKey(WP11_Object* object, unsigned char** data,
                          CK_ULONG* len);
-int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
+WP11_LOCAL int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
                              CK_ULONG* len);
-int WP11_Object_SetCert(WP11_Object* object, unsigned char** data,
+WP11_LOCAL int WP11_Object_SetCert(WP11_Object* object, unsigned char** data,
                              CK_ULONG* len);
 
-int WP11_Object_SetClass(WP11_Object* object, CK_OBJECT_CLASS objClass);
-CK_OBJECT_CLASS WP11_Object_GetClass(WP11_Object* object);
+WP11_LOCAL int WP11_Object_SetClass(WP11_Object* object, CK_OBJECT_CLASS objClass);
+WP11_LOCAL CK_OBJECT_CLASS WP11_Object_GetClass(WP11_Object* object);
 
 #ifdef WOLFPKCS11_NSS
-int WP11_Object_SetTrust(WP11_Object* object, unsigned char** data,
+WP11_LOCAL int WP11_Object_SetTrust(WP11_Object* object, unsigned char** data,
                          CK_ULONG* len);
 #endif
 
-int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
+WP11_LOCAL int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
                      WP11_Object** object);
-int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
+WP11_LOCAL int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                         CK_ULONG* len);
-int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
+WP11_LOCAL int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                         CK_ULONG len);
-int WP11_Object_MatchAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
+WP11_LOCAL int WP11_Object_MatchAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
                           byte* data, CK_ULONG len);
-int WP11_Generic_SerializeKey(WP11_Object* object, byte* output, word32* poutsz);
+WP11_LOCAL int WP11_Generic_SerializeKey(WP11_Object* object, byte* output, word32* poutsz);
 
-int WP11_Rsa_SerializeKey(WP11_Object* object, byte* output, word32* poutsz);
+WP11_LOCAL int WP11_Rsa_SerializeKey(WP11_Object* object, byte* output, word32* poutsz);
 
-int WP11_Rsa_SerializeKeyPTPKC8(WP11_Object* object, byte* output, word32* poutsz);
+WP11_LOCAL int WP11_Rsa_SerializeKeyPTPKC8(WP11_Object* object, byte* output, word32* poutsz);
 
-int WP11_Rsa_ParsePrivKey(byte* data, word32 dataLen, WP11_Object* privKey);
+WP11_LOCAL int WP11_Rsa_ParsePrivKey(byte* data, word32 dataLen, WP11_Object* privKey);
 
-int WP11_Rsa_PrivKey2PubKey(WP11_Object* privKey, WP11_Object* pubKey, byte* workbuf, word32 worksz);
+WP11_LOCAL int WP11_Rsa_PrivKey2PubKey(WP11_Object* privKey, WP11_Object* pubKey, byte* workbuf, word32 worksz);
 
-int WP11_Rsa_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
+WP11_LOCAL int WP11_Rsa_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
                              WP11_Slot* slot);
 
-word32 WP11_Rsa_KeyLen(WP11_Object* key);
+WP11_LOCAL word32 WP11_Rsa_KeyLen(WP11_Object* key);
 
-int WP11_Rsa_PublicEncrypt(unsigned char* in, word32 inLen, unsigned char* out,
+WP11_LOCAL int WP11_Rsa_PublicEncrypt(unsigned char* in, word32 inLen, unsigned char* out,
                            word32* outLen, WP11_Object* pub, WP11_Slot* slot);
-int WP11_Rsa_PrivateDecrypt(unsigned char* in, word32 inLen, unsigned char* out,
+WP11_LOCAL int WP11_Rsa_PrivateDecrypt(unsigned char* in, word32 inLen, unsigned char* out,
                             word32* outLen, WP11_Object* priv, WP11_Slot* slot);
-int WP11_RsaPkcs15_PublicEncrypt(unsigned char* in, word32 inLen,
+WP11_LOCAL int WP11_RsaPkcs15_PublicEncrypt(unsigned char* in, word32 inLen,
                                  unsigned char* out, word32* outLen,
                                  WP11_Object* pub, WP11_Slot* slot);
-int WP11_RsaPkcs15_PrivateDecrypt(unsigned char* in, word32 inLen,
+WP11_LOCAL int WP11_RsaPkcs15_PrivateDecrypt(unsigned char* in, word32 inLen,
                                   unsigned char* out, word32* outLen,
                                   WP11_Object* priv, WP11_Slot* slot);
-int WP11_RsaOaep_PublicEncrypt(unsigned char* in, word32 inLen,
+WP11_LOCAL int WP11_RsaOaep_PublicEncrypt(unsigned char* in, word32 inLen,
                                unsigned char* out, word32* outLen,
                                WP11_Object* pub, WP11_Session* session);
-int WP11_RsaOaep_PrivateDecrypt(unsigned char* in, word32 inLen,
+WP11_LOCAL int WP11_RsaOaep_PrivateDecrypt(unsigned char* in, word32 inLen,
                                 unsigned char* out, word32* outLen,
                                 WP11_Object* priv, WP11_Session* session);
-int WP11_Rsa_Sign(unsigned char* in, word32 inLen, unsigned char* sig,
+WP11_LOCAL int WP11_Rsa_Sign(unsigned char* in, word32 inLen, unsigned char* sig,
                   word32* sigLen, WP11_Object* priv, WP11_Slot* slot);
-int WP11_Rsa_Verify(unsigned char* sig, word32 sigLen, unsigned char* in,
+WP11_LOCAL int WP11_Rsa_Verify(unsigned char* sig, word32 sigLen, unsigned char* in,
                     word32 inLen, int* stat, WP11_Object* pub);
-int WP11_RsaPkcs15_Sign(unsigned char* encHash, word32 encHashLen,
+WP11_LOCAL int WP11_RsaPkcs15_Sign(unsigned char* encHash, word32 encHashLen,
                         unsigned char* sig, word32* sigLen, WP11_Object* priv,
                         WP11_Slot* slot);
-int WP11_RsaPkcs15_Verify(unsigned char* sig, word32 sigLen,
+WP11_LOCAL int WP11_RsaPkcs15_Verify(unsigned char* sig, word32 sigLen,
                           unsigned char* encHash, word32 encHashLen, int* stat,
                           WP11_Object* pub);
-int WP11_RsaPKCSPSS_Sign(unsigned char* hash, word32 hashLen,
+WP11_LOCAL int WP11_RsaPKCSPSS_Sign(unsigned char* hash, word32 hashLen,
                          unsigned char* sig, word32* sigLen,
                          WP11_Object* pub, WP11_Session* session);
-int WP11_RsaPKCSPSS_Verify(unsigned char* sig, word32 sigLen,
+WP11_LOCAL int WP11_RsaPKCSPSS_Verify(unsigned char* sig, word32 sigLen,
                            unsigned char* hash, word32 hashLen, int* stat,
                            WP11_Object* pub, WP11_Session* session);
-int WP11_Rsa_Verify_Recover(CK_MECHANISM_TYPE mechanism, unsigned char* sig,
+WP11_LOCAL int WP11_Rsa_Verify_Recover(CK_MECHANISM_TYPE mechanism, unsigned char* sig,
                             word32 sigLen, unsigned char* out,
                             CK_ULONG_PTR outLen, WP11_Object* pub);
 
-int WP11_Ec_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
+WP11_LOCAL int WP11_Ec_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
                             WP11_Slot* slot);
-int WP11_Ec_SigLen(WP11_Object* key);
-int WP11_Ec_Sign(unsigned char* hash, word32 hashLen, unsigned char* sig,
+WP11_LOCAL int WP11_Ec_SigLen(WP11_Object* key);
+WP11_LOCAL int WP11_Ec_Sign(unsigned char* hash, word32 hashLen, unsigned char* sig,
                  word32* sigLen, WP11_Object* priv, WP11_Slot* slot);
-int WP11_Ec_Verify(unsigned char* sig, word32 sigLen, unsigned char* hash,
+WP11_LOCAL int WP11_Ec_Verify(unsigned char* sig, word32 sigLen, unsigned char* hash,
                    word32 hashLen, int* stat, WP11_Object* pub);
-int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
+WP11_LOCAL int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
                    word32 keyLen, WP11_Object* priv);
 
-int WP11_Dh_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
+WP11_LOCAL int WP11_Dh_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
                             WP11_Slot* slot);
-int WP11_Dh_Derive(unsigned char* pub, word32 pubLen, unsigned char* key,
+WP11_LOCAL int WP11_Dh_Derive(unsigned char* pub, word32 pubLen, unsigned char* key,
                    word32* keyLen, WP11_Object* priv);
 
-int WP11_GenerateRandomKey(WP11_Object* secret, WP11_Slot* slot);
+WP11_LOCAL int WP11_GenerateRandomKey(WP11_Object* secret, WP11_Slot* slot);
 
-int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
+WP11_LOCAL int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
                     unsigned char* key, word32* keyLen, WP11_Object* priv);
 
-int WP11_Tls12_Master_Key_Derive(CK_SSL3_RANDOM_DATA* random,
+WP11_LOCAL int WP11_Tls12_Master_Key_Derive(CK_SSL3_RANDOM_DATA* random,
                                  CK_MECHANISM_TYPE mech, const char* label,
                                  CK_ULONG ulLabelLen, byte* enc,
                                  CK_ULONG encLen, CK_BBOOL clientFirst,
                                  WP11_Object* key);
 
-int WP11_Nss_Tls12_Master_Key_Derive(CK_BYTE_PTR pSessionHash,
+WP11_LOCAL int WP11_Nss_Tls12_Master_Key_Derive(CK_BYTE_PTR pSessionHash,
                                      CK_ULONG ulSessionHashLen,
                                      CK_MECHANISM_TYPE mech, const char* label,
                                      CK_ULONG ulLabelLen, byte* enc,
                                      CK_ULONG encLen, WP11_Object* key);
 
-int WP11_AesGenerateKey(WP11_Object* secret, WP11_Slot* slot);
+WP11_LOCAL int WP11_AesGenerateKey(WP11_Object* secret, WP11_Slot* slot);
 
-int WP11_AesCbc_DeriveKey(unsigned char* plain, word32 plainSz,
+WP11_LOCAL int WP11_AesCbc_DeriveKey(unsigned char* plain, word32 plainSz,
                         unsigned char* enc, byte* iv,
                         WP11_Object* key);
-int WP11_AesCbc_PartLen(WP11_Session* session);
-int WP11_AesCbc_Encrypt(unsigned char* plain, word32 plainSz,
+WP11_LOCAL int WP11_AesCbc_PartLen(WP11_Session* session);
+WP11_LOCAL int WP11_AesCbc_Encrypt(unsigned char* plain, word32 plainSz,
                         unsigned char* enc, word32* encSz,
                         WP11_Session* session);
-int WP11_AesCbc_EncryptUpdate(unsigned char* plain, word32 plainSz,
+WP11_LOCAL int WP11_AesCbc_EncryptUpdate(unsigned char* plain, word32 plainSz,
                         unsigned char* enc, word32* encSz,
                         WP11_Session* session);
-int WP11_AesCbc_EncryptFinal(WP11_Session* session);
-int WP11_AesCbc_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
+WP11_LOCAL int WP11_AesCbc_EncryptFinal(WP11_Session* session);
+WP11_LOCAL int WP11_AesCbc_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
                         word32* decSz, WP11_Session* session);
-int WP11_AesCbc_DecryptUpdate(unsigned char* enc, word32 encSz,
+WP11_LOCAL int WP11_AesCbc_DecryptUpdate(unsigned char* enc, word32 encSz,
                               unsigned char* dec, word32* decSz,
                               WP11_Session* session);
-int WP11_AesCbc_DecryptFinal(WP11_Session* session);
-int WP11_AesCbcPad_Encrypt(unsigned char* plain, word32 plainSz,
+WP11_LOCAL int WP11_AesCbc_DecryptFinal(WP11_Session* session);
+WP11_LOCAL int WP11_AesCbcPad_Encrypt(unsigned char* plain, word32 plainSz,
                            unsigned char* enc, word32* encSz,
                            WP11_Session* session);
-int WP11_AesCbcPad_EncryptUpdate(unsigned char* plain, word32 plainSz,
+WP11_LOCAL int WP11_AesCbcPad_EncryptUpdate(unsigned char* plain, word32 plainSz,
                            unsigned char* enc, word32* encSz,
                            WP11_Session* session);
-int WP11_AesCbcPad_EncryptFinal(unsigned char* enc, word32* encSz,
+WP11_LOCAL int WP11_AesCbcPad_EncryptFinal(unsigned char* enc, word32* encSz,
                                 WP11_Session* session);
-int WP11_AesCbcPad_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
+WP11_LOCAL int WP11_AesCbcPad_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
                            word32* decSz, WP11_Session* session);
-int WP11_AesCbcPad_DecryptUpdate(unsigned char* enc, word32 encSz,
+WP11_LOCAL int WP11_AesCbcPad_DecryptUpdate(unsigned char* enc, word32 encSz,
                                  unsigned char* dec, word32* decSz,
                                  WP11_Session* session);
-int WP11_AesCbcPad_DecryptFinal(unsigned char* dec, word32* decSz,
+WP11_LOCAL int WP11_AesCbcPad_DecryptFinal(unsigned char* dec, word32* decSz,
                                 WP11_Session* session);
 
 
-int WP11_AesCtr_Do(unsigned char* in, word32 inSz, unsigned char* out,
+WP11_LOCAL int WP11_AesCtr_Do(unsigned char* in, word32 inSz, unsigned char* out,
         word32* outSz, WP11_Session* session);
-int WP11_AesCtr_Update(unsigned char* in, word32 inSz, unsigned char* out,
+WP11_LOCAL int WP11_AesCtr_Update(unsigned char* in, word32 inSz, unsigned char* out,
         word32* outSz, WP11_Session* session);
-int WP11_AesCtr_Final(WP11_Session* session);
+WP11_LOCAL int WP11_AesCtr_Final(WP11_Session* session);
 
-int WP11_AesGcm_GetTagBits(WP11_Session* session);
-int WP11_AesGcm_EncDataLen(WP11_Session* session);
-int WP11_AesGcm_Encrypt(unsigned char* plain, word32 plainSz,
+WP11_LOCAL int WP11_AesGcm_GetTagBits(WP11_Session* session);
+WP11_LOCAL int WP11_AesGcm_EncDataLen(WP11_Session* session);
+WP11_LOCAL int WP11_AesGcm_Encrypt(unsigned char* plain, word32 plainSz,
                         unsigned char* enc, word32* encSz, WP11_Object* secret,
                         WP11_Session* session);
-int WP11_AesGcm_EncryptUpdate(unsigned char* plain, word32 plainSz,
+WP11_LOCAL int WP11_AesGcm_EncryptUpdate(unsigned char* plain, word32 plainSz,
                               unsigned char* enc, word32* encSz,
                               WP11_Object* secret, WP11_Session* session);
-int WP11_AesGcm_EncryptFinal(unsigned char* enc, word32* encSz,
+WP11_LOCAL int WP11_AesGcm_EncryptFinal(unsigned char* enc, word32* encSz,
                              WP11_Session* session);
-int WP11_AesGcm_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
+WP11_LOCAL int WP11_AesGcm_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
                         word32* decSz, WP11_Object* secret,
                         WP11_Session* session);
-int WP11_AesGcm_DecryptUpdate(unsigned char* enc, word32 encSz,
+WP11_LOCAL int WP11_AesGcm_DecryptUpdate(unsigned char* enc, word32 encSz,
                               WP11_Session* session);
-int WP11_AesGcm_DecryptFinal(unsigned char* dec, word32* decSz,
+WP11_LOCAL int WP11_AesGcm_DecryptFinal(unsigned char* dec, word32* decSz,
                              WP11_Object* secret, WP11_Session* session);
 
-int WP11_AesCcm_DataLen(WP11_Session* session);
-int WP11_AesCcm_GetMacLen(WP11_Session* session);
-int WP11_AesCcm_Encrypt(unsigned char* plain, word32 plainSz,
+WP11_LOCAL int WP11_AesCcm_DataLen(WP11_Session* session);
+WP11_LOCAL int WP11_AesCcm_GetMacLen(WP11_Session* session);
+WP11_LOCAL int WP11_AesCcm_Encrypt(unsigned char* plain, word32 plainSz,
                         unsigned char* enc, word32* encSz, WP11_Object* secret,
                         WP11_Session* session);
-int WP11_AesCcm_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
+WP11_LOCAL int WP11_AesCcm_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
                         word32* decSz, WP11_Object* secret,
                         WP11_Session* session);
-int WP11_AesEcb_Encrypt(unsigned char* plain, word32 plainSz,
+WP11_LOCAL int WP11_AesEcb_Encrypt(unsigned char* plain, word32 plainSz,
                         unsigned char* enc, word32* encSz, WP11_Object* secret,
                         WP11_Session* session);
-int WP11_AesEcb_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
+WP11_LOCAL int WP11_AesEcb_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
                         word32* decSz, WP11_Object* secret,
                         WP11_Session* session);
 
-int WP11_AesKeyWrap_Encrypt(unsigned char* plain, word32 plainSz,
+WP11_LOCAL int WP11_AesKeyWrap_Encrypt(unsigned char* plain, word32 plainSz,
         unsigned char* enc, word32* encSz, WP11_Session* session);
-int WP11_AesKeyWrap_Decrypt(unsigned char* enc, word32 encSz,
+WP11_LOCAL int WP11_AesKeyWrap_Decrypt(unsigned char* enc, word32 encSz,
         unsigned char* dec, word32* decSz, WP11_Session* session);
 
-int WP11_AesCts_Encrypt(unsigned char* plain, word32 plainSz,
+WP11_LOCAL int WP11_AesCts_Encrypt(unsigned char* plain, word32 plainSz,
                         unsigned char* enc, word32* encSz,
                         WP11_Session* session);
-int WP11_AesCts_EncryptUpdate(unsigned char* plain, word32 plainSz,
+WP11_LOCAL int WP11_AesCts_EncryptUpdate(unsigned char* plain, word32 plainSz,
                               unsigned char* enc, word32* encSz,
                               WP11_Session* session);
-int WP11_AesCts_EncryptFinal(unsigned char* enc, word32* encSz,
+WP11_LOCAL int WP11_AesCts_EncryptFinal(unsigned char* enc, word32* encSz,
                              WP11_Session* session);
-int WP11_AesCts_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
+WP11_LOCAL int WP11_AesCts_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
                         word32* decSz, WP11_Session* session);
-int WP11_AesCts_DecryptUpdate(unsigned char* enc, word32 encSz,
+WP11_LOCAL int WP11_AesCts_DecryptUpdate(unsigned char* enc, word32 encSz,
                               unsigned char* dec, word32* decSz,
                               WP11_Session* session);
-int WP11_AesCts_DecryptFinal(unsigned char* dec, word32* decSz,
+WP11_LOCAL int WP11_AesCts_DecryptFinal(unsigned char* dec, word32* decSz,
                              WP11_Session* session);
 
-int WP11_Aes_Cmac_Init(WP11_Object* secret, WP11_Session* session,
+WP11_LOCAL int WP11_Aes_Cmac_Init(WP11_Object* secret, WP11_Session* session,
         word32 sigLen);
-int WP11_Aes_Cmac_Check_Len(CK_BYTE_PTR pSignature,
+WP11_LOCAL int WP11_Aes_Cmac_Check_Len(CK_BYTE_PTR pSignature,
         CK_ULONG_PTR pulSignatureLen, WP11_Session* session);
-int WP11_Aes_Cmac_Sign(unsigned char* data, word32 dataLen, unsigned char* sig,
+WP11_LOCAL int WP11_Aes_Cmac_Sign(unsigned char* data, word32 dataLen, unsigned char* sig,
         word32* sigLen, WP11_Session* session);
-int WP11_Aes_Cmac_Sign_Update(unsigned char* data, word32 dataLen,
+WP11_LOCAL int WP11_Aes_Cmac_Sign_Update(unsigned char* data, word32 dataLen,
         WP11_Session* session);
-int WP11_Aes_Cmac_Sign_Final(unsigned char* sig, word32* sigLen,
+WP11_LOCAL int WP11_Aes_Cmac_Sign_Final(unsigned char* sig, word32* sigLen,
         WP11_Session* session);
-int WP11_Aes_Cmac_Verify(unsigned char* data, word32 dataLen,
+WP11_LOCAL int WP11_Aes_Cmac_Verify(unsigned char* data, word32 dataLen,
         unsigned char* sig, word32 sigLen, int* stat, WP11_Session* session);
-int WP11_Aes_Cmac_Verify_Final(unsigned char* sig, word32 sigLen, int* stat,
+WP11_LOCAL int WP11_Aes_Cmac_Verify_Final(unsigned char* sig, word32 sigLen, int* stat,
         WP11_Session* session);
 
-int WP11_Hmac_SigLen(WP11_Session* session);
-int WP11_Hmac_Init(CK_MECHANISM_TYPE mechanism, WP11_Object* secret,
+WP11_LOCAL int WP11_Hmac_SigLen(WP11_Session* session);
+WP11_LOCAL int WP11_Hmac_Init(CK_MECHANISM_TYPE mechanism, WP11_Object* secret,
                    WP11_Session* session);
-int WP11_Hmac_Sign(unsigned char* data, word32 dataLen, unsigned char* sig,
+WP11_LOCAL int WP11_Hmac_Sign(unsigned char* data, word32 dataLen, unsigned char* sig,
                    word32* sigLen, WP11_Session* session);
-int WP11_Hmac_Verify(unsigned char* sig, word32 sigLen, unsigned char* data,
+WP11_LOCAL int WP11_Hmac_Verify(unsigned char* sig, word32 sigLen, unsigned char* data,
                      word32 dataLen, int* stat, WP11_Session* session);
-int WP11_Hmac_Update(unsigned char* data, word32 dataLen,
+WP11_LOCAL int WP11_Hmac_Update(unsigned char* data, word32 dataLen,
                      WP11_Session* session);
-int WP11_Hmac_SignFinal(unsigned char* sig, word32* sigLen,
+WP11_LOCAL int WP11_Hmac_SignFinal(unsigned char* sig, word32* sigLen,
                         WP11_Session* session);
-int WP11_Hmac_VerifyFinal(unsigned char* sig, word32 sigLen, int* stat,
+WP11_LOCAL int WP11_Hmac_VerifyFinal(unsigned char* sig, word32 sigLen, int* stat,
                           WP11_Session* session);
 
-int WP11_TLS_MAC_init(unsigned long hashType, unsigned long macLen, byte server,
+WP11_LOCAL int WP11_TLS_MAC_init(unsigned long hashType, unsigned long macLen, byte server,
                       CK_OBJECT_HANDLE hKey, WP11_Session *session);
-word32 WP11_TLS_MAC_get_len(WP11_Session *session);
-int WP11_TLS_MAC_sign(byte* data, word32 dataLen, byte* sig, word32* sigLen,
+WP11_LOCAL word32 WP11_TLS_MAC_get_len(WP11_Session *session);
+WP11_LOCAL int WP11_TLS_MAC_sign(byte* data, word32 dataLen, byte* sig, word32* sigLen,
                       WP11_Session *session);
-int WP11_TLS_MAC_verify(byte* data, word32 dataLen, byte* sig, word32 sigLen,
+WP11_LOCAL int WP11_TLS_MAC_verify(byte* data, word32 dataLen, byte* sig, word32 sigLen,
         int* stat, WP11_Session *session);
 
-int WP11_Digest_Init(CK_MECHANISM_TYPE mechanism, WP11_Session* session);
-int WP11_Digest_Update(unsigned char* data, word32 dataLen,
+WP11_LOCAL int WP11_Digest_Init(CK_MECHANISM_TYPE mechanism, WP11_Session* session);
+WP11_LOCAL int WP11_Digest_Update(unsigned char* data, word32 dataLen,
                        WP11_Session* session);
-int WP11_Digest_Final(unsigned char* data, word32* dataLen,
+WP11_LOCAL int WP11_Digest_Final(unsigned char* data, word32* dataLen,
                       WP11_Session* session);
-int WP11_Digest_Single(unsigned char* data, word32 dataLen,
+WP11_LOCAL int WP11_Digest_Single(unsigned char* data, word32 dataLen,
                        unsigned char* dataOut, word32* dataOutLen,
                        WP11_Session* session);
-int WP11_Digest_Key(WP11_Object* key, WP11_Session* session);
+WP11_LOCAL int WP11_Digest_Key(WP11_Object* key, WP11_Session* session);
 
-int WP11_Slot_SeedRandom(WP11_Slot* slot, unsigned char* seed, int seedLen);
-int WP11_Slot_GenerateRandom(WP11_Slot* slot, unsigned char* data, int len);
+WP11_LOCAL int WP11_Slot_SeedRandom(WP11_Slot* slot, unsigned char* seed, int seedLen);
+WP11_LOCAL int WP11_Slot_GenerateRandom(WP11_Slot* slot, unsigned char* data, int len);
 
-int WP11_GetOperationState(WP11_Session* session, unsigned char* stateData,
+WP11_LOCAL int WP11_GetOperationState(WP11_Session* session, unsigned char* stateData,
                            unsigned long* stateDataLen);
 
-int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
+WP11_LOCAL int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
                            unsigned long stateDataLen);
 
-void wolfPKCS11_Debugging_On(void);
-void wolfPKCS11_Debugging_Off(void);
+WP11_LOCAL void wolfPKCS11_Debugging_On(void);
+WP11_LOCAL void wolfPKCS11_Debugging_Off(void);
 
 #ifdef DEBUG_WOLFPKCS11
 extern int wolfpkcs11_debugging;
