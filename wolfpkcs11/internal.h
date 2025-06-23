@@ -613,8 +613,7 @@ WP11_LOCAL int WP11_GetOperationState(WP11_Session* session, unsigned char* stat
 WP11_LOCAL int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
                            unsigned long stateDataLen);
 
-WP11_LOCAL void wolfPKCS11_Debugging_On(void);
-WP11_LOCAL void wolfPKCS11_Debugging_Off(void);
+
 
 #ifdef DEBUG_WOLFPKCS11
 extern int wolfpkcs11_debugging;
