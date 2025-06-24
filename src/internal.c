@@ -9269,19 +9269,43 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
 {
     int ret;
     ecc_key pubKey;
+    unsigned char* x963Data = point;
+    word32 x963Len = pointLen;
+    int dataLen;
+    int i = 0;
 #if defined(ECC_TIMING_RESISTANT) && (!defined(HAVE_FIPS) || \
     (defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION > 2)))
     WC_RNG rng;
 #endif
 
+    /* Check if the point data is DER-encoded (starts with OCTET STRING tag) */
+    if (pointLen >= 3 && point[0] == ASN_OCTET_STRING) {
+        /* Strip DER encoding - similar to EcSetPoint function */
+        i = 1;
+        if (point[i] >= ASN_LONG_LENGTH) {
+            if (point[i] == (ASN_LONG_LENGTH | 1)) {
+                i++;
+            }
+            else {
+                ret = ASN_PARSE_E;
+                goto cleanup;
+            }
+        }
+        dataLen = point[i++];
+        if (dataLen == (int)(pointLen - i)) {
+            x963Data = point + i;
+            x963Len = dataLen;
+        }
+    }
+
     ret = wc_ecc_init_ex(&pubKey, NULL, priv->slot->devId);
     if (ret == 0) {
         if (priv->data.ecKey.dp) {
-            ret = wc_ecc_import_x963_ex(point, pointLen, &pubKey,
+            ret = wc_ecc_import_x963_ex(x963Data, x963Len, &pubKey,
                                         priv->data.ecKey.dp->id);
         }
         else {
-            ret = wc_ecc_import_x963(point, pointLen, &pubKey);
+            ret = wc_ecc_import_x963(x963Data, x963Len, &pubKey);
         }
     }
 #if defined(ECC_TIMING_RESISTANT) && (!defined(HAVE_FIPS) || \
@@ -9305,6 +9329,7 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
 #endif
     }
 
+cleanup:
     wc_ecc_free(&pubKey);
 
     return ret;
