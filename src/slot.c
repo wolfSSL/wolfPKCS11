@@ -608,6 +608,9 @@ static CK_MECHANISM_INFO hkdfMechInfo = {
 static CK_MECHANISM_INFO hkdfDatMechInfo = {
     1, 16320, CKF_DERIVE
 };
+static CK_MECHANISM_INFO hkdfKeyGenMechInfo = {
+    20, 64, CKF_GENERATE
+};
 #endif
 #ifndef NO_DH
 /* Info on DH key generation mechanism. */
@@ -919,6 +922,9 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
             break;
         case CKM_HKDF_DATA:
             XMEMCPY(pInfo, &hkdfDatMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+        case CKM_HKDF_KEY_GEN:
+            XMEMCPY(pInfo, &hkdfKeyGenMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
 #endif
 #ifndef NO_DH
