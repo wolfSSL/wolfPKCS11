@@ -491,7 +491,7 @@ struct WP11_Slot {
 
 
 /* Number of slots. */
-static int slotCnt = 1;
+static const int slotCnt = 1;
 /* List of slot objects. */
 static WP11_Slot slotList[1];
 /* Global random used in random API, cryptographic operations and generating
@@ -935,6 +935,7 @@ static word32 wolfPKCS11_Store_Handle(int type, CK_ULONG id1, CK_ULONG id2)
 static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* name,
     int nameLen)
 {
+    int ret = 0;
 #ifndef WOLFPKCS11_NO_ENV
     const char* str = NULL;
 #endif
@@ -1000,54 +1001,58 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
     /* Set different filename for each type of data and different ids. */
     switch (type) {
         case WOLFPKCS11_STORE_TOKEN:
-            XSNPRINTF(name, nameLen, "%s/wp11_token_%016lx", str, id1);
+            ret = XSNPRINTF(name, nameLen, "%s/wp11_token_%016lx", str, id1);
             break;
         case WOLFPKCS11_STORE_OBJECT:
-            XSNPRINTF(name, nameLen, "%s/wp11_obj_%016lx_%016lx", str, id1,
+            ret = XSNPRINTF(name, nameLen, "%s/wp11_obj_%016lx_%016lx", str, id1,
                     id2);
             break;
         case WOLFPKCS11_STORE_SYMMKEY:
-            XSNPRINTF(name, nameLen, "%s/wp11_symmkey_%016lx_%016lx", str,
+            ret = XSNPRINTF(name, nameLen, "%s/wp11_symmkey_%016lx_%016lx", str,
                     id1, id2);
             break;
         case WOLFPKCS11_STORE_RSAKEY_PRIV:
-            XSNPRINTF(name, nameLen, "%s/wp11_rsakey_priv_%016lx_%016lx",
+            ret = XSNPRINTF(name, nameLen, "%s/wp11_rsakey_priv_%016lx_%016lx",
                     str, id1, id2);
             break;
         case WOLFPKCS11_STORE_RSAKEY_PUB:
-            XSNPRINTF(name, nameLen, "%s/wp11_rsakey_pub_%016lx_%016lx",
+            ret = XSNPRINTF(name, nameLen, "%s/wp11_rsakey_pub_%016lx_%016lx",
                     str, id1, id2);
             break;
         case WOLFPKCS11_STORE_ECCKEY_PRIV:
-            XSNPRINTF(name, nameLen, "%s/wp11_ecckey_priv_%016lx_%016lx",
+            ret = XSNPRINTF(name, nameLen, "%s/wp11_ecckey_priv_%016lx_%016lx",
                     str, id1, id2);
             break;
         case WOLFPKCS11_STORE_ECCKEY_PUB:
-            XSNPRINTF(name, nameLen, "%s/wp11_ecckey_pub_%016lx_%016lx",
+            ret = XSNPRINTF(name, nameLen, "%s/wp11_ecckey_pub_%016lx_%016lx",
                     str, id1, id2);
             break;
         case WOLFPKCS11_STORE_DHKEY_PRIV:
-            XSNPRINTF(name, nameLen, "%s/wp11_dhkey_priv_%016lx_%016lx",
+            ret = XSNPRINTF(name, nameLen, "%s/wp11_dhkey_priv_%016lx_%016lx",
                     str, id1, id2);
             break;
         case WOLFPKCS11_STORE_DHKEY_PUB:
-            XSNPRINTF(name, nameLen, "%s/wp11_dhkey_pub_%016lx_%016lx",
+            ret = XSNPRINTF(name, nameLen, "%s/wp11_dhkey_pub_%016lx_%016lx",
                     str, id1, id2);
             break;
         case WOLFPKCS11_STORE_CERT:
-            XSNPRINTF(name, nameLen, "%s/wp11_cert_%016lx_%016lx",
+            ret = XSNPRINTF(name, nameLen, "%s/wp11_cert_%016lx_%016lx",
                     str, id1, id2);
             break;
         case WOLFPKCS11_STORE_TRUST:
-            XSNPRINTF(name, nameLen, "%s/wp11_trust_%016lx_%016lx",
+            ret = XSNPRINTF(name, nameLen, "%s/wp11_trust_%016lx_%016lx",
                     str, id1, id2);
             break;
 
         default:
-            return -1;
+            ret = -1;
             break;
     }
-    return 0;
+    if (ret > 0 && ret < (int) sizeof(name))
+         ret = 0;
+     else
+         ret = -1;
+    return ret;
 }
 #endif
 
@@ -1099,6 +1104,24 @@ int wolfPKCS11_Store_Remove(int type, CK_ULONG id1, CK_ULONG id2)
 #endif
     return ret;
 }
+#ifdef WOLFPKCS11_NSS
+static char* storeDir = NULL;
+
+int WP11_SetStoreDir(const char *dir, size_t dirSz)
+{
+    if (storeDir != NULL)
+        XFREE(storeDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    storeDir = NULL;
+    if (dir != NULL) {
+        storeDir = (char*) XMALLOC(dirSz + 1, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (storeDir == NULL)
+            return MEMORY_E;
+        XMEMCPY(storeDir, dir, dirSz);
+        storeDir[dirSz] = '\0'; /* Ensure null termination */
+    }
+    return 0;
+}
+#endif
 
 /**
  * Opens access to location to read/write token data.
@@ -4256,7 +4279,7 @@ static int wp11_Object_Unstore(WP11_Object* object, int tokenId, int objId)
 {
     int ret;
     int storeObjType = -1;
-    
+
     if (objId < 0) {
         return BAD_FUNC_ARG;
     }
@@ -4936,6 +4959,10 @@ void WP11_Library_Final(void)
         #endif
             (void)ret; /* store failure cannot be returned, so log and ignore */
         }
+#if !defined (WOLFPKCS11_CUSTOM_STORE) && defined(WOLFPKCS11_NSS)
+        XFREE(storeDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        storeDir = NULL;
+#endif
 #endif
         /* Cleanup the slots. */
         for (i = 0; i < slotCnt; i++)
@@ -6225,9 +6252,7 @@ int WP11_Session_SetPssParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
     ret = wp11_hash_type(hashAlg, &pss->hashType);
     if (ret == 0)
         ret = wp11_mgf(mgf, &pss->mgf);
-    if (ret == 0 && sLen > RSA_PSS_SALT_MAX_SZ)
-        ret = BAD_FUNC_ARG;
-    else
+    if (ret == 0)
         pss->saltLen = sLen;
 
     return ret;

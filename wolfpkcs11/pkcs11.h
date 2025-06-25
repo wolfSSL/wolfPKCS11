@@ -607,6 +607,9 @@ typedef struct CK_C_INITIALIZE_ARGS {
     CK_LOCKMUTEX LockMutex;
     CK_UNLOCKMUTEX UnlockMutex;
     CK_FLAGS flags;
+#ifdef WOLFPKCS11_NSS
+    CK_CHAR_PTR *LibraryParameters;
+#endif
     CK_VOID_PTR pReserved;
 } CK_C_INITIALIZE_ARGS;
 typedef CK_C_INITIALIZE_ARGS* CK_C_INITIALIZE_ARGS_PTR;

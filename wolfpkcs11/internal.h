@@ -124,7 +124,11 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 
 /* Maximum number of objects in a token. */
 #ifndef WP11_TOKEN_OBJECT_CNT_MAX
+#ifdef WOLFPKCS11_NSS
+#define WP11_TOKEN_OBJECT_CNT_MAX      6400
+#else
 #define WP11_TOKEN_OBJECT_CNT_MAX      64
+#endif
 #endif
 
 /* Session was opened read-only or read/write. */
@@ -148,7 +152,11 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #define WP11_FIND_STATE_FOUND          2
 /* Maximum number of matching objects to hold handles of. */
 #ifndef WP11_FIND_MAX
+#ifdef WOLFPKCS11_NSS
+#define WP11_FIND_MAX                  100
+#else
 #define WP11_FIND_MAX                  10
+#endif
 #endif
 
 /* Flags for object. */
@@ -395,6 +403,7 @@ WP11_LOCAL CK_OBJECT_CLASS WP11_Object_GetClass(WP11_Object* object);
 #ifdef WOLFPKCS11_NSS
 WP11_LOCAL int WP11_Object_SetTrust(WP11_Object* object, unsigned char** data,
                          CK_ULONG* len);
+int WP11_SetStoreDir(const char *dir, size_t dirSz);
 #endif
 
 WP11_LOCAL int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
