@@ -35,6 +35,10 @@
 #include <wolfpkcs11/pkcs11.h>
 #include <wolfpkcs11/version.h>
 
+#ifdef HAVE_FIPS
+    #define NO_MD5
+#endif
+
 /* store requires AES */
 #ifdef NO_AES
     #undef  WOLFPKCS11_NO_STORE

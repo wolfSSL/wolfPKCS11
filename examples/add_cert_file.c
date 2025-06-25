@@ -148,7 +148,7 @@ static CK_RV load_cert(char* filename, unsigned char **certData,
                        CK_ULONG *certDataLen)
 {
     int ret = 0;
-    unsigned char *buffer;
+    unsigned char *buffer = NULL;
     int len;
     XFILE file;
 
