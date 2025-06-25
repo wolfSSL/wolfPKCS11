@@ -490,7 +490,7 @@ struct WP11_Slot {
 
 
 /* Number of slots. */
-static int slotCnt = 1;
+static const int slotCnt = 1;
 /* List of slot objects. */
 static WP11_Slot slotList[1];
 /* Global random used in random API, cryptographic operations and generating
@@ -920,6 +920,25 @@ static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
 
 /* Functions that handle storing data. */
 
+#ifdef WOLFPKCS11_NSS
+static char* storeDir = NULL;
+
+int WP11_SetStoreDir(const char *dir, size_t dirSz)
+{
+    if (storeDir != NULL)
+        XFREE(storeDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    storeDir = NULL;
+    if (dir != NULL) {
+        storeDir = (char*) XMALLOC(dirSz + 1, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (storeDir == NULL)
+            return MEMORY_E;
+        XMEMCPY(storeDir, dir, dirSz);
+        storeDir[dirSz] = '\0'; /* Ensure null termination */
+    }
+    return 0;
+}
+#endif
+
 /**
  * Opens access to location to read/write token data.
  *
@@ -1034,6 +1053,12 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
      */
     #ifndef WOLFPKCS11_NO_ENV
     str = XGETENV("WOLFPKCS11_TOKEN_PATH");
+    #endif
+
+    #ifdef WOLFPKCS11_NSS
+    if (str == NULL) {
+        str = storeDir;
+    }
     #endif
 
     if (str == NULL) {
@@ -4655,6 +4680,10 @@ void WP11_Library_Final(void)
         #endif
             (void)ret; /* store failure cannot be returned, so log and ignore */
         }
+#if !defined (WOLFPKCS11_CUSTOM_STORE) && defined(WOLFPKCS11_NSS)
+        XFREE(storeDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        storeDir = NULL;
+#endif
 #endif
         /* Cleanup the slots. */
         for (i = 0; i < slotCnt; i++)
@@ -5925,9 +5954,7 @@ int WP11_Session_SetPssParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
     ret = wp11_hash_type(hashAlg, &pss->hashType);
     if (ret == 0)
         ret = wp11_mgf(mgf, &pss->mgf);
-    if (ret == 0 && sLen > RSA_PSS_SALT_MAX_SZ)
-        ret = BAD_FUNC_ARG;
-    else
+    if (ret == 0)
         pss->saltLen = sLen;
 
     return ret;
