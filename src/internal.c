@@ -11570,6 +11570,11 @@ int WP11_GetOperationState(WP11_Session* session, unsigned char* stateData,
 {
     unsigned long bufferAvailable = *stateDataLen;
     unsigned long mechSize = 0;
+#if defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX < 0x05007004
+    wc_HashAlg* hashAlg;
+#else
+    wc_Hashes* hashAlg;
+#endif
 
     *stateDataLen = sizeof(session->mechanism);
 
@@ -11613,35 +11618,37 @@ int WP11_GetOperationState(WP11_Session* session, unsigned char* stateData,
     XMEMCPY(stateData, &session->mechanism, sizeof(session->mechanism));
     stateData += sizeof(session->mechanism);
 
+#if defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX < 0x05007004
+    hashAlg = &session->params.digest.hash;
+#else
+    hashAlg = &session->params.digest.hash.alg;
+#endif
+
+
     switch (session->mechanism) {
 #ifndef NO_SHA
         case CKM_SHA1:
-            wc_ShaCopy(&session->params.digest.hash.alg.sha,
-                (wc_Sha*)stateData);
+            wc_ShaCopy(&hashAlg->sha, (wc_Sha*)stateData);
             break;
 #endif
 #ifdef WOLFSSL_SHA224
         case CKM_SHA224:
-            wc_Sha224Copy(&session->params.digest.hash.alg.sha224,
-                (wc_Sha224*)stateData);
+            wc_Sha224Copy(&hashAlg->sha224, (wc_Sha224*)stateData);
             break;
 #endif
 #ifndef NO_SHA256
         case CKM_SHA256:
-            wc_Sha256Copy(&session->params.digest.hash.alg.sha256,
-                (wc_Sha256*)stateData);
+            wc_Sha256Copy(&hashAlg->sha256, (wc_Sha256*)stateData);
             break;
 #endif
 #ifdef WOLFSSL_SHA384
         case CKM_SHA384:
-            wc_Sha384Copy(&session->params.digest.hash.alg.sha384,
-                (wc_Sha384*)stateData);
+            wc_Sha384Copy(&hashAlg->sha384, (wc_Sha384*)stateData);
             break;
 #endif
 #ifdef WOLFSSL_SHA512
         case CKM_SHA512:
-            wc_Sha512Copy(&session->params.digest.hash.alg.sha512,
-                (wc_Sha512*)stateData);
+            wc_Sha512Copy(&hashAlg->sha512, (wc_Sha512*)stateData);
             break;
 #endif
     }
@@ -11655,6 +11662,11 @@ int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
     unsigned long mechSize = 0;
     int hashType = WC_HASH_TYPE_NONE;
     int ret;
+#if defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX < 0x05007004
+    wc_HashAlg* hashAlg;
+#else
+    wc_Hashes* hashAlg;
+#endif
 
     if (stateDataLen < sizeof(session->mechanism))
         return CKR_SAVED_STATE_INVALID;
@@ -11706,35 +11718,36 @@ int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
     if (ret != CKR_OK)
         return ret;
 
+    #if defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX < 0x05007004
+        hashAlg = &session->params.digest.hash;
+    #else
+        hashAlg = &session->params.digest.hash.alg;
+    #endif
+
     switch (session->mechanism) {
 #ifndef NO_SHA
         case CKM_SHA1:
-            wc_ShaCopy((wc_Sha*)stateData,
-                &session->params.digest.hash.alg.sha);
+            wc_ShaCopy((wc_Sha*)stateData, &hashAlg->sha);
             break;
 #endif
 #ifdef WOLFSSL_SHA224
         case CKM_SHA224:
-            wc_Sha224Copy((wc_Sha224*)stateData,
-                &session->params.digest.hash.alg.sha224);
+            wc_Sha224Copy((wc_Sha224*)stateData, &hashAlg->sha224);
             break;
 #endif
 #ifndef NO_SHA256
         case CKM_SHA256:
-            wc_Sha256Copy((wc_Sha256*)stateData,
-                &session->params.digest.hash.alg.sha256);
+            wc_Sha256Copy((wc_Sha256*)stateData, &hashAlg->sha256);
             break;
 #endif
 #ifdef WOLFSSL_SHA384
         case CKM_SHA384:
-            wc_Sha384Copy((wc_Sha384*)stateData,
-                &session->params.digest.hash.alg.sha384);
+            wc_Sha384Copy((wc_Sha384*)stateData, &hashAlg->sha384);
             break;
 #endif
 #ifdef WOLFSSL_SHA512
         case CKM_SHA512:
-            wc_Sha512Copy((wc_Sha512*)stateData,
-                &session->params.digest.hash.alg.sha512);
+            wc_Sha512Copy((wc_Sha512*)stateData, &hashAlg->sha512);
             break;
 #endif
     }

@@ -2061,8 +2061,8 @@ CK_RV C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             }
 
             /* PKCS#5 pad makes the output a multiple of 16 */
-            encDataLen = (word32)((ulDataLen + WC_AES_BLOCK_SIZE - 1) /
-                        WC_AES_BLOCK_SIZE) * WC_AES_BLOCK_SIZE;
+            encDataLen = (word32)((ulDataLen + AES_BLOCK_SIZE - 1) /
+                        AES_BLOCK_SIZE) * AES_BLOCK_SIZE;
             if (pEncryptedData == NULL) {
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
@@ -2407,7 +2407,7 @@ CK_RV C_EncryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
                 return CKR_OPERATION_NOT_INITIALIZED;
 
             if (pEncryptedPart == NULL) {
-                *pulEncryptedPartLen = ulPartLen + WC_AES_BLOCK_SIZE * 2;
+                *pulEncryptedPartLen = ulPartLen + AES_BLOCK_SIZE * 2;
                 return CKR_OK;
             }
 
@@ -2571,7 +2571,7 @@ CK_RV C_EncryptFinal(CK_SESSION_HANDLE hSession,
                 return CKR_OPERATION_NOT_INITIALIZED;
 
             if (pLastEncryptedPart == NULL) {
-                *pulLastEncryptedPartLen = WC_AES_BLOCK_SIZE * 2;
+                *pulLastEncryptedPartLen = AES_BLOCK_SIZE * 2;
                 return CKR_OK;
             }
 
@@ -3323,7 +3323,7 @@ CK_RV C_DecryptUpdate(CK_SESSION_HANDLE hSession,
                 return CKR_OPERATION_NOT_INITIALIZED;
 
             if (pPart == NULL) {
-                *pulPartLen = ulEncryptedPartLen + WC_AES_BLOCK_SIZE * 2;
+                *pulPartLen = ulEncryptedPartLen + AES_BLOCK_SIZE * 2;
                 return CKR_OK;
             }
 
@@ -3484,7 +3484,7 @@ CK_RV C_DecryptFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastPart,
                 return CKR_OPERATION_NOT_INITIALIZED;
 
             if (pLastPart == NULL) {
-                *pulLastPartLen = WC_AES_BLOCK_SIZE * 2;
+                *pulLastPartLen = AES_BLOCK_SIZE * 2;
                 return CKR_OK;
             }
 
@@ -4072,7 +4072,7 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
                                               pMechanism->ulParameterLen != 0) {
                 return CKR_MECHANISM_PARAM_INVALID;
             }
-            ret = WP11_Aes_Cmac_Init(obj, session, WC_AES_BLOCK_SIZE/2);
+            ret = WP11_Aes_Cmac_Init(obj, session, AES_BLOCK_SIZE/2);
             if (ret != 0)
                 return CKR_FUNCTION_FAILED;
             init = WP11_INIT_AES_CMAC_SIGN;
@@ -5091,7 +5091,7 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
                                               pMechanism->ulParameterLen != 0) {
                 return CKR_MECHANISM_PARAM_INVALID;
             }
-            ret = WP11_Aes_Cmac_Init(obj, session, WC_AES_BLOCK_SIZE/2);
+            ret = WP11_Aes_Cmac_Init(obj, session, AES_BLOCK_SIZE/2);
             if (ret != 0)
                 return CKR_FUNCTION_FAILED;
             init = WP11_INIT_AES_CMAC_VERIFY;
