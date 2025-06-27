@@ -4159,7 +4159,7 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
         }
 
         /* If there is no pin, there is no login, so decode now */
-        if (WP11_Slot_Has_Empty_Pin(slot)) {
+        if (WP11_Slot_Has_Empty_Pin(slot) && (ret == 0)) {
 #ifndef WOLFPKCS11_NO_STORE
             object = token->object;
             while (ret == 0 && object != NULL) {
