@@ -477,6 +477,7 @@ typedef struct WP11_Token {
     WP11_Object* object;               /* Linked list of token objects        */
     int objCnt;                        /* Count of objects on token           */
     int tokenFlags;                    /* Flags for token                     */
+    int nextObjId;
 } WP11_Token;
 
 struct WP11_Slot {
@@ -486,7 +487,6 @@ struct WP11_Slot {
     WP11_Lock lock;                    /* Lock for access to slot info        */
 
     int devId;
-    int nextObjId;
 #ifdef WOLFPKCS11_TPM
     WOLFTPM2_DEV tpmDev;
     WOLFTPM2_KEY tpmSrk;
@@ -880,6 +880,7 @@ static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
                 FIELD_SIZE(WP11_Token, seed) +
                 FIELD_SIZE(WP11_Token, objCnt) +
                 FIELD_SIZE(WP11_Token, tokenFlags) +
+                FIELD_SIZE(WP11_Token, nextObjId) +
                 variableSz /* soPinLen + userPinLen + (objCnt * long) */
             ;
             break;
@@ -3987,6 +3988,7 @@ static int wp11_Token_Init(WP11_Token* token, const char* label)
     if (ret == 0) {
         token->state = WP11_TOKEN_STATE_INITIALIZED;
         token->loginState = WP11_APP_STATE_RW_PUBLIC;
+        token->nextObjId = 1;
         XMEMCPY(token->label, label, sizeof(token->label));
     }
 
@@ -4130,7 +4132,15 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
                 if (token->soPinLen > 0) {
                     token->tokenFlags |= WP11_TOKEN_FLAG_SO_PIN_SET;
                 }
+                token->nextObjId = 1;
                 ret = 0;
+            }
+            else {
+                ret = wp11_storage_read_int(storage, &token->nextObjId);
+                if (ret == BUFFER_E || token->nextObjId == 0) {
+                    token->nextObjId = 1;
+                    ret = 0;
+                }
             }
         }
 
@@ -4262,6 +4272,11 @@ static int wp11_Token_Store(WP11_Token* token, int tokenId)
         if (ret == 0) {
             /* Write token flags. (4) */
             ret = wp11_storage_write_int(storage, token->tokenFlags);
+        }
+
+        if (ret == 0) {
+            /* Write next object id. (4) */
+            ret = wp11_storage_write_int(storage, token->nextObjId);
         }
 
         wp11_storage_close(storage);
@@ -4414,7 +4429,6 @@ static int wp11_Slot_Init(WP11_Slot* slot, int id)
 
     XMEMSET(slot, 0, sizeof(*slot));
     slot->id = id;
-    slot->nextObjId = 1;
     slot->token.state = WP11_TOKEN_STATE_UNKNOWN;
     slot->token.tokenFlags = 0;
 
@@ -6074,7 +6088,7 @@ int WP11_Session_AddObject(WP11_Session* session, int onToken,
             /* Get next item in list after this object has been added. */
             next = token->object;
             /* Determine handle value */
-            object->handle = OBJ_HANDLE(onToken, session->slot->nextObjId++);
+            object->handle = OBJ_HANDLE(onToken, token->nextObjId++);
             object->next = next;
             token->object = object;
         }
@@ -6092,7 +6106,7 @@ int WP11_Session_AddObject(WP11_Session* session, int onToken,
             /* Get next item in list after this object has been added. */
             next = session->object;
             /* Determine handle value */
-            object->handle = OBJ_HANDLE(onToken, session->slot->nextObjId++);
+            object->handle = OBJ_HANDLE(onToken, token->nextObjId++);
             object->next = next;
             session->object = object;
             object->session = session;

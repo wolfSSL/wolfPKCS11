@@ -97,17 +97,11 @@ jobs:
         echo "=== Copying storage files from ${{ matrix.base-ref.name }} to PR branch ==="
         
         # Create directories if they don't exist
-        mkdir -p pr-branch/tests
         mkdir -p pr-branch/store
-        
-        # Copy test storage files
-        if [ -d "${{ matrix.base-ref.branch-dir }}/tests" ]; then
-          cp -v ${{ matrix.base-ref.branch-dir }}/tests/wp* pr-branch/tests/ 2>/dev/null || echo "No wp* files in ${{ matrix.base-ref.branch-dir }}/tests/"
-        fi
         
         # Copy store files
         if [ -d "${{ matrix.base-ref.branch-dir }}/store" ]; then
-          cp -v ${{ matrix.base-ref.branch-dir }}/store/wp* pr-branch/store/ 2>/dev/null || echo "No wp* files in ${{ matrix.base-ref.branch-dir }}/store/"
+          cp -rv ${{ matrix.base-ref.branch-dir }}/store/* pr-branch/store/ 2>/dev/null || echo "No files in ${{ matrix.base-ref.branch-dir }}/store/"
         fi
         
         echo "=== Storage file copy completed ==="
@@ -119,10 +113,8 @@ jobs:
         echo "This tests that the PR can read storage files created by ${{ matrix.base-ref.name }} branch"
         
         # List the copied files for verification
-        echo "Files in tests directory:"
-        ls -la tests/wp* 2>/dev/null || echo "No wp* files in tests/"
         echo "Files in store directory:"
-        ls -la store/wp* 2>/dev/null || echo "No wp* files in store/"
+        ls -la store/* 2>/dev/null || echo "No wp* files in store/"
         
         # Run the tests with the copied storage files
         make test
@@ -137,8 +129,7 @@ jobs:
         name: storage-upgrade-test-artifacts-${{ matrix.base-ref.name }}
         path: |
           pr-branch/test-suite.log
-          ${{ matrix.base-ref.branch-dir }}/store/wp*
-          ${{ matrix.base-ref.branch-dir }}/tests/wp*
+          ${{ matrix.base-ref.branch-dir }}/store/*
           ${{ matrix.base-ref.branch-dir }}/test-suite.log
         retention-days: 5
 

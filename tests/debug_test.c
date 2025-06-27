@@ -74,7 +74,13 @@ int main(void)
     CK_RV rv;
     CK_FUNCTION_LIST_PTR pFunctionList;
     int debug_found;
-    
+
+#ifndef WOLFPKCS11_NO_ENV
+    if (!XGETENV("WOLFPKCS11_TOKEN_PATH")) {
+        XSETENV("WOLFPKCS11_TOKEN_PATH", "./store/debug", 1);
+    }
+#endif
+
     printf("=== wolfPKCS11 Debug Test Program ===\n");
     printf("Debug mode is ENABLED (DEBUG_WOLFPKCS11 defined)\n");
     

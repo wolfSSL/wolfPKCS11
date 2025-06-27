@@ -641,6 +641,12 @@ int main(int argc, char* argv[])
 #if !defined(NO_RSA) && !defined(WOLFPKCS11_NO_STORE)
     CK_RV ret;
 
+#ifndef WOLFPKCS11_NO_ENV
+    if (!XGETENV("WOLFPKCS11_TOKEN_PATH")) {
+        XSETENV("WOLFPKCS11_TOKEN_PATH", "./store/rsa", 1);
+    }
+#endif
+
     if (argc > 1 && strcmp(argv[1], "-v") == 0) {
         verbose = 1;
     }
