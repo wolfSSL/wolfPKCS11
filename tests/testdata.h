@@ -31,6 +31,14 @@
     #define WOLFPKCS11_DLL_SLOT 1
 #endif
 
+/* Suppress unused variable warnings across different compilers */
+#if defined(_MSC_VER)
+    #pragma warning(push)
+    #pragma warning(disable: 4101 4189)
+#elif defined(__GNUC__)
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wunused-variable"
+#endif
 
 #ifndef NO_RSA
 static unsigned char rsa_2048_modulus[] = {
@@ -241,8 +249,7 @@ static unsigned char ecc_p256_point[] = {
     0xB2, 0x36, 0x22, 0x5F, 0xC7, 0x5D, 0x7F, 0xB4
 };
 
-static const unsigned char ecc_secret_256[] =
-{
+static const unsigned char ecc_secret_256[] = {
     0xcc, 0xfb, 0x45, 0xaf, 0xc3, 0x9c, 0xd7, 0x9e,
     0x1f, 0xd1, 0xc7, 0xb8, 0x0e, 0x63, 0xd2, 0xb0,
     0x09, 0xba, 0x5a, 0xbb, 0xcf, 0x9b, 0xe2, 0x9b,
@@ -475,3 +482,10 @@ static inline int setenv(const char *name, const char *value, int overwrite)
 }
 #endif
 #endif /* !WOLFPKCS11_NO_ENV */
+
+/* Restore original warning behavior */
+#if defined(_MSC_VER)
+    #pragma warning(pop)
+#elif defined(__GNUC__)
+    #pragma GCC diagnostic pop
+#endif
