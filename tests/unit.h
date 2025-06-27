@@ -117,6 +117,8 @@
     { func, #func, CKR_OK, 0, 0, flags, setup, teardown, argsSz }
 #endif
 
+#define CKR_SKIPPED CKR_VENDOR_DEFINED+77
+
 typedef struct TEST_FUNC
 {
     CK_RV (*func)(void* args);
@@ -299,6 +301,9 @@ static CK_RV run_tests(TEST_FUNC* testFunc, int testFuncCnt, int onlySet,
                                                                testFunc[i].cnt);
         if (testFunc[i].ret == CKR_OK)
             fprintf(stderr, "PASSED\n");
+        else if (testFunc[i].ret == CKR_SKIPPED) {
+            fprintf(stderr, "SKIPPED\n");
+        }
         else
             fprintf(stderr, "FAILED\n");
         }
@@ -342,6 +347,9 @@ static CK_RV run_tests(TEST_FUNC* testFunc, int testFuncCnt, int onlySet,
                 fprintf(stderr, "%d: %s ... ", i + 1, testFunc[i].name);
             if (testFunc[i].ret == CKR_OK)
                 fprintf(stderr, "PASSED\n");
+            else if (testFunc[i].ret == CKR_SKIPPED) {
+                fprintf(stderr, "SKIPPED\n");
+            }
             else if (verbose)
                 fprintf(stderr, "FAILED\n");
 

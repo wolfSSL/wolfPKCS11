@@ -3931,6 +3931,11 @@ static void wp11_Object_Unstore(WP11_Object* object, int tokenId, int objId)
     if (object->objClass == CKO_CERTIFICATE) {
         storeObjType = WOLFPKCS11_STORE_CERT;
     }
+#ifdef WOLFPKCS11_NSS
+    else if (object->objClass == CKO_NSS_TRUST) {
+        storeObjType = WOLFPKCS11_STORE_TRUST;
+    }
+#endif
     else {
     /* Open access to symmetric key. */
     switch (object->type) {
@@ -4159,7 +4164,7 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
         }
 
         /* If there is no pin, there is no login, so decode now */
-        if (WP11_Slot_Has_Empty_Pin(slot)) {
+        if (WP11_Slot_Has_Empty_Pin(slot) && (ret == 0)) {
 #ifndef WOLFPKCS11_NO_STORE
             object = token->object;
             while (ret == 0 && object != NULL) {

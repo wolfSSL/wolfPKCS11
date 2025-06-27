@@ -6797,7 +6797,7 @@ int pkcs11test_mtt(int argc, char* argv[])
     int i;
 
 #ifndef WOLFPKCS11_NO_ENV
-    XSETENV("WOLFPKCS11_NO_STORE", "1", 1);
+    XSETENV("WOLFPKCS11_TOKEN_PATH", "./store/pkcs11mtt", 1);
 #endif
 
     argc--;
