@@ -10139,7 +10139,7 @@ static CK_RV test_tls_mac(CK_SESSION_HANDLE session, int hashType,
     return ret;
 }
 
-
+#ifndef NO_MD5
 static CK_RV test_tls_mac_tls_prf(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -10162,6 +10162,7 @@ static CK_RV test_tls_mac_tls_prf(void* args)
 
     return ret;
 }
+#endif
 
 #ifndef NO_SHA256
 static CK_RV test_tls_mac_sha256(void* args)
@@ -13768,7 +13769,9 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_extract_with_expand_salt_key),
     PKCS11TEST_FUNC_SESS_DECL(test_hkdf_gen_key),
 #endif
+#ifndef NO_MD5
     PKCS11TEST_FUNC_SESS_DECL(test_tls_mac_tls_prf),
+#endif
 #ifndef NO_SHA256
     PKCS11TEST_FUNC_SESS_DECL(test_tls_mac_sha256),
 #endif

@@ -32,6 +32,7 @@
     #include <wolfpkcs11/options.h>
 #endif
 #include <wolfpkcs11/pkcs11.h>
+#include <wolfpkcs11/internal.h>
 
 #ifndef HAVE_PKCS11_STATIC
 #include <dlfcn.h>

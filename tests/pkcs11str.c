@@ -1073,7 +1073,7 @@ int pkcs11test_str(int argc, char* argv[])
 
 #ifndef WOLFPKCS11_NO_ENV
     if (!XGETENV("WOLFPKCS11_TOKEN_PATH")) {
-        XSETENV("WOLFPKCS11_TOKEN_PATH", "./tests", 1);
+        XSETENV("WOLFPKCS11_TOKEN_PATH", "./store/str", 1);
     }
 #endif
 

@@ -39,6 +39,11 @@
     #define NO_MD5
 #endif
 
+#ifdef WOLFPKCS11_NO_MD5
+    #undef NO_MD5
+    #define NO_MD5
+#endif
+
 /* store requires AES */
 #ifdef NO_AES
     #undef  WOLFPKCS11_NO_STORE

@@ -265,7 +265,7 @@ static int test_default_home_path(void)
 static int test_env_var_path(void)
 {
     CK_RV ret;
-    const char* test_dir = "./test_token_storage";
+    const char* test_dir = "./store/test_token_storage";
     char test_file[512];
 
     /* Set environment variable */

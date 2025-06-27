@@ -69,7 +69,7 @@ jobs:
         git clone https://github.com/wolfSSL/wolfssl.git
         cd wolfssl
         ./autogen.sh
-        ./configure --enable-cryptocb --enable-aescfb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt \
+        ./configure --enable-cryptocb --enable-aescfb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt --enable-md5 \
             C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
         make -j$(nproc)
         sudo make install
