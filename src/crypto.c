@@ -1117,7 +1117,7 @@ CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
         WOLFPKCS11_LEAVE("C_CopyObject", rv);
         return rv;
     }
-    if (pTemplate == NULL || phNewObject == NULL) {
+    if (phNewObject == NULL) {
         rv = CKR_ARGUMENTS_BAD;
         WOLFPKCS11_LEAVE("C_CopyObject", rv);
         return rv;
@@ -1166,14 +1166,19 @@ CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
 
     /* Use get and set attribute value to fill in object. */
     rv = C_GetAttributeValue(hSession, hObject, pTemplate, ulCount);
+    /* copy all the attributes from the original object to the new object */
+    rv = WP11_Object_Copy(obj, newObj);
     if (rv != CKR_OK) {
         WP11_Object_Free(newObj);
         return rv;
     }
-    rv = SetAttributeValue(session, newObj, pTemplate, ulCount, CK_TRUE);
-    if (rv != CKR_OK) {
-        WP11_Object_Free(newObj);
-        return rv;
+
+    if (pTemplate != NULL) {
+        rv = SetAttributeValue(session, newObj, pTemplate, ulCount, CK_FALSE);
+        if (rv != CKR_OK) {
+            WP11_Object_Free(newObj);
+            return rv;
+        }
     }
 
     ret = WP11_Session_AddObject(session, onToken, newObj);

@@ -214,6 +214,7 @@ typedef struct WP11_DhKey {
 } WP11_DhKey;
 #endif
 
+/* When adding/modifying new members, add support in WP11_Object_Copy */
 struct WP11_Object {
     union {
     #ifndef NO_RSA
@@ -2149,6 +2150,123 @@ static long GetRsaExponentValue(unsigned char* eData, word32 eSz)
     return e;
 }
 #endif
+
+#define OBJ_COPY_DATA(src, dest, field)                                        \
+    do {                                                                       \
+        if (src->field != NULL) {                                              \
+            dest->field = (unsigned char*)XMALLOC(src->field##Len, NULL,       \
+                    DYNAMIC_TYPE_TMP_BUFFER);                                  \
+            if (dest->field == NULL)                                           \
+                return MEMORY_E;                                               \
+            XMEMCPY(dest->field, src->field, src->field##Len);                 \
+            dest->field##Len = src->field##Len;                                \
+        } else {                                                               \
+            dest->field = NULL;                                                \
+            dest->field##Len = 0;                                              \
+        }                                                                      \
+    } while (0)
+
+/**
+ * Copy an object. Not all fields are supported.
+ * @param  src  [in]   Source object.
+ * @param  dest [out]  Destination object.
+ * @return  0 on success.
+ *         <0 on failure.
+ */
+int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
+{
+    int ret = 0;
+
+    if (src == NULL || dest == NULL)
+        return BAD_FUNC_ARG;
+
+    /* We save data copying for the last step */
+
+    dest->size = src->size;
+#ifndef WOLFPKCS11_NO_STORE
+    OBJ_COPY_DATA(src, dest, keyData);
+    XMEMCPY(dest->iv, src->iv, sizeof(dest->iv));
+    dest->encoded = src->encoded;
+#endif
+    dest->objClass = src->objClass;
+    dest->keyGenMech = src->keyGenMech;
+    dest->opFlag = src->opFlag;
+    XMEMCPY(dest->startDate, src->startDate, sizeof(dest->startDate));
+    XMEMCPY(dest->endDate, src->endDate, sizeof(dest->endDate));
+    OBJ_COPY_DATA(src, dest, keyId);
+    OBJ_COPY_DATA(src, dest, label);
+    OBJ_COPY_DATA(src, dest, issuer);
+    OBJ_COPY_DATA(src, dest, serial);
+    OBJ_COPY_DATA(src, dest, subject);
+
+    dest->category = src->category;
+
+    if (src->objClass == CKO_CERTIFICATE) {
+        return BAD_FUNC_ARG;
+    }
+    else if (src->objClass == CKO_NSS_TRUST) {
+        return BAD_FUNC_ARG;
+    }
+    else {
+        switch (src->type) {
+#ifndef NO_RSA
+            case CKK_RSA: {
+                byte* derBuf = NULL;
+                int derSz = 0;
+
+                ret = wc_RsaKeyToDer(&src->data.rsaKey, NULL, 0);
+                if (ret == 0) /* Should not happen */
+                    ret = BUFFER_E;
+                if (ret > 0) {
+                    derSz = ret;
+                    ret = 0;
+                }
+                if (ret == 0) {
+                    derBuf = (byte*)XMALLOC(derSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                    if (derBuf == NULL)
+                        ret = MEMORY_E;
+                }
+                if (ret == 0) {
+                    ret = wc_RsaKeyToDer(&src->data.rsaKey, derBuf, derSz);
+                    if (ret == 0) /* Should not happen */
+                        ret = BUFFER_E;
+                    if (ret > 0)
+                        ret = 0;
+                }
+                if (ret == 0) {
+                    word32 idx = 0;
+                    ret = wc_RsaPrivateKeyDecode(derBuf, &idx, &
+                            dest->data.rsaKey, (word32)derSz);
+                }
+
+                XFREE(derBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                break;
+            }
+#endif
+#ifdef HAVE_ECC
+            case CKK_EC:
+                return BAD_FUNC_ARG;
+#endif
+#ifndef NO_DH
+            case CKK_DH:
+                return BAD_FUNC_ARG;
+#endif
+#ifndef NO_AES
+            case CKK_AES:
+#endif
+#ifdef WOLFPKCS11_HKDF
+            case CKK_HKDF:
+#endif
+            case CKK_GENERIC_SECRET:
+                XMEMCPY(&dest->data.symmKey, &src->data.symmKey,
+                        sizeof(dest->data.symmKey));
+                break;
+        }
+    }
+
+
+    return ret;
+}
 
 #ifndef WOLFPKCS11_NO_STORE
 /**
