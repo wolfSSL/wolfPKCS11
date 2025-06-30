@@ -13721,6 +13721,7 @@ static TEST_FUNC testFunc[] = {
 #ifndef NOSHA256
     PKCS11TEST_FUNC_SESS_DECL(test_digest),
 #endif
+#ifdef WOLFSSL_SHA3
 #ifndef WOLFSSL_NOSHA3_224
     PKCS11TEST_FUNC_SESS_DECL(test_digest_sha3_224),
 #endif
@@ -13732,6 +13733,7 @@ static TEST_FUNC testFunc[] = {
 #endif
 #ifndef WOLFSSL_NOSHA3_512
     PKCS11TEST_FUNC_SESS_DECL(test_digest_sha3_512),
+#endif
 #endif
 #ifndef NO_HMAC
 #ifndef NO_MD5
