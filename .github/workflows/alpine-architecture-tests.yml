@@ -1,0 +1,190 @@
+name: wolfPKCS11 Alpine Architecture Tests
+
+on:
+  push:
+    branches: [ 'master', 'main' ]
+  pull_request:
+    branches: [ '*' ]
+
+env:
+  WOLFSSL_VERSION: v5.8.0-stable
+
+jobs:
+  alpine-architecture-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86, armhf, armv7]
+        tpm: [with-tpm, without-tpm]
+        include:
+          - arch: x86
+            alpine_arch: x86
+          - arch: armhf
+            alpine_arch: armhf
+          - arch: armv7
+            alpine_arch: armv7
+
+    name: Alpine ${{ matrix.arch }} (${{ matrix.tpm }})
+
+    steps:
+    - name: Checkout wolfPKCS11
+      uses: actions/checkout@v4
+
+    - name: Setup Alpine Linux ${{ matrix.alpine_arch }}
+      uses: jirutka/setup-alpine@v1
+      with:
+        arch: ${{ matrix.alpine_arch }}
+        branch: latest-stable
+        packages: >
+          build-base
+          autoconf
+          automake
+          libtool
+          git
+          pkgconfig
+          linux-headers
+          musl-dev
+          openssl-dev
+          bash
+        shell-name: alpine.sh
+
+    - name: Cache wolfSSL
+      id: cache-wolfssl
+      uses: actions/cache@v4
+      with:
+        path: wolfssl-${{ matrix.alpine_arch }}
+        key: alpine-wolfssl-${{ env.WOLFSSL_VERSION }}-${{ matrix.alpine_arch }}
+
+    - name: Build wolfSSL
+      if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+      run: |
+        echo "=== Building wolfSSL for ${{ matrix.alpine_arch }} ==="
+        git clone https://github.com/wolfSSL/wolfssl.git --branch ${{ env.WOLFSSL_VERSION }} --depth 1
+        mv wolfssl wolfssl-${{ matrix.alpine_arch }}
+        cd wolfssl-${{ matrix.alpine_arch }}
+        ./autogen.sh
+        ./configure --enable-cryptocb --enable-aescfb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt --enable-md5 --enable-sha224 --enable-sha3 \
+            C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
+        make
+      shell: alpine.sh {0}
+
+    - name: Install wolfSSL
+      run: |
+        cd wolfssl-${{ matrix.alpine_arch }}
+        echo "Starting wolfSSL installation..."
+        LDCONFIG=: make install
+        echo "wolfSSL installation completed successfully"
+        ls -la /usr/local/lib/libwolfssl* || echo "No wolfSSL libraries found"
+        echo "/usr/local/lib" > /etc/ld-musl-$(uname -m).path
+      shell: alpine.sh --root {0}
+
+    - name: Cache TPM components
+      if: matrix.tpm == 'with-tpm'
+      id: cache-tpm
+      uses: actions/cache@v4
+      with:
+        path: |
+          ibmswtpm2-${{ matrix.alpine_arch }}
+          wolftpm-${{ matrix.alpine_arch }}
+        key: alpine-tpm-components-${{ matrix.alpine_arch }}-v1
+
+    - name: Setup IBM Software TPM
+      if: matrix.tpm == 'with-tpm' && steps.cache-tpm.outputs.cache-hit != 'true'
+      run: |
+        echo "=== Building IBM Software TPM for ${{ matrix.alpine_arch }} ==="
+        git clone https://github.com/kgoldman/ibmswtpm2.git ibmswtpm2-${{ matrix.alpine_arch }}
+        cd ibmswtpm2-${{ matrix.alpine_arch }}/src
+        make
+      shell: alpine.sh {0}
+
+    - name: Build wolfTPM
+      if: matrix.tpm == 'with-tpm' && steps.cache-tpm.outputs.cache-hit != 'true'
+      run: |
+        echo "=== Building wolfTPM for ${{ matrix.alpine_arch }} ==="
+        git clone https://github.com/wolfSSL/wolftpm.git wolftpm-${{ matrix.alpine_arch }}
+        cd wolftpm-${{ matrix.alpine_arch }}
+        ./autogen.sh
+        ./configure --enable-swtpm --enable-debug
+        make
+      shell: alpine.sh {0}
+
+    - name: Install wolfTPM
+      if: matrix.tpm == 'with-tpm'
+      run: |
+        cd wolftpm-${{ matrix.alpine_arch }}
+        echo "Starting wolfTPM installation..."
+        LDCONFIG=: make install
+        echo "wolfTPM installation completed successfully"
+        ls -la /usr/local/lib/libwolftpm* || echo "No wolfTPM libraries found"
+        echo "/usr/local/lib" > /etc/ld-musl-$(uname -m).path
+      shell: alpine.sh --root {0}
+
+    - name: Start TPM Server
+      if: matrix.tpm == 'with-tpm'
+      run: |
+        echo "=== Starting TPM server ==="
+        cd ibmswtpm2-${{ matrix.alpine_arch }}/src
+        ./tpm_server &
+        sleep 2
+        echo "TPM server started"
+      shell: alpine.sh {0}
+
+    - name: Build wolfPKCS11 (without TPM)
+      if: matrix.tpm == 'without-tpm'
+      run: |
+        echo "=== Building wolfPKCS11 without TPM for ${{ matrix.arch }} ==="
+        export LD_LIBRARY_PATH="/usr/local/lib:$LD_LIBRARY_PATH"
+        export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
+        echo "Running autogen.sh..."
+        ./autogen.sh
+        echo "Running configure..."
+        ./configure
+        make
+      shell: alpine.sh {0}
+
+    - name: Build wolfPKCS11 (with TPM)
+      if: matrix.tpm == 'with-tpm'
+      run: |
+        echo "=== Building wolfPKCS11 with TPM for ${{ matrix.arch }} ==="
+        export LD_LIBRARY_PATH="/usr/local/lib:$LD_LIBRARY_PATH"
+        export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
+        echo "Running autogen.sh..."
+        ./autogen.sh
+        echo "Running configure..."
+        ./configure --enable-singlethreaded --enable-wolftpm --disable-dh C_EXTRA_FLAGS="-DWOLFPKCS11_TPM_STORE"
+        make
+      shell: alpine.sh {0}
+
+    - name: Run tests (without TPM)
+      if: matrix.tpm == 'without-tpm'
+      run: |
+        echo "=== Running tests without TPM on ${{ matrix.arch }} ==="
+        export LD_LIBRARY_PATH="/usr/local/lib:$LD_LIBRARY_PATH"
+        make test
+      shell: alpine.sh {0}
+
+    - name: Run tests (with TPM)
+      if: matrix.tpm == 'with-tpm'
+      run: |
+        echo "=== Running TPM tests on ${{ matrix.arch }} ==="
+        export LD_LIBRARY_PATH="/usr/local/lib:$LD_LIBRARY_PATH"
+        ./tests/pkcs11str && ./tests/pkcs11test && ./tests/rsa_session_persistence_test
+      shell: alpine.sh {0}
+
+    - name: Cleanup TPM server
+      if: always() && matrix.tpm == 'with-tpm'
+      run: |
+        echo "=== Cleaning up TPM server ==="
+        pkill -f tpm_server || echo "TPM server was not running"
+      shell: alpine.sh {0}
+
+    - name: Upload failure logs
+      if: failure() || cancelled()
+      uses: actions/upload-artifact@v4
+      with:
+        name: alpine-${{ matrix.arch }}-${{ matrix.tpm }}-failure-logs
+        path: |
+          test-suite.log
+          config.log
+        retention-days: 5
