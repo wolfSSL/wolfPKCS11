@@ -1,0 +1,158 @@
+name: wolfPKCS11 Storage Format Upgrade Test (TPM)
+
+on:
+  pull_request:
+    branches: [ '*' ]
+
+env:
+  WOLFSSL_VERSION: v5.8.0-stable
+
+jobs:
+  storage-upgrade-test-tpm:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        base-ref:
+          - name: master
+            ref: master
+            branch-dir: master-branch
+          - name: v1.3.0
+            ref: v1.3.0-stable
+            branch-dir: v1.3.0-stable-branch
+
+    steps:
+    # Checkout the PR branch
+    - name: Checkout PR branch
+      uses: actions/checkout@v4
+      with:
+        path: pr-branch
+
+    # Checkout base branch/tag separately
+    - name: Checkout ${{ matrix.base-ref.name }} branch
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ matrix.base-ref.ref }}
+        path: ${{ matrix.base-ref.branch-dir }}
+
+    - name: Cache wolfSSL
+      id: cache-wolfssl
+      uses: actions/cache@v4
+      with:
+        path: wolfssl
+        key: wolfssl-${{ env.WOLFSSL_VERSION }}
+
+    # Setup wolfssl (required dependency)
+    - name: Checkout wolfssl
+      if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+      uses: actions/checkout@v4
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+        ref: ${{ env.WOLFSSL_VERSION }}
+
+    - name: Build wolfssl
+      if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+      working-directory: ./wolfssl
+      run: |
+        ./autogen.sh
+        ./configure --enable-md5 --enable-cryptocb --enable-aescfb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt \
+            C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
+        make
+
+    - name: Install wolfssl
+      working-directory: ./wolfssl
+      run: |
+        sudo make install
+        sudo ldconfig
+
+    # Setup IBM Software TPM simulator
+    - name: Setup IBM Software TPM
+      run: |
+        git clone https://github.com/kgoldman/ibmswtpm2.git
+        cd ibmswtpm2/src
+        make
+        ./tpm_server &
+        sleep 2
+        cd ../..
+
+    # Build and install wolfTPM (required for TPM operations)
+    - name: Build and install wolfTPM
+      run: |
+        git clone https://github.com/wolfSSL/wolftpm.git
+        cd wolftpm
+        ./autogen.sh
+        ./configure --enable-swtpm --enable-debug
+        make -j$(nproc)
+        sudo make install
+        sudo ldconfig
+        cd ..
+
+    # Phase 1: Build and test base branch/tag with TPM
+    - name: Modify pkcs11test.c for TPM storage generation
+      working-directory: ./${{ matrix.base-ref.branch-dir }}
+      run: |
+        echo "=== Modifying pkcs11test.c for TPM storage generation ==="
+        # Check if WOLFPKCS11_NO_STORE is used and change it to use token path
+        if grep -q 'XSETENV("WOLFPKCS11_NO_STORE"' tests/pkcs11test.c; then
+          echo "Found WOLFPKCS11_NO_STORE, changing to WOLFPKCS11_TOKEN_PATH"
+          sed -i 's/XSETENV("WOLFPKCS11_NO_STORE", "1", 1);/XSETENV("WOLFPKCS11_TOKEN_PATH", ".\/store\/pkcs11test", 1);/' tests/pkcs11test.c
+        else
+          echo "WOLFPKCS11_NO_STORE not found, assuming WOLFPKCS11_TOKEN_PATH is already set"
+        fi
+        echo "=== pkcs11test.c modification completed ==="
+
+    - name: Build wolfPKCS11 ${{ matrix.base-ref.name }} with TPM
+      working-directory: ./${{ matrix.base-ref.branch-dir }}
+      run: |
+        echo "=== Building wolfPKCS11 ${{ matrix.base-ref.name }} branch with TPM support ==="
+        ./autogen.sh
+        ./configure --enable-singlethreaded --enable-wolftpm --disable-dh C_EXTRA_FLAGS="-DWOLFPKCS11_TPM_STORE"
+        make
+
+    - name: Run TPM tests on ${{ matrix.base-ref.name }} to generate storage files
+      working-directory: ./${{ matrix.base-ref.branch-dir }}
+      run: |
+        echo "=== Running TPM tests on ${{ matrix.base-ref.name }} branch ==="
+        # Run specific TPM tests that generate storage files
+        ./tests/pkcs11test
+        echo "=== ${{ matrix.base-ref.name }} branch TPM test completed ==="
+
+    # Phase 2: Build PR branch with TPM and copy storage files from base
+    - name: Build wolfPKCS11 PR branch with TPM
+      working-directory: ./pr-branch
+      run: |
+        echo "=== Building wolfPKCS11 PR branch with TPM support ==="
+        ./autogen.sh
+        ./configure --enable-singlethreaded --enable-wolftpm --disable-dh C_EXTRA_FLAGS="-DWOLFPKCS11_TPM_STORE"
+        make
+
+    - name: Test TPM storage format compatibility (${{ matrix.base-ref.name }} → PR)
+      working-directory: ./pr-branch
+      run: |
+        echo "=== Testing TPM storage format compatibility with PR branch ==="
+        echo "This tests that the PR can read TPM storage files created by ${{ matrix.base-ref.name }} branch"
+
+        # Run the TPM-specific tests with the copied storage files
+        echo "=== Running TPM compatibility tests ==="
+        ./tests/pkcs11test
+        echo "=== TPM storage format upgrade test (${{ matrix.base-ref.name }} → PR) completed successfully ==="
+
+    # Capture logs on failure with TPM-specific information
+    - name: Upload TPM failure logs
+      if: failure() || cancelled()
+      uses: actions/upload-artifact@v4
+      with:
+        name: tpm-storage-upgrade-test-failure-logs-${{ matrix.base-ref.name }}
+        path: |
+          pr-branch/test-suite.log
+          pr-branch/config.log
+          ${{ matrix.base-ref.branch-dir }}/test-suite.log
+          ${{ matrix.base-ref.branch-dir }}/config.log
+        retention-days: 5
+
+    # Clean up TPM simulator on exit
+    - name: Cleanup TPM simulator
+      if: always()
+      run: |
+        echo "=== Cleaning up TPM simulator ==="
+        pkill -f tpm_server || echo "TPM server was not running"

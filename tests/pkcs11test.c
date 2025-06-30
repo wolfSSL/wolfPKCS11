@@ -410,9 +410,22 @@ static CK_RV test_no_token_init(void* args)
     CK_FLAGS expFlags = CKF_RNG | CKF_CLOCK_ON_TOKEN | CKF_TOKEN_INITIALIZED;
     int flags = CKF_SERIAL_SESSION | CKF_RW_SESSION;
 
+    ret = funcList->C_GetTokenInfo(slot, &tokenInfo);
+    CHECK_CKR(ret, "Get Token Info");
+    if (ret == CKR_OK) {
+        /* This will happen if we are re-running the tests */
+        if (tokenInfo.flags & CKF_LOGIN_REQUIRED) {
+            fprintf(stderr, "A test re-run, skipping ... ");
+            return CKR_SKIPPED;
+        }
+    }
+
     session = CK_INVALID_HANDLE;
-    ret = funcList->C_OpenSession(slot, flags, NULL, NULL, &session);
-    CHECK_CKR(ret, "Open Session");
+    if (ret == CKR_OK) {
+        ret = funcList->C_OpenSession(slot, flags, NULL, NULL, &session);
+        CHECK_CKR(ret, "Open Session");
+    }
+
     if (ret == CKR_OK) {
 #ifndef WOLFPKCS11_NSS
         ret = funcList->C_Login(session, CKU_SO, soPin, soPinLen);
@@ -13807,7 +13820,7 @@ static CK_RV pkcs11_test(int slotId, int setPin, int onlySet, int closeDl)
 {
     CK_RV ret;
     int i;
-    int attempted = 0, passed = 0;
+    int attempted = 0, passed = 0, skipped = 0;
     int inited = 0;
 
     /* Set it global. */
@@ -13850,7 +13863,10 @@ static CK_RV pkcs11_test(int slotId, int setPin, int onlySet, int closeDl)
     for (i = 0; i < testFuncCnt; i++) {
         if (testFunc[i].attempted) {
             attempted++;
-            if (testFunc[i].ret != CKR_OK) {
+            if (testFunc[i].ret == CKR_SKIPPED) {
+                skipped++;
+            }
+            else if (testFunc[i].ret != CKR_OK) {
 #ifdef DEBUG_WOLFPKCS11
                 if (ret == CKR_OK)
                     fprintf(stderr, "\nFAILED tests:\n");
@@ -13862,7 +13878,11 @@ static CK_RV pkcs11_test(int slotId, int setPin, int onlySet, int closeDl)
                 passed++;
         }
     }
-    fprintf(stderr, "Result: %d / %d\n", passed, attempted);
+    fprintf(stderr, "Result: attempted: %d, passed: %d", attempted, passed);
+    if (skipped != 0) {
+        fprintf(stderr, ", skipped %d", skipped);
+    }
+    fprintf(stderr, "\n");
     if (ret == CKR_OK)
         fprintf(stderr, "Success\n");
     else
@@ -13944,7 +13964,7 @@ int pkcs11test_test(int argc, char* argv[])
     int i;
 
 #ifndef WOLFPKCS11_NO_ENV
-    XSETENV("WOLFPKCS11_NO_STORE", "1", 1);
+    XSETENV("WOLFPKCS11_TOKEN_PATH", "./store/pkcs11test", 1);
 #endif
 
     argc--;

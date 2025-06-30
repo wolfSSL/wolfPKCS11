@@ -16,9 +16,10 @@ jobs:
           - name: master
             ref: master
             branch-dir: master-branch
-          - name: v1.3.0
-            ref: v1.3.0-stable
-            branch-dir: v1.3.0-stable-branch
+          # v1.3.0 disk storage is too broken to run
+          # - name: v1.3.0
+          #   ref: v1.3.0-stable
+          #   branch-dir: v1.3.0-stable-branch
     
     steps:
     # Checkout the PR branch
@@ -68,6 +69,19 @@ jobs:
         sudo ldconfig
 
     # Phase 1: Build and test base branch/tag
+    - name: Modify pkcs11test.c for storage generation
+      working-directory: ./${{ matrix.base-ref.branch-dir }}
+      run: |
+        echo "=== Modifying pkcs11test.c for storage generation ==="
+        # Check if WOLFPKCS11_NO_STORE is used and change it to use token path
+        if grep -q 'XSETENV("WOLFPKCS11_NO_STORE"' tests/pkcs11test.c; then
+          echo "Found WOLFPKCS11_NO_STORE, changing to WOLFPKCS11_TOKEN_PATH"
+          sed -i 's/XSETENV("WOLFPKCS11_NO_STORE", "1", 1);/XSETENV("WOLFPKCS11_TOKEN_PATH", ".\/store\/pkcs11test", 1);/' tests/pkcs11test.c
+        else
+          echo "WOLFPKCS11_NO_STORE not found, assuming WOLFPKCS11_TOKEN_PATH is already set"
+        fi
+        echo "=== pkcs11test.c modification completed ==="
+
     - name: Build wolfPKCS11 ${{ matrix.base-ref.name }}
       working-directory: ./${{ matrix.base-ref.branch-dir }}
       run: |
@@ -80,7 +94,7 @@ jobs:
       working-directory: ./${{ matrix.base-ref.branch-dir }}
       run: |
         echo "=== Running tests on ${{ matrix.base-ref.name }} branch ==="
-        make test
+        ./tests/pkcs11test
         echo "=== ${{ matrix.base-ref.name }} branch test completed ==="
 
     # Phase 2: Build PR branch and copy storage files from base
@@ -117,7 +131,7 @@ jobs:
         ls -la store/* 2>/dev/null || echo "No wp* files in store/"
         
         # Run the tests with the copied storage files
-        make test
+        ./tests/pkcs11test
         
         echo "=== Storage format upgrade test (${{ matrix.base-ref.name }} → PR) completed successfully ==="
 
