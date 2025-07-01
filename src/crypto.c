@@ -1127,6 +1127,13 @@ CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
         WOLFPKCS11_LEAVE("C_CopyObject", rv);
         return rv;
     }
+    if (pTemplate == NULL && ulCount > 0) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_CopyObject", rv);
+        return rv;
+    }
+
+
 
     /* Need key type and whether object is to be on the token to create a new
      * object. Get the object type from original object and where to store
