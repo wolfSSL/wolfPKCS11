@@ -9451,14 +9451,22 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
                 i++;
             }
             else {
-                ret = ASN_PARSE_E;
-                goto cleanup;
+                /* Not valid DER encoding, treat as raw X9.63 data */
+                x963Data = point;
+                x963Len = pointLen;
             }
         }
-        dataLen = point[i++];
-        if (dataLen == (int)(pointLen - i)) {
-            x963Data = point + i;
-            x963Len = dataLen;
+        if (i < (int)pointLen) {
+            dataLen = point[i++];
+            if (dataLen == (int)(pointLen - i)) {
+                x963Data = point + i;
+                x963Len = dataLen;
+            }
+            else {
+                /* Length mismatch, treat as raw X9.63 data */
+                x963Data = point;
+                x963Len = pointLen;
+            }
         }
     }
 
@@ -9493,7 +9501,6 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
 #endif
     }
 
-cleanup:
     wc_ecc_free(&pubKey);
 
     return ret;
