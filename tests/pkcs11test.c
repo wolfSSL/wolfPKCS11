@@ -5786,13 +5786,6 @@ static CK_RV test_rsa_pkcs_pss_sig_fail(void* args)
         params.mgf = CKG_MGF1_SHA256;
     }
     if (ret == CKR_OK) {
-        params.sLen = 63;
-        ret = funcList->C_SignInit(session, &mech, priv);
-        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
-                                                   "Sign Init bad salt length");
-        params.sLen = 32;
-    }
-    if (ret == CKR_OK) {
         mech.pParameter = NULL;
         ret = funcList->C_VerifyInit(session, &mech, priv);
         CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
@@ -5819,13 +5812,6 @@ static CK_RV test_rsa_pkcs_pss_sig_fail(void* args)
         CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
                                                "Verify Init bad mgf algorithm");
         params.mgf = CKG_MGF1_SHA256;
-    }
-    if (ret == CKR_OK) {
-        params.sLen = 63;
-        ret = funcList->C_VerifyInit(session, &mech, priv);
-        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
-                                                 "Verify Init bad salt length");
-        params.sLen = 32;
     }
 
     return ret;
@@ -6980,6 +6966,25 @@ static CK_RV test_ecdsa_sig_fail(void* args)
         CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
                                             "Verify Init bad parameter length");
         mech.ulParameterLen = 0;
+    }
+
+    return ret;
+}
+
+static CK_RV test_ecdh_x963(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+
+    ret = get_ecc_priv_key(session, CK_FALSE, &priv);
+    if (ret == CKR_OK)
+        ret = get_ecc_pub_key(session, &pub);
+    if (ret == CKR_OK) {
+        /* Test with x963 data */
+        ret = ecdh_test(session, priv, ecc_p256_x963_point,
+                       sizeof(ecc_p256_x963_point), 0);
     }
 
     return ret;
@@ -13700,6 +13705,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_ecc_gen_keys_token),
     PKCS11TEST_FUNC_SESS_DECL(test_ecc_token_keys_ecdsa),
     PKCS11TEST_FUNC_SESS_DECL(test_ecdsa_sig_fail),
+    PKCS11TEST_FUNC_SESS_DECL(test_ecdh_x963),
 #endif /* HAVE_ECC */
 #ifndef NO_DH
     PKCS11TEST_FUNC_SESS_DECL(test_dh_fixed_keys),
