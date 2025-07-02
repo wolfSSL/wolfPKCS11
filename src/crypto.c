@@ -6448,6 +6448,9 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
     CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
     word32 serialSize = 0;
     byte* serialBuff = NULL;
+#ifndef NO_RSA
+    word32 encDataLen;
+#endif
 
     WOLFPKCS11_ENTER("C_WrapKey");
     #ifdef DEBUG_WOLFPKCS11
@@ -6563,6 +6566,44 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
 
             break;
 #endif
+#ifndef NO_RSA
+        case CKM_RSA_PKCS:
+            if (wrapkeyType != CKK_RSA) {
+                rv = CKR_WRAPPING_KEY_TYPE_INCONSISTENT;
+                goto err_out;
+            }
+
+            if (pMechanism->pParameter != NULL ||
+                pMechanism->ulParameterLen != 0) {
+                rv = CKR_MECHANISM_PARAM_INVALID;
+                goto err_out;
+            }
+
+            encDataLen = WP11_Rsa_KeyLen(wrappingKey);
+            if (pWrappedKey == NULL) {
+                *pulWrappedKeyLen = encDataLen;
+                rv = CKR_OK;
+                goto err_out;
+            }
+            if (*pulWrappedKeyLen < encDataLen) {
+                *pulWrappedKeyLen = encDataLen;
+                rv = CKR_BUFFER_TOO_SMALL;
+                goto err_out;
+            }
+
+            ret = WP11_RsaPkcs15_PublicEncrypt(serialBuff, serialSize,
+                                                pWrappedKey, &encDataLen,
+                                                wrappingKey,
+                                                WP11_Session_GetSlot(session)
+                                                );
+            if (ret != 0) {
+                rv = CKR_FUNCTION_FAILED;
+                goto err_out;
+            }
+            *pulWrappedKeyLen = encDataLen;
+
+            break;
+#endif
         default:
             rv = CKR_MECHANISM_INVALID;
             break;
@@ -6619,6 +6660,9 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
     CK_ATTRIBUTE*     attr = NULL;
     byte* workBuffer = NULL;
     CK_ULONG ulUnwrappedLen = ulWrappedKeyLen;
+#ifndef NO_RSA
+    word32 decryptedLen;
+#endif
 
     WOLFPKCS11_ENTER("C_UnwrapKey");
     #ifdef DEBUG_WOLFPKCS11
@@ -6708,6 +6752,36 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
                 &ulUnwrappedLen);
             if (rv != CKR_OK)
                 goto err_out;
+
+            break;
+#endif
+#ifndef NO_RSA
+        case CKM_RSA_PKCS:
+            if (wrapkeyType != CKK_RSA)
+                return CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT;
+
+            if (pMechanism->pParameter != NULL ||
+                                              pMechanism->ulParameterLen != 0) {
+                rv = CKR_MECHANISM_PARAM_INVALID;
+                goto err_out;
+            }
+
+            workBuffer = (byte*)XMALLOC(ulWrappedKeyLen, NULL,
+                DYNAMIC_TYPE_TMP_BUFFER);
+            if (workBuffer == NULL)
+                return CKR_HOST_MEMORY;
+
+            decryptedLen = (word32)ulUnwrappedLen;
+            ret = WP11_RsaPkcs15_PrivateDecrypt(pWrappedKey, ulWrappedKeyLen,
+                                                workBuffer, &decryptedLen,
+                                                unwrappingKey,
+                                                WP11_Session_GetSlot(session));
+            ulUnwrappedLen = (CK_ULONG)decryptedLen;
+
+            if (ret != 0) {
+                rv = CKR_FUNCTION_FAILED;
+                goto err_out;
+            }
 
             break;
 #endif

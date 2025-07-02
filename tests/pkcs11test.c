@@ -4358,6 +4358,122 @@ static CK_RV find_rsa_priv_key_label(CK_SESSION_HANDLE session,
 }
 #endif
 
+static CK_RV test_rsa_wrap_unwrap_key(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_MECHANISM mech = { CKM_RSA_PKCS, NULL, 0 };
+    CK_OBJECT_HANDLE wrappingPrivKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE wrappingPubKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE unwrappedKey = CK_INVALID_HANDLE;
+    byte wrappedKey[256], keyData[32];
+    CK_ULONG wrappedKeyLen;
+    CK_KEY_TYPE keyType = CKK_GENERIC_SECRET;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)},
+        { CKA_KEY_TYPE,          &keyType,          sizeof(keyType)       },
+    };
+    CK_ULONG tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
+
+    memset(keyData, 7, sizeof(keyData));
+    wrappedKeyLen = sizeof(wrappedKey);
+
+    /* Get RSA key pair for wrapping */
+    ret = get_rsa_priv_key(session, NULL, 0, CK_FALSE, &wrappingPrivKey);
+    if (ret == CKR_OK) {
+        ret = get_rsa_pub_key(session, NULL, 0, &wrappingPubKey);
+    }
+
+    /* Create a secret key to wrap */
+    if (ret == CKR_OK) {
+        ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE, &key);
+    }
+
+    /* Test wrapping with RSA public key */
+    if (ret == CKR_OK) {
+        ret = funcList->C_WrapKey(session, &mech, wrappingPubKey, key,
+                                  wrappedKey, &wrappedKeyLen);
+        CHECK_CKR(ret, "RSA Wrap Key mechanism");
+    }
+
+    /* Destroy original key since unwrap returns new handle */
+    funcList->C_DestroyObject(session, key);
+    key = CK_INVALID_HANDLE;
+
+    /* Test unwrapping with RSA private key */
+    if (ret == CKR_OK) {
+        ret = funcList->C_UnwrapKey(session, &mech, wrappingPrivKey,
+                                    wrappedKey, wrappedKeyLen, tmpl, tmplCnt,
+                                    &unwrappedKey);
+        CHECK_CKR(ret, "RSA UnWrap Key mechanism");
+    }
+
+    /* Test getting wrapped key length */
+    if (ret == CKR_OK) {
+        ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE, &key);
+        if (ret == CKR_OK) {
+            CK_ULONG testLen = 0;
+            ret = funcList->C_WrapKey(session, &mech, wrappingPubKey, key,
+                                      NULL, &testLen);
+            CHECK_CKR(ret, "RSA Wrap Key get length");
+            if (ret == CKR_OK && testLen != wrappedKeyLen) {
+                ret = CKR_GENERAL_ERROR;
+                printf("ERROR: Expected wrapped key length %lu, got %lu\n",
+                       wrappedKeyLen, testLen);
+            }
+        }
+    }
+
+    /* Test with wrong key type for wrapping */
+    if (ret == CKR_OK) {
+        CK_OBJECT_HANDLE aesKey = CK_INVALID_HANDLE;
+        ret = get_aes_128_key(session, NULL, 0, &aesKey);
+        if (ret == CKR_OK) {
+            CK_RV wrapRet = funcList->C_WrapKey(session, &mech, aesKey, key,
+                                                wrappedKey, &wrappedKeyLen);
+            CHECK_CKR_FAIL(wrapRet, CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
+                           "RSA Wrap Key with AES key");
+            funcList->C_DestroyObject(session, aesKey);
+        }
+    }
+
+    /* Test with wrong key type for unwrapping */
+    if (ret == CKR_OK) {
+        CK_OBJECT_HANDLE aesKey = CK_INVALID_HANDLE;
+        ret = get_aes_128_key(session, NULL, 0, &aesKey);
+        if (ret == CKR_OK) {
+            CK_RV unwrapRet = funcList->C_UnwrapKey(session, &mech, aesKey,
+                                                    wrappedKey, wrappedKeyLen,
+                                                    tmpl, tmplCnt, &key);
+            CHECK_CKR_FAIL(unwrapRet, CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT,
+                           "RSA UnWrap Key with AES key");
+            funcList->C_DestroyObject(session, aesKey);
+        }
+    }
+
+    /* Test buffer too small error */
+    if (ret == CKR_OK) {
+        /* Create fresh key for this test since original was destroyed */
+        ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE, &key);
+        if (ret == CKR_OK) {
+            CK_ULONG smallLen = 1;
+            CK_RV wrapRet = funcList->C_WrapKey(session, &mech, wrappingPubKey,
+                                                key, wrappedKey, &smallLen);
+            CHECK_CKR_FAIL(wrapRet, CKR_BUFFER_TOO_SMALL,
+                           "RSA Wrap Key with buffer too small");
+        }
+    }
+
+    /* Clean up */
+    funcList->C_DestroyObject(session, wrappingPrivKey);
+    funcList->C_DestroyObject(session, wrappingPubKey);
+    funcList->C_DestroyObject(session, key);
+    funcList->C_DestroyObject(session, unwrappedKey);
+
+    return ret;
+}
+
 static CK_RV test_attributes_rsa(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -13656,6 +13772,9 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_aes_wrap_unwrap_pad_key),
     PKCS11TEST_FUNC_SESS_DECL(test_wrap_unwrap_key),
 #endif /* HAVE_AES_KEYWRAP && !WOLFPKCS11_NO_STORE */
+#ifndef NO_RSA
+    PKCS11TEST_FUNC_SESS_DECL(test_rsa_wrap_unwrap_key),
+#endif
 #ifndef NO_DH
     PKCS11TEST_FUNC_SESS_DECL(test_derive_key),
 #endif
