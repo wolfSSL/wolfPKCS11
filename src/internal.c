@@ -2204,9 +2204,11 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
     if (src->objClass == CKO_CERTIFICATE) {
         return BAD_FUNC_ARG;
     }
+#ifdef WOLFPKCS11_NSS
     else if (src->objClass == CKO_NSS_TRUST) {
         return BAD_FUNC_ARG;
     }
+#endif
     else {
         switch (src->type) {
 #ifndef NO_RSA
