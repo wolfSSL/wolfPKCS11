@@ -220,6 +220,7 @@ typedef struct WP11_DhKey {
 } WP11_DhKey;
 #endif
 
+/* When adding/modifying new members, add support in WP11_Object_Copy */
 struct WP11_Object {
     union {
     #ifndef NO_RSA
@@ -497,7 +498,7 @@ struct WP11_Slot {
 
 
 /* Number of slots. */
-static int slotCnt = 1;
+static const int slotCnt = 1;
 /* List of slot objects. */
 static WP11_Slot slotList[1];
 /* Global random used in random API, cryptographic operations and generating
@@ -927,6 +928,25 @@ static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
 
 /* Functions that handle storing data. */
 
+#ifdef WOLFPKCS11_NSS
+static char* storeDir = NULL;
+
+int WP11_SetStoreDir(const char *dir, size_t dirSz)
+{
+    if (storeDir != NULL)
+        XFREE(storeDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    storeDir = NULL;
+    if (dir != NULL) {
+        storeDir = (char*) XMALLOC(dirSz + 1, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (storeDir == NULL)
+            return MEMORY_E;
+        XMEMCPY(storeDir, dir, dirSz);
+        storeDir[dirSz] = '\0'; /* Ensure null termination */
+    }
+    return 0;
+}
+#endif
+
 /**
  * Opens access to location to read/write token data.
  *
@@ -1041,6 +1061,12 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
      */
     #ifndef WOLFPKCS11_NO_ENV
     str = XGETENV("WOLFPKCS11_TOKEN_PATH");
+    #endif
+
+    #ifdef WOLFPKCS11_NSS
+    if (str == NULL) {
+        str = storeDir;
+    }
     #endif
 
     if (str == NULL) {
@@ -1890,6 +1916,125 @@ int WP11_Object_New(WP11_Session* session, CK_KEY_TYPE type,
                     WP11_Object** object)
 {
     return wp11_Object_New(session->slot, type, object);
+}
+
+#define OBJ_COPY_DATA(src, dest, field)                                        \
+    do {                                                                       \
+        if (src->field != NULL) {                                              \
+            dest->field = (unsigned char*)XMALLOC(src->field##Len, NULL,       \
+                    DYNAMIC_TYPE_TMP_BUFFER);                                  \
+            if (dest->field == NULL)                                           \
+                return MEMORY_E;                                               \
+            XMEMCPY(dest->field, src->field, src->field##Len);                 \
+            dest->field##Len = src->field##Len;                                \
+        } else {                                                               \
+            dest->field = NULL;                                                \
+            dest->field##Len = 0;                                              \
+        }                                                                      \
+    } while (0)
+
+/**
+ * Copy an object. Not all fields are supported.
+ * @param  src  [in]   Source object.
+ * @param  dest [out]  Destination object.
+ * @return  0 on success.
+ *         <0 on failure.
+ */
+int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
+{
+    int ret = 0;
+
+    if (src == NULL || dest == NULL)
+        return BAD_FUNC_ARG;
+
+    /* We save data copying for the last step */
+
+    dest->size = src->size;
+#ifndef WOLFPKCS11_NO_STORE
+    OBJ_COPY_DATA(src, dest, keyData);
+    XMEMCPY(dest->iv, src->iv, sizeof(dest->iv));
+    dest->encoded = src->encoded;
+#endif
+    dest->objClass = src->objClass;
+    dest->keyGenMech = src->keyGenMech;
+    dest->opFlag = src->opFlag;
+    XMEMCPY(dest->startDate, src->startDate, sizeof(dest->startDate));
+    XMEMCPY(dest->endDate, src->endDate, sizeof(dest->endDate));
+    OBJ_COPY_DATA(src, dest, keyId);
+    OBJ_COPY_DATA(src, dest, label);
+    OBJ_COPY_DATA(src, dest, issuer);
+    OBJ_COPY_DATA(src, dest, serial);
+    OBJ_COPY_DATA(src, dest, subject);
+
+    dest->category = src->category;
+
+    if (src->objClass == CKO_CERTIFICATE) {
+        return BAD_FUNC_ARG;
+    }
+#ifdef WOLFPKCS11_NSS
+    else if (src->objClass == CKO_NSS_TRUST) {
+        return BAD_FUNC_ARG;
+    }
+#endif
+    else {
+        switch (src->type) {
+#ifndef NO_RSA
+            case CKK_RSA: {
+                byte* derBuf = NULL;
+                int derSz = 0;
+
+                ret = wc_RsaKeyToDer(&src->data.rsaKey, NULL, 0);
+                if (ret == 0) /* Should not happen */
+                    ret = BUFFER_E;
+                if (ret > 0) {
+                    derSz = ret;
+                    ret = 0;
+                }
+                if (ret == 0) {
+                    derBuf = (byte*)XMALLOC(derSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                    if (derBuf == NULL)
+                        ret = MEMORY_E;
+                }
+                if (ret == 0) {
+                    ret = wc_RsaKeyToDer(&src->data.rsaKey, derBuf, derSz);
+                    if (ret == 0) /* Should not happen */
+                        ret = BUFFER_E;
+                    if (ret > 0)
+                        ret = 0;
+                }
+                if (ret == 0) {
+                    word32 idx = 0;
+                    ret = wc_RsaPrivateKeyDecode(derBuf, &idx, &
+                            dest->data.rsaKey, (word32)derSz);
+                }
+
+                XFREE(derBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                break;
+            }
+#endif
+#ifdef HAVE_ECC
+            case CKK_EC:
+                return BAD_FUNC_ARG;
+#endif
+#ifndef NO_DH
+            case CKK_DH:
+                return BAD_FUNC_ARG;
+#endif
+#ifndef NO_AES
+            case CKK_AES:
+#endif
+#ifdef WOLFPKCS11_HKDF
+            case CKK_HKDF:
+#endif
+            case CKK_GENERIC_SECRET:
+                XMEMCPY(&dest->data.symmKey, &src->data.symmKey,
+                        sizeof(dest->data.symmKey));
+                break;
+        }
+    }
+
+
+    return ret;
 }
 
 #ifndef WOLFPKCS11_NO_STORE
@@ -4559,6 +4704,10 @@ void WP11_Library_Final(void)
         /* Store the slots. */
         for (i = 0; i < slotCnt; i++)
             wp11_Slot_Store(&slotList[i], i + 1);
+#if !defined (WOLFPKCS11_CUSTOM_STORE) && defined(WOLFPKCS11_NSS)
+        XFREE(storeDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        storeDir = NULL;
+#endif
 #endif
         /* Cleanup the slots. */
         for (i = 0; i < slotCnt; i++)
@@ -5829,9 +5978,7 @@ int WP11_Session_SetPssParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
     ret = wp11_hash_type(hashAlg, &pss->hashType);
     if (ret == 0)
         ret = wp11_mgf(mgf, &pss->mgf);
-    if (ret == 0 && sLen > RSA_PSS_SALT_MAX_SZ)
-        ret = BAD_FUNC_ARG;
-    else
+    if (ret == 0)
         pss->saltLen = sLen;
 
     return ret;
@@ -9306,14 +9453,22 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
                 i++;
             }
             else {
-                ret = ASN_PARSE_E;
-                goto cleanup;
+                /* Not valid DER encoding, treat as raw X9.63 data */
+                x963Data = point;
+                x963Len = pointLen;
             }
         }
-        dataLen = point[i++];
-        if (dataLen == (int)(pointLen - i)) {
-            x963Data = point + i;
-            x963Len = dataLen;
+        if (i < (int)pointLen) {
+            dataLen = point[i++];
+            if (dataLen == (int)(pointLen - i)) {
+                x963Data = point + i;
+                x963Len = dataLen;
+            }
+            else {
+                /* Length mismatch, treat as raw X9.63 data */
+                x963Data = point;
+                x963Len = pointLen;
+            }
         }
     }
 
@@ -9348,7 +9503,6 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
 #endif
     }
 
-cleanup:
     wc_ecc_free(&pubKey);
 
     return ret;
