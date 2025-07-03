@@ -361,6 +361,7 @@ static CK_MECHANISM_TYPE mechanismList[] = {
 #ifdef WOLFPKCS11_HKDF
     CKM_HKDF_DERIVE,
     CKM_HKDF_DATA,
+    CKM_HKDF_KEY_GEN,
 #endif
 #ifndef NO_DH
     CKM_DH_PKCS_KEY_PAIR_GEN,
