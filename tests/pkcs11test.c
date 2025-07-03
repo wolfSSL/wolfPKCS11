@@ -4349,6 +4349,7 @@ static CK_RV find_rsa_priv_key_label(CK_SESSION_HANDLE session,
 }
 #endif
 
+#ifndef WOLFPKCS11_NO_STORE
 static CK_RV test_rsa_wrap_unwrap_key(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -4375,10 +4376,11 @@ static CK_RV test_rsa_wrap_unwrap_key(void* args)
     if (ret == CKR_OK) {
         ret = get_rsa_pub_key(session, NULL, 0, &wrappingPubKey);
     }
-    
+
     /* Create a secret key to wrap */
     if (ret == CKR_OK) {
-        ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE, &key);
+        ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE,
+                              &key);
     }
 
     /* Test wrapping with RSA public key */
@@ -4402,7 +4404,8 @@ static CK_RV test_rsa_wrap_unwrap_key(void* args)
 
     /* Test getting wrapped key length */
     if (ret == CKR_OK) {
-        ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE, &key);
+        ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE,
+                              &key);
         if (ret == CKR_OK) {
             CK_ULONG testLen = 0;
             ret = funcList->C_WrapKey(session, &mech, wrappingPubKey, key,
@@ -4446,7 +4449,8 @@ static CK_RV test_rsa_wrap_unwrap_key(void* args)
     /* Test buffer too small error */
     if (ret == CKR_OK) {
         /* Create fresh key for this test since original was destroyed */
-        ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE, &key);
+        ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE,
+                              &key);
         if (ret == CKR_OK) {
             CK_ULONG smallLen = 1;
             CK_RV wrapRet = funcList->C_WrapKey(session, &mech, wrappingPubKey,
@@ -4464,6 +4468,7 @@ static CK_RV test_rsa_wrap_unwrap_key(void* args)
 
     return ret;
 }
+#endif
 
 static CK_RV test_attributes_rsa(void* args)
 {
@@ -13749,7 +13754,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_aes_wrap_unwrap_pad_key),
 #endif
     PKCS11TEST_FUNC_SESS_DECL(test_wrap_unwrap_key),
-#ifndef NO_RSA
+#if (!defined(NO_RSA) && !defined(WOLFPKCS11_NO_STORE))
     PKCS11TEST_FUNC_SESS_DECL(test_rsa_wrap_unwrap_key),
 #endif
 #ifndef NO_DH
