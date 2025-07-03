@@ -2972,7 +2972,7 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
                                                  &decDataLen, obj,
                                                  WP11_Session_GetSlot(session));
             if (ret < 0)
-                return CKR_FUNCTION_FAILED;
+                return CKR_ENCRYPTED_DATA_INVALID;
             *pulDataLen = decDataLen;
             break;
         case CKM_RSA_PKCS:
@@ -2992,7 +2992,7 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
                                                  &decDataLen, obj,
                                                  WP11_Session_GetSlot(session));
             if (ret < 0)
-                return CKR_FUNCTION_FAILED;
+                return CKR_ENCRYPTED_DATA_INVALID;
             *pulDataLen = decDataLen;
             break;
     #ifndef WC_NO_RSA_OAEP
@@ -3014,7 +3014,7 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
                                                  (int)ulEncryptedDataLen, pData,
                                                  &decDataLen, obj, session);
             if (ret < 0)
-                return CKR_FUNCTION_FAILED;
+                return CKR_ENCRYPTED_DATA_INVALID;
             *pulDataLen = decDataLen;
             break;
     #endif
@@ -3036,7 +3036,7 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
             ret = WP11_AesCbc_Decrypt(pEncryptedData, (int)ulEncryptedDataLen,
                                               pData, &decDataLen, session);
             if (ret < 0)
-                return CKR_FUNCTION_FAILED;
+                return CKR_ENCRYPTED_DATA_INVALID;
             *pulDataLen = decDataLen;
             break;
         case CKM_AES_CBC_PAD:
@@ -3055,7 +3055,7 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
                                                  (int)ulEncryptedDataLen, pData,
                                                  &decDataLen, session);
             if (ret < 0)
-                return CKR_FUNCTION_FAILED;
+                return CKR_ENCRYPTED_DATA_INVALID;
             *pulDataLen = decDataLen;
             break;
     #endif
@@ -3075,7 +3075,7 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
             ret = WP11_AesCtr_Do(pEncryptedData,
                     (word32)ulEncryptedDataLen, pData, &decDataLen, session);
             if (ret != 0)
-                return CKR_FUNCTION_FAILED;
+                return CKR_ENCRYPTED_DATA_INVALID;
             *pulDataLen = decDataLen;
             break;
     #endif
@@ -3096,7 +3096,7 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
             ret = WP11_AesGcm_Decrypt(pEncryptedData, (int)ulEncryptedDataLen,
                                               pData, &decDataLen, obj, session);
             if (ret < 0)
-                return CKR_FUNCTION_FAILED;
+                return CKR_ENCRYPTED_DATA_INVALID;
             *pulDataLen = decDataLen;
             break;
     #endif
@@ -3117,7 +3117,7 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
             ret = WP11_AesCcm_Decrypt(pEncryptedData, (int)ulEncryptedDataLen,
                                       pData, &decDataLen, obj, session);
             if (ret < 0)
-                return CKR_FUNCTION_FAILED;
+                return CKR_ENCRYPTED_DATA_INVALID;
             *pulDataLen = decDataLen;
             break;
     #endif
@@ -3137,7 +3137,7 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
             ret = WP11_AesEcb_Decrypt(pEncryptedData, (int)ulEncryptedDataLen,
                                       pData, &decDataLen, obj, session);
             if (ret < 0)
-                return CKR_FUNCTION_FAILED;
+                return CKR_ENCRYPTED_DATA_INVALID;
             *pulDataLen = decDataLen;
             break;
     #endif
@@ -3159,7 +3159,7 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
             if (ret == BUFFER_E)
                 return CKR_BUFFER_TOO_SMALL;
             if (ret < 0)
-                return CKR_FUNCTION_FAILED;
+                return CKR_ENCRYPTED_DATA_INVALID;
             *pulDataLen = decDataLen;
             break;
     #endif
@@ -3183,15 +3183,15 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
             ret = WP11_AesKeyWrap_Decrypt(pEncryptedData,
                     (word32)ulEncryptedDataLen, pData, &decDataLen, session);
             if (ret != 0)
-                return CKR_FUNCTION_FAILED;
+                return CKR_ENCRYPTED_DATA_INVALID;
             if (mechanism == CKM_AES_KEY_WRAP_PAD) {
                 int i;
                 byte padValue = pData[decDataLen - 1];
                 if (padValue > KEYWRAP_BLOCK_SIZE || padValue > decDataLen)
-                    return CKR_FUNCTION_FAILED;
+                    return CKR_ENCRYPTED_DATA_LEN_RANGE;
                 for (i = 0; i < padValue; i++) {
                     if (pData[decDataLen - 1 - i] != padValue)
-                        return CKR_FUNCTION_FAILED;
+                        return CKR_ENCRYPTED_DATA_INVALID;
                 }
                 decDataLen -= padValue;
             }
@@ -6772,7 +6772,7 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
                 return CKR_HOST_MEMORY;
 
             decryptedLen = (word32)ulUnwrappedLen;
-            ret = WP11_RsaPkcs15_PrivateDecrypt(pWrappedKey, ulWrappedKeyLen,
+            ret = WP11_RsaPkcs15_PrivateDecrypt(pWrappedKey, decryptedLen,
                                                 workBuffer, &decryptedLen,
                                                 unwrappingKey,
                                                 WP11_Session_GetSlot(session));

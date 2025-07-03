@@ -111,7 +111,7 @@ CK_RV C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList)
 {
     CK_RV ret;
     WOLFPKCS11_ENTER("C_GetFunctionList");
-    
+
     if (ppFunctionList == NULL) {
         ret = CKR_ARGUMENTS_BAD;
         WOLFPKCS11_LEAVE("C_GetFunctionList", ret);
@@ -124,7 +124,7 @@ CK_RV C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList)
     return ret;
 }
 
-#ifdef WOLFPKCS11_NSS
+#if (defined(WOLFPKCS11_NSS) && !defined(WOLFPKCS11_NO_STORE))
 /*
  * Parse a string of NSS configuration parameters. For now only the
  * configdir parameter is supported.
@@ -197,7 +197,7 @@ CK_RV C_Initialize(CK_VOID_PTR pInitArgs)
     if (args != NULL) {
         WOLFPKCS11_MSG("Warning: C_Initialize called with arguments, but most "
                        "are ignored.");
-#ifdef WOLFPKCS11_NSS
+#if (defined(WOLFPKCS11_NSS) && !defined(WOLFPKCS11_NO_STORE))
         if (args->LibraryParameters != NULL) {
             char* configdir = NULL;
             size_t configdirLen = 0;
@@ -241,7 +241,7 @@ CK_RV C_Finalize(CK_VOID_PTR pReserved)
 {
     CK_RV ret;
     WOLFPKCS11_ENTER("C_Finalize");
-    
+
     WP11_Library_Final();
 
     (void)pReserved;
@@ -271,7 +271,7 @@ CK_RV C_GetInfo(CK_INFO_PTR pInfo)
 {
     CK_RV ret;
     WOLFPKCS11_ENTER("C_GetInfo");
-    
+
     if (!WP11_Library_IsInitialized()) {
         ret = CKR_CRYPTOKI_NOT_INITIALIZED;
         WOLFPKCS11_LEAVE("C_GetInfo", ret);
@@ -288,4 +288,3 @@ CK_RV C_GetInfo(CK_INFO_PTR pInfo)
     WOLFPKCS11_LEAVE("C_GetInfo", ret);
     return ret;
 }
-
