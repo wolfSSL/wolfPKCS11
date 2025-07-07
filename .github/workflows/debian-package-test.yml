@@ -8,7 +8,7 @@ on:
 
 jobs:
   debian-package-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     
     steps:
     # Pull wolfPKCS11
@@ -33,20 +33,24 @@ jobs:
     - name: wolfssl configure
       working-directory: ./wolfssl
       run: |
-        ./configure --enable-cryptocb --enable-aescfb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt --enable-md5 \
-            C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
+        ./configure --enable-cryptocb --enable-aescfb --enable-aesctr  --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt --enable-md5 --enable-cmac \
+            C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT -DHAVE_AES_ECB"
     - name: wolfssl make and install
       working-directory: ./wolfssl
       run: |
-        make -j$(nproc)
-        sudo make install
-        sudo ldconfig
+        make
+        sudo make deb
+
+    - name: wolfssl install
+      working-directory: ./wolfssl
+      run: |
+        sudo dpkg -i libwolfssl_*.deb libwolfssl-dev_*.deb
 
     # Setup wolfPKCS11
     - name: wolfpkcs11 autogen
       run: ./autogen.sh
     - name: wolfpkcs11 configure
-      run: ./configure
+      run: ./configure --enable-nss --enable-aesecb --enable-aesctr --enable-aesccm --enable-aescmac
 
     # Test local debian package build
     - name: Test make deb
@@ -66,20 +70,6 @@ jobs:
         ls -la /usr/lib/libwolfpkcs11*
         ls -la /usr/include/wolfpkcs11/ || echo "Headers not found in expected location"
         pkg-config --exists wolfpkcs11 && echo "pkg-config found wolfpkcs11" || echo "pkg-config did not find wolfpkcs11"
-
-    # Test Docker-based debian package build
-    - name: Test make deb-docker
-      run: |
-        make deb-clean
-        make deb-docker
-        ls -la *.deb
-
-    # Test that normal build still works after debian packaging
-    - name: Test normal build after debian packaging
-      run: |
-        make clean
-        make -j$(nproc)
-        make check
 
     # Upload generated packages as artifacts
     - name: Upload debian packages

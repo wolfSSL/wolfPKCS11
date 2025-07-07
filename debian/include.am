@@ -78,14 +78,6 @@ deb:
 # Clean up the working dirs
 	make deb-clean
 
-deb-docker:
-	docker build -t "debian-builder:Dockerfile" Docker/packaging/debian
-	docker run --rm -v $(CURDIR):/opt/wolfpkcs11 debian-builder:Dockerfile \
-		bash -c 'cd /opt/wolfpkcs11 && ./config.status --recheck && make deb && \
-				make clean deb-clean &> /dev/null'
-# To allow the user to keep using the configuration on the host
-	@./config.status --recheck &> /dev/null
-
 deb-clean:
 	rm -rf debian/libwolfpkcs11 debian/libwolfpkcs11-dev debian/files \
 		debian/*.substvars debian/.debhelper
