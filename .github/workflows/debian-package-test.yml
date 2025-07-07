@@ -57,8 +57,7 @@ jobs:
     # Test debian package installation
     - name: Test debian package installation
       run: |
-        sudo dpkg -i libwolfpkcs11_*.deb libwolfpkcs11-dev_*.deb || true
-        sudo apt-get install -f -y
+        sudo dpkg -i libwolfpkcs11_*.deb libwolfpkcs11-dev_*.deb
         
     # Verify installation
     - name: Verify package installation
