@@ -1,0 +1,41 @@
+Source: wolfpkcs11
+Maintainer: wolfSSL <support@wolfssl.com>
+Section: libs
+Priority: optional
+Standards-Version: 4.6.2
+Build-Depends: debhelper-compat (= 13), libwolfssl-dev
+Vcs-Git: https://github.com/wolfSSL/wolfPKCS11.git
+Vcs-browser: https://github.com/wolfSSL/wolfPKCS11
+Homepage: https://www.wolfssl.com/
+
+Package: libwolfpkcs11
+Architecture: any
+Section: libs
+Priority: optional
+Pre-Depends:
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ libwolfssl
+Description: wolfPKCS11 cryptographic library
+ PKCS#11 library that implements cryptographic algorithms using wolfSSL.
+ This library provides a PKCS#11 interface for applications requiring
+ cryptographic operations through hardware security modules (HSMs),
+ Trusted Platform Modules (TPMs), or software-based tokens.
+
+Package: libwolfpkcs11-dev
+Architecture: any
+Section: libdevel
+Priority: optional
+Pre-Depends:
+Depends:
+ libwolfpkcs11 (= ${binary:Version}),
+ libwolfssl-dev,
+ ${misc:Depends}
+Description: wolfPKCS11 cryptographic library development files
+ PKCS#11 library that implements cryptographic algorithms using wolfSSL.
+ This library provides a PKCS#11 interface for applications requiring
+ cryptographic operations through hardware security modules (HSMs),
+ Trusted Platform Modules (TPMs), or software-based tokens.
+ .
+ This package contains the development files.
