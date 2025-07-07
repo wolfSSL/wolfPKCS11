@@ -18,15 +18,19 @@ deb:
 		prefix=$(CURDIR)/debian/libwolfpkcs11-dev/usr
 # deb shared lib stuff
 	fakeroot dh_makeshlibs
-	dh_shlibdeps
+	dh_shlibdeps --dpkg-shlibdeps-params=--ignore-missing-info
 	dh_installdeb
 # Generate the lib and src descriptions
 	fakeroot dh_gencontrol
 # Make adjustments to the package structure and to satisfy lintian checks
 # Correct doc dir name
 	@rm -rf debian/libwolfpkcs11-dev/usr/share/doc/libwolfpkcs11-dev
-	@mv debian/libwolfpkcs11-dev/usr/share/doc/wolfpkcs11 \
-		debian/libwolfpkcs11-dev/usr/share/doc/libwolfpkcs11-dev
+	@if [ -d debian/libwolfpkcs11-dev/usr/share/doc/wolfpkcs11 ]; then \
+		mv debian/libwolfpkcs11-dev/usr/share/doc/wolfpkcs11 \
+			debian/libwolfpkcs11-dev/usr/share/doc/libwolfpkcs11-dev; \
+	else \
+		mkdir -p debian/libwolfpkcs11-dev/usr/share/doc/libwolfpkcs11-dev; \
+	fi
 # Clear lib folder
 	@rm -rf debian/libwolfpkcs11-dev/usr/lib
 	@mkdir -p debian/libwolfpkcs11-dev/usr/lib
@@ -51,8 +55,10 @@ deb:
 # https://lintian.debian.org/tags/pkg-config-unavailable-for-cross-compilation
 	@rm -rf debian/libwolfpkcs11/usr/lib/$(DEB_HOST_MULTIARCH)
 	@mkdir -p debian/libwolfpkcs11/usr/lib/$(DEB_HOST_MULTIARCH)
-	@mv debian/libwolfpkcs11/usr/lib/pkgconfig \
-		debian/libwolfpkcs11/usr/lib/$(DEB_HOST_MULTIARCH)
+	@if [ -d debian/libwolfpkcs11/usr/lib/pkgconfig ]; then \
+		mv debian/libwolfpkcs11/usr/lib/pkgconfig \
+			debian/libwolfpkcs11/usr/lib/$(DEB_HOST_MULTIARCH); \
+	fi
 # Set the expected access rules
 	@chmod 644 debian/libwolfpkcs11/usr/lib/libwolfpkcs11.so.*.*.*
 	@chmod 644 debian/libwolfpkcs11/usr/share/doc/libwolfpkcs11/changelog.gz \
