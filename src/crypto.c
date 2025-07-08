@@ -103,8 +103,18 @@ static CK_ATTRIBUTE_TYPE secretKeyParams[] = {
     CKA_VALUE_LEN,
     CKA_VALUE,
 };
+
 /* Count of secret key data attributes. */
 #define SECRET_KEY_PARAMS_CNT (sizeof(secretKeyParams)/sizeof(*secretKeyParams))
+
+/* Generic data attributes */
+static CK_ATTRIBUTE_TYPE genericDataParams[] = {
+    CKA_VALUE_LEN,
+    CKA_VALUE,
+};
+
+/* Count of generic data attributes */
+#define DATA_PARAMS_CNT (sizeof(genericDataParams)/sizeof(*genericDataParams))
 
 /* Certificate data attributes */
 static CK_ATTRIBUTE_TYPE certParams[] = {
@@ -548,6 +558,10 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
         cnt = TRUST_PARAMS_CNT;
     }
 #endif
+    else if (objClass == CKO_DATA) {
+        attrs = genericDataParams;
+        cnt = DATA_PARAMS_CNT;
+    }
     else {
         /* Get the value and length of key specific attribute types. */
         switch (type) {
@@ -607,6 +621,9 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
             ret = WP11_Object_SetTrust(obj, data, len);
         }
 #endif
+        else if (objClass == CKO_DATA) {
+            ret = WP11_Object_DataObject(obj, data, len);
+        }
         else {
             /* Set the value and length of key specific attributes
             * Old key data is cleared.
@@ -952,7 +969,6 @@ static CK_RV CreateObject(WP11_Session* session, CK_ATTRIBUTE_PTR pTemplate,
         FindAttributeType(pTemplate, ulCount, CKA_VALUE, &attr);
         if (attr == NULL)
             return CKR_TEMPLATE_INCOMPLETE;
-        objType = CKK_HKDF;
     }
 #ifdef WOLFPKCS11_NSS
     else if (objectClass == CKO_NSS_TRUST) {

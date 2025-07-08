@@ -35,6 +35,7 @@
 #define WOLFPKCS11_STORE_DHKEY_PUB      0x08
 #define WOLFPKCS11_STORE_CERT           0x09
 #define WOLFPKCS11_STORE_TRUST          0x0A
+#define WOLFPKCS11_STORE_DATA           0x0B
 
 /*
  * Opens access to location to read/write token data.

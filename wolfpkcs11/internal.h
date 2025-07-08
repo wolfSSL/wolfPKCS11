@@ -397,6 +397,8 @@ WP11_LOCAL int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** dat
                              CK_ULONG* len);
 WP11_LOCAL int WP11_Object_SetCert(WP11_Object* object, unsigned char** data,
                              CK_ULONG* len);
+WP11_LOCAL int WP11_Object_DataObject(WP11_Object* object, unsigned char** data,
+                           CK_ULONG* len);
 
 WP11_LOCAL int WP11_Object_SetClass(WP11_Object* object, CK_OBJECT_CLASS objClass);
 WP11_LOCAL CK_OBJECT_CLASS WP11_Object_GetClass(WP11_Object* object);
