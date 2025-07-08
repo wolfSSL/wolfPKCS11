@@ -288,3 +288,28 @@ CK_RV C_GetInfo(CK_INFO_PTR pInfo)
     WOLFPKCS11_LEAVE("C_GetInfo", ret);
     return ret;
 }
+
+/* Debug control functions */
+#ifdef DEBUG_WOLFPKCS11
+extern int wolfpkcs11_debugging;
+
+void wolfPKCS11_Debugging_On(void)
+{
+    wolfpkcs11_debugging = 1;
+    WOLFPKCS11_MSG("debug logging enabled");
+}
+
+void wolfPKCS11_Debugging_Off(void)
+{
+    WOLFPKCS11_MSG("debug logging disabled");
+    wolfpkcs11_debugging = 0;
+}
+#else
+void wolfPKCS11_Debugging_On(void)
+{
+}
+
+void wolfPKCS11_Debugging_Off(void)
+{
+}
+#endif
