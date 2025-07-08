@@ -971,7 +971,11 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
     int maxSz;
     WOLFTPM2_HANDLE parent;
 #else
+#ifdef WOLFPKCS11_NSS
+    char name[600] = "\0";
+#else
     char name[120] = "\0";
+#endif
     XFILE file = XBADFILE;
     char homePath[47]; /* Must fit within name buffer size limit */
 #endif
@@ -1115,50 +1119,50 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
     /* Set different filename for each type of data and different ids. */
     switch (type) {
         case WOLFPKCS11_STORE_TOKEN:
-            XSNPRINTF(name, sizeof(name), "%s/wp11_token_%016lx", str, id1);
+            ret = XSNPRINTF(name, sizeof(name), "%s/wp11_token_%016lx", str, id1);
             break;
         case WOLFPKCS11_STORE_OBJECT:
-            XSNPRINTF(name, sizeof(name), "%s/wp11_obj_%016lx_%016lx", str, id1,
+            ret = XSNPRINTF(name, sizeof(name), "%s/wp11_obj_%016lx_%016lx", str, id1,
                       id2);
             break;
         case WOLFPKCS11_STORE_SYMMKEY:
-            XSNPRINTF(name, sizeof(name), "%s/wp11_symmkey_%016lx_%016lx", str,
+            ret = XSNPRINTF(name, sizeof(name), "%s/wp11_symmkey_%016lx_%016lx", str,
                       id1, id2);
             break;
         case WOLFPKCS11_STORE_RSAKEY_PRIV:
-            XSNPRINTF(name, sizeof(name), "%s/wp11_rsakey_priv_%016lx_%016lx",
+            ret = XSNPRINTF(name, sizeof(name), "%s/wp11_rsakey_priv_%016lx_%016lx",
                       str, id1, id2);
             break;
         case WOLFPKCS11_STORE_RSAKEY_PUB:
-            XSNPRINTF(name, sizeof(name), "%s/wp11_rsakey_pub_%016lx_%016lx",
+            ret = XSNPRINTF(name, sizeof(name), "%s/wp11_rsakey_pub_%016lx_%016lx",
                       str, id1, id2);
             break;
         case WOLFPKCS11_STORE_ECCKEY_PRIV:
-            XSNPRINTF(name, sizeof(name), "%s/wp11_ecckey_priv_%016lx_%016lx",
+            ret = XSNPRINTF(name, sizeof(name), "%s/wp11_ecckey_priv_%016lx_%016lx",
                       str, id1, id2);
             break;
         case WOLFPKCS11_STORE_ECCKEY_PUB:
-            XSNPRINTF(name, sizeof(name), "%s/wp11_ecckey_pub_%016lx_%016lx",
+            ret = XSNPRINTF(name, sizeof(name), "%s/wp11_ecckey_pub_%016lx_%016lx",
                       str, id1, id2);
             break;
         case WOLFPKCS11_STORE_DHKEY_PRIV:
-            XSNPRINTF(name, sizeof(name), "%s/wp11_dhkey_priv_%016lx_%016lx",
+            ret = XSNPRINTF(name, sizeof(name), "%s/wp11_dhkey_priv_%016lx_%016lx",
                       str, id1, id2);
             break;
         case WOLFPKCS11_STORE_DHKEY_PUB:
-            XSNPRINTF(name, sizeof(name), "%s/wp11_dhkey_pub_%016lx_%016lx",
+            ret = XSNPRINTF(name, sizeof(name), "%s/wp11_dhkey_pub_%016lx_%016lx",
                       str, id1, id2);
             break;
         case WOLFPKCS11_STORE_CERT:
-            XSNPRINTF(name, sizeof(name), "%s/wp11_cert_%016lx_%016lx",
+            ret = XSNPRINTF(name, sizeof(name), "%s/wp11_cert_%016lx_%016lx",
                       str, id1, id2);
             break;
         case WOLFPKCS11_STORE_TRUST:
-            XSNPRINTF(name, sizeof(name), "%s/wp11_trust_%016lx_%016lx",
+            ret = XSNPRINTF(name, sizeof(name), "%s/wp11_trust_%016lx_%016lx",
                       str, id1, id2);
             break;
         case WOLFPKCS11_STORE_DATA:
-            XSNPRINTF(name, sizeof(name), "%s/wp11_data_%016lx_%016lx",
+            ret = XSNPRINTF(name, sizeof(name), "%s/wp11_data_%016lx_%016lx",
                       str, id1, id2);
             break;
 
@@ -1166,6 +1170,12 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
             ret = -1;
             break;
     }
+
+    /* Check that the string fits in name */
+    if (ret > 0 && ret < (int) sizeof(name))
+        ret = 0;
+    else
+        ret = -1;
 
     /* Open file for read or write. */
     if (ret == 0) {
