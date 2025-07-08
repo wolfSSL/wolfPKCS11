@@ -7625,7 +7625,7 @@ int WP11_Object_DataObject(WP11_Object* object, unsigned char** data,
         ret = BAD_FUNC_ARG;
     else if (data[1] != NULL) {
         XMEMCPY(object->data.genericData.data, data[1], len[1]);
-        object->data.genericData.len = len[1];
+        object->data.genericData.len = (word32)len[1];
     }
 
 
