@@ -2246,8 +2246,81 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
             }
 #endif
 #ifdef HAVE_ECC
-            case CKK_EC:
-                return BAD_FUNC_ARG;
+            case CKK_EC: {
+                byte* derBuf = NULL;
+                int derSz = 0;
+
+                /* Initialize destination ECC key */
+                ret = wc_ecc_init_ex(&dest->data.ecKey, NULL, 
+                                     dest->slot->devId);
+                if (ret != 0)
+                    break;
+
+                /* Determine if this is a private or public key and get DER 
+                 * size */
+                if (src->objClass == CKO_PRIVATE_KEY) {
+                    ret = wc_EccPrivateKeyToDer(&src->data.ecKey, NULL, 0);
+                } else {
+                    ret = wc_EccPublicKeyToDer(&src->data.ecKey, NULL, 0, 1);
+                }
+                
+                if (ret == 0) /* Should not happen */
+                    ret = BUFFER_E;
+                if (ret > 0) {
+                    derSz = ret;
+                    ret = 0;
+                }
+                
+                if (ret == 0) {
+                    derBuf = (byte*)XMALLOC(derSz, NULL, 
+                                            DYNAMIC_TYPE_TMP_BUFFER);
+                    if (derBuf == NULL)
+                        ret = MEMORY_E;
+                }
+                
+                if (ret == 0) {
+                    /* Encode the source key to DER */
+                    if (src->objClass == CKO_PRIVATE_KEY) {
+                        ret = wc_EccPrivateKeyToDer(&src->data.ecKey, derBuf, 
+                                                    derSz);
+                    } else {
+                        ret = wc_EccPublicKeyToDer(&src->data.ecKey, derBuf, 
+                                                   derSz, 1);
+                    }
+                    
+                    if (ret == 0) /* Should not happen */
+                        ret = BUFFER_E;
+                    if (ret > 0)
+                        ret = 0;
+                }
+                
+                if (ret == 0) {
+                    /* Decode the DER data into the destination key */
+                    word32 idx = 0;
+                    if (src->objClass == CKO_PRIVATE_KEY) {
+                        ret = wc_EccPrivateKeyDecode(derBuf, &idx, 
+                                                     &dest->data.ecKey, 
+                                                     (word32)derSz);
+                    } else {
+                        ret = wc_EccPublicKeyDecode(derBuf, &idx, 
+                                                    &dest->data.ecKey, 
+                                                    (word32)derSz);
+                    }
+                }
+
+                /* Clean up */
+                if (derBuf != NULL) {
+                    XMEMSET(derBuf, 0, derSz); /* Clear sensitive data */
+                    XFREE(derBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                }
+                
+                /* Free destination key on failure */
+                if (ret != 0) {
+                    wc_ecc_free(&dest->data.ecKey);
+                }
+                
+                break;
+            }
 #endif
 #ifndef NO_DH
             case CKK_DH:
