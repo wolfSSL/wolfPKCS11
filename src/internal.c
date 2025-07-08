@@ -1155,7 +1155,11 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
     int maxSz;
     WOLFTPM2_HANDLE parent;
 #else
+#ifdef WOLFPKCS11_NSS
+    char name[600] = "\0";
+#else
     char name[120] = "\0";
+#endif
     XFILE file = XBADFILE;
 #endif
 
@@ -1230,6 +1234,12 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
 #else
     /* build filename */
     ret = wolfPKCS11_Store_Name(type, id1, id2, name, sizeof(name));
+
+    /* Check that the string fits in name */
+    if (ret > 0 && ret < (int) sizeof(name))
+        ret = 0;
+    else
+        ret = -1;
 
     /* Open file for read or write. */
     if (ret == 0) {
