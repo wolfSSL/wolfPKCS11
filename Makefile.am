@@ -36,6 +36,8 @@ include wolfpkcs11/include.am
 include examples/include.am
 include tests/include.am
 include IDE/include.am
+include debian/include.am
+include Docker/include.am
 
 EXTRA_DIST+= README.md
 EXTRA_DIST+= LICENSE

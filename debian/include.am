@@ -1,0 +1,83 @@
+# vim:ft=automake
+# included from Top Level Makefile.am
+# All paths should be given relative to the root
+
+EXTRA_DIST+= debian/changelog
+EXTRA_DIST+= debian/control
+EXTRA_DIST+= debian/control.in
+EXTRA_DIST+= debian/copyright
+EXTRA_DIST+= debian/include.am
+
+DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
+
+deb:
+# Setup meta folders
+	mkdir -p debian/libwolfpkcs11/DEBIAN debian/libwolfpkcs11-dev/DEBIAN
+# "Install" wolfPKCS11
+	make install exec_prefix=$(CURDIR)/debian/libwolfpkcs11/usr \
+		prefix=$(CURDIR)/debian/libwolfpkcs11-dev/usr
+# deb shared lib stuff
+	fakeroot dh_makeshlibs
+	dh_shlibdeps --dpkg-shlibdeps-params=--ignore-missing-info
+	dh_installdeb
+# Generate the lib and src descriptions
+	fakeroot dh_gencontrol
+# Make adjustments to the package structure and to satisfy lintian checks
+# Correct doc dir name
+	@rm -rf debian/libwolfpkcs11-dev/usr/share/doc/libwolfpkcs11-dev
+	@if [ -d debian/libwolfpkcs11-dev/usr/share/doc/wolfpkcs11 ]; then \
+		mv debian/libwolfpkcs11-dev/usr/share/doc/wolfpkcs11 \
+			debian/libwolfpkcs11-dev/usr/share/doc/libwolfpkcs11-dev; \
+	else \
+		mkdir -p debian/libwolfpkcs11-dev/usr/share/doc/libwolfpkcs11-dev; \
+	fi
+# Clear lib folder
+	@rm -rf debian/libwolfpkcs11-dev/usr/lib
+	@mkdir -p debian/libwolfpkcs11-dev/usr/lib
+# Move the top level .so into the dev pkg
+	@mv debian/libwolfpkcs11/usr/lib/libwolfpkcs11.so debian/libwolfpkcs11-dev/usr/lib
+# Create correct pkg doc dir
+	@rm -rf debian/libwolfpkcs11/usr/share/doc/libwolfpkcs11
+	@mkdir -p debian/libwolfpkcs11/usr/share/doc/libwolfpkcs11
+# Place changelog
+	@gzip -n -9 -c debian/changelog | \
+		tee debian/libwolfpkcs11/usr/share/doc/libwolfpkcs11/changelog.gz > \
+		debian/libwolfpkcs11-dev/usr/share/doc/libwolfpkcs11-dev/changelog.gz
+# Place copyright
+	@cp debian/copyright debian/libwolfpkcs11/usr/share/doc/libwolfpkcs11
+	@cp debian/copyright debian/libwolfpkcs11-dev/usr/share/doc/libwolfpkcs11-dev
+# Remove .la file https://wiki.debian.org/ReleaseGoals/LAFileRemoval
+	@rm debian/libwolfpkcs11/usr/lib/libwolfpkcs11.la
+# Strip unwanted symbols
+# https://www.debian.org/doc/debian-policy/ch-files.html#binaries
+	@strip --strip-unneeded debian/libwolfpkcs11/usr/lib/libwolfpkcs11.so.*.*.*
+# Place pkgconfig so that it is available for cross-compilation
+# https://lintian.debian.org/tags/pkg-config-unavailable-for-cross-compilation
+	@rm -rf debian/libwolfpkcs11/usr/lib/$(DEB_HOST_MULTIARCH)
+	@mkdir -p debian/libwolfpkcs11/usr/lib/$(DEB_HOST_MULTIARCH)
+	@if [ -d debian/libwolfpkcs11/usr/lib/pkgconfig ]; then \
+		mv debian/libwolfpkcs11/usr/lib/pkgconfig \
+			debian/libwolfpkcs11/usr/lib/$(DEB_HOST_MULTIARCH); \
+	fi
+# Set the expected access rules
+	@chmod 644 debian/libwolfpkcs11/usr/lib/libwolfpkcs11.so.*.*.*
+	@chmod 644 debian/libwolfpkcs11/usr/share/doc/libwolfpkcs11/changelog.gz \
+		debian/libwolfpkcs11/usr/share/doc/libwolfpkcs11/copyright \
+		debian/libwolfpkcs11-dev/usr/share/doc/libwolfpkcs11-dev/changelog.gz \
+		debian/libwolfpkcs11-dev/usr/share/doc/libwolfpkcs11-dev/copyright
+# Do this as the last step to mark all directories with the correct access bits
+	@find debian/libwolfpkcs11*/usr -type d | xargs chmod 755
+# Generate debs
+	dpkg-deb --root-owner-group -b debian/libwolfpkcs11 .
+	dpkg-deb --root-owner-group -b debian/libwolfpkcs11-dev .
+# Check that everything is correct with lintian
+# - we don't provide a manual page for wolfpkcs11-config
+# - we don't care about matching the soname for our debs
+	lintian *.deb --fail-on error,warning --tag-display-limit 0 \
+		--suppress-tags no-manual-page,package-name-doesnt-match-sonames
+# Clean up the working dirs
+	make deb-clean
+
+deb-clean:
+	rm -rf debian/libwolfpkcs11 debian/libwolfpkcs11-dev debian/files \
+		debian/*.substvars debian/.debhelper

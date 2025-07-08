@@ -1,0 +1,92 @@
+name: Debian Package Build and Install Test
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  debian-package-test:
+    runs-on: ubuntu-22.04
+    
+    steps:
+    # Pull wolfPKCS11
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+
+    # Install debian packaging tools
+    - name: Install debian packaging dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential autoconf gawk debhelper lintian
+
+    # Setup wolfssl with required flags for wolfPKCS11
+    - uses: actions/checkout@v4
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+    - name: wolfssl autogen
+      working-directory: ./wolfssl
+      run: ./autogen.sh
+    - name: wolfssl configure
+      working-directory: ./wolfssl
+      run: |
+        ./configure --enable-cryptocb --enable-aescfb --enable-aesctr  --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt --enable-md5 --enable-cmac \
+            C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT -DHAVE_AES_ECB"
+    - name: wolfssl make and install
+      working-directory: ./wolfssl
+      run: |
+        make
+        sudo make deb
+
+    - name: wolfssl install
+      working-directory: ./wolfssl
+      run: |
+        sudo dpkg -i libwolfssl_*.deb libwolfssl-dev_*.deb
+
+    # Setup wolfPKCS11
+    - name: wolfpkcs11 autogen
+      run: ./autogen.sh
+    - name: wolfpkcs11 configure
+      run: ./configure --enable-nss --enable-aesecb --enable-aesctr --enable-aesccm --enable-aescmac
+
+    # Test local debian package build
+    - name: Test make deb
+      run: |
+        make deb
+        ls -la *.deb
+
+    # Test debian package installation
+    - name: Test debian package installation
+      run: |
+        sudo dpkg -i libwolfpkcs11_*.deb libwolfpkcs11-dev_*.deb
+        
+    # Verify installation
+    - name: Verify package installation
+      run: |
+        dpkg -l | grep wolfpkcs11
+        ls -la /usr/lib/libwolfpkcs11*
+        ls -la /usr/include/wolfpkcs11/ || echo "Headers not found in expected location"
+        pkg-config --exists wolfpkcs11 && echo "pkg-config found wolfpkcs11" || echo "pkg-config did not find wolfpkcs11"
+
+    # Upload generated packages as artifacts
+    - name: Upload debian packages
+      uses: actions/upload-artifact@v4
+      with:
+        name: wolfpkcs11-debian-packages
+        path: "*.deb"
+        retention-days: 5
+
+    # Capture logs on failure
+    - name: Upload failure logs
+      if: failure() || cancelled()
+      uses: actions/upload-artifact@v4
+      with:
+        name: debian-package-test-logs
+        path: |
+          test-suite.log
+          debian/files
+          debian/*.log
+        retention-days: 5
