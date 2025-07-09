@@ -109,8 +109,9 @@ static CK_ATTRIBUTE_TYPE secretKeyParams[] = {
 
 /* Generic data attributes */
 static CK_ATTRIBUTE_TYPE genericDataParams[] = {
-    CKA_VALUE_LEN,
     CKA_VALUE,
+    CKA_APPLICATION,
+    CKA_OBJECT_ID
 };
 
 /* Count of generic data attributes */
@@ -604,8 +605,11 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
             if (attrs[i] == pTemplate[j].type) {
                 attrsFound = 1;
                 data[i] = (unsigned char*)pTemplate[j].pValue;
-                if (data[i] == NULL)
-                    return CKR_ATTRIBUTE_VALUE_INVALID;
+                if (data[i] == NULL) {
+                    /* For CKO_DATA, values can be NULL */
+                    if (objClass != CKO_DATA)
+                        return CKR_ATTRIBUTE_VALUE_INVALID;
+                }
                 len[i] = (int)pTemplate[j].ulValueLen;
                 break;
             }
@@ -666,6 +670,7 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
     /* Set remaining attributes - key specific attributes ignored. */
     for (i = 0; i < (int)ulCount; i++) {
         attr = &pTemplate[i];
+
         /* Cannot change sensitive from true to false */
         if (attr->type == CKA_SENSITIVE) {
             rv = WP11_Object_GetAttr(obj, CKA_SENSITIVE, &getVar, &getVarLen);

@@ -190,6 +190,15 @@ typedef struct WP11_Data {
     word32 len;                        /* Length of key data in bytes         */
 } WP11_Data;
 
+typedef struct WP11_GenericData {
+    byte *data;
+    word32 dataLen;
+    byte *application;
+    word32 applicationLen;
+    byte *objectId;                    /* CKA_OBJECT_ID, a DER encoded ID     */
+    word32 objectIdLen;
+} WP11_GenericData;
+
 /* Certificate */
 typedef struct WP11_Cert {
     byte *data;                        /* Certificate data                    */
@@ -228,7 +237,7 @@ struct WP11_Object {
         WP11_DhKey* dhKey;             /* DH parameters object                */
     #endif
         WP11_Data* symmKey;            /* Symmetric key object                */
-        WP11_Data* genericData;        /* Generic data object                 */
+        WP11_GenericData genericData;  /* Generic data object                 */
         WP11_Cert cert;                /* Certificate object                  */
     #ifdef WOLFPKCS11_NSS
         WP11_Trust trust;              /* Trust object                        */
@@ -2458,8 +2467,8 @@ static void wp11_Object_Decode_Trust(WP11_Object* object)
 
 static void wp11_Object_Decode_Data(WP11_Object* object)
 {
-    XMEMCPY((unsigned char*)&object->data.genericData, object->keyData,
-        object->keyDataLen);
+    /* No longer needed since wp11_Object_Load_Data handles
+     * deserialization directly */
     object->encoded = 0;
 }
 
@@ -2530,16 +2539,65 @@ static int wp11_Object_Load_Data(WP11_Object* object, int tokenId, int objId)
 {
     int ret;
     void* storage = NULL;
+    int tempLen;
 
     /* Open access to data. */
     ret = wp11_storage_open_readonly(WOLFPKCS11_STORE_DATA, tokenId, objId,
         &storage);
     if (ret == 0) {
-        /* Read data. */
-        ret = wp11_storage_read_alloc_array(storage, &object->keyData,
-            &object->keyDataLen);
+        /* Read data length and data. */
+        ret = wp11_storage_read_word32(storage, 
+            &object->data.genericData.dataLen);
+        if (ret == 0 && object->data.genericData.dataLen > 0) {
+            tempLen = (int)object->data.genericData.dataLen;
+            ret = wp11_storage_read_alloc_array(storage,
+                &object->data.genericData.data, 
+                &tempLen);
+            object->data.genericData.dataLen = (word32)tempLen;
+        }
+        else if (ret == 0) {
+            /* Ensure data is NULL when length is 0 */
+            object->data.genericData.data = NULL;
+            object->data.genericData.dataLen = 0;
+        }
+
+        /* Read application length and application. */
+        if (ret == 0) {
+            ret = wp11_storage_read_word32(storage,
+                &object->data.genericData.applicationLen);
+        }
+        if (ret == 0 && object->data.genericData.applicationLen > 0) {
+            tempLen = (int)object->data.genericData.applicationLen;
+            ret = wp11_storage_read_alloc_array(storage,
+                &object->data.genericData.application, 
+                &tempLen);
+            object->data.genericData.applicationLen = (word32)tempLen;
+        }
+        else if (ret == 0) {
+            /* Ensure application is NULL when length is 0 */
+            object->data.genericData.application = NULL;
+            object->data.genericData.applicationLen = 0;
+        }
+
+        /* Read object ID length and object ID. */
+        if (ret == 0) {
+            ret = wp11_storage_read_word32(storage,
+                &object->data.genericData.objectIdLen);
+        }
+        if (ret == 0 && object->data.genericData.objectIdLen > 0) {
+            tempLen = (int)object->data.genericData.objectIdLen;
+            ret = wp11_storage_read_alloc_array(storage,
+                &object->data.genericData.objectId, 
+                &tempLen);
+            object->data.genericData.objectIdLen = (word32)tempLen;
+        }
+        else if (ret == 0) {
+            /* Ensure objectId is NULL when length is 0 */
+            object->data.genericData.objectId = NULL;
+            object->data.genericData.objectIdLen = 0;
+        }
+
         wp11_storage_close(storage);
-        wp11_Object_Decode_Data(object);
     }
 
     return ret;
@@ -3029,11 +3087,39 @@ static int wp11_Object_Store_Data(WP11_Object* object, int tokenId, int objId)
 
     /* Open access to data. */
     ret = wp11_storage_open(WOLFPKCS11_STORE_DATA, tokenId, objId,
-        sizeof(WP11_Data), &storage);
+        sizeof(WP11_GenericData), &storage);
     if (ret == 0) {
-        /* Write data to storage. */
-        ret = wp11_storage_write_array(storage,
-            (unsigned char*)&object->data.genericData, sizeof(WP11_Data));
+        /* Write data length and data. */
+        ret = wp11_storage_write_word32(storage,
+            object->data.genericData.dataLen);
+        if (ret == 0 && object->data.genericData.dataLen > 0) {
+            ret = wp11_storage_write_array(storage,
+                object->data.genericData.data,
+                object->data.genericData.dataLen);
+        }
+
+        /* Write application length and application. */
+        if (ret == 0) {
+            ret = wp11_storage_write_word32(storage,
+                object->data.genericData.applicationLen);
+        }
+        if (ret == 0 && object->data.genericData.applicationLen > 0) {
+            ret = wp11_storage_write_array(storage,
+                object->data.genericData.application,
+                object->data.genericData.applicationLen);
+        }
+
+        /* Write object ID length and object ID. */
+        if (ret == 0) {
+            ret = wp11_storage_write_word32(storage,
+                object->data.genericData.objectIdLen);
+        }
+        if (ret == 0 && object->data.genericData.objectIdLen > 0) {
+            ret = wp11_storage_write_array(storage,
+                object->data.genericData.objectId,
+                object->data.genericData.objectIdLen);
+        }
+
         wp11_storage_close(storage);
     }
 
@@ -7115,6 +7201,11 @@ void WP11_Object_Free(WP11_Object* object)
         XFREE(object->data.cert.data, NULL, DYNAMIC_TYPE_CERT);
         certFreed = 1;
     }
+    else if (object->objClass == CKO_DATA) {
+        XFREE(object->data.genericData.data, NULL, DYNAMIC_TYPE_CERT);
+        XFREE(object->data.genericData.application, NULL, DYNAMIC_TYPE_CERT);
+        XFREE(object->data.genericData.objectId, NULL, DYNAMIC_TYPE_CERT);
+    }
     else {
     #ifndef NO_RSA
         if (object->type == CKK_RSA && object->data.rsaKey != NULL) {
@@ -7621,13 +7712,74 @@ int WP11_Object_DataObject(WP11_Object* object, unsigned char** data,
     if (object->onToken)
         WP11_Lock_LockRW(object->lock);
 
-    if (data[1] == NULL || len[1] == 0 || len[1] > WP11_MAX_SYM_KEY_SZ)
-        ret = BAD_FUNC_ARG;
-    else if (data[1] != NULL) {
-        XMEMCPY(object->data.genericData.data, data[1], len[1]);
-        object->data.genericData.len = (word32)len[1];
+    if (data[0] != NULL && len[0] > 0) {
+        if (object->data.genericData.data != NULL) {
+            XFREE(object->data.genericData.data, NULL, DYNAMIC_TYPE_CERT);
+        }
+        object->data.genericData.data =
+            XMALLOC(len[0], NULL, DYNAMIC_TYPE_CERT);
+        if (object->data.genericData.data == NULL) {
+            ret = MEMORY_E;
+        }
+        else {
+            XMEMCPY(object->data.genericData.data, data[0], len[0]);
+            object->data.genericData.dataLen = (word32)len[0];
+        }
+    }
+    else if (data[0] == NULL) {
+        /* Clear data if not provided */
+        if (object->data.genericData.data != NULL) {
+            XFREE(object->data.genericData.data, NULL, DYNAMIC_TYPE_CERT);
+            object->data.genericData.data = NULL;
+        }
+        object->data.genericData.dataLen = 0;
     }
 
+    if (ret == 0 && data[1] != NULL && len[1] > 0) {
+        if (object->data.genericData.application != NULL) {
+            XFREE(object->data.genericData.application, NULL, DYNAMIC_TYPE_CERT);
+        }
+        object->data.genericData.application =
+            XMALLOC(len[1], NULL, DYNAMIC_TYPE_CERT);
+        if (object->data.genericData.application == NULL) {
+            ret = MEMORY_E;
+        }
+        else {
+            XMEMCPY(object->data.genericData.application, data[1], len[1]);
+            object->data.genericData.applicationLen = (word32)len[1];
+        }
+    }
+    else if (ret == 0 && data[1] == NULL) {
+        /* Clear application if not provided */
+        if (object->data.genericData.application != NULL) {
+            XFREE(object->data.genericData.application, NULL, DYNAMIC_TYPE_CERT);
+            object->data.genericData.application = NULL;
+        }
+        object->data.genericData.applicationLen = 0;
+    }
+
+    if (ret == 0 && data[2] != NULL && len[2] > 0) {
+        if (object->data.genericData.objectId != NULL) {
+            XFREE(object->data.genericData.objectId, NULL, DYNAMIC_TYPE_CERT);
+        }
+        object->data.genericData.objectId =
+            XMALLOC(len[2], NULL, DYNAMIC_TYPE_CERT);
+        if (object->data.genericData.objectId == NULL) {
+            ret = MEMORY_E;
+        }
+        else {
+            XMEMCPY(object->data.genericData.objectId, data[2], len[2]);
+            object->data.genericData.objectIdLen = (word32)len[2];
+        }
+    }
+    else if (ret == 0 && data[2] == NULL) {
+        /* Clear object ID if not provided */
+        if (object->data.genericData.objectId != NULL) {
+            XFREE(object->data.genericData.objectId, NULL, DYNAMIC_TYPE_CERT);
+            object->data.genericData.objectId = NULL;
+        }
+        object->data.genericData.objectIdLen = 0;
+    }
 
     if (object->onToken)
         WP11_Lock_UnlockRW(object->lock);
@@ -7932,7 +8084,15 @@ static int GetDataAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
     switch (type) {
         case CKA_VALUE:
             ret = GetData((byte*)object->data.genericData.data,
-                object->data.genericData.len, data, len);
+                object->data.genericData.dataLen, data, len);
+            break;
+        case CKA_APPLICATION:
+            ret = GetData((byte*)object->data.genericData.application,
+                object->data.genericData.applicationLen, data, len);
+            break;
+        case CKA_OBJECT_ID:
+            ret = GetData((byte*)object->data.genericData.objectId,
+                object->data.genericData.objectIdLen, data, len);
             break;
         default:
             ret = NOT_AVAILABLE_E;
@@ -8482,7 +8642,13 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             ret = GetBool(CK_TRUE, data, len);
             break;
         case CKA_APPLICATION:
-            /* Not available */
+            if (object->objClass == CKO_DATA) {
+                ret = GetDataAttr(object, type, data, len);
+            }
+            else {
+                /* Not available for other object types */
+                ret = NOT_AVAILABLE_E;
+            }
             break;
         case CKA_ID:
             ret = GetData(object->keyId, object->keyIdLen, data, len);
@@ -8919,6 +9085,22 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                 default:
                     ret = BAD_FUNC_ARG;
                     break;
+            }
+            break;
+        case CKA_APPLICATION:
+            if (object->objClass == CKO_DATA) {
+                break; /* Handled in WP11_Object_DataObject */
+            }
+            else {
+                ret = BAD_FUNC_ARG;
+            }
+            break;
+        case CKA_OBJECT_ID:
+            if (object->objClass == CKO_DATA) {
+                break; /* Handled in WP11_Object_DataObject */
+            }
+            else {
+                ret = BAD_FUNC_ARG;
             }
             break;
 #ifdef WOLFPKCS11_NSS

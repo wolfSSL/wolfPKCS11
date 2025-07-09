@@ -3080,6 +3080,8 @@ static CK_RV test_data_object(void* args)
         0x72, 0x6C, 0x64, 0x21  /* "Hello World!" */
     };
     static byte testLabel[] = "TestDataObject";
+    static byte testApplication[] = "TestApplication";
+    static byte testObjectId[] = {0x01, 0x02, 0x03, 0x04};
 
     /* Template for creating a session data object */
     CK_ATTRIBUTE dataTemplate[] = {
@@ -3088,7 +3090,9 @@ static CK_RV test_data_object(void* args)
         { CKA_VALUE,        testData,          sizeof(testData)         },
         { CKA_TOKEN,        &ckFalse,          sizeof(ckFalse)          },
         { CKA_PRIVATE,      &ckFalse,          sizeof(ckFalse)          },
-        { CKA_MODIFIABLE,   &ckTrue,           sizeof(ckTrue)           }
+        { CKA_MODIFIABLE,   &ckTrue,           sizeof(ckTrue)           },
+        { CKA_APPLICATION,  testApplication,   sizeof(testApplication)  },
+        { CKA_OBJECT_ID,    testObjectId,      sizeof(testObjectId)     }
     };
     CK_ULONG dataTemplateCnt = sizeof(dataTemplate) / sizeof(*dataTemplate);
 
@@ -3099,7 +3103,9 @@ static CK_RV test_data_object(void* args)
         { CKA_VALUE,        testData,          sizeof(testData)         },
         { CKA_TOKEN,        &ckTrue,           sizeof(ckTrue)           },
         { CKA_PRIVATE,      &ckFalse,          sizeof(ckFalse)          },
-        { CKA_MODIFIABLE,   &ckTrue,           sizeof(ckTrue)           }
+        { CKA_MODIFIABLE,   &ckTrue,           sizeof(ckTrue)           },
+        { CKA_APPLICATION,  testApplication,   sizeof(testApplication)  },
+        { CKA_OBJECT_ID,    testObjectId,      sizeof(testObjectId)     }
     };
     CK_ULONG tokenDataTemplateCnt = sizeof(tokenDataTemplate) /
                                     sizeof(*tokenDataTemplate);
@@ -3111,7 +3117,9 @@ static CK_RV test_data_object(void* args)
         { CKA_VALUE,        NULL,   0 },
         { CKA_TOKEN,        NULL,   0 },
         { CKA_PRIVATE,      NULL,   0 },
-        { CKA_MODIFIABLE,   NULL,   0 }
+        { CKA_MODIFIABLE,   NULL,   0 },
+        { CKA_APPLICATION,  NULL,   0 },
+        { CKA_OBJECT_ID,    NULL,   0 }
     };
     CK_ULONG getTemplateCnt = sizeof(getTemplate) / sizeof(*getTemplate);
 
@@ -3122,6 +3130,8 @@ static CK_RV test_data_object(void* args)
     CK_BBOOL retToken;
     CK_BBOOL retPrivate;
     CK_BBOOL retModifiable;
+    byte retApplication[32];
+    byte retObjectId[32];
 
 
 
@@ -3163,6 +3173,12 @@ static CK_RV test_data_object(void* args)
 
         getTemplate[5].pValue = &retModifiable;
         getTemplate[5].ulValueLen = sizeof(retModifiable);
+
+        getTemplate[6].pValue = retApplication;
+        getTemplate[6].ulValueLen = sizeof(retApplication);
+
+        getTemplate[7].pValue = retObjectId;
+        getTemplate[7].ulValueLen = sizeof(retObjectId);
     }
 
     /* Test C_GetAttributeValue - get the actual values */
@@ -3212,6 +3228,20 @@ static CK_RV test_data_object(void* args)
         if (retModifiable != ckTrue) {
             ret = -1;
             CHECK_CKR(ret, "CKO_DATA modifiable attribute verification");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (XMEMCMP(retApplication, testApplication, sizeof(testApplication)) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA application attribute verification");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (XMEMCMP(retObjectId, testObjectId, sizeof(testObjectId)) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA object ID attribute verification");
         }
     }
 
@@ -3266,6 +3296,231 @@ static CK_RV test_data_object(void* args)
                 ret = -1;
                 CHECK_CKR(ret,
                           "Token CKO_DATA token attribute verification");
+            }
+        }
+    }
+
+    /* Clean up */
+    if (dataObj != CK_INVALID_HANDLE) {
+        funcList->C_DestroyObject(session, dataObj);
+    }
+    if (dataObjToken != CK_INVALID_HANDLE) {
+        funcList->C_DestroyObject(session, dataObjToken);
+    }
+
+    return ret;
+}
+
+static CK_RV test_data_object_null_value(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE dataObj = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE dataObjToken = CK_INVALID_HANDLE;
+
+    /* Test data for the data object - no value data */
+    static byte testLabel[] = "TestDataObjectNullValue";
+    static byte testApplication[] = "TestApplicationNull";
+    static byte testObjectId[] = {0x05, 0x06, 0x07, 0x08};
+
+    /* Template for creating a session data object with NULL value */
+    static CK_BBOOL sessionFalse = CK_FALSE;
+    CK_ATTRIBUTE dataTemplate[] = {
+        { CKA_CLASS,        &dataClass,        sizeof(dataClass)        },
+        { CKA_LABEL,        testLabel,         sizeof(testLabel)        },
+        { CKA_VALUE,        NULL,              0                        },
+        { CKA_TOKEN,        &sessionFalse,     sizeof(sessionFalse)     },
+        { CKA_PRIVATE,      &sessionFalse,     sizeof(sessionFalse)     },
+        { CKA_MODIFIABLE,   &ckTrue,           sizeof(ckTrue)           },
+        { CKA_APPLICATION,  testApplication,   sizeof(testApplication)  },
+        { CKA_OBJECT_ID,    testObjectId,      sizeof(testObjectId)     }
+    };
+    CK_ULONG dataTemplateCnt = sizeof(dataTemplate) / sizeof(*dataTemplate);
+
+    /* Template for creating a token data object with NULL value */
+    CK_ATTRIBUTE tokenDataTemplate[] = {
+        { CKA_CLASS,        &dataClass,        sizeof(dataClass)        },
+        { CKA_LABEL,        testLabel,         sizeof(testLabel)        },
+        { CKA_VALUE,        NULL,              0                        },
+        { CKA_TOKEN,        &ckTrue,           sizeof(ckTrue)           },
+        { CKA_PRIVATE,      &ckTrue,           sizeof(ckTrue)           },
+        { CKA_MODIFIABLE,   &ckTrue,           sizeof(ckTrue)           },
+        { CKA_APPLICATION,  testApplication,   sizeof(testApplication)  },
+        { CKA_OBJECT_ID,    testObjectId,      sizeof(testObjectId)     }
+    };
+    CK_ULONG tokenDataTemplateCnt = sizeof(tokenDataTemplate) /
+                                    sizeof(*tokenDataTemplate);
+
+    /* Template for retrieving attributes */
+    CK_ATTRIBUTE getTemplate[] = {
+        { CKA_CLASS,        NULL,   0 },
+        { CKA_LABEL,        NULL,   0 },
+        { CKA_VALUE,        NULL,   0 },
+        { CKA_TOKEN,        NULL,   0 },
+        { CKA_PRIVATE,      NULL,   0 },
+        { CKA_MODIFIABLE,   NULL,   0 },
+        { CKA_APPLICATION,  NULL,   0 },
+        { CKA_OBJECT_ID,    NULL,   0 }
+    };
+    CK_ULONG getTemplateCnt = sizeof(getTemplate) / sizeof(*getTemplate);
+
+    /* Buffers for retrieved attributes */
+    CK_OBJECT_CLASS retClass;
+    byte retLabel[32];
+    byte retValue[32];
+    CK_BBOOL retToken;
+    CK_BBOOL retPrivate;
+    CK_BBOOL retModifiable;
+    byte retApplication[32];
+    byte retObjectId[32];
+
+    /* Test creating a session data object with NULL value */
+    ret = funcList->C_CreateObject(session, dataTemplate, dataTemplateCnt,
+                                   &dataObj);
+    CHECK_CKR(ret, "Create CKO_DATA session object with NULL value");
+
+    /* Test creating a token data object with NULL value */
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, tokenDataTemplate,
+                                       tokenDataTemplateCnt, &dataObjToken);
+        CHECK_CKR(ret, "Create CKO_DATA token object with NULL value");
+    }
+
+    /* Test C_GetAttributeValue - first get the lengths */
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, dataObj, getTemplate,
+                                            getTemplateCnt);
+        CHECK_CKR(ret, "Get CKO_DATA attribute lengths for NULL value");
+    }
+
+    /* Verify that CKA_VALUE has length 0 */
+    if (ret == CKR_OK) {
+        if (getTemplate[2].ulValueLen != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA NULL value should have length 0");
+        }
+    }
+
+    /* Allocate buffers and set up pointers */
+    if (ret == CKR_OK) {
+        getTemplate[0].pValue = &retClass;
+        getTemplate[0].ulValueLen = sizeof(retClass);
+
+        getTemplate[1].pValue = retLabel;
+        getTemplate[1].ulValueLen = sizeof(retLabel);
+
+        getTemplate[2].pValue = retValue;
+        getTemplate[2].ulValueLen = sizeof(retValue);
+
+        getTemplate[3].pValue = &retToken;
+        getTemplate[3].ulValueLen = sizeof(retToken);
+
+        getTemplate[4].pValue = &retPrivate;
+        getTemplate[4].ulValueLen = sizeof(retPrivate);
+
+        getTemplate[5].pValue = &retModifiable;
+        getTemplate[5].ulValueLen = sizeof(retModifiable);
+
+        getTemplate[6].pValue = retApplication;
+        getTemplate[6].ulValueLen = sizeof(retApplication);
+
+        getTemplate[7].pValue = retObjectId;
+        getTemplate[7].ulValueLen = sizeof(retObjectId);
+    }
+
+    /* Test C_GetAttributeValue - get the actual values */
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, dataObj, getTemplate,
+                                            getTemplateCnt);
+        CHECK_CKR(ret, "Get CKO_DATA attribute values for NULL value");
+    }
+
+    /* Verify the retrieved values match what we set */
+    if (ret == CKR_OK) {
+        if (retClass != dataClass) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA NULL value class attribute verification");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (XMEMCMP(retLabel, testLabel, sizeof(testLabel)) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA NULL value label attribute verification");
+        }
+    }
+
+    /* Verify that CKA_VALUE is indeed empty/NULL */
+    if (ret == CKR_OK) {
+        if (getTemplate[2].ulValueLen != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA NULL value should remain length 0");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (retToken != sessionFalse) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA NULL value token attribute verification");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (retPrivate != sessionFalse) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA NULL value private attribute verification");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (retModifiable != ckTrue) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA NULL value modifiable attribute verification");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (XMEMCMP(retApplication, testApplication, sizeof(testApplication)) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA NULL value application attribute verification");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (XMEMCMP(retObjectId, testObjectId, sizeof(testObjectId)) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA NULL value object ID attribute verification");
+        }
+    }
+
+    /* Test getting CKA_VALUE individually to confirm it's NULL/empty */
+    if (ret == CKR_OK) {
+        CK_ATTRIBUTE singleAttr = { CKA_VALUE, NULL, 0 };
+        
+        ret = funcList->C_GetAttributeValue(session, dataObj, &singleAttr, 1);
+        CHECK_CKR(ret, "Get single CKA_VALUE attribute for NULL value");
+
+        if (ret == CKR_OK) {
+            if (singleAttr.ulValueLen != 0) {
+                ret = -1;
+                CHECK_CKR(ret, "Single CKA_VALUE NULL verification");
+            }
+        }
+    }
+
+    /* Test token data object attribute retrieval */
+    if (ret == CKR_OK) {
+        CK_ATTRIBUTE tokenAttr = { CKA_TOKEN, &retToken, sizeof(retToken) };
+
+        ret = funcList->C_GetAttributeValue(session, dataObjToken,
+                                            &tokenAttr, 1);
+        CHECK_CKR(ret, "Get token CKO_DATA attribute for NULL value");
+
+        if (ret == CKR_OK) {
+            if (retToken != ckTrue) {
+                ret = -1;
+                CHECK_CKR(ret,
+                          "Token CKO_DATA NULL value token attribute verification");
             }
         }
     }
@@ -14795,6 +15050,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_attribute_types),
     PKCS11TEST_FUNC_SESS_DECL(test_attribute_get),
     PKCS11TEST_FUNC_SESS_DECL(test_data_object),
+    PKCS11TEST_FUNC_SESS_DECL(test_data_object_null_value),
     PKCS11TEST_FUNC_SESS_DECL(test_attributes_secret),
 #ifndef NO_RSA
     PKCS11TEST_FUNC_SESS_DECL(test_attributes_rsa),
