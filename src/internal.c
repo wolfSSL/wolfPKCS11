@@ -9463,7 +9463,8 @@ int WP11_RsaPKCSPSS_Verify(unsigned char* sig, word32 sigLen,
     if (ret == 0) {
         ret = wc_RsaPSS_CheckPadding_ex(hash, hashLen, decSig, decSz,
                                           pss->hashType, pss->saltLen, 0);
-        if (ret == BAD_PADDING_E) {
+        /* Both can indicate that the verification failed */
+        if (ret == BAD_PADDING_E || ret == PSS_SALTLEN_E) {
             *stat = 0;
             ret = 0;
         }
