@@ -6445,9 +6445,6 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
     CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
     word32 serialSize = 0;
     byte* serialBuff = NULL;
-#ifndef NO_RSA
-    word32 encDataLen;
-#endif
 
     WOLFPKCS11_ENTER("C_WrapKey");
     #ifdef DEBUG_WOLFPKCS11
@@ -6565,6 +6562,8 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
 #endif
 #ifndef NO_RSA
         case CKM_RSA_PKCS:
+        {
+            word32 encDataLen;
             if (wrapkeyType != CKK_RSA) {
                 rv = CKR_WRAPPING_KEY_TYPE_INCONSISTENT;
                 goto err_out;
@@ -6600,6 +6599,7 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
             *pulWrappedKeyLen = encDataLen;
 
             break;
+        }
 #endif
         default:
             rv = CKR_MECHANISM_INVALID;

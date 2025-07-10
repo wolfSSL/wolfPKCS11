@@ -1950,6 +1950,7 @@ static CK_RV test_copy_object_rsa_key(void* args)
     CK_OBJECT_HANDLE pubKey = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE privKey = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE copiedPrivKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE copiedPubKey = CK_INVALID_HANDLE;
     CK_MECHANISM mech;
     CK_ULONG bits = 2048;
     static byte keyId[] = { 0xAA, 0xBB, 0xCC, 0xDD };
@@ -2008,11 +2009,33 @@ static CK_RV test_copy_object_rsa_key(void* args)
     CK_ULONG getCopiedAttrsCnt = sizeof(getCopiedAttrs) /
                                  sizeof(*getCopiedAttrs);
 
+    CK_ATTRIBUTE getOriginalPubAttrs[] = {
+        { CKA_ID,                NULL,              0                         },
+        { CKA_LABEL,             NULL,              0                         },
+        { CKA_MODULUS,           NULL,              0                         },
+        { CKA_PUBLIC_EXPONENT,   NULL,              0                         },
+    };
+    CK_ULONG getOriginalPubAttrsCnt = sizeof(getOriginalPubAttrs) /
+                                      sizeof(*getOriginalPubAttrs);
+
+    CK_ATTRIBUTE getCopiedPubAttrs[] = {
+        { CKA_ID,                NULL,              0                         },
+        { CKA_LABEL,             NULL,              0                         },
+        { CKA_MODULUS,           NULL,              0                         },
+        { CKA_PUBLIC_EXPONENT,   NULL,              0                         },
+    };
+    CK_ULONG getCopiedPubAttrsCnt = sizeof(getCopiedPubAttrs) /
+                                    sizeof(*getCopiedPubAttrs);
+
     /* Buffers for retrieved attributes */
     byte origId[32], copiedId[32];
     byte origLabel[64], copiedLabel[64];
     byte origModulus[512], copiedModulus[512];
     CK_BBOOL origExtractable, copiedExtractable;
+    byte origPubId[32], copiedPubId[32];
+    byte origPubLabel[64], copiedPubLabel[64];
+    byte origPubModulus[512], copiedPubModulus[512];
+    byte origPubExponent[8], copiedPubExponent[8];
 
     /* Generate RSA key pair */
     mech.mechanism = CKM_RSA_PKCS_KEY_PAIR_GEN;
@@ -2029,6 +2052,13 @@ static CK_RV test_copy_object_rsa_key(void* args)
         ret = funcList->C_CopyObject(session, privKey, copyTmpl, copyTmplCnt,
                                      &copiedPrivKey);
         CHECK_CKR(ret, "Copy RSA private key");
+    }
+
+    /* Test: Copy RSA public key */
+    if (ret == CKR_OK) {
+        ret = funcList->C_CopyObject(session, pubKey, copyTmpl, copyTmplCnt,
+                                     &copiedPubKey);
+        CHECK_CKR(ret, "Copy RSA public key");
     }
 
     /* Verify that both keys exist and have expected attributes */
@@ -2101,6 +2131,79 @@ static CK_RV test_copy_object_rsa_key(void* args)
         }
     }
 
+    /* Verify that both public keys exist and have expected attributes */
+    if (ret == CKR_OK) {
+        /* Set up buffers for original public key attributes */
+        getOriginalPubAttrs[0].pValue = origPubId;
+        getOriginalPubAttrs[0].ulValueLen = sizeof(origPubId);
+        getOriginalPubAttrs[1].pValue = origPubLabel;
+        getOriginalPubAttrs[1].ulValueLen = sizeof(origPubLabel);
+        getOriginalPubAttrs[2].pValue = origPubModulus;
+        getOriginalPubAttrs[2].ulValueLen = sizeof(origPubModulus);
+        getOriginalPubAttrs[3].pValue = origPubExponent;
+        getOriginalPubAttrs[3].ulValueLen = sizeof(origPubExponent);
+
+        ret = funcList->C_GetAttributeValue(session, pubKey, getOriginalPubAttrs,
+                                            getOriginalPubAttrsCnt);
+        CHECK_CKR(ret, "Get original RSA public key attributes");
+    }
+
+    if (ret == CKR_OK) {
+        /* Set up buffers for copied public key attributes */
+        getCopiedPubAttrs[0].pValue = copiedPubId;
+        getCopiedPubAttrs[0].ulValueLen = sizeof(copiedPubId);
+        getCopiedPubAttrs[1].pValue = copiedPubLabel;
+        getCopiedPubAttrs[1].ulValueLen = sizeof(copiedPubLabel);
+        getCopiedPubAttrs[2].pValue = copiedPubModulus;
+        getCopiedPubAttrs[2].ulValueLen = sizeof(copiedPubModulus);
+        getCopiedPubAttrs[3].pValue = copiedPubExponent;
+        getCopiedPubAttrs[3].ulValueLen = sizeof(copiedPubExponent);
+
+        ret = funcList->C_GetAttributeValue(session, copiedPubKey,
+                                            getCopiedPubAttrs, getCopiedPubAttrsCnt);
+        CHECK_CKR(ret, "Get copied RSA public key attributes");
+    }
+
+    /* Verify that public key attributes match */
+    if (ret == CKR_OK) {
+        if (getOriginalPubAttrs[0].ulValueLen != getCopiedPubAttrs[0].ulValueLen ||
+            XMEMCMP(origPubId, copiedPubId,
+                    getOriginalPubAttrs[0].ulValueLen) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Copied RSA public key ID should match original");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        /* Verify LABEL is different (modified) */
+        if (getCopiedPubAttrs[1].ulValueLen != sizeof(modifiedLabel)-1 ||
+            XMEMCMP(copiedPubLabel, modifiedLabel,
+                    sizeof(modifiedLabel)-1) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Copied RSA public key LABEL should be modified");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        /* Verify MODULUS matches (deep copy of RSA key structure) */
+        if (getOriginalPubAttrs[2].ulValueLen != getCopiedPubAttrs[2].ulValueLen ||
+            XMEMCMP(origPubModulus, copiedPubModulus,
+                    getOriginalPubAttrs[2].ulValueLen) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Copied RSA public key MODULUS should match original");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        /* Verify PUBLIC_EXPONENT matches */
+        if (getOriginalPubAttrs[3].ulValueLen != getCopiedPubAttrs[3].ulValueLen ||
+            XMEMCMP(origPubExponent, copiedPubExponent,
+                    getOriginalPubAttrs[3].ulValueLen) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Copied RSA public key PUBLIC_EXPONENT should match original");
+        }
+    }
+
     /* Test that both keys can be used for signing (verifying key structure
      * is intact) */
     if (ret == CKR_OK) {
@@ -2153,6 +2256,16 @@ static CK_RV test_copy_object_rsa_key(void* args)
                 CHECK_CKR(ret, "Verify signature from copied RSA key");
             }
         }
+
+        /* Also verify with copied public key */
+        if (ret == CKR_OK) {
+            ret = funcList->C_VerifyInit(session, &signMech, copiedPubKey);
+            if (ret == CKR_OK) {
+                ret = funcList->C_Verify(session, data, sizeof(data)-1,
+                                         signature1, sigLen1);
+                CHECK_CKR(ret, "Verify signature with copied RSA public key");
+            }
+        }
     }
 
     /* Clean up */
@@ -2164,6 +2277,9 @@ static CK_RV test_copy_object_rsa_key(void* args)
     }
     if (copiedPrivKey != CK_INVALID_HANDLE) {
         funcList->C_DestroyObject(session, copiedPrivKey);
+    }
+    if (copiedPubKey != CK_INVALID_HANDLE) {
+        funcList->C_DestroyObject(session, copiedPubKey);
     }
 
     return ret;
