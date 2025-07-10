@@ -503,7 +503,7 @@ struct WP11_Slot {
 
 
 /* Number of slots. */
-static const int slotCnt = 1;
+#define slotCnt 1
 /* List of slot objects. */
 static WP11_Slot slotList[1];
 /* Global random used in random API, cryptographic operations and generating
@@ -2238,7 +2238,20 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                 byte* derBuf = NULL;
                 int derSz = 0;
 
-                ret = wc_RsaKeyToDer(&src->data.rsaKey, NULL, 0);
+                /* Initialize destination RSA key */
+                ret = wc_InitRsaKey_ex(&dest->data.rsaKey, NULL,
+                                       dest->slot->devId);
+                if (ret != 0)
+                    break;
+
+                /* Determine if this is a private or public key and get DER
+                 * size */
+                if (src->objClass == CKO_PRIVATE_KEY) {
+                    ret = wc_RsaKeyToDer(&src->data.rsaKey, NULL, 0);
+                } else {
+                    ret = wc_RsaKeyToPublicDer(&src->data.rsaKey, NULL, 0);
+                }
+
                 if (ret == 0) /* Should not happen */
                     ret = BUFFER_E;
                 if (ret > 0) {
@@ -2246,21 +2259,36 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                     ret = 0;
                 }
                 if (ret == 0) {
-                    derBuf = (byte*)XMALLOC(derSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                    derBuf = (byte*)XMALLOC(derSz, NULL,
+                        DYNAMIC_TYPE_TMP_BUFFER);
                     if (derBuf == NULL)
                         ret = MEMORY_E;
                 }
                 if (ret == 0) {
-                    ret = wc_RsaKeyToDer(&src->data.rsaKey, derBuf, derSz);
+                    /* Encode the source key to DER */
+                    if (src->objClass == CKO_PRIVATE_KEY) {
+                        ret = wc_RsaKeyToDer(&src->data.rsaKey, derBuf, derSz);
+                    } else {
+                        ret = wc_RsaKeyToPublicDer(&src->data.rsaKey, derBuf,
+                            derSz);
+                    }
                     if (ret == 0) /* Should not happen */
                         ret = BUFFER_E;
                     if (ret > 0)
                         ret = 0;
                 }
                 if (ret == 0) {
+                    /* Decode the DER data into the destination key */
                     word32 idx = 0;
-                    ret = wc_RsaPrivateKeyDecode(derBuf, &idx, &
-                            dest->data.rsaKey, (word32)derSz);
+                    if (src->objClass == CKO_PRIVATE_KEY) {
+                        ret = wc_RsaPrivateKeyDecode(derBuf, &idx,
+                                                     &dest->data.rsaKey,
+                                                     (word32)derSz);
+                    } else {
+                        ret = wc_RsaPublicKeyDecode(derBuf, &idx,
+                                                    &dest->data.rsaKey,
+                                                    (word32)derSz);
+                    }
                 }
 
                 XFREE(derBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
