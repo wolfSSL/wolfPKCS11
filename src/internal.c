@@ -2248,7 +2248,8 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                  * size */
                 if (src->objClass == CKO_PRIVATE_KEY) {
                     ret = wc_RsaKeyToDer(&src->data.rsaKey, NULL, 0);
-                } else {
+                }
+                else {
                     ret = wc_RsaKeyToPublicDer(&src->data.rsaKey, NULL, 0);
                 }
 
@@ -2268,7 +2269,8 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                     /* Encode the source key to DER */
                     if (src->objClass == CKO_PRIVATE_KEY) {
                         ret = wc_RsaKeyToDer(&src->data.rsaKey, derBuf, derSz);
-                    } else {
+                    }
+                    else {
                         ret = wc_RsaKeyToPublicDer(&src->data.rsaKey, derBuf,
                             derSz);
                     }
@@ -2284,7 +2286,8 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                         ret = wc_RsaPrivateKeyDecode(derBuf, &idx,
                                                      &dest->data.rsaKey,
                                                      (word32)derSz);
-                    } else {
+                    }
+                    else {
                         ret = wc_RsaPublicKeyDecode(derBuf, &idx,
                                                     &dest->data.rsaKey,
                                                     (word32)derSz);
@@ -2312,7 +2315,8 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                 if (src->objClass == CKO_PRIVATE_KEY) {
                     initialDerSz = wc_EccPrivateKeyToDer(&src->data.ecKey,
                                                          NULL, 0);
-                } else {
+                }
+                else {
                     initialDerSz = wc_EccPublicKeyToDer(&src->data.ecKey,
                                                         NULL, 0, 1);
                 }
@@ -2322,10 +2326,12 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                     /* wolfSSL 5.6.6 compatibility */
                     derSz = 256; /* Conservative estimate for ECC key DER */
                     ret = 0;
-                } else if (initialDerSz > 0) {
+                }
+                else if (initialDerSz > 0) {
                     derSz = initialDerSz;
                     ret = 0;
-                } else {
+                }
+                else {
                     ret = initialDerSz; /* Pass through the error */
                 }
 
@@ -2342,7 +2348,8 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                     if (src->objClass == CKO_PRIVATE_KEY) {
                         ret = wc_EccPrivateKeyToDer(&src->data.ecKey, derBuf,
                                                     derSz);
-                    } else {
+                    }
+                    else {
                         ret = wc_EccPublicKeyToDer(&src->data.ecKey, derBuf,
                                                    derSz, 1);
                     }
@@ -2355,11 +2362,13 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                                                  DYNAMIC_TYPE_TMP_BUFFER);
                         if (derBuf == NULL) {
                             ret = MEMORY_E;
-                        } else {
+                        }
+                        else {
                             if (src->objClass == CKO_PRIVATE_KEY) {
                                 ret = wc_EccPrivateKeyToDer(&src->data.ecKey,
                                                             derBuf, derSz);
-                            } else {
+                            }
+                            else {
                                 ret = wc_EccPublicKeyToDer(&src->data.ecKey,
                                                            derBuf, derSz, 1);
                             }
@@ -2380,7 +2389,8 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                         ret = wc_EccPrivateKeyDecode(derBuf, &idx,
                                                      &dest->data.ecKey,
                                                      (word32)derSz);
-                    } else {
+                    }
+                    else {
                         ret = wc_EccPublicKeyDecode(derBuf, &idx,
                                                     &dest->data.ecKey,
                                                     (word32)derSz);
@@ -7770,9 +7780,7 @@ int WP11_Object_DataObject(WP11_Object* object, unsigned char** data,
         WP11_Lock_LockRW(object->lock);
 
     if (data[0] != NULL && len[0] > 0) {
-        if (object->data.genericData.data != NULL) {
-            XFREE(object->data.genericData.data, NULL, DYNAMIC_TYPE_CERT);
-        }
+        XFREE(object->data.genericData.data, NULL, DYNAMIC_TYPE_CERT);
         object->data.genericData.data =
             XMALLOC(len[0], NULL, DYNAMIC_TYPE_CERT);
         if (object->data.genericData.data == NULL) {
@@ -7785,17 +7793,13 @@ int WP11_Object_DataObject(WP11_Object* object, unsigned char** data,
     }
     else if (data[0] == NULL) {
         /* Clear data if not provided */
-        if (object->data.genericData.data != NULL) {
-            XFREE(object->data.genericData.data, NULL, DYNAMIC_TYPE_CERT);
-            object->data.genericData.data = NULL;
-        }
+        XFREE(object->data.genericData.data, NULL, DYNAMIC_TYPE_CERT);
+        object->data.genericData.data = NULL;
         object->data.genericData.dataLen = 0;
     }
 
     if (ret == 0 && data[1] != NULL && len[1] > 0) {
-        if (object->data.genericData.application != NULL) {
-            XFREE(object->data.genericData.application, NULL, DYNAMIC_TYPE_CERT);
-        }
+        XFREE(object->data.genericData.application, NULL, DYNAMIC_TYPE_CERT);
         object->data.genericData.application =
             XMALLOC(len[1], NULL, DYNAMIC_TYPE_CERT);
         if (object->data.genericData.application == NULL) {
@@ -7808,17 +7812,13 @@ int WP11_Object_DataObject(WP11_Object* object, unsigned char** data,
     }
     else if (ret == 0 && data[1] == NULL) {
         /* Clear application if not provided */
-        if (object->data.genericData.application != NULL) {
-            XFREE(object->data.genericData.application, NULL, DYNAMIC_TYPE_CERT);
-            object->data.genericData.application = NULL;
-        }
+        XFREE(object->data.genericData.application, NULL, DYNAMIC_TYPE_CERT);
+        object->data.genericData.application = NULL;
         object->data.genericData.applicationLen = 0;
     }
 
     if (ret == 0 && data[2] != NULL && len[2] > 0) {
-        if (object->data.genericData.objectId != NULL) {
-            XFREE(object->data.genericData.objectId, NULL, DYNAMIC_TYPE_CERT);
-        }
+        XFREE(object->data.genericData.objectId, NULL, DYNAMIC_TYPE_CERT);
         object->data.genericData.objectId =
             XMALLOC(len[2], NULL, DYNAMIC_TYPE_CERT);
         if (object->data.genericData.objectId == NULL) {
@@ -7831,10 +7831,8 @@ int WP11_Object_DataObject(WP11_Object* object, unsigned char** data,
     }
     else if (ret == 0 && data[2] == NULL) {
         /* Clear object ID if not provided */
-        if (object->data.genericData.objectId != NULL) {
-            XFREE(object->data.genericData.objectId, NULL, DYNAMIC_TYPE_CERT);
-            object->data.genericData.objectId = NULL;
-        }
+        XFREE(object->data.genericData.objectId, NULL, DYNAMIC_TYPE_CERT);
+        object->data.genericData.objectId = NULL;
         object->data.genericData.objectIdLen = 0;
     }
 
@@ -8777,68 +8775,64 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                 ret = CKR_ATTRIBUTE_TYPE_INVALID;
             break;
         case CKA_CHECK_VALUE:
-            if (object->objClass == CKO_CERTIFICATE)
+            if (object->objClass == CKO_CERTIFICATE) {
 #ifndef NO_SHA
                 ret = GetSha1CheckValue(object->data.cert.data,
                     object->data.cert.len, data, len);
 #else
                 ret = NOT_AVAILABLE_E;
 #endif
-            else if (object->objClass == CKO_SECRET_KEY)
+            }
+            else if (object->objClass == CKO_SECRET_KEY) {
 #ifdef HAVE_AESECB
                 ret = GetEcbCheckValue(object, data, len);
 #else
                 ret = NOT_AVAILABLE_E;
 #endif
+            }
             else
                 ret = NOT_AVAILABLE_E;
             break;
 
         default:
             {
-                if (object->objClass == CKO_CERTIFICATE) {
+                if (object->objClass == CKO_CERTIFICATE)
                     ret = GetCertAttr(object, type, data, len);
-                    break;
-                }
-                #if defined(WOLFPKCS11_NSS)
-                else if (object->objClass == CKO_NSS_TRUST) {
+#if defined(WOLFPKCS11_NSS)
+                else if (object->objClass == CKO_NSS_TRUST)
                     ret = GetTrustAttr(object, type, data, len);
-                    break;
-                }
-                #endif
-                else if (object->objClass == CKO_DATA) {
+#endif
+                else if (object->objClass == CKO_DATA)
                     ret = GetDataAttr(object, type, data, len);
-                    break;
-                }
                 else {
                     switch (object->type) {
-        #ifndef NO_RSA
+#ifndef NO_RSA
                         case CKK_RSA:
                             ret = RsaObject_GetAttr(object, type, data, len);
                             break;
-        #endif
-        #ifdef HAVE_ECC
+#endif
+#ifdef HAVE_ECC
                         case CKK_EC:
                             ret = EcObject_GetAttr(object, type, data, len);
                             break;
-        #endif
-        #ifndef NO_DH
+#endif
+#ifndef NO_DH
                         case CKK_DH:
                             ret = DhObject_GetAttr(object, type, data, len);
                             break;
-        #endif
-        #ifndef NO_AES
+#endif
+#ifndef NO_AES
                         case CKK_AES:
-        #endif
-        #ifdef WOLFPKCS11_HKDF
+#endif
+#ifdef WOLFPKCS11_HKDF
                         case CKK_HKDF:
-        #endif
+#endif
                         case CKK_GENERIC_SECRET:
                             ret = SecretObject_GetAttr(object, type, data, len);
                             break;
                     }
-                    break;
                 }
+                break;
             }
     }
 
@@ -9146,7 +9140,7 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             break;
         case CKA_APPLICATION:
             if (object->objClass == CKO_DATA) {
-                break; /* Handled in WP11_Object_DataObject */
+                /* Handled in WP11_Object_DataObject */
             }
             else {
                 ret = BAD_FUNC_ARG;
@@ -9154,7 +9148,7 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             break;
         case CKA_OBJECT_ID:
             if (object->objClass == CKO_DATA) {
-                break; /* Handled in WP11_Object_DataObject */
+                /* Handled in WP11_Object_DataObject */
             }
             else {
                 ret = BAD_FUNC_ARG;
