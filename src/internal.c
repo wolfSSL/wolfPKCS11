@@ -921,7 +921,7 @@ static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
         case WOLFPKCS11_STORE_DHKEY_PUB:
         case WOLFPKCS11_STORE_CERT:
         case WOLFPKCS11_STORE_TRUST:
-        case WOLFPKCS11_STOR_DATA:
+        case WOLFPKCS11_STORE_DATA:
             maxSz = sizeof(word32) + variableSz;
             break;
 
@@ -2271,6 +2271,7 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
             case CKK_EC: {
                 byte* derBuf = NULL;
                 int derSz = 0;
+                int initialDerSz = 0;
 
                 /* Initialize destination ECC key */
                 ret = wc_ecc_init_ex(&dest->data.ecKey, NULL,
@@ -2281,18 +2282,26 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                 /* Determine if this is a private or public key and get DER
                  * size */
                 if (src->objClass == CKO_PRIVATE_KEY) {
-                    ret = wc_EccPrivateKeyToDer(&src->data.ecKey, NULL, 0);
+                    initialDerSz = wc_EccPrivateKeyToDer(&src->data.ecKey,
+                                                         NULL, 0);
                 } else {
-                    ret = wc_EccPublicKeyToDer(&src->data.ecKey, NULL, 0, 1);
+                    initialDerSz = wc_EccPublicKeyToDer(&src->data.ecKey,
+                                                        NULL, 0, 1);
                 }
 
-                if (ret == 0) /* Should not happen */
-                    ret = BUFFER_E;
-                if (ret > 0) {
-                    derSz = ret;
+                /* Handle different return values for size estimation */
+                if (initialDerSz == LENGTH_ONLY_E || initialDerSz == 0) {
+                    /* wolfSSL 5.6.6 compatibility */
+                    derSz = 256; /* Conservative estimate for ECC key DER */
                     ret = 0;
+                } else if (initialDerSz > 0) {
+                    derSz = initialDerSz;
+                    ret = 0;
+                } else {
+                    ret = initialDerSz; /* Pass through the error */
                 }
 
+                /* Allocate buffer with retry logic */
                 if (ret == 0) {
                     derBuf = (byte*)XMALLOC(derSz, NULL,
                                             DYNAMIC_TYPE_TMP_BUFFER);
@@ -2301,7 +2310,7 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                 }
 
                 if (ret == 0) {
-                    /* Encode the source key to DER */
+                    /* Encode the source key to DER with retry logic */
                     if (src->objClass == CKO_PRIVATE_KEY) {
                         ret = wc_EccPrivateKeyToDer(&src->data.ecKey, derBuf,
                                                     derSz);
@@ -2310,10 +2319,30 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                                                    derSz, 1);
                     }
 
-                    if (ret == 0) /* Should not happen */
-                        ret = BUFFER_E;
-                    if (ret > 0)
+                    /* Handle buffer too small case */
+                    if (ret == BUFFER_E && derSz < 1024) {
+                        /* Reallocate buffer with larger size */
+                        derSz = 1024; /* Larger buffer size */
+                        derBuf = (byte*)XREALLOC(derBuf, derSz, NULL,
+                                                 DYNAMIC_TYPE_TMP_BUFFER);
+                        if (derBuf == NULL) {
+                            ret = MEMORY_E;
+                        } else {
+                            if (src->objClass == CKO_PRIVATE_KEY) {
+                                ret = wc_EccPrivateKeyToDer(&src->data.ecKey,
+                                                            derBuf, derSz);
+                            } else {
+                                ret = wc_EccPublicKeyToDer(&src->data.ecKey,
+                                                           derBuf, derSz, 1);
+                            }
+                        }
+                    }
+
+                    /* Normalize positive return to success */
+                    if (ret > 0) {
+                        derSz = ret; /* Update actual size used */
                         ret = 0;
+                    }
                 }
 
                 if (ret == 0) {
@@ -2546,12 +2575,12 @@ static int wp11_Object_Load_Data(WP11_Object* object, int tokenId, int objId)
         &storage);
     if (ret == 0) {
         /* Read data length and data. */
-        ret = wp11_storage_read_word32(storage, 
+        ret = wp11_storage_read_word32(storage,
             &object->data.genericData.dataLen);
         if (ret == 0 && object->data.genericData.dataLen > 0) {
             tempLen = (int)object->data.genericData.dataLen;
             ret = wp11_storage_read_alloc_array(storage,
-                &object->data.genericData.data, 
+                &object->data.genericData.data,
                 &tempLen);
             object->data.genericData.dataLen = (word32)tempLen;
         }
@@ -2569,7 +2598,7 @@ static int wp11_Object_Load_Data(WP11_Object* object, int tokenId, int objId)
         if (ret == 0 && object->data.genericData.applicationLen > 0) {
             tempLen = (int)object->data.genericData.applicationLen;
             ret = wp11_storage_read_alloc_array(storage,
-                &object->data.genericData.application, 
+                &object->data.genericData.application,
                 &tempLen);
             object->data.genericData.applicationLen = (word32)tempLen;
         }
@@ -2587,7 +2616,7 @@ static int wp11_Object_Load_Data(WP11_Object* object, int tokenId, int objId)
         if (ret == 0 && object->data.genericData.objectIdLen > 0) {
             tempLen = (int)object->data.genericData.objectIdLen;
             ret = wp11_storage_read_alloc_array(storage,
-                &object->data.genericData.objectId, 
+                &object->data.genericData.objectId,
                 &tempLen);
             object->data.genericData.objectIdLen = (word32)tempLen;
         }
