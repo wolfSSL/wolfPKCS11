@@ -7221,8 +7221,15 @@ int WP11_Session_FindGet(WP11_Session* session, CK_OBJECT_HANDLE* handle)
 
     if (session->find.curr == session->find.count)
         ret = FIND_NO_MORE_E;
-    if (ret == 0)
+    if (ret == 0) {
+#ifdef WOLFPKCS11_NSS
+        /* NSS relies on the latest object being found first */
+        *handle = session->find.found[session->find.count - 1 -
+                                      session->find.curr++];
+#else
         *handle = session->find.found[session->find.curr++];
+#endif
+    }
 
     return ret;
 }
