@@ -12589,6 +12589,11 @@ int WP11_GetOperationState(WP11_Session* session, unsigned char* stateData,
     *stateDataLen = sizeof(session->mechanism);
 
     switch (session->mechanism) {
+#ifndef NO_MD5
+        case CKM_MD5:
+            mechSize = sizeof(wc_Md5);
+            break;
+#endif
 #ifndef NO_SHA
         case CKM_SHA1:
             mechSize = sizeof(wc_Sha);
@@ -12636,6 +12641,11 @@ int WP11_GetOperationState(WP11_Session* session, unsigned char* stateData,
 
 
     switch (session->mechanism) {
+#ifndef NO_MD5
+        case CKM_MD5:
+            wc_Md5Copy(&hashAlg->md5, (wc_Md5*)stateData);
+            break;
+#endif
 #ifndef NO_SHA
         case CKM_SHA1:
             wc_ShaCopy(&hashAlg->sha, (wc_Sha*)stateData);
@@ -12683,6 +12693,11 @@ int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
 
     XMEMCPY(&session->mechanism, stateData, sizeof(session->mechanism));
     switch (session->mechanism) {
+#ifndef NO_MD5
+        case CKM_MD5:
+            mechSize = sizeof(wc_Md5);
+            break;
+#endif
 #ifndef NO_SHA
         case CKM_SHA1:
             mechSize = sizeof(wc_Sha);
@@ -12735,6 +12750,11 @@ int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
     #endif
 
     switch (session->mechanism) {
+#ifndef NO_MD5
+        case CKM_MD5:
+            wc_Md5Copy((wc_Md5*)stateData, &hashAlg->md5);
+            break;
+#endif
 #ifndef NO_SHA
         case CKM_SHA1:
             wc_ShaCopy((wc_Sha*)stateData, &hashAlg->sha);
