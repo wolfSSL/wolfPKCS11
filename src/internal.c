@@ -10737,6 +10737,8 @@ int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
                     unsigned char* key, word32* keyLen, WP11_Object* priv)
 {
     int ret = 0;
+    byte* privData = NULL;
+    word32 privLen = 0;
     byte* salt = NULL;
     unsigned long saltLen = 0;
     WP11_Object* saltKey = NULL;
@@ -10776,24 +10778,30 @@ int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
     }
 
     PRIVATE_KEY_UNLOCK();
+    if (priv->objClass == CKO_DATA) {
+        privData = priv->data.genericData.data;
+        privLen = priv->data.genericData.dataLen;
+    }
+    else {
+        privData = priv->data.symmKey.data;
+        privLen = priv->data.symmKey.len;
+    }
     if (params->bExtract && !params->bExpand) {
         ret = wc_HKDF_Extract(hashType, salt, (word32)saltLen,
-            priv->data.symmKey->data, priv->data.symmKey->len, key);
+            privData, privLen, key);
 
         if (!ret)
             *keyLen = hashLen;
     }
     else if (!params->bExtract && params->bExpand) {
-        ret = wc_HKDF_Expand(hashType, priv->data.symmKey->data,
-            priv->data.symmKey->len, params->pInfo, (word32)params->ulInfoLen,
+        ret = wc_HKDF_Expand(hashType, privData, privLen,
+            params->pInfo, (word32)params->ulInfoLen,
             key, *keyLen);
     }
     else {
         /* Both */
-        ret = wc_HKDF(hashType, priv->data.symmKey->data,
-            priv->data.symmKey->len,
-            salt, (word32)saltLen, params->pInfo, (word32)params->ulInfoLen,
-            key, *keyLen);
+        ret = wc_HKDF(hashType, privData, privLen, salt, (word32)saltLen,
+              params->pInfo, (word32)params->ulInfoLen, key, *keyLen);
     }
     PRIVATE_KEY_LOCK();
 
