@@ -4073,7 +4073,16 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
                 return CKR_KEY_TYPE_INCONSISTENT;
             if (pMechanism->pParameter != NULL ||
                                               pMechanism->ulParameterLen != 0) {
-                return CKR_MECHANISM_PARAM_INVALID;
+                /* input can be the expected output length */
+                if (pMechanism->ulParameterLen != sizeof(CK_ULONG)) {
+                    return CKR_MECHANISM_PARAM_INVALID;
+                }
+                if (pMechanism->pParameter == NULL) {
+                    return CKR_MECHANISM_PARAM_INVALID;
+                }
+                if (*((CK_ULONG*) pMechanism->pParameter) != 32) {
+                    return CKR_MECHANISM_PARAM_INVALID;
+                }
             }
             ret = WP11_Hmac_Init(pMechanism->mechanism, obj, session);
             if (ret != 0)
