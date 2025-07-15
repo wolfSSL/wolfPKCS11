@@ -209,7 +209,7 @@ jobs:
 
       - name: Configure NSS database
         run: |
-          mkdir -p /etc/pki/nssdb
+          sudo mkdir -p /etc/pki/nssdb
           cd /etc/pki
           
           # Initialize NSS database
