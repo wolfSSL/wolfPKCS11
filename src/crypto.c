@@ -4067,7 +4067,9 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
                 init = WP11_INIT_SHA3_512;
     #endif
     #endif
-            if (type != CKK_GENERIC_SECRET)
+            if (type != CKK_GENERIC_SECRET &&
+                    type != CKK_AES &&
+                    type != CKK_HKDF)
                 return CKR_KEY_TYPE_INCONSISTENT;
             if (pMechanism->pParameter != NULL ||
                                               pMechanism->ulParameterLen != 0) {
@@ -5086,7 +5088,9 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
                 init = WP11_INIT_SHA3_512;
     #endif
     #endif
-            if (type != CKK_GENERIC_SECRET)
+            if (type != CKK_GENERIC_SECRET &&
+                    type != CKK_AES &&
+                    type != CKK_HKDF)
                 return CKR_KEY_TYPE_INCONSISTENT;
             if (pMechanism->pParameter != NULL ||
                                               pMechanism->ulParameterLen != 0) {
