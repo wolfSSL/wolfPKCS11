@@ -5110,7 +5110,9 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
         case CKM_SHA3_512_HMAC:
     #endif
     #endif
-            if (type != CKK_GENERIC_SECRET)
+            if (type != CKK_GENERIC_SECRET &&
+                    type != CKK_AES &&
+                    type != CKK_HKDF)
                 return CKR_KEY_TYPE_INCONSISTENT;
             if (pMechanism->pParameter != NULL ||
                                               pMechanism->ulParameterLen != 0) {
