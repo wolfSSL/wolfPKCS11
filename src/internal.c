@@ -484,6 +484,10 @@ typedef struct WP11_Token {
     int objCnt;                        /* Count of objects on token           */
     int tokenFlags;                    /* Flags for token                     */
     int nextObjId;
+    byte userPinEmpty:2;               /* Indicates user PIN is empty
+                                        * 0 = not set
+                                        * 1 = empty
+                                        * 2 = not empty                       */
 } WP11_Token;
 
 struct WP11_Slot {
@@ -713,9 +717,28 @@ int WP11_Slot_Has_Empty_Pin(WP11_Slot* slot)
     if (slot == NULL)
         return 0;
 
-    if ((slot->token.tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET) &&
-        (WP11_Slot_CheckUserPin(slot, (char*)"", 0) == 0))
-        return 1;
+    if (slot->token.tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET) {
+        switch (slot->token.userPinEmpty) {
+            case 1:
+                /* Empty user PIN */
+                return 1;
+            case 2:
+                /* Non-empty user PIN */
+                return 0;
+            default:
+                /* Cache result as WP11_Slot_CheckUserPin is very expensive */
+                if (WP11_Slot_CheckUserPin(slot, (char*)"", 0) == 0) {
+                    /* Empty user PIN */
+                    slot->token.userPinEmpty = 1;
+                    return 1;
+                }
+                else {
+                    /* Non-empty user PIN */
+                    slot->token.userPinEmpty = 2;
+                    return 0;
+                }
+        }
+    }
 
     return 0;
 }
@@ -4855,6 +4878,7 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
         }
         if (ret == 0) {
             /* Read User's PIN. (32) */
+            token->userPinEmpty = 0;
             ret = wp11_storage_read_array(storage, token->userPin, &len,
                                           sizeof(token->userPin));
         }
@@ -6047,6 +6071,7 @@ int WP11_Slot_SetUserPin(WP11_Slot* slot, char* pin, int pinLen)
     if (ret == 0) {
         WP11_Lock_UnlockRW(&slot->lock);
         /* Costly Operation done out of lock. */
+        token->userPinEmpty = 0;
         ret = HashPIN(pin, pinLen, token->userPinSeed,
                                      sizeof(token->userPinSeed), token->userPin,
                                      sizeof(token->userPin));
