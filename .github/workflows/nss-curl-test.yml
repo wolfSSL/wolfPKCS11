@@ -50,8 +50,7 @@ jobs:
             vim \
             ca-certificates \
             libnss3-tools
-          ln -sf /usr/bin/python3 /usr/bin/python
-          rm -rf /var/lib/apt/lists/*
+          sudo rm -rf /var/lib/apt/lists/*
       
       - name: Cache NSPR
         id: cache-nspr
