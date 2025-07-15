@@ -216,11 +216,9 @@ jobs:
           sudo certutil -N -d sql:/etc/pki/nssdb --empty-password
 
           # Configure NSS to use wolfPKCS11
-          sudo cat > /etc/pki/nssdb/pkcs11.txt << EOF
-          library=/usr/local/lib/libwolfpkcs11.so
-          name=wolfPKCS11
-          NSS=Flags=internal,critical,fips cipherOrder=100 slotParams={0x00000001=[slotFlags=ECC,RSA,DSA,DH,RC2,RC4,DES,RANDOM,SHA1,MD5,MD2,SSL,TLS,AES,Camellia,SEED,SHA256,SHA512]}
-          EOF
+          sudo bash -c 'echo "library=/usr/local/lib/libwolfpkcs11.so" > /etc/pki/nssdb/pkcs11.txt'
+          sudo bash -c 'echo "name=wolfPKCS11" >> /etc/pki/nssdb/pkcs11.txt'
+          sudo bash -c 'echo "NSS=Flags=internal,critical,fips cipherOrder=100 slotParams={0x00000001=[slotFlags=ECC,RSA,DSA,DH,RC2,RC4,DES,RANDOM,SHA1,MD5,MD2,SSL,TLS,AES,Camellia,SEED,SHA256,SHA512]}" >> /etc/pki/nssdb/pkcs11.txt'
 
       - name: Copy NSS headers and libraries
         run: |
