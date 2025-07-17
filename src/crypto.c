@@ -3963,6 +3963,7 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
     WP11_Object* obj = NULL;
     CK_KEY_TYPE type;
     int init = 0;
+    CK_ULONG digestSize = 0;
     CK_RV rv;
 
     WOLFPKCS11_ENTER("C_SignInit");
