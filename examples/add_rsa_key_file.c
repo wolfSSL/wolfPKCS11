@@ -40,7 +40,7 @@
 #include <dlfcn.h>
 #endif
 
-#if !defined(WOLFPKCS11_NO_STORE) && !defined(NO_RSA)
+#if !defined(WOLFPKCS11_NO_STORE) && !defined(NO_RSA) && !defined(NO_FILESYSTEM)
 
 #ifdef DEBUG_WOLFPKCS11
     #define CHECK_CKR(rv, op)                                   \
@@ -422,5 +422,4 @@ int add_rsa_key_file(int argc, char* argv[])
     return 0;
 }
 
-#endif
-
+#endif /* !WOLFPKCS11_NO_STORE && !NO_RSA && !NO_FILESYSTEM */

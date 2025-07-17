@@ -643,9 +643,11 @@ static CK_MECHANISM_INFO ssl3MasterKeyDeriveInfo = {
     48, 48, CKF_DERIVE
 };
 #endif
+#ifdef WOLFSSL_HAVE_PRF
 static CK_MECHANISM_INFO tlsMacMechInfo = {
     0, 512, CKF_SIGN | CKF_VERIFY
 };
+#endif
 #ifndef NO_AES
 static CK_MECHANISM_INFO aesKeyGenMechInfo = {
     16, 32, CKF_GENERATE
@@ -1295,7 +1297,7 @@ CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
     WOLFPKCS11_ENTER("C_SetPIN");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        WOLFPKCS11_MSG("  hSession=%lu, ulOldLen=%lu, ulNewLen=%lu", 
+        WOLFPKCS11_MSG("  hSession=%lu, ulOldLen=%lu, ulNewLen=%lu",
                        (unsigned long)hSession, (unsigned long)ulOldLen, (unsigned long)ulNewLen);
     }
     #endif
@@ -1658,7 +1660,7 @@ CK_RV C_SetOperationState(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_SetOperationState");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        WOLFPKCS11_MSG("  hSession=%lu, ulOperationStateLen=%lu", 
+        WOLFPKCS11_MSG("  hSession=%lu, ulOperationStateLen=%lu",
                        (unsigned long)hSession, (unsigned long)ulOperationStateLen);
     }
     #endif
@@ -1719,7 +1721,7 @@ CK_RV C_Login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
     WOLFPKCS11_ENTER("C_Login");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        WOLFPKCS11_MSG("  hSession=%lu, userType=%lu, ulPinLen=%lu", 
+        WOLFPKCS11_MSG("  hSession=%lu, userType=%lu, ulPinLen=%lu",
                        (unsigned long)hSession, (unsigned long)userType, (unsigned long)ulPinLen);
     }
     #endif
