@@ -3849,6 +3849,7 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
     WP11_Object* obj = NULL;
     CK_KEY_TYPE type;
     int init = 0;
+    CK_ULONG digestSize = 0;
     CK_RV rv;
 
     WOLFPKCS11_ENTER("C_SignInit");
@@ -4008,63 +4009,83 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
 #ifndef NO_HMAC
     #ifndef NO_MD5
         case CKM_MD5_HMAC:
-            if (init == 0)
+            if (init == 0) {
                 init = WP11_INIT_MD5;
+                digestSize = WC_MD5_DIGEST_SIZE;
+            }
             FALL_THROUGH;
     #endif
     #ifndef NO_SHA
         case CKM_SHA1_HMAC:
-            if (init == 0)
+            if (init == 0) {
                 init = WP11_INIT_SHA1;
+                digestSize = WC_SHA_DIGEST_SIZE;
+            }
             FALL_THROUGH;
     #endif
     #ifdef WOLFSSL_SHA224
         case CKM_SHA224_HMAC:
-            if (init == 0)
+            if (init == 0) {
                 init = WP11_INIT_SHA224;
+                digestSize = WC_SHA224_DIGEST_SIZE;
+            }
             FALL_THROUGH;
     #endif
     #ifndef NO_SHA256
         case CKM_SHA256_HMAC:
-            if (init == 0)
+            if (init == 0) {
                 init = WP11_INIT_SHA256;
+                digestSize = WC_SHA256_DIGEST_SIZE;
+            }
             FALL_THROUGH;
     #endif
     #ifdef WOLFSSL_SHA384
         case CKM_SHA384_HMAC:
-            if (init == 0)
+            if (init == 0) {
                 init = WP11_INIT_SHA384;
+                digestSize = WC_SHA384_DIGEST_SIZE;
+            }
             FALL_THROUGH;
     #endif
     #ifdef WOLFSSL_SHA512
         case CKM_SHA512_HMAC:
-            if (init == 0)
+            if (init == 0) {
                 init = WP11_INIT_SHA512;
+                digestSize = WC_SHA512_DIGEST_SIZE;
+            }
             FALL_THROUGH;
     #endif
     #ifdef WOLFSSL_SHA3
     #ifndef WOLFSSL_NOSHA3_224
         case CKM_SHA3_224_HMAC:
-            if (init == 0)
+            if (init == 0) {
                 init = WP11_INIT_SHA3_224;
+                digestSize = WC_SHA3_224_DIGEST_SIZE;
+            }
             FALL_THROUGH;
     #endif
     #ifndef WOLFSSL_NOSHA3_256
         case CKM_SHA3_256_HMAC:
-            if (init == 0)
+            if (init == 0) {
                 init = WP11_INIT_SHA3_256;
+                digestSize = WC_SHA3_256_DIGEST_SIZE;
+            }
             FALL_THROUGH;
     #endif
     #ifndef WOLFSSL_NOSHA3_384
         case CKM_SHA3_384_HMAC:
-            if (init == 0)
+            if (init == 0) {
                 init = WP11_INIT_SHA3_384;
+                digestSize = WC_SHA3_384_DIGEST_SIZE;
+            }
             FALL_THROUGH;
     #endif
     #ifndef WOLFSSL_NOSHA3_512
         case CKM_SHA3_512_HMAC:
-            if (init == 0)
+            if (init == 0) {
                 init = WP11_INIT_SHA3_512;
+                digestSize = WC_SHA3_512_DIGEST_SIZE;
+            }
     #endif
     #endif
             if (type != CKK_GENERIC_SECRET &&
@@ -4080,7 +4101,7 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
                 if (pMechanism->pParameter == NULL) {
                     return CKR_MECHANISM_PARAM_INVALID;
                 }
-                if (*((CK_ULONG*) pMechanism->pParameter) != 32) {
+                if (*((CK_ULONG*) pMechanism->pParameter) != digestSize) {
                     return CKR_MECHANISM_PARAM_INVALID;
                 }
             }
