@@ -55,7 +55,8 @@
     ( \
             (kc == CKO_PRIVATE_KEY && kt == CKK_RSA) || \
             (kc == CKO_SECRET_KEY && kt == CKK_AES) || \
-            (kc == CKO_SECRET_KEY && kt == CKK_GENERIC_SECRET) \
+            (kc == CKO_SECRET_KEY && kt == CKK_GENERIC_SECRET) || \
+            (kc == CKO_SECRET_KEY && kt == CKK_HKDF) \
     ) \
     ? CKR_OK: CKR_KEY_NOT_WRAPPABLE
 
@@ -103,8 +104,19 @@ static CK_ATTRIBUTE_TYPE secretKeyParams[] = {
     CKA_VALUE_LEN,
     CKA_VALUE,
 };
+
 /* Count of secret key data attributes. */
 #define SECRET_KEY_PARAMS_CNT (sizeof(secretKeyParams)/sizeof(*secretKeyParams))
+
+/* Generic data attributes */
+static CK_ATTRIBUTE_TYPE genericDataParams[] = {
+    CKA_VALUE,
+    CKA_APPLICATION,
+    CKA_OBJECT_ID
+};
+
+/* Count of generic data attributes */
+#define DATA_PARAMS_CNT (sizeof(genericDataParams)/sizeof(*genericDataParams))
 
 /* Certificate data attributes */
 static CK_ATTRIBUTE_TYPE certParams[] = {
@@ -548,6 +560,10 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
         cnt = TRUST_PARAMS_CNT;
     }
 #endif
+    else if (objClass == CKO_DATA) {
+        attrs = genericDataParams;
+        cnt = DATA_PARAMS_CNT;
+    }
     else {
         /* Get the value and length of key specific attribute types. */
         switch (type) {
@@ -590,8 +606,11 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
             if (attrs[i] == pTemplate[j].type) {
                 attrsFound = 1;
                 data[i] = (unsigned char*)pTemplate[j].pValue;
-                if (data[i] == NULL)
-                    return CKR_ATTRIBUTE_VALUE_INVALID;
+                if (data[i] == NULL) {
+                    /* For CKO_DATA, values can be NULL */
+                    if (objClass != CKO_DATA)
+                        return CKR_ATTRIBUTE_VALUE_INVALID;
+                }
                 len[i] = (int)pTemplate[j].ulValueLen;
                 break;
             }
@@ -607,6 +626,9 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
             ret = WP11_Object_SetTrust(obj, data, len);
         }
 #endif
+        else if (objClass == CKO_DATA) {
+            ret = WP11_Object_DataObject(obj, data, len);
+        }
         else {
             /* Set the value and length of key specific attributes
             * Old key data is cleared.
@@ -649,6 +671,7 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
     /* Set remaining attributes - key specific attributes ignored. */
     for (i = 0; i < (int)ulCount; i++) {
         attr = &pTemplate[i];
+
         /* Cannot change sensitive from true to false */
         if (attr->type == CKA_SENSITIVE) {
             rv = WP11_Object_GetAttr(obj, CKA_SENSITIVE, &getVar, &getVarLen);
@@ -942,7 +965,6 @@ static CK_RV CreateObject(WP11_Session* session, CK_ATTRIBUTE_PTR pTemplate,
         FindAttributeType(pTemplate, ulCount, CKA_VALUE, &attr);
         if (attr == NULL)
             return CKR_TEMPLATE_INCOMPLETE;
-        objType = CKK_HKDF;
     }
 #ifdef WOLFPKCS11_NSS
     else if (objectClass == CKO_NSS_TRUST) {
@@ -1104,7 +1126,7 @@ CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
         WOLFPKCS11_LEAVE("C_CopyObject", rv);
         return rv;
     }
-    if (pTemplate == NULL || phNewObject == NULL) {
+    if (phNewObject == NULL) {
         rv = CKR_ARGUMENTS_BAD;
         WOLFPKCS11_LEAVE("C_CopyObject", rv);
         return rv;
@@ -1114,6 +1136,13 @@ CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
         WOLFPKCS11_LEAVE("C_CopyObject", rv);
         return rv;
     }
+    if (pTemplate == NULL && ulCount > 0) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_CopyObject", rv);
+        return rv;
+    }
+
+
 
     /* Need key type and whether object is to be on the token to create a new
      * object. Get the object type from original object and where to store
@@ -1139,16 +1168,19 @@ CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
     if (ret != 0)
         return CKR_FUNCTION_FAILED;
 
-    /* Use get and set attribute value to fill in object. */
-    rv = C_GetAttributeValue(hSession, hObject, pTemplate, ulCount);
+    /* copy all the attributes from the original object to the new object */
+    rv = WP11_Object_Copy(obj, newObj);
     if (rv != CKR_OK) {
         WP11_Object_Free(newObj);
         return rv;
     }
-    rv = SetAttributeValue(session, newObj, pTemplate, ulCount, CK_TRUE);
-    if (rv != CKR_OK) {
-        WP11_Object_Free(newObj);
-        return rv;
+
+    if (pTemplate != NULL) {
+        rv = SetAttributeValue(session, newObj, pTemplate, ulCount, CK_FALSE);
+        if (rv != CKR_OK) {
+            WP11_Object_Free(newObj);
+            return rv;
+        }
     }
 
     ret = WP11_Session_AddObject(session, onToken, newObj);
@@ -2936,7 +2968,7 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
                                                  &decDataLen, obj,
                                                  WP11_Session_GetSlot(session));
             if (ret < 0)
-                return CKR_FUNCTION_FAILED;
+                return CKR_ENCRYPTED_DATA_INVALID;
             *pulDataLen = decDataLen;
             break;
         case CKM_RSA_PKCS:
@@ -2956,7 +2988,7 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
                                                  &decDataLen, obj,
                                                  WP11_Session_GetSlot(session));
             if (ret < 0)
-                return CKR_FUNCTION_FAILED;
+                return CKR_ENCRYPTED_DATA_INVALID;
             *pulDataLen = decDataLen;
             break;
     #ifndef WC_NO_RSA_OAEP
@@ -2978,7 +3010,7 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
                                                  (int)ulEncryptedDataLen, pData,
                                                  &decDataLen, obj, session);
             if (ret < 0)
-                return CKR_FUNCTION_FAILED;
+                return CKR_ENCRYPTED_DATA_INVALID;
             *pulDataLen = decDataLen;
             break;
     #endif
@@ -3000,7 +3032,7 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
             ret = WP11_AesCbc_Decrypt(pEncryptedData, (int)ulEncryptedDataLen,
                                               pData, &decDataLen, session);
             if (ret < 0)
-                return CKR_FUNCTION_FAILED;
+                return CKR_ENCRYPTED_DATA_INVALID;
             *pulDataLen = decDataLen;
             break;
         case CKM_AES_CBC_PAD:
@@ -3019,7 +3051,7 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
                                                  (int)ulEncryptedDataLen, pData,
                                                  &decDataLen, session);
             if (ret < 0)
-                return CKR_FUNCTION_FAILED;
+                return CKR_ENCRYPTED_DATA_INVALID;
             *pulDataLen = decDataLen;
             break;
     #endif
@@ -3039,7 +3071,7 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
             ret = WP11_AesCtr_Do(pEncryptedData,
                     (word32)ulEncryptedDataLen, pData, &decDataLen, session);
             if (ret != 0)
-                return CKR_FUNCTION_FAILED;
+                return CKR_ENCRYPTED_DATA_INVALID;
             *pulDataLen = decDataLen;
             break;
     #endif
@@ -3060,7 +3092,7 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
             ret = WP11_AesGcm_Decrypt(pEncryptedData, (int)ulEncryptedDataLen,
                                               pData, &decDataLen, obj, session);
             if (ret < 0)
-                return CKR_FUNCTION_FAILED;
+                return CKR_ENCRYPTED_DATA_INVALID;
             *pulDataLen = decDataLen;
             break;
     #endif
@@ -3081,7 +3113,7 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
             ret = WP11_AesCcm_Decrypt(pEncryptedData, (int)ulEncryptedDataLen,
                                       pData, &decDataLen, obj, session);
             if (ret < 0)
-                return CKR_FUNCTION_FAILED;
+                return CKR_ENCRYPTED_DATA_INVALID;
             *pulDataLen = decDataLen;
             break;
     #endif
@@ -3101,7 +3133,7 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
             ret = WP11_AesEcb_Decrypt(pEncryptedData, (int)ulEncryptedDataLen,
                                       pData, &decDataLen, obj, session);
             if (ret < 0)
-                return CKR_FUNCTION_FAILED;
+                return CKR_ENCRYPTED_DATA_INVALID;
             *pulDataLen = decDataLen;
             break;
     #endif
@@ -3123,7 +3155,7 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
             if (ret == BUFFER_E)
                 return CKR_BUFFER_TOO_SMALL;
             if (ret < 0)
-                return CKR_FUNCTION_FAILED;
+                return CKR_ENCRYPTED_DATA_INVALID;
             *pulDataLen = decDataLen;
             break;
     #endif
@@ -3147,15 +3179,15 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
             ret = WP11_AesKeyWrap_Decrypt(pEncryptedData,
                     (word32)ulEncryptedDataLen, pData, &decDataLen, session);
             if (ret != 0)
-                return CKR_FUNCTION_FAILED;
+                return CKR_ENCRYPTED_DATA_INVALID;
             if (mechanism == CKM_AES_KEY_WRAP_PAD) {
                 int i;
                 byte padValue = pData[decDataLen - 1];
                 if (padValue > KEYWRAP_BLOCK_SIZE || padValue > decDataLen)
-                    return CKR_FUNCTION_FAILED;
+                    return CKR_ENCRYPTED_DATA_LEN_RANGE;
                 for (i = 0; i < padValue; i++) {
                     if (pData[decDataLen - 1 - i] != padValue)
-                        return CKR_FUNCTION_FAILED;
+                        return CKR_ENCRYPTED_DATA_INVALID;
                 }
                 decDataLen -= padValue;
             }
@@ -3818,6 +3850,7 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
     WP11_Object* obj = NULL;
     CK_KEY_TYPE type;
     int init = 0;
+    CK_ULONG digestSize = 0;
     CK_RV rv;
 
     WOLFPKCS11_ENTER("C_SignInit");
@@ -3977,70 +4010,101 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
 #ifndef NO_HMAC
     #ifndef NO_MD5
         case CKM_MD5_HMAC:
-            if (init == 0)
+            if (init == 0) {
                 init = WP11_INIT_MD5;
+                digestSize = WC_MD5_DIGEST_SIZE;
+            }
             FALL_THROUGH;
     #endif
     #ifndef NO_SHA
         case CKM_SHA1_HMAC:
-            if (init == 0)
+            if (init == 0) {
                 init = WP11_INIT_SHA1;
+                digestSize = WC_SHA_DIGEST_SIZE;
+            }
             FALL_THROUGH;
     #endif
     #ifdef WOLFSSL_SHA224
         case CKM_SHA224_HMAC:
-            if (init == 0)
+            if (init == 0) {
                 init = WP11_INIT_SHA224;
+                digestSize = WC_SHA224_DIGEST_SIZE;
+            }
             FALL_THROUGH;
     #endif
     #ifndef NO_SHA256
         case CKM_SHA256_HMAC:
-            if (init == 0)
+            if (init == 0) {
                 init = WP11_INIT_SHA256;
+                digestSize = WC_SHA256_DIGEST_SIZE;
+            }
             FALL_THROUGH;
     #endif
     #ifdef WOLFSSL_SHA384
         case CKM_SHA384_HMAC:
-            if (init == 0)
+            if (init == 0) {
                 init = WP11_INIT_SHA384;
+                digestSize = WC_SHA384_DIGEST_SIZE;
+            }
             FALL_THROUGH;
     #endif
     #ifdef WOLFSSL_SHA512
         case CKM_SHA512_HMAC:
-            if (init == 0)
+            if (init == 0) {
                 init = WP11_INIT_SHA512;
+                digestSize = WC_SHA512_DIGEST_SIZE;
+            }
             FALL_THROUGH;
     #endif
     #ifdef WOLFSSL_SHA3
     #ifndef WOLFSSL_NOSHA3_224
         case CKM_SHA3_224_HMAC:
-            if (init == 0)
+            if (init == 0) {
                 init = WP11_INIT_SHA3_224;
+                digestSize = WC_SHA3_224_DIGEST_SIZE;
+            }
             FALL_THROUGH;
     #endif
     #ifndef WOLFSSL_NOSHA3_256
         case CKM_SHA3_256_HMAC:
-            if (init == 0)
+            if (init == 0) {
                 init = WP11_INIT_SHA3_256;
+                digestSize = WC_SHA3_256_DIGEST_SIZE;
+            }
             FALL_THROUGH;
     #endif
     #ifndef WOLFSSL_NOSHA3_384
         case CKM_SHA3_384_HMAC:
-            if (init == 0)
+            if (init == 0) {
                 init = WP11_INIT_SHA3_384;
+                digestSize = WC_SHA3_384_DIGEST_SIZE;
+            }
             FALL_THROUGH;
     #endif
     #ifndef WOLFSSL_NOSHA3_512
         case CKM_SHA3_512_HMAC:
-            if (init == 0)
+            if (init == 0) {
                 init = WP11_INIT_SHA3_512;
+                digestSize = WC_SHA3_512_DIGEST_SIZE;
+            }
     #endif
     #endif
-            if (type != CKK_GENERIC_SECRET)
+            if (type != CKK_GENERIC_SECRET &&
+                    type != CKK_AES &&
+                    type != CKK_HKDF)
                 return CKR_KEY_TYPE_INCONSISTENT;
             if (pMechanism->pParameter != NULL ||
                                               pMechanism->ulParameterLen != 0) {
-                return CKR_MECHANISM_PARAM_INVALID;
+                /* input can be the expected output length */
+                if (pMechanism->ulParameterLen != sizeof(CK_ULONG)) {
+                    return CKR_MECHANISM_PARAM_INVALID;
+                }
+                if (pMechanism->pParameter == NULL) {
+                    return CKR_MECHANISM_PARAM_INVALID;
+                }
+                if (*((CK_ULONG*) pMechanism->pParameter) != digestSize) {
+                    return CKR_MECHANISM_PARAM_INVALID;
+                }
             }
             ret = WP11_Hmac_Init(pMechanism->mechanism, obj, session);
             if (ret != 0)
@@ -5055,7 +5119,9 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
                 init = WP11_INIT_SHA3_512;
     #endif
     #endif
-            if (type != CKK_GENERIC_SECRET)
+            if (type != CKK_GENERIC_SECRET &&
+                    type != CKK_AES &&
+                    type != CKK_HKDF)
                 return CKR_KEY_TYPE_INCONSISTENT;
             if (pMechanism->pParameter != NULL ||
                                               pMechanism->ulParameterLen != 0) {
@@ -6482,6 +6548,7 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
 #ifndef NO_AES
         case CKK_AES:
 #endif
+        case CKK_HKDF:
         case CKK_GENERIC_SECRET:
             ret = WP11_Generic_SerializeKey(key, NULL, &serialSize);
             if (ret != 0) {
@@ -6514,6 +6581,7 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
         case CKM_AES_KEY_WRAP_PAD:
 #endif
         case CKM_AES_CBC_PAD:
+        case CKM_AES_ECB:
             if (wrapkeyType != CKK_AES) {
                 rv = CKR_WRAPPING_KEY_TYPE_INCONSISTENT;
                 goto err_out;
@@ -6528,6 +6596,47 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
                 goto err_out;
 
             break;
+#endif
+#ifndef NO_RSA
+        case CKM_RSA_PKCS:
+        {
+            word32 encDataLen;
+            if (wrapkeyType != CKK_RSA) {
+                rv = CKR_WRAPPING_KEY_TYPE_INCONSISTENT;
+                goto err_out;
+            }
+
+            if (pMechanism->pParameter != NULL ||
+                pMechanism->ulParameterLen != 0) {
+                rv = CKR_MECHANISM_PARAM_INVALID;
+                goto err_out;
+            }
+
+            encDataLen = WP11_Rsa_KeyLen(wrappingKey);
+            if (pWrappedKey == NULL) {
+                *pulWrappedKeyLen = encDataLen;
+                rv = CKR_OK;
+                goto err_out;
+            }
+            if (*pulWrappedKeyLen < encDataLen) {
+                *pulWrappedKeyLen = encDataLen;
+                rv = CKR_BUFFER_TOO_SMALL;
+                goto err_out;
+            }
+
+            ret = WP11_RsaPkcs15_PublicEncrypt(serialBuff, serialSize,
+                                                pWrappedKey, &encDataLen,
+                                                wrappingKey,
+                                                WP11_Session_GetSlot(session)
+                                                );
+            if (ret != 0) {
+                rv = CKR_FUNCTION_FAILED;
+                goto err_out;
+            }
+            *pulWrappedKeyLen = encDataLen;
+
+            break;
+        }
 #endif
         default:
             rv = CKR_MECHANISM_INVALID;
@@ -6585,6 +6694,9 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
     CK_ATTRIBUTE*     attr = NULL;
     byte* workBuffer = NULL;
     CK_ULONG ulUnwrappedLen = ulWrappedKeyLen;
+#ifndef NO_RSA
+    word32 decryptedLen;
+#endif
 
     WOLFPKCS11_ENTER("C_UnwrapKey");
     #ifdef DEBUG_WOLFPKCS11
@@ -6657,6 +6769,7 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
         case CKM_AES_KEY_WRAP_PAD:
 #endif
         case CKM_AES_CBC_PAD:
+        case CKM_AES_ECB:
 
             if (wrapkeyType != CKK_AES)
                 return CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT;
@@ -6677,6 +6790,36 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
 
             break;
 #endif
+#ifndef NO_RSA
+        case CKM_RSA_PKCS:
+            if (wrapkeyType != CKK_RSA)
+                return CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT;
+
+            if (pMechanism->pParameter != NULL ||
+                                              pMechanism->ulParameterLen != 0) {
+                rv = CKR_MECHANISM_PARAM_INVALID;
+                goto err_out;
+            }
+
+            workBuffer = (byte*)XMALLOC(ulWrappedKeyLen, NULL,
+                DYNAMIC_TYPE_TMP_BUFFER);
+            if (workBuffer == NULL)
+                return CKR_HOST_MEMORY;
+
+            decryptedLen = (word32)ulUnwrappedLen;
+            ret = WP11_RsaPkcs15_PrivateDecrypt(pWrappedKey, decryptedLen,
+                                                workBuffer, &decryptedLen,
+                                                unwrappingKey,
+                                                WP11_Session_GetSlot(session));
+            ulUnwrappedLen = (CK_ULONG)decryptedLen;
+
+            if (ret != 0) {
+                rv = CKR_FUNCTION_FAILED;
+                goto err_out;
+            }
+
+            break;
+#endif
         default:
             rv = CKR_MECHANISM_INVALID;
             goto err_out;
@@ -6692,6 +6835,7 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
 #ifndef NO_AES
         case CKK_AES:
 #endif
+        case CKK_HKDF:
         case CKK_GENERIC_SECRET: {
             WP11_Object* keyObj = NULL;
             unsigned char* keyData[2] = {
@@ -6746,7 +6890,7 @@ err_out:
  * @param  symmKeyLen  [out]  Length of symmetric key in bytes.
  * @return  0 on success.
  */
-static int SymmKeyLen(WP11_Object* obj, word32 len, word32* symmKeyLen)
+static int SymmKeyLen(WP11_Object* obj, word32 len, CK_ULONG* symmKeyLen)
 {
     int ret;
     word32 valueLen = 0;
@@ -6761,12 +6905,27 @@ static int SymmKeyLen(WP11_Object* obj, word32 len, word32* symmKeyLen)
 
     switch (WP11_Object_GetType(obj)) {
         case CKK_AES:
+#ifdef WOLFPKCS11_NSS
+            /* This is the only wrapping mechanism that we support. NSS chooses
+             * the wrapping mechanism from the list in wrapMechanismList in
+             * PK11_GetBestWrapMechanism. Unfortunately this relies on a default
+             * key length value so let's default to the strongest key. */
+            if (valueLen == 0) {
+                if (len >= AES_256_KEY_SIZE)
+                    valueLen = AES_256_KEY_SIZE;
+                else if (len >= AES_192_KEY_SIZE)
+                    valueLen = AES_192_KEY_SIZE;
+                else
+                    valueLen = AES_128_KEY_SIZE;
+            }
+            FALL_THROUGH;
+#endif
         case CKK_HKDF:
         case CKK_GENERIC_SECRET:
         default:
             if (valueLen > 0 && valueLen <= len)
                 len = valueLen;
-            *symmKeyLen = len;
+            *symmKeyLen = (CK_ULONG)len;
             break;
     }
 
@@ -6781,7 +6940,7 @@ static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
 {
     WP11_Object* secret = NULL;
     int ret;
-    word32 symmKeyLen;
+    CK_ULONG symmKeyLen;
     CK_KEY_TYPE keyType = CKK_GENERIC_SECRET;
     CK_BBOOL ckTrue = CK_TRUE;
     CK_BBOOL ckFalse = CK_FALSE;
@@ -6795,8 +6954,10 @@ static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
     ret = SymmKeyLen(secret, (word32)length, &symmKeyLen);
     if (ret == 0) {
         /* Only use the bottom part of the secret for the key. */
+        secretKeyData[0] = (unsigned char*)&symmKeyLen;
+        secretKeyLen[0] = sizeof(CK_ULONG);
         secretKeyData[1] = ptr + (length - symmKeyLen);
-        secretKeyLen[1] = length;
+        secretKeyLen[1] = symmKeyLen;
         ret = WP11_Object_SetSecretKey(secret, secretKeyData, secretKeyLen);
         if (ret != CKR_OK)
             return CKR_FUNCTION_FAILED;
@@ -6951,7 +7112,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
 #if defined(HAVE_ECC) || !defined(NO_DH) || defined(WOLFPKCS11_HKDF)
     byte* derivedKey = NULL;
     word32 keyLen;
-    word32 symmKeyLen;
+    CK_ULONG symmKeyLen;
     unsigned char* secretKeyData[2] = { NULL, NULL };
     CK_ULONG secretKeyLen[2] = { 0, 0 };
 #endif
@@ -7011,6 +7172,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
             derivedKey = (byte*)XMALLOC(keyLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             if (derivedKey == NULL)
                 return CKR_DEVICE_MEMORY;
+            XMEMSET(derivedKey, 0, keyLen);
 
             ret = WP11_EC_Derive(params->pPublicData,
                                        (int)params->ulPublicDataLen, derivedKey,
@@ -7048,6 +7210,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
             derivedKey = (byte*)XMALLOC(keyLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             if (derivedKey == NULL)
                 return CKR_DEVICE_MEMORY;
+            XMEMSET(derivedKey, 0, keyLen);
 
             ret = WP11_KDF_Derive(session, kdfParams, derivedKey, &keyLen, obj);
 
@@ -7067,6 +7230,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
             derivedKey = (byte*)XMALLOC(keyLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             if (derivedKey == NULL)
                 return CKR_DEVICE_MEMORY;
+            XMEMSET(derivedKey, 0, keyLen);
 
             ret = WP11_Dh_Derive((unsigned char*)pMechanism->pParameter,
                                     (int)pMechanism->ulParameterLen, derivedKey,
@@ -7092,6 +7256,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
             derivedKey = (byte*)XMALLOC(keyLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             if (derivedKey == NULL)
                 return CKR_DEVICE_MEMORY;
+            XMEMSET(derivedKey, 0, keyLen);
 
             ret = WP11_AesCbc_DeriveKey(params->pData, (word32)params->length,
                     derivedKey, params->iv, obj);
@@ -7126,6 +7291,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
             derivedKey = (byte*)XMALLOC(keyLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             if (derivedKey == NULL)
                 return CKR_DEVICE_MEMORY;
+            XMEMSET(derivedKey, 0, keyLen);
             ret = WP11_Tls12_Master_Key_Derive(&tlsParams->RandomInfo,
                                                tlsParams->prfHashMechanism,
                                                "key expansion", 13,
@@ -7172,6 +7338,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
             derivedKey = (byte*)XMALLOC(keyLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             if (derivedKey == NULL)
                 return CKR_DEVICE_MEMORY;
+            XMEMSET(derivedKey, 0, keyLen);
 
             ret = WP11_Tls12_Master_Key_Derive(&prfParams->RandomInfo,
                                                prfParams->prfHashMechanism,
@@ -7200,6 +7367,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
             derivedKey = (byte*)XMALLOC(keyLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             if (derivedKey == NULL)
                 return CKR_DEVICE_MEMORY;
+            XMEMSET(derivedKey, 0, keyLen);
 
             ret = WP11_Nss_Tls12_Master_Key_Derive(nssParams->pSessionHash,
                                                    nssParams->ulSessionHashLen,
@@ -7226,8 +7394,10 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
             ret = SymmKeyLen(obj, keyLen, &symmKeyLen);
             if (ret == 0) {
                 /* Only use the bottom part of the secret for the key. */
+                secretKeyData[0] = (unsigned char*)&symmKeyLen;
+                secretKeyLen[0] = sizeof(CK_ULONG);
                 secretKeyData[1] = derivedKey + (keyLen - symmKeyLen);
-                secretKeyLen[1] = keyLen;
+                secretKeyLen[1] = symmKeyLen;
                 ret = WP11_Object_SetSecretKey(obj, secretKeyData,
                                                 secretKeyLen);
                 if (ret != 0)
