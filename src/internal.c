@@ -13012,11 +13012,11 @@ int WP11_GetOperationState(WP11_Session* session, unsigned char* stateData,
     }
     *stateDataLen += mechSize;
 
-    if (bufferAvailable < *stateDataLen)
-        return CKR_BUFFER_TOO_SMALL;
-
     if (stateData == NULL)
         return CKR_OK;
+
+    if (bufferAvailable < *stateDataLen)
+        return CKR_BUFFER_TOO_SMALL;
 
     XMEMCPY(stateData, &session->mechanism, sizeof(session->mechanism));
     stateData += sizeof(session->mechanism);
