@@ -2766,26 +2766,34 @@ static CK_RV test_rsa_fixed_keys_oaep(void* args)
                                                       (unsigned char*)"aad", 3);
         CHECK_CKR(ret, "SHA256 with AAD");
     }
+#ifndef NO_SHA
     if (ret == CKR_OK) {
         ret = rsa_oaep_test(session, priv, pub, CKM_SHA1, CKG_MGF1_SHA1, NULL,
                                                                              0);
         CHECK_CKR(ret, "SHA1 No AAD");
     }
+#endif
+#ifdef WOLFSSL_SHA224
     if (ret == CKR_OK) {
         ret = rsa_oaep_test(session, priv, pub, CKM_SHA224, CKG_MGF1_SHA224,
                                                                        NULL, 0);
         CHECK_CKR(ret, "SHA224 No AAD");
     }
+#endif
+#ifdef WOLFSSL_SHA384
     if (ret == CKR_OK) {
         ret = rsa_oaep_test(session, priv, pub, CKM_SHA384, CKG_MGF1_SHA384,
                                                                        NULL, 0);
         CHECK_CKR(ret, "SHA384 No AAD");
     }
+#endif
+#ifdef WOLFSSL_SHA512
     if (ret == CKR_OK) {
         ret = rsa_oaep_test(session, priv, pub, CKM_SHA512, CKG_MGF1_SHA512,
                                                                        NULL, 0);
         CHECK_CKR(ret, "SHA512 No AAD");
     }
+#endif
 
     funcList->C_DestroyObject(session, pub);
     funcList->C_DestroyObject(session, priv);
@@ -2842,22 +2850,30 @@ static CK_RV test_rsa_fixed_keys_pss(void* args)
         ret = rsa_pss_test(session, priv, pub, CKM_SHA256, CKG_MGF1_SHA256, 32);
         CHECK_CKR(ret, "RSA PKCS#1 PSS - SHA256");
     }
+#ifndef NO_SHA
     if (ret == CKR_OK) {
         ret = rsa_pss_test(session, priv, pub, CKM_SHA1, CKG_MGF1_SHA1, 20);
         CHECK_CKR(ret, "RSA PKCS#1 PSS - SHA1");
     }
+#endif
+#ifdef WOLFSSL_SHA224
     if (ret == CKR_OK) {
         ret = rsa_pss_test(session, priv, pub, CKM_SHA224, CKG_MGF1_SHA224, 28);
         CHECK_CKR(ret, "RSA PKCS#1 PSS - SHA224");
     }
+#endif
+#ifdef WOLFSSL_SHA384
     if (ret == CKR_OK) {
         ret = rsa_pss_test(session, priv, pub, CKM_SHA384, CKG_MGF1_SHA384, 48);
         CHECK_CKR(ret, "RSA PKCS#1 PSS - SHA384");
     }
+#endif
+#ifdef WOLFSSL_SHA512
     if (ret == CKR_OK) {
         ret = rsa_pss_test(session, priv, pub, CKM_SHA512, CKG_MGF1_SHA512, 64);
         CHECK_CKR(ret, "RSA PKCS#1 PSS - SHA512");
     }
+#endif
 
     funcList->C_DestroyObject(session, pub);
     funcList->C_DestroyObject(session, priv);

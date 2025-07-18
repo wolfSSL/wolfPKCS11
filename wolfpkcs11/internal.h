@@ -35,6 +35,10 @@
 #include <wolfpkcs11/pkcs11.h>
 #include <wolfpkcs11/version.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #ifdef HAVE_FIPS
     #define NO_MD5
 #endif
@@ -61,9 +65,22 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #error Compiling with HKDF requires HMAC and wolfSSL to be compiled with HKDF.
 #endif
 
-#ifdef __cplusplus
-extern "C" {
+/* Disable SHA3 if not supported by wolfSSL */
+#ifndef WOLFSSL_SHA3
+    #ifndef WOLFSSL_NOSHA3_224
+        #define WOLFSSL_NOSHA3_224
+    #endif
+    #ifndef WOLFSSL_NOSHA3_256
+        #define WOLFSSL_NOSHA3_256
+    #endif
+    #ifndef WOLFSSL_NOSHA3_384
+        #define WOLFSSL_NOSHA3_384
+    #endif
+    #ifndef WOLFSSL_NOSHA3_512
+        #define WOLFSSL_NOSHA3_512
+    #endif
 #endif
+
 
 /* We need the next two for NSS, just for storage, even if we have no algos */
 #ifndef WC_MD5_DIGEST_SIZE

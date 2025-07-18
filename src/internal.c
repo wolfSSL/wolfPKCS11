@@ -9570,6 +9570,7 @@ int WP11_AesCbc_DeriveKey(unsigned char* plain, word32 plainSz,
     return ret;
 }
 
+#ifdef WOLFSSL_HAVE_PRF
 /* Used for wc_PRF_TLS, less than sha256_mac not possible */
 static enum wc_MACAlgorithm MechToMac(CK_MECHANISM_TYPE mech)
 {
@@ -9589,7 +9590,6 @@ static enum wc_MACAlgorithm MechToMac(CK_MECHANISM_TYPE mech)
     }
 }
 
-#ifdef WOLFSSL_HAVE_PRF
 int WP11_Tls12_Master_Key_Derive(CK_SSL3_RANDOM_DATA* random,
                                  CK_MECHANISM_TYPE mech, const char* label,
                                  CK_ULONG ulLabelLen, byte* enc,
@@ -9667,7 +9667,7 @@ int WP11_Nss_Tls12_Master_Key_Derive(CK_BYTE_PTR pSessionHash,
     return ret;
 }
 #endif
-#endif
+#endif /* WOLFSSL_HAVE_PRF */
 
 /**
  * Encrypt plain text with AES-CBC.

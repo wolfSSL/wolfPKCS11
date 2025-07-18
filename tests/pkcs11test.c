@@ -2562,7 +2562,9 @@ static CK_RV get_aes_128_key(CK_SESSION_HANDLE session, unsigned char* id,
 #endif
         { CKA_ENCRYPT,           &ckTrue,           sizeof(ckTrue)            },
         { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue)            },
+#ifndef NO_AES
         { CKA_VALUE,             aes_128_key,       sizeof(aes_128_key)       },
+#endif
         { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
         { CKA_ID,                id,                idLen                     },
     };
@@ -5258,11 +5260,13 @@ static CK_RV test_rsa_fixed_keys_oaep(void* args)
                                                       (unsigned char*)"aad", 3);
         CHECK_CKR(ret, "SHA256 with AAD");
     }
+#ifndef NO_SHA
     if (ret == CKR_OK) {
         ret = rsa_oaep_test(session, priv, pub, CKM_SHA1, CKG_MGF1_SHA1, NULL,
                                                                              0);
         CHECK_CKR(ret, "SHA1 No AAD");
     }
+#endif
 #ifdef WOLFSSL_SHA224
     if (ret == CKR_OK) {
         ret = rsa_oaep_test(session, priv, pub, CKM_SHA224, CKG_MGF1_SHA224,
@@ -5270,16 +5274,20 @@ static CK_RV test_rsa_fixed_keys_oaep(void* args)
         CHECK_CKR(ret, "SHA224 No AAD");
     }
 #endif
+#ifdef WOLFSSL_SHA384
     if (ret == CKR_OK) {
         ret = rsa_oaep_test(session, priv, pub, CKM_SHA384, CKG_MGF1_SHA384,
                                                                        NULL, 0);
         CHECK_CKR(ret, "SHA384 No AAD");
     }
+#endif
+#ifdef WOLFSSL_SHA512
     if (ret == CKR_OK) {
         ret = rsa_oaep_test(session, priv, pub, CKM_SHA512, CKG_MGF1_SHA512,
                                                                        NULL, 0);
         CHECK_CKR(ret, "SHA512 No AAD");
     }
+#endif
 
     return ret;
 }
@@ -5379,25 +5387,30 @@ static CK_RV test_rsa_fixed_keys_pss(void* args)
         ret = rsa_pss_test(session, priv, pub, CKM_SHA256, CKG_MGF1_SHA256, 32);
         CHECK_CKR(ret, "RSA PKCS#1 PSS - SHA256");
     }
+#ifndef NO_SHA
     if (ret == CKR_OK) {
         ret = rsa_pss_test(session, priv, pub, CKM_SHA1, CKG_MGF1_SHA1, 20);
         CHECK_CKR(ret, "RSA PKCS#1 PSS - SHA1");
     }
+#endif
 #ifdef WOLFSSL_SHA224
     if (ret == CKR_OK) {
         ret = rsa_pss_test(session, priv, pub, CKM_SHA224, CKG_MGF1_SHA224, 28);
         CHECK_CKR(ret, "RSA PKCS#1 PSS - SHA224");
     }
 #endif
+#ifdef WOLFSSL_SHA384
     if (ret == CKR_OK) {
         ret = rsa_pss_test(session, priv, pub, CKM_SHA384, CKG_MGF1_SHA384, 48);
         CHECK_CKR(ret, "RSA PKCS#1 PSS - SHA384");
     }
+#endif
+#ifdef WOLFSSL_SHA512
     if (ret == CKR_OK) {
         ret = rsa_pss_test(session, priv, pub, CKM_SHA512, CKG_MGF1_SHA512, 64);
         CHECK_CKR(ret, "RSA PKCS#1 PSS - SHA512");
     }
-
+#endif
     if (ret == CKR_OK) {
         ret = sha256_rsa_pss_test(session, priv, pub, CKM_SHA256,
             CKG_MGF1_SHA256, 32);
@@ -10079,7 +10092,7 @@ static CK_RV test_aes_cmac_general(void* args)
 
 #endif
 
-
+#ifdef WOLFSSL_HAVE_PRF
 static CK_RV test_tls_mac(CK_SESSION_HANDLE session, int hashType,
         unsigned char* exp, int expLen, CK_OBJECT_HANDLE key)
 {
@@ -10245,6 +10258,7 @@ static CK_RV test_tls_mac_sha512(void* args)
     return ret;
 }
 #endif
+#endif /* WOLFSSL_HAVE_PRF */
 
 #ifndef NO_HMAC
 static CK_RV test_hmac(CK_SESSION_HANDLE session, int mechanism,
@@ -13784,6 +13798,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_extract_with_expand_salt_key),
     PKCS11TEST_FUNC_SESS_DECL(test_hkdf_gen_key),
 #endif
+#ifdef WOLFSSL_HAVE_PRF
 #ifndef NO_MD5
     PKCS11TEST_FUNC_SESS_DECL(test_tls_mac_tls_prf),
 #endif
@@ -13796,6 +13811,7 @@ static TEST_FUNC testFunc[] = {
 #ifdef WOLFSSL_SHA512
     PKCS11TEST_FUNC_SESS_DECL(test_tls_mac_sha512),
 #endif
+#endif /* WOLFSSL_HAVE_PRF */
     PKCS11TEST_FUNC_SESS_DECL(test_random),
     PKCS11TEST_FUNC_SESS_DECL(test_x509),
 #ifndef NO_RSA

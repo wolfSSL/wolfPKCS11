@@ -1088,8 +1088,8 @@ CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
     WOLFPKCS11_ENTER("C_CopyObject");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        WOLFPKCS11_MSG("  hSession=%lu, hObject=%lu, ulCount=%lu", 
-                       (unsigned long)hSession, (unsigned long)hObject, 
+        WOLFPKCS11_MSG("  hSession=%lu, hObject=%lu, ulCount=%lu",
+                       (unsigned long)hSession, (unsigned long)hObject,
                        (unsigned long)ulCount);
     }
     #endif
@@ -1312,8 +1312,8 @@ CK_RV C_GetAttributeValue(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_GetAttributeValue");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        WOLFPKCS11_MSG("  hSession=%lu, hObject=%lu, ulCount=%lu", 
-                       (unsigned long)hSession, (unsigned long)hObject, 
+        WOLFPKCS11_MSG("  hSession=%lu, hObject=%lu, ulCount=%lu",
+                       (unsigned long)hSession, (unsigned long)hObject,
                        (unsigned long)ulCount);
     }
     #endif
@@ -1414,8 +1414,8 @@ CK_RV C_SetAttributeValue(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_ENTER("C_SetAttributeValue");
     #ifdef DEBUG_WOLFPKCS11
     if (wolfpkcs11_debugging) {
-        WOLFPKCS11_MSG("  hSession=%lu, hObject=%lu, ulCount=%lu", 
-                       (unsigned long)hSession, (unsigned long)hObject, 
+        WOLFPKCS11_MSG("  hSession=%lu, hObject=%lu, ulCount=%lu",
+                       (unsigned long)hSession, (unsigned long)hObject,
                        (unsigned long)ulCount);
     }
     #endif
@@ -6534,6 +6534,7 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
             break;
     }
     (void)pWrappedKey;
+    (void)wrapkeyType;
 
 err_out:
 
@@ -6724,6 +6725,7 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
             rv = CKR_KEY_NOT_WRAPPABLE;
             goto err_out;
     }
+    (void)wrapkeyType;
 
 err_out:
 
@@ -6772,6 +6774,7 @@ static int SymmKeyLen(WP11_Object* obj, word32 len, word32* symmKeyLen)
 }
 #endif
 
+#ifdef WOLFSSL_HAVE_PRF
 static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
                          CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulAttributeCount,
                          CK_BBOOL isMac, CK_OBJECT_HANDLE* handle)
@@ -6909,6 +6912,7 @@ static int Tls12_Extract_Keys(WP11_Session* session,
     }
     return ret;
 }
+#endif
 
 /**
  * Generate a symmetric key into a new key object.
