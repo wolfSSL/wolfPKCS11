@@ -39,7 +39,7 @@
 #include <dlfcn.h>
 #endif
 
-#if !defined(WOLFPKCS11_NO_STORE) && !defined(NO_RSA) && !defined(NO_FILESYSTEM)
+#if !defined(WOLFPKCS11_NO_STORE) && !defined(NO_FILESYSTEM)
 
 #ifdef DEBUG_WOLFPKCS11
     #define CHECK_CKR(rv, op)                       \
@@ -397,4 +397,4 @@ int add_cert(int argc, char* argv[])
     return 0;
 }
 
-#endif /* !WOLFPKCS11_NO_STORE && !NO_RSA && !NO_FILESYSTEM */
+#endif /* !WOLFPKCS11_NO_STORE && !NO_FILESYSTEM */
