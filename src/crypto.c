@@ -55,7 +55,8 @@
     ( \
             (kc == CKO_PRIVATE_KEY && kt == CKK_RSA) || \
             (kc == CKO_SECRET_KEY && kt == CKK_AES) || \
-            (kc == CKO_SECRET_KEY && kt == CKK_GENERIC_SECRET) \
+            (kc == CKO_SECRET_KEY && kt == CKK_GENERIC_SECRET) || \
+            (kc == CKO_SECRET_KEY && kt == CKK_HKDF) \
     ) \
     ? CKR_OK: CKR_KEY_NOT_WRAPPABLE
 
@@ -6540,6 +6541,7 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
 #ifndef NO_AES
         case CKK_AES:
 #endif
+        case CKK_HKDF:
         case CKK_GENERIC_SECRET:
             ret = WP11_Generic_SerializeKey(key, NULL, &serialSize);
             if (ret != 0) {
@@ -6572,6 +6574,7 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
         case CKM_AES_KEY_WRAP_PAD:
 #endif
         case CKM_AES_CBC_PAD:
+        case CKM_AES_ECB:
             if (wrapkeyType != CKK_AES) {
                 rv = CKR_WRAPPING_KEY_TYPE_INCONSISTENT;
                 goto err_out;
@@ -6759,6 +6762,7 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
         case CKM_AES_KEY_WRAP_PAD:
 #endif
         case CKM_AES_CBC_PAD:
+        case CKM_AES_ECB:
 
             if (wrapkeyType != CKK_AES)
                 return CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT;
@@ -6824,6 +6828,7 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
 #ifndef NO_AES
         case CKK_AES:
 #endif
+        case CKK_HKDF:
         case CKK_GENERIC_SECRET: {
             WP11_Object* keyObj = NULL;
             unsigned char* keyData[2] = {
@@ -6879,7 +6884,7 @@ err_out:
  * @param  symmKeyLen  [out]  Length of symmetric key in bytes.
  * @return  0 on success.
  */
-static int SymmKeyLen(WP11_Object* obj, word32 len, word32* symmKeyLen)
+static int SymmKeyLen(WP11_Object* obj, word32 len, CK_ULONG* symmKeyLen)
 {
     int ret;
     word32 valueLen = 0;
@@ -6894,12 +6899,27 @@ static int SymmKeyLen(WP11_Object* obj, word32 len, word32* symmKeyLen)
 
     switch (WP11_Object_GetType(obj)) {
         case CKK_AES:
+#ifdef WOLFPKCS11_NSS
+            /* This is the only wrapping mechanism that we support. NSS chooses
+             * the wrapping mechanism from the list in wrapMechanismList in
+             * PK11_GetBestWrapMechanism. Unfortunately this relies on a default
+             * key length value so let's default to the strongest key. */
+            if (valueLen == 0) {
+                if (len >= AES_256_KEY_SIZE)
+                    valueLen = AES_256_KEY_SIZE;
+                else if (len >= AES_192_KEY_SIZE)
+                    valueLen = AES_192_KEY_SIZE;
+                else
+                    valueLen = AES_128_KEY_SIZE;
+            }
+            FALL_THROUGH;
+#endif
         case CKK_HKDF:
         case CKK_GENERIC_SECRET:
         default:
             if (valueLen > 0 && valueLen <= len)
                 len = valueLen;
-            *symmKeyLen = len;
+            *symmKeyLen = (CK_ULONG)len;
             break;
     }
 
@@ -6914,7 +6934,7 @@ static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
 {
     WP11_Object* secret = NULL;
     int ret;
-    word32 symmKeyLen;
+    CK_ULONG symmKeyLen;
     CK_KEY_TYPE keyType = CKK_GENERIC_SECRET;
     CK_BBOOL ckTrue = CK_TRUE;
     CK_BBOOL ckFalse = CK_FALSE;
@@ -6928,8 +6948,10 @@ static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
     ret = SymmKeyLen(secret, (word32)length, &symmKeyLen);
     if (ret == 0) {
         /* Only use the bottom part of the secret for the key. */
+        secretKeyData[0] = (unsigned char*)&symmKeyLen;
+        secretKeyLen[0] = sizeof(CK_ULONG);
         secretKeyData[1] = ptr + (length - symmKeyLen);
-        secretKeyLen[1] = length;
+        secretKeyLen[1] = symmKeyLen;
         ret = WP11_Object_SetSecretKey(secret, secretKeyData, secretKeyLen);
         if (ret != CKR_OK)
             return CKR_FUNCTION_FAILED;
@@ -7084,7 +7106,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
 #if defined(HAVE_ECC) || !defined(NO_DH) || defined(WOLFPKCS11_HKDF)
     byte* derivedKey = NULL;
     word32 keyLen;
-    word32 symmKeyLen;
+    CK_ULONG symmKeyLen;
     unsigned char* secretKeyData[2] = { NULL, NULL };
     CK_ULONG secretKeyLen[2] = { 0, 0 };
 #endif
@@ -7359,8 +7381,10 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
             ret = SymmKeyLen(obj, keyLen, &symmKeyLen);
             if (ret == 0) {
                 /* Only use the bottom part of the secret for the key. */
+                secretKeyData[0] = (unsigned char*)&symmKeyLen;
+                secretKeyLen[0] = sizeof(CK_ULONG);
                 secretKeyData[1] = derivedKey + (keyLen - symmKeyLen);
-                secretKeyLen[1] = keyLen;
+                secretKeyLen[1] = symmKeyLen;
                 ret = WP11_Object_SetSecretKey(obj, secretKeyData,
                                                 secretKeyLen);
                 if (ret != 0)

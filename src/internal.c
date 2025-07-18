@@ -8522,7 +8522,8 @@ int WP11_Generic_SerializeKey(WP11_Object* object, byte* output, word32* poutsz)
     if (object == NULL || poutsz == NULL)
         return PARAM_E;
 
-    if (object->type != CKK_AES && object->type != CKK_GENERIC_SECRET)
+    if (object->type != CKK_AES && object->type != CKK_GENERIC_SECRET
+            && object->type != CKK_HKDF)
         return OBJ_TYPE_E;
 
     if (object->objClass != CKO_SECRET_KEY)
