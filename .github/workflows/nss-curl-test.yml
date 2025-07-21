@@ -263,10 +263,10 @@ jobs:
 
       - name: Test curl
         run: |
-          echo "Running curl against https://example.com/"
+          echo "Running curl against https://github.com/"
           touch /tmp/nss.log
           chmod 666 /tmp/nss.log
-          if curl -v https://example.com/; then
+          if curl -v https://github.com/; then
             echo "✓ curl exited successfully"
           else
             echo "✗ curl exited with error code $?"
