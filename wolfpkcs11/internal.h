@@ -476,7 +476,7 @@ WP11_LOCAL int WP11_Ec_Sign(unsigned char* hash, word32 hashLen, unsigned char* 
 WP11_LOCAL int WP11_Ec_Verify(unsigned char* sig, word32 sigLen, unsigned char* hash,
                    word32 hashLen, int* stat, WP11_Object* pub);
 WP11_LOCAL int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
-                   word32 keyLen, WP11_Object* priv);
+                   word32* keyLen, WP11_Object* priv);
 
 WP11_LOCAL int WP11_Dh_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
                             WP11_Slot* slot);

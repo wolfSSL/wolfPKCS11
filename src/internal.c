@@ -10636,7 +10636,7 @@ int WP11_Ec_Verify(unsigned char* sig, word32 sigLen, unsigned char* hash,
  *          0 on success.
  */
 int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
-                   word32 keyLen, WP11_Object* priv)
+                   word32* keyLen, WP11_Object* priv)
 {
     int ret;
     ecc_key pubKey;
@@ -10703,7 +10703,7 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
     #endif
         {
             PRIVATE_KEY_UNLOCK();
-            ret = wc_ecc_shared_secret(priv->data.ecKey, &pubKey, key, &keyLen);
+            ret = wc_ecc_shared_secret(&priv->data.ecKey, &pubKey, key, keyLen);
             PRIVATE_KEY_LOCK();
 
         #ifdef WOLFPKCS11_TPM

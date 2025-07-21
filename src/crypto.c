@@ -7172,7 +7172,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
 
             ret = WP11_EC_Derive(params->pPublicData,
                                        (int)params->ulPublicDataLen, derivedKey,
-                                       keyLen, obj);
+                                       &keyLen, obj);
             if (ret != 0)
                 rv = CKR_FUNCTION_FAILED;
             break;
