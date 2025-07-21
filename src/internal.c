@@ -7738,7 +7738,8 @@ int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
         ret = BAD_FUNC_ARG;
 #ifndef NO_AES
     if (ret == 0 && object->type == CKK_AES && data[0] != NULL) {
-        if (*(CK_ULONG*)data[0] != AES_128_KEY_SIZE &&
+        if (*(CK_ULONG*)data[0] != 0 &&
+            *(CK_ULONG*)data[0] != AES_128_KEY_SIZE &&
             *(CK_ULONG*)data[0] != AES_192_KEY_SIZE &&
             *(CK_ULONG*)data[0] != AES_256_KEY_SIZE) {
             ret = BAD_FUNC_ARG;
