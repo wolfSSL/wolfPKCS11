@@ -5713,9 +5713,11 @@ static CK_RV find_rsa_pub_key_label(CK_SESSION_HANDLE session,
     CK_ATTRIBUTE      pubKeyTmpl[] = {
 #ifndef WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL
         { CKA_LABEL,     (unsigned char*)"", 0 },
+        { CKA_TOKEN,     &ckFalse,      sizeof(ckFalse) },
 #else
         { CKA_CLASS,     &pubKeyClass,  sizeof(privKeyClass) },
         { CKA_KEY_TYPE,  &rsaKeyType,    sizeof(rsaKeyType)  },
+        { CKA_TOKEN,     &ckFalse,      sizeof(ckFalse) },
 #endif
     };
     CK_ULONG pubKeyTmplCnt = sizeof(pubKeyTmpl) / sizeof(*pubKeyTmpl);
@@ -5747,6 +5749,7 @@ static CK_RV find_rsa_priv_key_label(CK_SESSION_HANDLE session,
         { CKA_CLASS,     &privKeyClass,  sizeof(privKeyClass) },
         { CKA_KEY_TYPE,  &rsaKeyType,    sizeof(rsaKeyType)   },
         { CKA_LABEL,     (unsigned char*)"priv_label", 10 },
+        { CKA_TOKEN,     &ckFalse,       sizeof(ckFalse) },
     };
     CK_ULONG privKeyTmplCnt = sizeof(privKeyTmpl) / sizeof(*privKeyTmpl);
     CK_ULONG count;
