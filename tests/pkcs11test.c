@@ -6852,6 +6852,11 @@ static CK_RV test_ecc_gen_keys(void* args)
     if (ret == CKR_OK)
        ret = ecdsa_test(session, priv, pub);
 
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+
     return ret;
 }
 
@@ -6874,6 +6879,11 @@ static CK_RV test_ecc_gen_keys_id(void* args)
     }
     if (ret == CKR_OK)
         ret = ecdsa_test(session, priv, pub);
+
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
 
     return ret;
 }
@@ -6909,6 +6919,11 @@ static CK_RV test_ecc_token_keys_ecdsa(void* args)
         ret = find_ecc_pub_key(session, &pub, pubId, pubIdLen);
     if (ret == CKR_OK)
         ret = ecdsa_test(session, priv, pub);
+
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
 
     return ret;
 }
