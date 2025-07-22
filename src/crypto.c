@@ -4197,6 +4197,14 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
                 return ret;
             init = WP11_INIT_TLS_MAC_SIGN;
             break;
+#ifdef WOLFPKCS11_NSS
+        case CKM_NSS_TLS_PRF_GENERAL_SHA256:
+            ret = WP11_TLS_MAC_init(CKM_SHA256_HMAC, 0, 0, hKey, session);
+            if (ret != 0)
+                return CKR_FUNCTION_FAILED;
+            init = WP11_INIT_TLS_MAC_SIGN;
+            break;
+#endif
 #endif
         default:
             (void)type;
@@ -4520,6 +4528,9 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 #endif
 #ifdef WOLFSSL_HAVE_PRF
         case CKM_TLS_MAC:
+#ifdef WOLFPKCS11_NSS
+        case CKM_NSS_TLS_PRF_GENERAL_SHA256:
+#endif
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_TLS_MAC_SIGN))
                 return CKR_OPERATION_NOT_INITIALIZED;
 
@@ -4650,6 +4661,9 @@ CK_RV C_SignUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
 #endif
 #ifdef WOLFSSL_HAVE_PRF
         case CKM_TLS_MAC:
+#ifdef WOLFPKCS11_NSS
+        case CKM_NSS_TLS_PRF_GENERAL_SHA256:
+#endif
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_TLS_MAC_SIGN))
                 return CKR_OPERATION_NOT_INITIALIZED;
 
@@ -4788,7 +4802,11 @@ CK_RV C_SignFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature,
 #endif
 #endif
 #ifdef WOLFSSL_HAVE_PRF
-        case CKM_TLS_MAC: {
+        case CKM_TLS_MAC:
+#ifdef WOLFPKCS11_NSS
+        case CKM_NSS_TLS_PRF_GENERAL_SHA256:
+#endif
+        {
             byte* data = NULL;
             word32 dataLen = 0;
 
@@ -5166,6 +5184,14 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
                 return ret;
             init = WP11_INIT_TLS_MAC_VERIFY;
             break;
+#ifdef WOLFPKCS11_NSS
+        case CKM_NSS_TLS_PRF_GENERAL_SHA256:
+            ret = WP11_TLS_MAC_init(CKM_SHA256_HMAC, 0, 0, hKey, session);
+            if (ret != 0)
+                return CKR_FUNCTION_FAILED;
+            init = WP11_INIT_TLS_MAC_VERIFY;
+            break;
+#endif
 #endif
         default:
             (void)type;
@@ -5440,7 +5466,11 @@ CK_RV C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 #endif
 #endif
 #ifdef WOLFSSL_HAVE_PRF
-        case CKM_TLS_MAC: {
+        case CKM_TLS_MAC:
+#ifdef WOLFPKCS11_NSS
+        case CKM_NSS_TLS_PRF_GENERAL_SHA256:
+#endif
+        {
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_TLS_MAC_VERIFY))
                 return CKR_OPERATION_NOT_INITIALIZED;
 

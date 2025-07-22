@@ -12862,6 +12862,7 @@ int WP11_TLS_MAC_sign(byte* data, word32 dataLen, byte* sig, word32* sigLen,
             "server finished" : "client finished");
     WP11_Data* key = NULL;
     WP11_Object* secret = NULL;
+    word32 outLen = 0;
 
     if (mac->macSz > *sigLen)
         return BAD_FUNC_ARG;
@@ -12878,11 +12879,17 @@ int WP11_TLS_MAC_sign(byte* data, word32 dataLen, byte* sig, word32* sigLen,
 
     PRIVATE_KEY_UNLOCK();
     if (mac->isTlsPrf) {
-        ret = wc_PRF_TLSv1(sig, mac->macSz, key->data, key->len, label, 15,
+        outLen = mac->macSz;
+        ret = wc_PRF_TLSv1(sig, outLen, key->data, key->len, label, 15,
                 data, dataLen, NULL, secret->slot->devId);
     }
     else {
-        ret = wc_PRF_TLS(sig, mac->macSz, key->data, key->len, label, 15,
+        /* Use maximum requested size if MAC size is unspecified */
+        if (mac->macSz == 0)
+            outLen = *sigLen;
+        else
+            outLen = mac->macSz;
+        ret = wc_PRF_TLS(sig, outLen, key->data, key->len, label, 15,
                 data, dataLen, 1, mac->mac, NULL, secret->slot->devId);
     }
     PRIVATE_KEY_LOCK();
@@ -12891,7 +12898,7 @@ int WP11_TLS_MAC_sign(byte* data, word32 dataLen, byte* sig, word32* sigLen,
         WP11_Lock_UnlockRO(secret->lock);
 
     if (ret == 0)
-        *sigLen = mac->macSz;
+        *sigLen = outLen;
 
     session->init = 0;
     return ret;

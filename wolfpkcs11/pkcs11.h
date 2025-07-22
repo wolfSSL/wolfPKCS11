@@ -322,6 +322,7 @@ extern "C" {
 #define CKM_HKDF_KEY_GEN                      0x0000402CUL
 
 #ifdef WOLFPKCS11_NSS
+#define CKM_NSS_TLS_PRF_GENERAL_SHA256            (CKM_NSS + 21)
 #define CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE    (CKM_NSS + 25)
 #define CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_DH (CKM_NSS + 26)
 #endif
