@@ -26,6 +26,10 @@
 #include <wolfpkcs11/pkcs11.h>
 #include <wolfpkcs11/internal.h>
 
+#ifdef WOLFPKCS11_TPM
+    #include <wolftpm/tpm2_wrap.h>
+#endif
+
 
 /**
  * Gets a list of slot identifiers for available slots.
@@ -1713,8 +1717,8 @@ CK_RV C_SetOperationState(CK_SESSION_HANDLE hSession,
 CK_RV C_Login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
               CK_UTF8CHAR_PTR pPin, CK_ULONG ulPinLen)
 {
-    int ret;
-    CK_RV rv;
+    int ret = 0;
+    CK_RV rv = CKR_OK;
     WP11_Slot* slot;
     WP11_Session* session;
 
@@ -1751,44 +1755,9 @@ CK_RV C_Login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
     slot = WP11_Session_GetSlot(session);
     if (userType == CKU_SO) {
         ret = WP11_Slot_SOLogin(slot, (char*)pPin, (int)ulPinLen);
-        if (ret == LOGGED_IN_E) {
-            rv = CKR_USER_ALREADY_LOGGED_IN;
-            WOLFPKCS11_LEAVE("C_Login", rv);
-            return rv;
-        }
-        if (ret == READ_ONLY_E) {
-            rv = CKR_SESSION_READ_ONLY_EXISTS;
-            WOLFPKCS11_LEAVE("C_Login", rv);
-            return rv;
-        }
-        if (ret == PIN_NOT_SET_E) {
-            rv = CKR_USER_PIN_NOT_INITIALIZED;
-            WOLFPKCS11_LEAVE("C_Login", rv);
-            return rv;
-        }
-        if (ret != 0) {
-            rv = CKR_PIN_INCORRECT;
-            WOLFPKCS11_LEAVE("C_Login", rv);
-            return rv;
-        }
     }
     else if (userType == CKU_USER) {
         ret = WP11_Slot_UserLogin(slot, (char*)pPin, (int)ulPinLen);
-        if (ret == LOGGED_IN_E) {
-            rv = CKR_USER_ALREADY_LOGGED_IN;
-            WOLFPKCS11_LEAVE("C_Login", rv);
-            return rv;
-        }
-        if (ret == PIN_NOT_SET_E) {
-            rv = CKR_USER_PIN_NOT_INITIALIZED;
-            WOLFPKCS11_LEAVE("C_Login", rv);
-            return rv;
-        }
-        if (ret != 0) {
-            rv = CKR_PIN_INCORRECT;
-            WOLFPKCS11_LEAVE("C_Login", rv);
-            return rv;
-        }
     }
     else if (userType == CKU_CONTEXT_SPECIFIC) {
         rv = CKR_OPERATION_NOT_INITIALIZED;
@@ -1801,7 +1770,37 @@ CK_RV C_Login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
         return rv;
     }
 
-    rv = CKR_OK;
+    switch (ret) {
+        case LOGGED_IN_E:
+            rv = CKR_USER_ALREADY_LOGGED_IN;
+            break;
+        case PIN_NOT_SET_E:
+            rv = CKR_USER_PIN_NOT_INITIALIZED;
+            break;
+        case PIN_INVALID_E:
+            rv = CKR_PIN_INCORRECT;
+            break;
+        case READ_ONLY_E:
+            /* Only possible for SO login */
+            rv = CKR_SESSION_READ_ONLY_EXISTS;
+            break;
+        case 0:
+            rv = CKR_OK;
+            break;
+#ifdef WOLFPKCS11_TPM
+        case TPM_RC_MEMORY:
+        case TPM_RC_SESSION_MEMORY:
+        case TPM_RC_OBJECT_MEMORY:
+            rv = CKR_DEVICE_MEMORY;
+            break;
+#endif
+        default:
+            rv = CKR_DEVICE_ERROR;
+            break;
+    }
+
+    WOLFPKCS11_MSG("Login function ret: %d", ret);
+
     WOLFPKCS11_LEAVE("C_Login", rv);
     return rv;
 }
