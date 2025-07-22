@@ -7,6 +7,12 @@ EXTRA_DIST+= debian/control
 EXTRA_DIST+= debian/control.in
 EXTRA_DIST+= debian/copyright
 EXTRA_DIST+= debian/include.am
+EXTRA_DIST+= debian/rules
+EXTRA_DIST+= debian/libwolfpkcs11.install
+EXTRA_DIST+= debian/libwolfpkcs11-dev.install
+EXTRA_DIST+= debian/libwolfpkcs11.lintian-overrides
+EXTRA_DIST+= debian/libwolfpkcs11-dev.lintian-overrides
+EXTRA_DIST+= debian/README.Debian
 
 DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
 

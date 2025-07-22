@@ -1,0 +1,56 @@
+#!/usr/bin/make -f
+# -*- makefile -*-
+
+# Uncomment this to turn on verbose mode.
+#export DH_VERBOSE=1
+
+# This has to be exported to make some magic below work.
+export DH_OPTIONS
+
+# Enable hardening build flags
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+# Get build flags
+DPKG_EXPORT_BUILDFLAGS = 1
+include /usr/share/dpkg/buildflags.mk
+
+# Configure options for the build
+CONFIGURE_OPTS = --enable-debug --enable-aesecb --enable-nss
+
+%:
+	dh $@ --with autoreconf
+
+override_dh_auto_configure:
+	dh_auto_configure -- $(CONFIGURE_OPTS)
+
+override_dh_auto_build:
+	dh_auto_build
+
+override_dh_auto_test:
+	# Run tests if they exist
+	-dh_auto_test
+
+override_dh_auto_install:
+	dh_auto_install --destdir=debian/tmp
+	# Remove .la files as per Debian policy
+	find debian/tmp -name '*.la' -delete
+
+override_dh_install:
+	dh_install
+
+override_dh_makeshlibs:
+	dh_makeshlibs -plibwolfpkcs11
+
+override_dh_shlibdeps:
+	dh_shlibdeps -plibwolfpkcs11
+
+override_dh_strip:
+	dh_strip -plibwolfpkcs11 --dbgsym-migration='libwolfpkcs11-dbg (<< 1.3.0~)'
+	dh_strip -plibwolfpkcs11-dev
+
+override_dh_clean:
+	dh_clean
+	# Clean up any generated files
+	-$(MAKE) distclean
+	rm -f config.log config.status
+	rm -rf autom4te.cache

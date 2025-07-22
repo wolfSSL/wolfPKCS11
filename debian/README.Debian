@@ -1,0 +1,69 @@
+wolfPKCS11 for Debian
+======================
+
+This package provides the wolfPKCS11 cryptographic library with PKCS#11 interface.
+
+Building the Package
+--------------------
+
+To build debian packages from source, you can use the standard debian tools:
+
+1. Install build dependencies:
+   ```
+   sudo apt-get install build-essential debhelper-compat libwolfssl-dev
+   ```
+
+2. Build the package using dpkg-buildpackage:
+   ```
+   dpkg-buildpackage -us -uc
+   ```
+
+   Or using debuild:
+   ```
+   debuild -us -uc
+   ```
+
+3. The resulting .deb files will be created in the parent directory.
+
+Alternative Build Method
+------------------------
+
+This package also supports the legacy build method using the existing Makefile
+targets:
+
+```
+make deb
+```
+
+This method uses custom debian packaging logic built into the Makefile and may
+be useful for specialized builds or development purposes.
+
+Package Contents
+----------------
+
+- libwolfpkcs11: The main shared library package
+- libwolfpkcs11-dev: Development headers and static libraries
+
+Configuration
+-------------
+
+The library supports various configuration options. For debian packaging,
+the following configure options are used by default:
+
+- --enable-debug: Enable debug support
+- --enable-aesecb: Enable AES ECB support
+- --enable-nss: Enable NSS compatibility
+
+These can be customized by modifying the debian/rules file if needed.
+
+Dependencies
+------------
+
+The package depends on libwolfssl which should be available in your debian
+repository. If building from source, ensure libwolfssl-dev is installed.
+
+For more information about wolfPKCS11, visit:
+https://www.wolfssl.com/
+https://github.com/wolfSSL/wolfPKCS11
+
+ -- wolfSSL <support@wolfssl.com>
