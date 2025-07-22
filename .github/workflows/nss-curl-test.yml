@@ -1,0 +1,282 @@
+name: wolfPKCS11 NSS curl test
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+
+env:
+  NSPR_VERSION: NSPR_4_36_BRANCH
+  NSS_VERSION: NSS_3_112_RTM
+  WOLFSSL_VERSION: v5.8.0-stable
+  CURL_VERSION: 8.0.0
+  NSS_DEBUG_PKCS11_MODULE: "wolfPKCS11"
+  NSPR_LOG_MODULES: all:5
+  NSPR_LOG_FILE: /tmp/nss.log
+  NSS_OUTPUT_FILE: /tmp/stats.log
+  NSS_STRICT_NOFORK: 1
+  NSS_DEBUG: all
+
+jobs:
+  test-nss-curl:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout wolfPKCS11 repository
+        uses: actions/checkout@v4
+        with:
+          path: wolfpkcs11
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential \
+            git \
+            mercurial \
+            gyp \
+            ninja-build \
+            pkg-config \
+            zlib1g-dev \
+            wget \
+            python3 \
+            python-is-python3 \
+            python3-pip \
+            autoconf \
+            automake \
+            libtool \
+            make \
+            gdb \
+            vim \
+            ca-certificates \
+            libnss3-tools
+          sudo rm -rf /var/lib/apt/lists/*
+      
+      - name: Cache NSPR
+        id: cache-nspr
+        uses: actions/cache@v4
+        with:
+          path: /tmp/src/nspr
+          key: nspr-${{ env.NSPR_VERSION }}
+
+      - name: Clone and build NSPR
+        if: steps.cache-nspr.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /tmp/src
+          cd /tmp/src
+          hg clone https://hg.mozilla.org/projects/nspr -r ${{ env.NSPR_VERSION }}
+
+      - name: Cache NSS source and patches
+        id: cache-nss-source
+        uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/src/nss
+            /tmp/src/osp
+          key: nss-source-${{ env.NSS_VERSION }}-latest
+
+      - name: Cache NSS build artifacts
+        id: cache-nss-build
+        uses: actions/cache@v4
+        with:
+          path: /tmp/src/dist
+          key: nss-build-${{ env.NSS_VERSION }}-latest
+
+      - name: Clone NSS and apply wolfSSL patches
+        if: steps.cache-nss-source.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /tmp/src
+          cd /tmp/src
+          
+          # Clone official Mozilla NSS with specific tag
+          hg clone https://hg.mozilla.org/projects/nss -r ${{ env.NSS_VERSION }}
+
+          # Clone wolfSSL OSP repository for patches
+          git clone https://github.com/wolfSSL/osp.git
+
+          cd nss
+
+          # Apply wolfSSL patches
+          echo "Applying wolfSSL patches..."
+          if [ -d "../osp/nss" ]; then
+            for patch in ../osp/nss/*.patch; do
+              if [ -f "$patch" ]; then
+                echo "Applying patch: $(basename $patch)"
+                patch -p1 < "$patch" || {
+                  echo "Warning: Patch $(basename $patch) failed to apply cleanly"
+                  echo "Attempting to apply with --reject-file option..."
+                  patch -p1 --reject-file=/tmp/$(basename $patch).rej < "$patch" || true
+                }
+              fi
+            done
+          else
+            echo "No patches found in wolfSSL/osp/nss directory"
+          fi
+
+      - name: Build NSS
+        if: steps.cache-nss-build.outputs.cache-hit != 'true'
+        run: |
+          cd /tmp/src/nss
+
+          export USE_64=1
+          export NSS_ENABLE_WERROR=0
+          export BUILD_OPT=0
+
+          ./build.sh -v
+
+      - name: Display patch application results
+        if: steps.cache-nss-source.outputs.cache-hit != 'true'
+        run: |
+          echo "=== NSS Patch Application Summary ==="
+          if [ -d /tmp/src/osp/nss ]; then
+            echo "Available patches in wolfSSL/osp/nss:"
+            ls -la /tmp/src/osp/nss/*.patch 2>/dev/null || echo "No .patch files found"
+
+            # Check for any rejected patches
+            if ls /tmp/*.rej 2>/dev/null; then
+              echo ""
+              echo "⚠ Warning: some patches were rejected:"
+              ls -la /tmp/*.rej
+              echo ""
+              echo "Rejected patch contents:"
+              for rej in /tmp/*.rej; do
+                echo "--- $(basename $rej) ---"
+                cat "$rej"
+                echo ""
+              done
+            else
+              echo "✓ All patches applied successfully (no .rej files found)"
+            fi
+          else
+            echo "No patches directory found at wolfSSL/osp/nss"
+          fi
+
+
+      - name: Cache wolfSSL
+        id: cache-wolfssl
+        uses: actions/cache@v4
+        with:
+          path: /tmp/wolfssl
+          key: wolfssl-${{ env.WOLFSSL_VERSION }}
+
+      - name: Clone and build wolfSSL
+        if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+        run: |
+          cd /tmp
+          git clone https://github.com/wolfSSL/wolfssl.git --branch ${{ env.WOLFSSL_VERSION }} --depth 1
+          cd wolfssl
+          ./autogen.sh
+          ./configure --enable-all --enable-aescfb --enable-cryptocb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt --with-eccminsz=192 --with-max-rsa-bits=8192 CFLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT -DRSA_MIN_SIZE=1024 -DWOLFSSL_PSS_LONG_SALT"
+          make
+
+      - name: Install wolfSSL
+        run: |
+          cd /tmp/wolfssl
+          sudo make install
+          sudo ldconfig
+
+      - name: Build wolfPKCS11 with NSS support
+        run: |
+          cd wolfpkcs11
+          ./autogen.sh
+          ./configure --enable-debug --enable-nss --enable-aesecb --enable-aesctr --enable-aesccm --enable-aescmac --enable-aeskeywrap CFLAGS="-D_GNU_SOURCE"
+          make
+          sudo make install
+          sudo ldconfig
+
+      - name: Verify wolfPKCS11 installation
+        run: |
+          echo "Checking wolfPKCS11 library..."
+          if [ -f /usr/local/lib/libwolfpkcs11.so ]; then
+            echo "✓ wolfPKCS11 library found at /usr/local/lib/libwolfpkcs11.so"
+            ls -la /usr/local/lib/libwolfpkcs11.so
+            ldd /usr/local/lib/libwolfpkcs11.so || echo "Failed to run ldd on libwolfpkcs11.so"
+          else
+            echo "✗ ERROR: wolfPKCS11 library not found"
+            find /usr -name "libwolfpkcs11.so" 2>/dev/null || true
+            exit 1
+          fi
+
+          echo "Checking wolfSSL library..."
+          if [ -f /usr/local/lib/libwolfssl.so ]; then
+            echo "✓ wolfSSL library found at /usr/local/lib/libwolfssl.so"
+            ls -la /usr/local/lib/libwolfssl.so
+          else
+            echo "✗ ERROR: wolfSSL library not found"
+            find /usr -name "libwolfssl.so" 2>/dev/null || true
+            exit 1
+          fi
+
+      - name: Configure NSS database
+        run: |
+          sudo mkdir -p /etc/pki/nssdb
+          cd /etc/pki
+          
+          # Initialize NSS database
+          sudo certutil -N -d sql:/etc/pki/nssdb --empty-password
+
+          # Configure NSS to use wolfPKCS11
+          sudo bash -c 'echo "library=/usr/local/lib/libwolfpkcs11.so" > /etc/pki/nssdb/pkcs11.txt'
+          sudo bash -c 'echo "name=wolfPKCS11" >> /etc/pki/nssdb/pkcs11.txt'
+          sudo bash -c 'echo "NSS=Flags=internal,critical,fips cipherOrder=100 slotParams={0x00000001=[slotFlags=ECC,RSA,DSA,DH,RC2,RC4,DES,RANDOM,SHA1,MD5,MD2,SSL,TLS,AES,Camellia,SEED,SHA256,SHA512]}" >> /etc/pki/nssdb/pkcs11.txt'
+
+      - name: Copy NSS headers and libraries
+        run: |
+          sudo mkdir -p /usr/local/include/nss
+          sudo mkdir -p /usr/local/include/nspr
+          sudo mkdir -p /usr/local/lib
+
+          sudo cp -r /tmp/src/dist/public/nss/* /usr/local/include/nss/
+          sudo cp -r /tmp/src/dist/Debug/* /usr/local/
+          sudo find /tmp/src/dist/Debug -name "*.so" -exec cp {} /usr/local/lib \;
+          sudo find /tmp/src/nspr/Debug -name "*.so" -exec cp {} /usr/local/lib \;
+
+          sudo ldconfig
+
+      - name: Cache curl
+        id: cache-curl
+        uses: actions/cache@v4
+        with:
+          path: /tmp/curl
+          key: curl-${{ env.CURL_VERSION }}
+
+      - name: Download and build curl
+        if: steps.cache-curl.outputs.cache-hit != 'true'
+        run: |
+          cd /tmp
+          wget https://curl.se/download/curl-${{ env.CURL_VERSION }}.tar.gz
+          tar -xzf curl-*.tar.gz
+          rm curl-*.tar.gz
+          cd curl-*
+
+          export LD_LIBRARY_PATH=/usr/local/lib
+          export CPPFLAGS="-I/usr/local/include/nss -I/usr/local/include/nspr -I/usr/local/include"
+          export LDFLAGS="-L/usr/local/lib"
+
+          ./configure --with-nss=/usr/local --with-nss-deprecated
+          make -j"$(nproc)"
+          sudo make install
+          sudo ldconfig
+
+      - name: Verify curl installation
+        run: curl -V | grep NSS
+
+      - name: Test curl
+        run: |
+          echo "Running curl against https://github.com/"
+          touch /tmp/nss.log
+          chmod 666 /tmp/nss.log
+          if curl -v https://github.com/; then
+            echo "✓ curl exited successfully"
+          else
+            echo "✗ curl exited with error code $?"
+            exit 1
+          fi
+
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: curl-test-artifacts
+          path: /tmp/*.log
+          retention-days: 5
