@@ -1,0 +1,3 @@
+# Override for missing manual page - wolfpkcs11-config is a simple script
+# and doesn't warrant a full manual page
+libwolfpkcs11-dev: binary-without-manpage usr/bin/wolfpkcs11-config

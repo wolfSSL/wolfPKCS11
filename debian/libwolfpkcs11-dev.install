@@ -1,0 +1,3 @@
+usr/include/
+usr/lib/*/libwolfpkcs11.so
+usr/bin/wolfpkcs11-config

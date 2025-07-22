@@ -1,0 +1,7 @@
+# Override for package name not matching soname - this is intentional
+# as we use a custom naming scheme for our packages
+libwolfpkcs11: package-name-doesnt-match-sonames
+
+# Override for missing manual page - wolfpkcs11-config is a simple script
+# and doesn't warrant a full manual page
+libwolfpkcs11: binary-without-manpage usr/bin/wolfpkcs11-config
