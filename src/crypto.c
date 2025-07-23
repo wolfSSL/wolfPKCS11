@@ -339,6 +339,20 @@ static CK_RV CheckAttributes(CK_ATTRIBUTE* pTemplate, CK_ULONG ulCount, int set)
     return CKR_OK;
 }
 
+static CK_RV CheckOpSupported(WP11_Object* obj, CK_ATTRIBUTE_TYPE op)
+{
+    CK_BBOOL haveOp = 0;
+    CK_ULONG dataLen = sizeof(haveOp);
+    int ret = WP11_Object_GetAttr(obj, op, &haveOp, &dataLen);
+    if (ret != 0)
+        return ret;
+    if (!haveOp) {
+        WOLFPKCS11_MSG("Operation not supported by object");
+        return CKR_KEY_TYPE_INCONSISTENT;
+    }
+    return CKR_OK;
+}
+
 static CK_RV SetInitialStates(WP11_Object* key)
 {
     CK_RV rv;
@@ -1659,28 +1673,9 @@ CK_RV C_FindObjectsFinal(CK_SESSION_HANDLE hSession)
 }
 
 
-/**
- * Initialize encryption operation.
- *
- * @param  hSession    [in]  Handle of session.
- * @param  pMechanism  [in]  Type of operation to perform with parameters.
- * @param  hKey        [in]  Handle to key object.
- * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
- *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_ARGUMENTS_BAD when pMechanism is NULL.
- *          CKR_OBJECT_HANDLE_INVALID when key object handle is not valid.
- *          CKR_KEY_TYPE_INCONSISTENT when the key type is not valid for the
- *          mechanism (operation).
- *          CKR_MECHANISM_PARAM_INVALID when mechanism's parameters are not
- *          valid for the operation.
- *          CKR_MECHANISM_INVALID when the mechanism is not supported with this
- *          type of operation.
- *          CKR_DEVICE_MEMORY when dynamic memory allocation fails.
- *          CKR_FUNCTION_FAILED when initializing fails.
- *          CKR_OK on success.
- */
-CK_RV C_EncryptInit(CK_SESSION_HANDLE hSession,
-                    CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
+static CK_RV EncryptInit(CK_SESSION_HANDLE hSession,
+                    CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey,
+                    byte skipOpCheck)
 {
     CK_RV rv;
     int ret;
@@ -1717,6 +1712,12 @@ CK_RV C_EncryptInit(CK_SESSION_HANDLE hSession,
         rv = CKR_OBJECT_HANDLE_INVALID;
         WOLFPKCS11_LEAVE("C_EncryptInit", rv);
         return rv;
+    }
+
+    if (!skipOpCheck) {
+        ret = CheckOpSupported(obj, CKA_ENCRYPT);
+        if (ret != CKR_OK)
+            return ret;
     }
 
     type = WP11_Object_GetType(obj);
@@ -1939,6 +1940,33 @@ CK_RV C_EncryptInit(CK_SESSION_HANDLE hSession,
     WP11_Session_SetOpInitialized(session, init);
 
     return CKR_OK;
+}
+
+
+/**
+ * Initialize encryption operation.
+ *
+ * @param  hSession    [in]  Handle of session.
+ * @param  pMechanism  [in]  Type of operation to perform with parameters.
+ * @param  hKey        [in]  Handle to key object.
+ * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
+ *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
+ *          CKR_ARGUMENTS_BAD when pMechanism is NULL.
+ *          CKR_OBJECT_HANDLE_INVALID when key object handle is not valid.
+ *          CKR_KEY_TYPE_INCONSISTENT when the key type is not valid for the
+ *          mechanism (operation).
+ *          CKR_MECHANISM_PARAM_INVALID when mechanism's parameters are not
+ *          valid for the operation.
+ *          CKR_MECHANISM_INVALID when the mechanism is not supported with this
+ *          type of operation.
+ *          CKR_DEVICE_MEMORY when dynamic memory allocation fails.
+ *          CKR_FUNCTION_FAILED when initializing fails.
+ *          CKR_OK on success.
+ */
+CK_RV C_EncryptInit(CK_SESSION_HANDLE hSession,
+                    CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
+{
+    return EncryptInit(hSession, pMechanism, hKey, 0);
 }
 
 /**
@@ -2628,28 +2656,9 @@ CK_RV C_EncryptFinal(CK_SESSION_HANDLE hSession,
     return CKR_OK;
 }
 
-/**
- * Initialize decryption operation.
- *
- * @param  hSession    [in]  Handle of session.
- * @param  pMechanism  [in]  Type of operation to perform with parameters.
- * @param  hKey        [in]  Handle to key object.
- * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
- *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_ARGUMENTS_BAD when pMechanism is NULL.
- *          CKR_OBJECT_HANDLE_INVALID when key object handle is not valid.
- *          CKR_KEY_TYPE_INCONSISTENT when the key type is not valid for the
- *          mechanism (operation).
- *          CKR_MECHANISM_PARAM_INVALID when mechanism's parameters are not
- *          valid for the operation.
- *          CKR_MECHANISM_INVALID when the mechanism is not supported with this
- *          type of operation.
- *          CKR_DEVICE_MEMORY when dynamic memory allocation fails.
- *          CKR_FUNCTION_FAILED when initializing fails.
- *          CKR_OK on success.
- */
-CK_RV C_DecryptInit(CK_SESSION_HANDLE hSession,
-                    CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
+static CK_RV DecryptInit(CK_SESSION_HANDLE hSession,
+                    CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey,
+                    byte skipOpCheck)
 {
     int ret;
     WP11_Session* session;
@@ -2678,6 +2687,12 @@ CK_RV C_DecryptInit(CK_SESSION_HANDLE hSession,
     ret = WP11_Object_Find(session, hKey, &obj);
     if (ret != 0)
         return CKR_OBJECT_HANDLE_INVALID;
+
+    if (!skipOpCheck) {
+        ret = CheckOpSupported(obj, CKA_DECRYPT);
+        if (ret != CKR_OK)
+            return ret;
+    }
 
     type = WP11_Object_GetType(obj);
     switch (pMechanism->mechanism) {
@@ -2892,6 +2907,32 @@ CK_RV C_DecryptInit(CK_SESSION_HANDLE hSession,
     WP11_Session_SetOpInitialized(session, init);
 
     return CKR_OK;
+}
+
+/**
+ * Initialize decryption operation.
+ *
+ * @param  hSession    [in]  Handle of session.
+ * @param  pMechanism  [in]  Type of operation to perform with parameters.
+ * @param  hKey        [in]  Handle to key object.
+ * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
+ *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
+ *          CKR_ARGUMENTS_BAD when pMechanism is NULL.
+ *          CKR_OBJECT_HANDLE_INVALID when key object handle is not valid.
+ *          CKR_KEY_TYPE_INCONSISTENT when the key type is not valid for the
+ *          mechanism (operation).
+ *          CKR_MECHANISM_PARAM_INVALID when mechanism's parameters are not
+ *          valid for the operation.
+ *          CKR_MECHANISM_INVALID when the mechanism is not supported with this
+ *          type of operation.
+ *          CKR_DEVICE_MEMORY when dynamic memory allocation fails.
+ *          CKR_FUNCTION_FAILED when initializing fails.
+ *          CKR_OK on success.
+ */
+CK_RV C_DecryptInit(CK_SESSION_HANDLE hSession,
+                    CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
+{
+    return DecryptInit(hSession, pMechanism, hKey, 0);
 }
 
 /**
@@ -3891,6 +3932,10 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
     if (ret != 0) {
         return CKR_OBJECT_HANDLE_INVALID;
     }
+
+    ret = CheckOpSupported(obj, CKA_SIGN);
+    if (ret != CKR_OK)
+        return ret;
 
     type = WP11_Object_GetType(obj);
     switch (pMechanism->mechanism) {
@@ -4960,6 +5005,10 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
         return rv;
     }
 
+    ret = CheckOpSupported(obj, CKA_VERIFY);
+    if (ret != CKR_OK)
+        return ret;
+
     type = WP11_Object_GetType(obj);
     switch (pMechanism->mechanism) {
 #ifndef NO_RSA
@@ -5758,8 +5807,6 @@ CK_RV C_VerifyRecoverInit(CK_SESSION_HANDLE hSession,
     int init = 0;
     WP11_Session* session;
     WP11_Object* obj;
-    CK_BBOOL getVar;
-    CK_ULONG getVarLen = sizeof(CK_BBOOL);
     CK_RV rv;
 
     WOLFPKCS11_ENTER("C_VerifyRecoverInit");
@@ -5817,12 +5864,9 @@ CK_RV C_VerifyRecoverInit(CK_SESSION_HANDLE hSession,
         return CKR_KEY_TYPE_INCONSISTENT;
     }
 
-    ret = WP11_Object_GetAttr(obj, CKA_VERIFY, &getVar, &getVarLen);
+    ret = CheckOpSupported(obj, CKA_VERIFY);
     if (ret != CKR_OK)
-        return CKR_FUNCTION_FAILED;
-
-    if (getVar != CK_TRUE)
-        return CKR_KEY_FUNCTION_NOT_PERMITTED;
+        return ret;
 
     WP11_Session_SetMechanism(session, pMechanism->mechanism);
     WP11_Session_SetObject(session, obj);
@@ -6547,6 +6591,10 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
     if (ret != 0)
         return CKR_WRAPPING_KEY_HANDLE_INVALID;
 
+    ret = CheckOpSupported(wrappingKey, CKA_WRAP);
+    if (ret != CKR_OK)
+        return ret;
+
     wrapkeyType = WP11_Object_GetType(wrappingKey);
 
     keyType = WP11_Object_GetType(key);
@@ -6619,7 +6667,7 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
                 goto err_out;
             }
 
-            rv = C_EncryptInit(hSession, pMechanism, hWrappingKey);
+            rv = EncryptInit(hSession, pMechanism, hWrappingKey, 1);
             if (rv != CKR_OK)
                 goto err_out;
 
@@ -6766,6 +6814,10 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
     if (ret != 0)
         return CKR_UNWRAPPING_KEY_HANDLE_INVALID;
 
+    ret = CheckOpSupported(unwrappingKey, CKA_UNWRAP);
+    if (ret != CKR_OK)
+        return ret;
+
     rv = FindValidAttributeType(pTemplate, ulAttributeCount, CKA_KEY_TYPE,
         &attr, sizeof(CK_KEY_TYPE));
     if (rv != CKR_OK)
@@ -6810,7 +6862,7 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
             if (workBuffer == NULL)
                 return CKR_HOST_MEMORY;
 
-            rv = C_DecryptInit(hSession, pMechanism, hUnwrappingKey);
+            rv = DecryptInit(hSession, pMechanism, hUnwrappingKey, 1);
             if (rv != CKR_OK)
                 goto err_out;
 
