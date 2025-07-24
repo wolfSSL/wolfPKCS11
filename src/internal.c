@@ -10003,38 +10003,26 @@ int WP11_Rsa_Verify_Recover(CK_MECHANISM_TYPE mechanism, unsigned char* sig,
                             CK_ULONG_PTR outLen, WP11_Object* pub)
 {
     int ret;
-    byte* data_out = NULL;
 
     switch (mechanism) {
         case CKM_RSA_PKCS:
-            ret = wc_RsaSSL_VerifyInline(sig, sigLen, &data_out,
-                                         pub->data.rsaKey);
+            ret = wc_RsaSSL_Verify(sig, sigLen, out, (word32)*outLen,
+                                         &pub->data.rsaKey);
+            if (ret == RSA_BUFFER_E)
+                return CKR_BUFFER_TOO_SMALL;
             if (ret < 0)
-                return ret;
+                return CKR_FUNCTION_FAILED;
 
             *outLen = ret;
-            if (out == NULL) {
-                return CKR_OK;
-            }
-            else {
-                if (*outLen < (CK_ULONG)ret) {
-                    return CKR_BUFFER_TOO_SMALL;
-                }
-                else {
-                    XMEMCPY(out, data_out, ret);
-                }
-            }
             break;
 
-        case CKM_RSA_X_509:
-        {
+        case CKM_RSA_X_509: {
+            byte* data_out = NULL;
             byte* pos;
-
-            ret = wc_RsaDirect(sig, sigLen, out, (word32*)outLen,
-                               pub->data.rsaKey, RSA_PUBLIC_DECRYPT, NULL);
+            ret =  wc_RsaDirect(sig, sigLen, out, (word32*)outLen,
+                                &pub->data.rsaKey, RSA_PUBLIC_DECRYPT, NULL);
             if (ret < 0)
-                return ret;
-
+                return CKR_FUNCTION_FAILED;
             /* Result is front padded with 0x00 */
             for (pos = out; pos < out + *outLen; pos++) {
                 if (*pos != 0x00) {
