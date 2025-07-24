@@ -6371,6 +6371,11 @@ static int MechanismToHash(int mechanism)
 #endif
 #endif
 #ifndef NO_RSA
+#ifndef NO_SHA
+        case CKM_SHA1_RSA_PKCS:
+        case CKM_SHA1_RSA_PKCS_PSS:
+            return WP11_INIT_SHA1;
+#endif
 #ifdef WOLFSSL_SHA224
         case CKM_SHA224_RSA_PKCS:
         case CKM_SHA224_RSA_PKCS_PSS:

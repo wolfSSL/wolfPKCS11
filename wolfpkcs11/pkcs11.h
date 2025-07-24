@@ -256,8 +256,10 @@ extern "C" {
 #define CKM_RSA_PKCS_KEY_PAIR_GEN             0x00000000UL
 #define CKM_RSA_PKCS                          0x00000001UL
 #define CKM_RSA_X_509                         0x00000003UL
+#define CKM_SHA1_RSA_PKCS                     0x00000006UL
 #define CKM_RSA_PKCS_OAEP                     0x00000009UL
 #define CKM_RSA_PKCS_PSS                      0x0000000DUL
+#define CKM_SHA1_RSA_PKCS_PSS                 0x0000000EUL
 #define CKM_DH_PKCS_KEY_PAIR_GEN              0x00000020UL
 #define CKM_DH_PKCS_DERIVE                    0x00000021UL
 #define CKM_SHA256_RSA_PKCS                   0x00000040UL
