@@ -306,6 +306,9 @@ static CK_MECHANISM_TYPE mechanismList[] = {
     CKM_RSA_PKCS_KEY_PAIR_GEN,
 #endif
     CKM_RSA_X_509,
+#ifndef NO_SHA
+    CKM_SHA1_RSA_PKCS,
+#endif
     CKM_RSA_PKCS,
 #ifdef WOLFSSL_SHA224
     CKM_SHA224_RSA_PKCS,
@@ -324,6 +327,9 @@ static CK_MECHANISM_TYPE mechanismList[] = {
 #endif
 #ifdef WC_RSA_PSS
     CKM_RSA_PKCS_PSS,
+#ifndef NO_SHA
+    CKM_SHA1_RSA_PKCS,
+#endif
 #ifdef WOLFSSL_SHA224
     CKM_SHA224_RSA_PKCS_PSS,
 #endif
@@ -361,6 +367,7 @@ static CK_MECHANISM_TYPE mechanismList[] = {
 #ifdef WOLFPKCS11_HKDF
     CKM_HKDF_DERIVE,
     CKM_HKDF_DATA,
+    CKM_HKDF_KEY_GEN,
 #endif
 #ifndef NO_DH
     CKM_DH_PKCS_KEY_PAIR_GEN,
@@ -612,6 +619,9 @@ static CK_MECHANISM_INFO hkdfMechInfo = {
 static CK_MECHANISM_INFO hkdfDatMechInfo = {
     1, 16320, CKF_DERIVE
 };
+static CK_MECHANISM_INFO hkdfKeyGenMechInfo = {
+    20, 64, CKF_GENERATE
+};
 #endif
 #ifndef NO_DH
 /* Info on DH key generation mechanism. */
@@ -849,6 +859,9 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
             XMEMCPY(pInfo, &rsaOaepMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
     #endif
+    #ifndef NO_SHA
+        case CKM_SHA1_RSA_PKCS:
+    #endif
     #ifndef NO_SHA256
         case CKM_SHA256_RSA_PKCS:
     #endif
@@ -867,6 +880,9 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
         case CKM_RSA_PKCS_PSS:
             XMEMCPY(pInfo, &rsaPssMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
+        #ifndef NO_SHA
+        case CKM_SHA1_RSA_PKCS_PSS:
+        #endif
         #ifndef NO_SHA256
         case CKM_SHA256_RSA_PKCS_PSS:
         #endif
@@ -925,6 +941,9 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
             break;
         case CKM_HKDF_DATA:
             XMEMCPY(pInfo, &hkdfDatMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+        case CKM_HKDF_KEY_GEN:
+            XMEMCPY(pInfo, &hkdfKeyGenMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
 #endif
 #ifndef NO_DH

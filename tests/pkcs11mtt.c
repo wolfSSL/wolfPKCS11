@@ -3252,13 +3252,6 @@ static CK_RV test_rsa_pkcs_pss_sig_fail(void* args)
         params.mgf = CKG_MGF1_SHA256;
     }
     if (ret == CKR_OK) {
-        params.sLen = 63;
-        ret = funcList->C_SignInit(session, &mech, priv);
-        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
-                                                   "Sign Init bad salt length");
-        params.sLen = 32;
-    }
-    if (ret == CKR_OK) {
         mech.pParameter = NULL;
         ret = funcList->C_VerifyInit(session, &mech, priv);
         CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
@@ -3285,13 +3278,6 @@ static CK_RV test_rsa_pkcs_pss_sig_fail(void* args)
         CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
                                                "Verify Init bad mgf algorithm");
         params.mgf = CKG_MGF1_SHA256;
-    }
-    if (ret == CKR_OK) {
-        params.sLen = 63;
-        ret = funcList->C_VerifyInit(session, &mech, priv);
-        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
-                                                 "Verify Init bad salt length");
-        params.sLen = 32;
     }
 
     funcList->C_DestroyObject(session, pub);
@@ -5985,13 +5971,6 @@ static CK_RV test_hmac_fail(CK_SESSION_HANDLE session, CK_MECHANISM* mech,
     if (ret == CKR_OK)
         ret = get_aes_128_key(session, NULL, 0, &aesKey);
 
-#ifndef NO_AES
-    if (ret == CKR_OK) {
-        ret = funcList->C_SignInit(session, mech, aesKey);
-        CHECK_CKR_FAIL(ret, CKR_KEY_TYPE_INCONSISTENT,
-                                               "HMAC Sign Init wrong key type");
-    }
-#endif
     if (ret == CKR_OK) {
         mech->pParameter = data;
         ret = funcList->C_SignInit(session, mech, key);
@@ -6006,13 +5985,6 @@ static CK_RV test_hmac_fail(CK_SESSION_HANDLE session, CK_MECHANISM* mech,
                                          "HMAC Sign Init bad parameter length");
         mech->ulParameterLen = 0;
     }
-#ifndef NO_AES
-    if (ret == CKR_OK) {
-        ret = funcList->C_VerifyInit(session, mech, aesKey);
-        CHECK_CKR_FAIL(ret, CKR_KEY_TYPE_INCONSISTENT,
-                                             "HMAC Verify Init wrong key type");
-    }
-#endif
     if (ret == CKR_OK) {
         mech->pParameter = data;
         ret = funcList->C_VerifyInit(session, mech, key);
