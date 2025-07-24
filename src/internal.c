@@ -101,7 +101,11 @@
 #define RNG_SEED_SZ                    32
 
 /* Maximum size of storage for generated/derived DH key. */
+#ifdef WOLFPKCS11_NSS
+#define WP11_MAX_DH_KEY_SZ             (8192/8)
+#else
 #define WP11_MAX_DH_KEY_SZ             (4096/8)
+#endif
 
 /* Maximum size of storage for generated/derived symmetric key. */
 #ifdef WOLFPKCS11_NSS
