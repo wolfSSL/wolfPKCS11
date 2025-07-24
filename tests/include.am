@@ -45,7 +45,6 @@ tests_rsa_session_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_debug_test_LDADD += src/libwolfpkcs11.la
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
 else
-tests_debug_test_LDADD += src/libwolfpkcs11.la
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
 endif
 
