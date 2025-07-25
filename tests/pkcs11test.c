@@ -64,6 +64,13 @@
 static void* dlib;
 #endif
 static CK_FUNCTION_LIST* funcList;
+
+#ifdef DEBUG_WOLFPKCS11
+#ifndef HAVE_PKCS11_STATIC
+void (*wolfPKCS11_Debugging_On_fp)(void) = NULL;
+void (*wolfPKCS11_Debugging_Off_fp)(void) = NULL;
+#endif
+#endif
 static int slot = 0;
 static const char* tokenName = "wolfpkcs11";
 
@@ -13947,6 +13954,16 @@ static CK_RV pkcs11_init(const char* library)
             ret = -1;
         }
     }
+
+#ifdef DEBUG_WOLFPKCS11
+    if (ret == CKR_OK) {
+        wolfPKCS11_Debugging_On_fp = (void (*)(void))dlsym(dlib,
+                                                     "wolfPKCS11_Debugging_On");
+        wolfPKCS11_Debugging_Off_fp = (void (*)(void))dlsym(dlib,
+                                                    "wolfPKCS11_Debugging_Off");
+        /* These functions are optional, so don't fail if they're not found */
+    }
+#endif
 
     if (ret == CKR_OK) {
         ret = ((CK_C_GetFunctionList)func)(&funcList);

@@ -19,6 +19,25 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
+/* Forward declarations for debugging function pointers */
+#ifdef DEBUG_WOLFPKCS11
+#ifndef HAVE_PKCS11_STATIC
+extern void (*wolfPKCS11_Debugging_On_fp)(void);
+extern void (*wolfPKCS11_Debugging_Off_fp)(void);
+#endif
+
+/* Wrapper function to handle both static and dynamic debugging calls */
+static inline void call_wolfPKCS11_Debugging_On(void) {
+#ifndef HAVE_PKCS11_STATIC
+    if (wolfPKCS11_Debugging_On_fp != NULL) {
+        wolfPKCS11_Debugging_On_fp();
+    }
+#else
+    wolfPKCS11_Debugging_On();
+#endif
+}
+#endif
+
 #ifdef DEBUG_WOLFPKCS11
 #define CHECK_COND(cond, ret, msg)                                         \
     do {                                                                   \
@@ -320,6 +339,12 @@ static CK_RV run_tests(TEST_FUNC* testFunc, int testFuncCnt, int onlySet,
     CK_RV ret = CKR_OK;
     int i;
     void* testArgs;
+
+#ifdef DEBUG_WOLFPKCS11
+    if (verbose) {
+        call_wolfPKCS11_Debugging_On();
+    }
+#endif
 
     for (i = 0; i < testFuncCnt; i++) {
         if (testFunc[i].flags != flags)

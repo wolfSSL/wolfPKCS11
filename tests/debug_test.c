@@ -39,11 +39,16 @@
 #endif
 #include <wolfpkcs11/pkcs11.h>
 
+#ifdef DEBUG_WOLFPKCS11
 #ifndef HAVE_PKCS11_STATIC
 #include <dlfcn.h>
+static void* dlib = NULL;
+void (*wolfPKCS11_Debugging_On_fp)(void) = NULL;
+void (*wolfPKCS11_Debugging_Off_fp)(void) = NULL;
 #endif
 
-#ifdef DEBUG_WOLFPKCS11
+static CK_FUNCTION_LIST_PTR pFunctionList = NULL;
+
 static FILE* original_stdout = NULL;
 static FILE* capture_file = NULL;
 
@@ -80,6 +85,67 @@ static int check_debug_output(void)
     fclose(capture_file);
     return found_debug;
 }
+
+/* Wrapper functions for debugging */
+static void call_wolfPKCS11_Debugging_On(void) {
+#ifndef HAVE_PKCS11_STATIC
+    if (wolfPKCS11_Debugging_On_fp != NULL) {
+        wolfPKCS11_Debugging_On_fp();
+    }
+#else
+    wolfPKCS11_Debugging_On();
+#endif
+}
+
+static void call_wolfPKCS11_Debugging_Off(void) {
+#ifndef HAVE_PKCS11_STATIC
+    if (wolfPKCS11_Debugging_Off_fp != NULL) {
+        wolfPKCS11_Debugging_Off_fp();
+    }
+#else
+    wolfPKCS11_Debugging_Off();
+#endif
+}
+
+static CK_RV debug_init(const char* library) {
+    CK_RV ret = CKR_OK;
+#ifndef HAVE_PKCS11_STATIC
+    void* func;
+
+    dlib = dlopen(library, RTLD_NOW | RTLD_LOCAL);
+    if (dlib == NULL) {
+        fprintf(stderr, "dlopen error: %s\n", dlerror());
+        return -1;
+    }
+
+    func = (void*)(CK_C_GetFunctionList)dlsym(dlib, "C_GetFunctionList");
+    if (func == NULL) {
+        fprintf(stderr, "Failed to get function list function\n");
+        dlclose(dlib);
+        return -1;
+    }
+
+    wolfPKCS11_Debugging_On_fp = (void (*)(void))dlsym(dlib,
+                                                  "wolfPKCS11_Debugging_On");
+    wolfPKCS11_Debugging_Off_fp = (void (*)(void))dlsym(dlib,
+                                                 "wolfPKCS11_Debugging_Off");
+
+    ret = ((CK_C_GetFunctionList)func)(&pFunctionList);
+#else
+    ret = C_GetFunctionList(&pFunctionList);
+    (void)library;
+#endif
+    return ret;
+}
+
+static void debug_cleanup(void) {
+#ifndef HAVE_PKCS11_STATIC
+    if (dlib) {
+        dlclose(dlib);
+        dlib = NULL;
+    }
+#endif
+}
 #endif
 
 int main(void)
@@ -90,8 +156,8 @@ int main(void)
     return 77;
 #else
     CK_RV rv;
-    CK_FUNCTION_LIST_PTR pFunctionList;
     int debug_found;
+    const char* library = "./src/.libs/libwolfpkcs11.so";
 
 #ifndef WOLFPKCS11_NO_ENV
     if (!XGETENV("WOLFPKCS11_TOKEN_PATH")) {
@@ -102,21 +168,26 @@ int main(void)
     printf("=== wolfPKCS11 Debug Test Program ===\n");
     printf("Debug mode is ENABLED (DEBUG_WOLFPKCS11 defined)\n");
 
+    printf("\nInitializing library:\n");
+    rv = debug_init(library);
+    if (rv != CKR_OK) {
+        printf("Failed to initialize library: %lu\n", (unsigned long)rv);
+        return 1;
+    }
+
     printf("\nTesting debug control functions:\n");
-    wolfPKCS11_Debugging_On();
+    call_wolfPKCS11_Debugging_On();
     printf("Debug enabled\n");
 
-    wolfPKCS11_Debugging_Off();
+    call_wolfPKCS11_Debugging_Off();
     printf("Debug disabled\n");
 
-    wolfPKCS11_Debugging_On();
+    call_wolfPKCS11_Debugging_On();
     printf("Debug re-enabled\n");
 
     printf("\nTesting PKCS#11 functions with debug output capture:\n");
 
     setup_output_capture();
-
-    rv = C_GetFunctionList(&pFunctionList);
 
     if (rv == CKR_OK && pFunctionList != NULL) {
         rv = pFunctionList->C_Initialize(NULL);
@@ -133,13 +204,15 @@ int main(void)
     printf("C_GetFunctionList returned: %lu\n", (unsigned long)rv);
     printf("Debug output detection: %s\n", debug_found ? "PASS" : "FAIL");
 
-    wolfPKCS11_Debugging_Off();
+    call_wolfPKCS11_Debugging_Off();
     printf("Debug disabled at end\n");
 
+    debug_cleanup();
     printf("\n=== Test Complete ===\n");
 
     if (!debug_found) {
-        printf("ERROR: No debug output was detected during PKCS#11 function calls\n");
+        printf("ERROR: No debug output was detected during "
+               "PKCS#11 function calls\n");
         return 1;
     }
 
