@@ -3893,6 +3893,10 @@ static int CKM_TLS_MAC_init(CK_KEY_TYPE type, CK_MECHANISM_PTR pMechanism,
 static int GetInitValue(CK_MECHANISM_TYPE mechanism) {
     switch (mechanism) {
 #ifndef NO_RSA
+#ifndef NO_SHA
+    case CKM_SHA1_RSA_PKCS:
+        return WP11_INIT_SHA1;
+#endif
 #ifdef WOLFSSL_SHA224
     case CKM_SHA224_RSA_PKCS:
         return WP11_INIT_SHA224;
@@ -3910,6 +3914,10 @@ static int GetInitValue(CK_MECHANISM_TYPE mechanism) {
         return WP11_INIT_SHA512;
 #endif
 #ifdef WC_RSA_PSS
+#ifndef NO_SHA
+    case CKM_SHA1_RSA_PKCS_PSS:
+        return WP11_INIT_SHA1;
+#endif
 #ifdef WOLFSSL_SHA224
     case CKM_SHA224_RSA_PKCS_PSS:
         return WP11_INIT_SHA224;
@@ -4005,9 +4013,6 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
     WP11_Object* obj = NULL;
     CK_KEY_TYPE type;
     int init = 0;
-#ifndef NO_HMAC
-    CK_ULONG digestSize = 0;
-#endif
     CK_RV rv;
 
     WOLFPKCS11_ENTER("C_SignInit");
@@ -4066,9 +4071,6 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
             break;
     #ifndef NO_SHA
         case CKM_SHA1_RSA_PKCS:
-            if (init == 0)
-                init = WP11_INIT_SHA1;
-            FALL_THROUGH;
     #endif
     #ifdef WOLFSSL_SHA224
         case CKM_SHA224_RSA_PKCS:
@@ -4092,11 +4094,8 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
             init |= WP11_INIT_RSA_PKCS_SIGN;
             break;
     #ifdef WC_RSA_PSS
-        #ifndef NO_SHA256
+        #ifndef NO_SHA
         case CKM_SHA1_RSA_PKCS_PSS:
-            if (init == 0)
-                init = WP11_INIT_SHA1;
-            FALL_THROUGH;
         #endif
         #ifdef WOLFSSL_SHA224
         case CKM_SHA224_RSA_PKCS_PSS:
@@ -4420,11 +4419,11 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
         #ifndef NO_SHA
         case CKM_SHA1_RSA_PKCS_PSS:
         #endif
-        #ifndef NO_SHA256
-        case CKM_SHA256_RSA_PKCS_PSS:
-        #endif
         #ifdef WOLFSSL_SHA224
         case CKM_SHA224_RSA_PKCS_PSS:
+        #endif
+        #ifndef NO_SHA256
+        case CKM_SHA256_RSA_PKCS_PSS:
         #endif
         #ifdef WOLFSSL_SHA384
         case CKM_SHA384_RSA_PKCS_PSS:
@@ -5087,9 +5086,6 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
             break;
     #ifndef NO_SHA
         case CKM_SHA1_RSA_PKCS:
-            if (init == 0)
-                init = WP11_INIT_SHA1;
-            FALL_THROUGH;
     #endif
     #ifdef WOLFSSL_SHA224
         case CKM_SHA224_RSA_PKCS:
@@ -5115,9 +5111,6 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
     #ifdef WC_RSA_PSS
         #ifndef NO_SHA
         case CKM_SHA1_RSA_PKCS_PSS:
-            if (init == 0)
-                init = WP11_INIT_SHA1;
-            FALL_THROUGH;
         #endif
         #ifdef WOLFSSL_SHA224
         case CKM_SHA224_RSA_PKCS_PSS:
@@ -5414,11 +5407,11 @@ CK_RV C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
         #ifndef NO_SHA
         case CKM_SHA1_RSA_PKCS_PSS:
         #endif
-        #ifndef NO_SHA256
-        case CKM_SHA256_RSA_PKCS_PSS:
-        #endif
         #ifdef WOLFSSL_SHA224
         case CKM_SHA224_RSA_PKCS_PSS:
+        #endif
+        #ifndef NO_SHA256
+        case CKM_SHA256_RSA_PKCS_PSS:
         #endif
         #ifdef WOLFSSL_SHA384
         case CKM_SHA384_RSA_PKCS_PSS:
