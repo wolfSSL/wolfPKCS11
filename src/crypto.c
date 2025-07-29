@@ -339,7 +339,7 @@ static CK_RV CheckAttributes(CK_ATTRIBUTE* pTemplate, CK_ULONG ulCount, int set)
     return CKR_OK;
 }
 
-static CK_RV CheckOpSupported(WP11_Object* obj, CK_ATTRIBUTE_TYPE op)
+static int CheckOpSupported(WP11_Object* obj, CK_ATTRIBUTE_TYPE op)
 {
     CK_BBOOL haveOp = 0;
     CK_ULONG dataLen = sizeof(haveOp);
