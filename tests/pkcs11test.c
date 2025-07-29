@@ -7254,14 +7254,14 @@ static CK_RV test_rsa_pkcs_sig_fail(void* args)
     }
     if (ret == CKR_OK) {
         mech.pParameter = data;
-        ret = funcList->C_VerifyInit(session, &mech, priv);
+        ret = funcList->C_VerifyInit(session, &mech, pub);
         CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
                                                    "Verify Init bad parameter");
         mech.pParameter = NULL;
     }
     if (ret == CKR_OK) {
         mech.ulParameterLen = 1;
-        ret = funcList->C_VerifyInit(session, &mech, priv);
+        ret = funcList->C_VerifyInit(session, &mech, pub);
         CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
                                             "Verify Init bad parameter length");
         mech.ulParameterLen = 0;
@@ -7323,28 +7323,28 @@ static CK_RV test_rsa_pkcs_pss_sig_fail(void* args)
     }
     if (ret == CKR_OK) {
         mech.pParameter = NULL;
-        ret = funcList->C_VerifyInit(session, &mech, priv);
+        ret = funcList->C_VerifyInit(session, &mech, pub);
         CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
                                                   "Verify Init NULL parameter");
         mech.pParameter = &params;
     }
     if (ret == CKR_OK) {
         mech.ulParameterLen = 0;
-        ret = funcList->C_VerifyInit(session, &mech, priv);
+        ret = funcList->C_VerifyInit(session, &mech, pub);
         CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
                                             "Verify Init bad parameter length");
         mech.ulParameterLen = sizeof(params);
     }
     if (ret == CKR_OK) {
         params.hashAlg = CKM_RSA_PKCS;
-        ret = funcList->C_VerifyInit(session, &mech, priv);
+        ret = funcList->C_VerifyInit(session, &mech, pub);
         CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
                                               "Verify Init bad hash algorithm");
         params.hashAlg = CKM_SHA256;
     }
     if (ret == CKR_OK) {
         params.mgf = 0;
-        ret = funcList->C_VerifyInit(session, &mech, priv);
+        ret = funcList->C_VerifyInit(session, &mech, pub);
         CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
                                                "Verify Init bad mgf algorithm");
         params.mgf = CKG_MGF1_SHA256;
