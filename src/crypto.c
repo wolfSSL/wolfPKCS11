@@ -431,6 +431,10 @@ static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
             derive = CK_FALSE;
             break;
         */
+        case CKK_RSA:
+            derive = CK_FALSE;
+            sign = CK_TRUE;
+            break;
         case CKK_DH:
             verify = CK_FALSE;
             derive = CK_TRUE;
@@ -440,7 +444,7 @@ static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
             break;
         case CKK_EC:
             derive = CK_FALSE;
-            verify = CK_FALSE;
+            verify = CK_TRUE;
             encrypt = CK_FALSE;
             recover = CK_FALSE;
             wrap = CK_FALSE;
