@@ -8312,6 +8312,7 @@ static int GetEcbCheckValue(WP11_Object* secret, byte* dataOut,
     }
 
     XFREE(hash, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    XFREE(input, NULL, DYNAMIC_TYPE_TMP_BUFFER);
 
     return CKR_OK;
 }
