@@ -4585,7 +4585,7 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             if (ret != CKR_OK || pSignature == NULL)
                 return ret;
 
-            sigLen = *pulSignatureLen;
+            sigLen = (word32)*pulSignatureLen;
             ret = WP11_Aes_Cmac_Sign(pData, (word32)ulDataLen, pSignature,
                     &sigLen, session);
             *pulSignatureLen = sigLen;
@@ -4861,7 +4861,7 @@ CK_RV C_SignFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature,
             if (ret != CKR_OK || pSignature == NULL)
                 return ret;
 
-            sigLen = *pulSignatureLen;
+            sigLen = (word32)*pulSignatureLen;
             ret = WP11_Aes_Cmac_Sign_Final(pSignature, &sigLen, session);
             *pulSignatureLen = sigLen;
             break;
