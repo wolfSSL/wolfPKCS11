@@ -10816,6 +10816,7 @@ static CK_RV test_aes_ccm_encdec(CK_SESSION_HANDLE session,
     encSz = sizeof(enc);
     decSz = sizeof(dec);
 
+    ccmParams.ulDataLen = 0;
     ccmParams.pIv    = iv;
     ccmParams.ulIvLen = sizeof(iv);
     ccmParams.pAAD      = aad;
