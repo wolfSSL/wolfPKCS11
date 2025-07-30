@@ -409,6 +409,18 @@ else
     DISABLE_DEFS="$DISABLE_DEFS -DWOLFSSL_SHA512"
 fi
 
+AC_ARG_ENABLE([sha3],
+    [AS_HELP_STRING([--enable-sha3],[Enable SHA-3 (default: enabled)])],
+    [ ENABLED_SHA3=$enableval ],
+    [ ENABLED_SHA3=yes ]
+    )
+if test "$ENABLED_SHA3" = "yes"
+then
+    AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_SHA3"
+else
+    DISABLE_DEFS="$DISABLE_DEFS -DWOLFSSL_SHA3"
+fi
+
 if test "$enable_shared" = "no"; then
     AM_CFLAGS="$AM_CFLAGS -DHAVE_PKCS11_STATIC"
 else
@@ -613,6 +625,7 @@ echo "   * SHA-224:                    $ENABLED_SHA224"
 echo "   * SHA-256:                    $ENABLED_SHA256"
 echo "   * SHA-384:                    $ENABLED_SHA384"
 echo "   * SHA-512:                    $ENABLED_SHA512"
+echo "   * SHA-3:                      $ENABLED_SHA3"
 echo "   * HMAC:                       $ENABLED_HMAC"
 echo "   * RSA:                        $ENABLED_RSA"
 echo "   * RSA-OAEP:                   $ENABLED_RSAOAEP"

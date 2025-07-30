@@ -66,6 +66,10 @@ jobs:
     uses: ./.github/workflows/build-workflow.yml
     with:
       config: --disable-sha224
+  no_sha3:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --disable-sha3
   no_sha1:
     uses: ./.github/workflows/build-workflow.yml
     with:
