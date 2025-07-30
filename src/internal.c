@@ -100,6 +100,8 @@
 /* Length of seed from global random to seed local random. */
 #define RNG_SEED_SZ                    32
 
+
+
 /* Maximum size of storage for generated/derived DH key. */
 #ifdef WOLFPKCS11_NSS
 #define WP11_MAX_DH_KEY_SZ             (8192/8)
@@ -2245,6 +2247,12 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
     XMEMCPY(dest->iv, src->iv, sizeof(dest->iv));
     dest->encoded = src->encoded;
 #endif
+#ifdef WOLFPKCS11_TPM
+    /* For TPM keys, copy keyData */
+    if (src->opFlag & WP11_FLAG_TPM) {
+        OBJ_COPY_DATA(src, dest, keyData);
+    }
+#endif
     dest->objClass = src->objClass;
     dest->keyGenMech = src->keyGenMech;
     dest->opFlag = src->opFlag;
@@ -2267,162 +2275,216 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
     }
 #endif
     else {
-        switch (src->type) {
+#ifdef WOLFPKCS11_TPM
+        /* Handle TPM keys - copy tpmKey structure directly */
+        if (src->opFlag & WP11_FLAG_TPM) {
+            /* Copy the TPM key blob structure directly */
+            XMEMCPY(&dest->tpmKey, &src->tpmKey, sizeof(WOLFTPM2_KEYBLOB));
+
+            /* Initialize TPM handle to NULL for the destination */
+            dest->tpmKey.handle.hndl = TPM_RH_NULL;
+
+            /* Initialize the wolf key structures based on key type */
+            switch (src->type) {
 #ifndef NO_RSA
-            case CKK_RSA: {
-                byte* derBuf = NULL;
-                int derSz = 0;
-
-                /* Initialize destination RSA key */
-                ret = wc_InitRsaKey_ex(&dest->data.rsaKey, NULL,
-                                       dest->slot->devId);
-                if (ret != 0)
+                case CKK_RSA:
+                    ret = wc_InitRsaKey_ex(&dest->data.rsaKey, NULL,
+                                           dest->slot->devId);
                     break;
-
-                /* Determine if this is a private or public key and get DER
-                 * size */
-                if (src->objClass == CKO_PRIVATE_KEY) {
-                    ret = wc_RsaKeyToDer(&src->data.rsaKey, NULL, 0);
-                }
-                else {
-                    ret = wc_RsaKeyToPublicDer(&src->data.rsaKey, NULL, 0);
-                }
-
-                if (ret == 0) /* Should not happen */
-                    ret = BUFFER_E;
-                if (ret > 0) {
-                    derSz = ret;
-                    ret = 0;
-                }
-                if (ret == 0) {
-                    derBuf = (byte*)XMALLOC(derSz, NULL,
-                        DYNAMIC_TYPE_TMP_BUFFER);
-                    if (derBuf == NULL)
-                        ret = MEMORY_E;
-                }
-                if (ret == 0) {
-                    /* Encode the source key to DER */
-                    if (src->objClass == CKO_PRIVATE_KEY) {
-                        ret = wc_RsaKeyToDer(&src->data.rsaKey, derBuf, derSz);
-                    }
-                    else {
-                        ret = wc_RsaKeyToPublicDer(&src->data.rsaKey, derBuf,
-                            derSz);
-                    }
-                    if (ret == 0) /* Should not happen */
-                        ret = BUFFER_E;
-                    if (ret > 0)
-                        ret = 0;
-                }
-                if (ret == 0) {
-                    /* Decode the DER data into the destination key */
-                    word32 idx = 0;
-                    if (src->objClass == CKO_PRIVATE_KEY) {
-                        ret = wc_RsaPrivateKeyDecode(derBuf, &idx,
-                                                     &dest->data.rsaKey,
-                                                     (word32)derSz);
-                    }
-                    else {
-                        ret = wc_RsaPublicKeyDecode(derBuf, &idx,
-                                                    &dest->data.rsaKey,
-                                                    (word32)derSz);
-                    }
-                }
-
-                XFREE(derBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-                break;
-            }
 #endif
 #ifdef HAVE_ECC
-            case CKK_EC: {
-                byte* derBuf = NULL;
-                int derSz = 0;
-
-                /* Initialize destination ECC key */
-                ret = wc_ecc_init_ex(&dest->data.ecKey, NULL,
-                                     dest->slot->devId);
-                if (ret != 0)
+                case CKK_EC:
+                    ret = wc_ecc_init_ex(&dest->data.ecKey, NULL,
+                                         dest->slot->devId);
                     break;
-
-                /* Determine if this is a private or public key and get DER
-                 * size */
-                if (src->objClass == CKO_PRIVATE_KEY)
-                    derSz = wc_EccKeyDerSize(&src->data.ecKey, 0);
-                else
-                    derSz = wc_EccPublicKeyDerSize(&src->data.ecKey, 1);
-
-                if (derSz < 0)
-                    ret = derSz;
-
-                /* Allocate buffer with retry logic */
-                if (ret == 0) {
-                    derBuf = (byte*)XMALLOC(derSz, NULL,
-                                            DYNAMIC_TYPE_TMP_BUFFER);
-                    if (derBuf == NULL)
-                        ret = MEMORY_E;
+#endif
+                default:
+                    ret = 0;
+                    break;
+            }
+            /* Populate wolf key structures from copied tpmKey */
+            if (ret == 0) {
+                switch (src->type) {
+#ifndef NO_RSA
+                    case CKK_RSA:
+                        /* Load public portion into wolf RsaKey structure */
+                        ret = wolfTPM2_RsaKey_TpmToWolf(&dest->slot->tpmDev,
+                            (WOLFTPM2_KEY*)&dest->tpmKey, &dest->data.rsaKey);
+                        break;
+#endif
+#ifdef HAVE_ECC
+                    case CKK_EC:
+                        /* Load public portion into wolf EccKey structure */
+                        ret = wolfTPM2_EccKey_TpmToWolf(&dest->slot->tpmDev,
+                            (WOLFTPM2_KEY*)&dest->tpmKey, &dest->data.ecKey);
+                        break;
+#endif
+                    default:
+                        /* For other key types, no decode needed */
+                        break;
                 }
+            }
+        }
+        else
+#endif
+        {
+            switch (src->type) {
+#ifndef NO_RSA
+                case CKK_RSA: {
+                    byte* derBuf = NULL;
+                    int derSz = 0;
 
-                if (ret == 0) {
-                    /* Encode the source key to DER with retry logic */
+                    /* Initialize destination RSA key */
+                    ret = wc_InitRsaKey_ex(&dest->data.rsaKey, NULL,
+                                           dest->slot->devId);
+                    if (ret != 0)
+                        break;
+
+                    /* Determine if this is a private or public key and get DER
+                     * size */
                     if (src->objClass == CKO_PRIVATE_KEY) {
-                        ret = wc_EccPrivateKeyToDer(&src->data.ecKey, derBuf,
-                                                    derSz);
+                        ret = wc_RsaKeyToDer(&src->data.rsaKey, NULL, 0);
                     }
                     else {
-                        ret = wc_EccPublicKeyToDer(&src->data.ecKey, derBuf,
-                                                   derSz, 1);
+                        ret = wc_RsaKeyToPublicDer(&src->data.rsaKey, NULL, 0);
                     }
 
-                    /* Normalize positive return to success */
+                    if (ret == 0) /* Should not happen */
+                        ret = BUFFER_E;
                     if (ret > 0) {
-                        derSz = ret; /* Update actual size used */
+                        derSz = ret;
                         ret = 0;
                     }
-                }
-
-                if (ret == 0) {
-                    /* Decode the DER data into the destination key */
-                    word32 idx = 0;
-                    if (src->objClass == CKO_PRIVATE_KEY) {
-                        ret = wc_EccPrivateKeyDecode(derBuf, &idx,
-                                                     &dest->data.ecKey,
-                                                     (word32)derSz);
+                    if (ret == 0) {
+                        derBuf = (byte*)XMALLOC(derSz, NULL,
+                            DYNAMIC_TYPE_TMP_BUFFER);
+                        if (derBuf == NULL)
+                            ret = MEMORY_E;
                     }
-                    else {
-                        ret = wc_EccPublicKeyDecode(derBuf, &idx,
-                                                    &dest->data.ecKey,
-                                                    (word32)derSz);
+                    if (ret == 0) {
+                        /* Encode the source key to DER */
+                        if (src->objClass == CKO_PRIVATE_KEY) {
+                            ret = wc_RsaKeyToDer(&src->data.rsaKey, derBuf, derSz);
+                        }
+                        else {
+                            ret = wc_RsaKeyToPublicDer(&src->data.rsaKey, derBuf,
+                                derSz);
+                        }
+                        if (ret == 0) /* Should not happen */
+                            ret = BUFFER_E;
+                        if (ret > 0)
+                            ret = 0;
                     }
-                }
+                    if (ret == 0) {
+                        /* Decode the DER data into the destination key */
+                        word32 idx = 0;
+                        if (src->objClass == CKO_PRIVATE_KEY) {
+                            ret = wc_RsaPrivateKeyDecode(derBuf, &idx,
+                                                         &dest->data.rsaKey,
+                                                         (word32)derSz);
+                        }
+                        else {
+                            ret = wc_RsaPublicKeyDecode(derBuf, &idx,
+                                                        &dest->data.rsaKey,
+                                                        (word32)derSz);
+                        }
+                    }
 
-                /* Clean up */
-                if (derBuf != NULL) {
-                    XMEMSET(derBuf, 0, derSz); /* Clear sensitive data */
                     XFREE(derBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                    break;
                 }
+#endif
+#ifdef HAVE_ECC
+                case CKK_EC: {
+                    byte* derBuf = NULL;
+                    int derSz = 0;
 
-                /* Free destination key on failure */
-                if (ret != 0) {
-                    wc_ecc_free(&dest->data.ecKey);
+                    /* Initialize destination ECC key */
+                    ret = wc_ecc_init_ex(&dest->data.ecKey, NULL,
+                                         dest->slot->devId);
+                    if (ret != 0)
+                        break;
+
+                    /* Determine if this is a private or public key and get DER
+                     * size */
+                    if (src->objClass == CKO_PRIVATE_KEY)
+                        derSz = wc_EccKeyDerSize(&src->data.ecKey, 0);
+                    else
+                        derSz = wc_EccPublicKeyDerSize(&src->data.ecKey, 1);
+
+                    if (derSz < 0)
+                        ret = derSz;
+
+                    /* Allocate buffer with retry logic */
+                    if (ret == 0) {
+                        derBuf = (byte*)XMALLOC(derSz, NULL,
+                                                DYNAMIC_TYPE_TMP_BUFFER);
+                        if (derBuf == NULL)
+                            ret = MEMORY_E;
+                    }
+
+                    if (ret == 0) {
+                        /* Encode the source key to DER with retry logic */
+                        if (src->objClass == CKO_PRIVATE_KEY) {
+                            ret = wc_EccPrivateKeyToDer(&src->data.ecKey,
+                                derBuf, derSz);
+                        }
+                        else {
+                            ret = wc_EccPublicKeyToDer(&src->data.ecKey, derBuf,
+                                                       derSz, 1);
+                        }
+
+                        /* Normalize positive return to success */
+                        if (ret > 0) {
+                            derSz = ret; /* Update actual size used */
+                            ret = 0;
+                        }
+                    }
+
+                    if (ret == 0) {
+                        /* Decode the DER data into the destination key */
+                        word32 idx = 0;
+                        if (src->objClass == CKO_PRIVATE_KEY) {
+                            ret = wc_EccPrivateKeyDecode(derBuf, &idx,
+                                                         &dest->data.ecKey,
+                                                         (word32)derSz);
+                        }
+                        else {
+                            ret = wc_EccPublicKeyDecode(derBuf, &idx,
+                                                        &dest->data.ecKey,
+                                                        (word32)derSz);
+                        }
+                    }
+
+                    /* Clean up */
+                    if (derBuf != NULL) {
+                        XMEMSET(derBuf, 0, derSz); /* Clear sensitive data */
+                        XFREE(derBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                    }
+
+                    /* Free destination key on failure */
+                    if (ret != 0) {
+                        wc_ecc_free(&dest->data.ecKey);
+                    }
+
+                    break;
                 }
-
-                break;
-            }
 #endif
 #ifndef NO_DH
-            case CKK_DH:
-                return BAD_FUNC_ARG;
+                case CKK_DH:
+                    return BAD_FUNC_ARG;
 #endif
 #ifndef NO_AES
-            case CKK_AES:
+                case CKK_AES:
 #endif
 #ifdef WOLFPKCS11_HKDF
-            case CKK_HKDF:
+                case CKK_HKDF:
 #endif
-            case CKK_GENERIC_SECRET:
-                XMEMCPY(&dest->data.symmKey, &src->data.symmKey,
-                        sizeof(dest->data.symmKey));
-                break;
+                case CKK_GENERIC_SECRET:
+                    XMEMCPY(&dest->data.symmKey, &src->data.symmKey,
+                            sizeof(dest->data.symmKey));
+                    break;
+            }
         }
     }
 
