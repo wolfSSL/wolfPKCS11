@@ -11677,7 +11677,7 @@ int WP11_Hmac_SigLen(WP11_Session* session)
  *          0 on success.
  */
 int WP11_Hmac_Init(CK_MECHANISM_TYPE mechanism, WP11_Object* secret,
-                   WP11_Session* session)
+                   WP11_Session* session, CK_ULONG digestSize)
 {
     int ret;
     int hashType = WC_HASH_TYPE_NONE;
@@ -11687,6 +11687,8 @@ int WP11_Hmac_Init(CK_MECHANISM_TYPE mechanism, WP11_Object* secret,
     ret = wp11_hmac_hash_type(mechanism, &hashType);
     if (ret == 0)
         hmac->hmacSz = wc_HmacSizeByType(hashType);
+    if (ret == 0 && digestSize != 0 && hmac->hmacSz != (word32)digestSize)
+        ret = BAD_FUNC_ARG;
     if (ret == 0)
         ret = wc_HmacInit(&hmac->hmac, NULL, secret->slot->devId);
     if (ret == 0) {
