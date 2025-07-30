@@ -939,6 +939,15 @@ static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
                 variableSz /* keyIdLen + labelLen + issuerLen + serialLen + subjectLen */
             ;
             break;
+        case WOLFPKCS11_STORE_DATA:
+            maxSz =
+                sizeof(word32) /* id */ +
+                sizeof(word32) /* dataLen */ +
+                sizeof(word32) /* applicationLen */ +
+                sizeof(word32) /* objectIdLen */ +
+                variableSz /* dataLen + applicationLen + objectIdLen */
+            ;
+            break;
         case WOLFPKCS11_STORE_SYMMKEY:
         case WOLFPKCS11_STORE_RSAKEY_PRIV:
         case WOLFPKCS11_STORE_RSAKEY_PUB:
@@ -948,7 +957,6 @@ static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
         case WOLFPKCS11_STORE_DHKEY_PUB:
         case WOLFPKCS11_STORE_CERT:
         case WOLFPKCS11_STORE_TRUST:
-        case WOLFPKCS11_STORE_DATA:
             maxSz = sizeof(word32) + variableSz;
             break;
 
@@ -2639,60 +2647,29 @@ static int wp11_Object_Load_Data(WP11_Object* object, int tokenId, int objId)
     ret = wp11_storage_open_readonly(WOLFPKCS11_STORE_DATA, tokenId, objId,
         &storage);
     if (ret == 0) {
-        /* Read data length and data. */
-        ret = wp11_storage_read_word32(storage,
-            &object->data.genericData.dataLen);
-        if (ret == 0 && object->data.genericData.dataLen > 0) {
-            tempLen = (int)object->data.genericData.dataLen;
-            ret = wp11_storage_read_alloc_array(storage,
-                &object->data.genericData.data,
-                &tempLen);
-            object->data.genericData.dataLen = (word32)tempLen;
-        }
-        else if (ret == 0) {
-            /* Ensure data is NULL when length is 0 */
-            object->data.genericData.data = NULL;
-            object->data.genericData.dataLen = 0;
-        }
-
-        /* Read application length and application. */
-        if (ret == 0) {
-            ret = wp11_storage_read_word32(storage,
-                &object->data.genericData.applicationLen);
-        }
-        if (ret == 0 && object->data.genericData.applicationLen > 0) {
-            tempLen = (int)object->data.genericData.applicationLen;
-            ret = wp11_storage_read_alloc_array(storage,
-                &object->data.genericData.application,
-                &tempLen);
-            object->data.genericData.applicationLen = (word32)tempLen;
-        }
-        else if (ret == 0) {
-            /* Ensure application is NULL when length is 0 */
-            object->data.genericData.application = NULL;
-            object->data.genericData.applicationLen = 0;
-        }
-
-        /* Read object ID length and object ID. */
-        if (ret == 0) {
-            ret = wp11_storage_read_word32(storage,
-                &object->data.genericData.objectIdLen);
-        }
-        if (ret == 0 && object->data.genericData.objectIdLen > 0) {
-            tempLen = (int)object->data.genericData.objectIdLen;
-            ret = wp11_storage_read_alloc_array(storage,
-                &object->data.genericData.objectId,
-                &tempLen);
-            object->data.genericData.objectIdLen = (word32)tempLen;
-        }
-        else if (ret == 0) {
-            /* Ensure objectId is NULL when length is 0 */
-            object->data.genericData.objectId = NULL;
-            object->data.genericData.objectIdLen = 0;
-        }
-
-        wp11_storage_close(storage);
+        ret = wp11_storage_read_alloc_array(storage,
+            &object->data.genericData.data,
+            &tempLen);
+        object->data.genericData.dataLen = (word32)tempLen;
     }
+
+    /* Read application length and application. */
+    if (ret == 0) {
+        ret = wp11_storage_read_alloc_array(storage,
+            &object->data.genericData.application,
+            &tempLen);
+        object->data.genericData.applicationLen = (word32)tempLen;
+    }
+
+    /* Read object ID length and object ID. */
+    if (ret == 0) {
+        ret = wp11_storage_read_alloc_array(storage,
+            &object->data.genericData.objectId,
+            &tempLen);
+        object->data.genericData.objectIdLen = (word32)tempLen;
+    }
+
+    wp11_storage_close(storage);
 
     return ret;
 }
@@ -3179,43 +3156,35 @@ static int wp11_Object_Store_Data(WP11_Object* object, int tokenId, int objId)
     int ret;
     void* storage = NULL;
 
+    int variableSz = (object->data.genericData.dataLen +
+        object->data.genericData.applicationLen +
+        object->data.genericData.objectIdLen);
+
     /* Open access to data. */
     ret = wp11_storage_open(WOLFPKCS11_STORE_DATA, tokenId, objId,
-        sizeof(WP11_GenericData), &storage);
+        variableSz, &storage);
+    /* Write data length and data. */
     if (ret == 0) {
-        /* Write data length and data. */
-        ret = wp11_storage_write_word32(storage,
+        ret = wp11_storage_write_array(storage,
+            object->data.genericData.data,
             object->data.genericData.dataLen);
-        if (ret == 0 && object->data.genericData.dataLen > 0) {
-            ret = wp11_storage_write_array(storage,
-                object->data.genericData.data,
-                object->data.genericData.dataLen);
-        }
+    }
 
-        /* Write application length and application. */
-        if (ret == 0) {
-            ret = wp11_storage_write_word32(storage,
-                object->data.genericData.applicationLen);
-        }
-        if (ret == 0 && object->data.genericData.applicationLen > 0) {
-            ret = wp11_storage_write_array(storage,
-                object->data.genericData.application,
-                object->data.genericData.applicationLen);
-        }
+    /* Write application length and application. */
+    if (ret == 0) {
+        ret = wp11_storage_write_array(storage,
+            object->data.genericData.application,
+            object->data.genericData.applicationLen);
+    }
 
         /* Write object ID length and object ID. */
-        if (ret == 0) {
-            ret = wp11_storage_write_word32(storage,
-                object->data.genericData.objectIdLen);
-        }
-        if (ret == 0 && object->data.genericData.objectIdLen > 0) {
-            ret = wp11_storage_write_array(storage,
-                object->data.genericData.objectId,
-                object->data.genericData.objectIdLen);
-        }
-
-        wp11_storage_close(storage);
+    if (ret == 0) {
+        ret = wp11_storage_write_array(storage,
+            object->data.genericData.objectId,
+            object->data.genericData.objectIdLen);
     }
+
+    wp11_storage_close(storage);
 
     return ret;
 }
