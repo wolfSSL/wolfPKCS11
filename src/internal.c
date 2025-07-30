@@ -2337,7 +2337,6 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
             case CKK_EC: {
                 byte* derBuf = NULL;
                 int derSz = 0;
-                int initialDerSz = 0;
 
                 /* Initialize destination ECC key */
                 ret = wc_ecc_init_ex(&dest->data.ecKey, NULL,
@@ -2347,28 +2346,13 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
 
                 /* Determine if this is a private or public key and get DER
                  * size */
-                if (src->objClass == CKO_PRIVATE_KEY) {
-                    initialDerSz = wc_EccPrivateKeyToDer(&src->data.ecKey,
-                                                         NULL, 0);
-                }
-                else {
-                    initialDerSz = wc_EccPublicKeyToDer(&src->data.ecKey,
-                                                        NULL, 0, 1);
-                }
+                if (src->objClass == CKO_PRIVATE_KEY)
+                    derSz = wc_EccKeyDerSize(&src->data.ecKey, 0);
+                else
+                    derSz = wc_EccPublicKeyDerSize(&src->data.ecKey, 1);
 
-                /* Handle different return values for size estimation */
-                if (initialDerSz == LENGTH_ONLY_E || initialDerSz == 0) {
-                    /* wolfSSL 5.6.6 compatibility */
-                    derSz = 256; /* Conservative estimate for ECC key DER */
-                    ret = 0;
-                }
-                else if (initialDerSz > 0) {
-                    derSz = initialDerSz;
-                    ret = 0;
-                }
-                else {
-                    ret = initialDerSz; /* Pass through the error */
-                }
+                if (derSz < 0)
+                    ret = derSz;
 
                 /* Allocate buffer with retry logic */
                 if (ret == 0) {
@@ -2387,27 +2371,6 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                     else {
                         ret = wc_EccPublicKeyToDer(&src->data.ecKey, derBuf,
                                                    derSz, 1);
-                    }
-
-                    /* Handle buffer too small case */
-                    if (ret == BUFFER_E && derSz < 1024) {
-                        /* Reallocate buffer with larger size */
-                        derSz = 1024; /* Larger buffer size */
-                        derBuf = (byte*)XREALLOC(derBuf, derSz, NULL,
-                                                 DYNAMIC_TYPE_TMP_BUFFER);
-                        if (derBuf == NULL) {
-                            ret = MEMORY_E;
-                        }
-                        else {
-                            if (src->objClass == CKO_PRIVATE_KEY) {
-                                ret = wc_EccPrivateKeyToDer(&src->data.ecKey,
-                                                            derBuf, derSz);
-                            }
-                            else {
-                                ret = wc_EccPublicKeyToDer(&src->data.ecKey,
-                                                           derBuf, derSz, 1);
-                            }
-                        }
                     }
 
                     /* Normalize positive return to success */
