@@ -3981,6 +3981,8 @@ static CK_RV get_aes_128_key(CK_SESSION_HANDLE session, unsigned char* id,
 #endif
         { CKA_ENCRYPT,           &ckTrue,           sizeof(ckTrue)            },
         { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue)            },
+        { CKA_SIGN,              &ckTrue,           sizeof(ckTrue)            },
+        { CKA_VERIFY,            &ckTrue,           sizeof(ckTrue)            },
 #ifndef NO_AES
         { CKA_VALUE,             aes_128_key,       sizeof(aes_128_key)       },
 #endif
