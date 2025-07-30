@@ -600,7 +600,7 @@ WP11_LOCAL int WP11_Aes_Cmac_Verify_Final(unsigned char* sig, word32 sigLen, int
 
 WP11_LOCAL int WP11_Hmac_SigLen(WP11_Session* session);
 WP11_LOCAL int WP11_Hmac_Init(CK_MECHANISM_TYPE mechanism, WP11_Object* secret,
-                   WP11_Session* session);
+                   WP11_Session* session, CK_ULONG digestSize);
 WP11_LOCAL int WP11_Hmac_Sign(unsigned char* data, word32 dataLen, unsigned char* sig,
                    word32* sigLen, WP11_Session* session);
 WP11_LOCAL int WP11_Hmac_Verify(unsigned char* sig, word32 sigLen, unsigned char* data,

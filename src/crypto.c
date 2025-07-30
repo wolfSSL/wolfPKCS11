@@ -3791,6 +3791,94 @@ static int CKM_TLS_MAC_init(CK_KEY_TYPE type, CK_MECHANISM_PTR pMechanism,
 }
 #endif
 
+static int GetInitValue(CK_MECHANISM_TYPE mechanism) {
+    switch (mechanism) {
+#ifndef NO_RSA
+#ifdef WOLFSSL_SHA224
+    case CKM_SHA224_RSA_PKCS:
+        return WP11_INIT_SHA224;
+#endif
+#ifndef NO_SHA256
+    case CKM_SHA256_RSA_PKCS:
+        return WP11_INIT_SHA256;
+#endif
+#ifdef WOLFSSL_SHA384
+    case CKM_SHA384_RSA_PKCS:
+        return WP11_INIT_SHA384;
+#endif
+#ifdef WOLFSSL_SHA512
+    case CKM_SHA512_RSA_PKCS:
+        return WP11_INIT_SHA512;
+#endif
+#ifdef WC_RSA_PSS
+#ifdef WOLFSSL_SHA224
+    case CKM_SHA224_RSA_PKCS_PSS:
+        return WP11_INIT_SHA224;
+#endif
+#ifndef NO_SHA256
+    case CKM_SHA256_RSA_PKCS_PSS:
+        return WP11_INIT_SHA256;
+#endif
+#ifdef WOLFSSL_SHA384
+    case CKM_SHA384_RSA_PKCS_PSS:
+        return WP11_INIT_SHA384;
+#endif
+#ifdef WOLFSSL_SHA512
+    case CKM_SHA512_RSA_PKCS_PSS:
+        return WP11_INIT_SHA512;
+#endif
+#endif
+#endif
+
+#ifndef NO_HMAC
+#ifndef NO_MD5
+    case CKM_MD5_HMAC:
+        return WP11_INIT_MD5;
+#endif
+#ifndef NO_SHA
+    case CKM_SHA1_HMAC:
+        return WP11_INIT_SHA1;
+#endif
+#ifdef WOLFSSL_SHA224
+    case CKM_SHA224_HMAC:
+        return WP11_INIT_SHA224;
+#endif
+#ifndef NO_SHA256
+    case CKM_SHA256_HMAC:
+        return WP11_INIT_SHA256;
+#endif
+#ifdef WOLFSSL_SHA384
+    case CKM_SHA384_HMAC:
+        return WP11_INIT_SHA384;
+#endif
+#ifdef WOLFSSL_SHA512
+    case CKM_SHA512_HMAC:
+        return WP11_INIT_SHA512;
+#endif
+#ifdef WOLFSSL_SHA3
+#ifndef WOLFSSL_NOSHA3_224
+    case CKM_SHA3_224_HMAC:
+        return WP11_INIT_SHA3_224;
+#endif
+#ifndef WOLFSSL_NOSHA3_256
+    case CKM_SHA3_256_HMAC:
+        return WP11_INIT_SHA3_256;
+#endif
+#ifndef WOLFSSL_NOSHA3_384
+    case CKM_SHA3_384_HMAC:
+        return WP11_INIT_SHA3_384;
+#endif
+#ifndef WOLFSSL_NOSHA3_512
+    case CKM_SHA3_512_HMAC:
+        return WP11_INIT_SHA3_512;
+#endif
+#endif
+#endif
+    default:
+        return 0;
+    }
+}
+
 /**
  * Initialize signing operation.
  *
@@ -3858,6 +3946,7 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
     }
 
     type = WP11_Object_GetType(obj);
+    init = GetInitValue(pMechanism->mechanism);
     switch (pMechanism->mechanism) {
 #ifndef NO_RSA
         case CKM_RSA_X_509:
@@ -3871,27 +3960,15 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
             break;
     #ifdef WOLFSSL_SHA224
         case CKM_SHA224_RSA_PKCS:
-            if (init == 0)
-                init = WP11_INIT_SHA224;
-            FALL_THROUGH;
     #endif
     #ifndef NO_SHA256
         case CKM_SHA256_RSA_PKCS:
-            if (init == 0)
-                init = WP11_INIT_SHA256;
-            FALL_THROUGH;
     #endif
     #ifdef WOLFSSL_SHA384
         case CKM_SHA384_RSA_PKCS:
-            if (init == 0)
-                init = WP11_INIT_SHA384;
-            FALL_THROUGH;
     #endif
     #ifdef WOLFSSL_SHA512
         case CKM_SHA512_RSA_PKCS:
-            if (init == 0)
-                init = WP11_INIT_SHA512;
-            FALL_THROUGH;
     #endif
         case CKM_RSA_PKCS:
             if (type != CKK_RSA)
@@ -3905,27 +3982,15 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
     #ifdef WC_RSA_PSS
         #ifdef WOLFSSL_SHA224
         case CKM_SHA224_RSA_PKCS_PSS:
-            if (init == 0)
-                init = WP11_INIT_SHA224;
-            FALL_THROUGH;
         #endif
         #ifndef NO_SHA256
         case CKM_SHA256_RSA_PKCS_PSS:
-            if (init == 0)
-                init = WP11_INIT_SHA256;
-            FALL_THROUGH;
         #endif
         #ifdef WOLFSSL_SHA384
         case CKM_SHA384_RSA_PKCS_PSS:
-            if (init == 0)
-                init = WP11_INIT_SHA384;
-            FALL_THROUGH;
         #endif
         #ifdef WOLFSSL_SHA512
         case CKM_SHA512_RSA_PKCS_PSS:
-            if (init == 0)
-                init = WP11_INIT_SHA512;
-            FALL_THROUGH;
         #endif
         case CKM_RSA_PKCS_PSS: {
             CK_RSA_PKCS_PSS_PARAMS* params;
@@ -3977,76 +4042,61 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
 #ifndef NO_HMAC
     #ifndef NO_MD5
         case CKM_MD5_HMAC:
-            if (init == 0)
-                init = WP11_INIT_MD5;
-            FALL_THROUGH;
     #endif
     #ifndef NO_SHA
         case CKM_SHA1_HMAC:
-            if (init == 0)
-                init = WP11_INIT_SHA1;
-            FALL_THROUGH;
     #endif
     #ifdef WOLFSSL_SHA224
         case CKM_SHA224_HMAC:
-            if (init == 0)
-                init = WP11_INIT_SHA224;
-            FALL_THROUGH;
     #endif
     #ifndef NO_SHA256
         case CKM_SHA256_HMAC:
-            if (init == 0)
-                init = WP11_INIT_SHA256;
-            FALL_THROUGH;
     #endif
     #ifdef WOLFSSL_SHA384
         case CKM_SHA384_HMAC:
-            if (init == 0)
-                init = WP11_INIT_SHA384;
-            FALL_THROUGH;
     #endif
     #ifdef WOLFSSL_SHA512
         case CKM_SHA512_HMAC:
-            if (init == 0)
-                init = WP11_INIT_SHA512;
-            FALL_THROUGH;
     #endif
     #ifdef WOLFSSL_SHA3
     #ifndef WOLFSSL_NOSHA3_224
         case CKM_SHA3_224_HMAC:
-            if (init == 0)
-                init = WP11_INIT_SHA3_224;
-            FALL_THROUGH;
     #endif
     #ifndef WOLFSSL_NOSHA3_256
         case CKM_SHA3_256_HMAC:
-            if (init == 0)
-                init = WP11_INIT_SHA3_256;
-            FALL_THROUGH;
     #endif
     #ifndef WOLFSSL_NOSHA3_384
         case CKM_SHA3_384_HMAC:
-            if (init == 0)
-                init = WP11_INIT_SHA3_384;
-            FALL_THROUGH;
     #endif
     #ifndef WOLFSSL_NOSHA3_512
         case CKM_SHA3_512_HMAC:
-            if (init == 0)
-                init = WP11_INIT_SHA3_512;
     #endif
     #endif
-            if (type != CKK_GENERIC_SECRET)
+        {
+            CK_ULONG digestSize = 0;
+            if (type != CKK_GENERIC_SECRET &&
+                    type != CKK_AES &&
+                    type != CKK_HKDF)
                 return CKR_KEY_TYPE_INCONSISTENT;
             if (pMechanism->pParameter != NULL ||
                                               pMechanism->ulParameterLen != 0) {
-                return CKR_MECHANISM_PARAM_INVALID;
+                /* input can be the expected output length */
+                if (pMechanism->ulParameterLen != sizeof(CK_ULONG)) {
+                    return CKR_MECHANISM_PARAM_INVALID;
+                }
+                if (pMechanism->pParameter == NULL) {
+                    return CKR_MECHANISM_PARAM_INVALID;
+                }
+                digestSize = *((CK_ULONG*) pMechanism->pParameter);
             }
-            ret = WP11_Hmac_Init(pMechanism->mechanism, obj, session);
+            ret = WP11_Hmac_Init(pMechanism->mechanism, obj, session, digestSize);
+            if (ret == BAD_FUNC_ARG)
+                return CKR_MECHANISM_PARAM_INVALID;
             if (ret != 0)
                 return CKR_FUNCTION_FAILED;
             init |= WP11_INIT_HMAC_SIGN;
             break;
+        }
 #endif
 #ifndef NO_AES
 #ifdef HAVE_AESCMAC
@@ -4877,6 +4927,7 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
     }
 
     type = WP11_Object_GetType(obj);
+    init = GetInitValue(pMechanism->mechanism);
     switch (pMechanism->mechanism) {
 #ifndef NO_RSA
         case CKM_RSA_X_509:
@@ -4890,27 +4941,15 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
             break;
     #ifdef WOLFSSL_SHA224
         case CKM_SHA224_RSA_PKCS:
-            if (init == 0)
-                init = WP11_INIT_SHA224;
-            FALL_THROUGH;
     #endif
     #ifndef NO_SHA256
         case CKM_SHA256_RSA_PKCS:
-            if (init == 0)
-                init = WP11_INIT_SHA256;
-            FALL_THROUGH;
     #endif
     #ifdef WOLFSSL_SHA384
         case CKM_SHA384_RSA_PKCS:
-            if (init == 0)
-                init = WP11_INIT_SHA384;
-            FALL_THROUGH;
     #endif
     #ifdef WOLFSSL_SHA512
         case CKM_SHA512_RSA_PKCS:
-            if (init == 0)
-                init = WP11_INIT_SHA512;
-            FALL_THROUGH;
     #endif
         case CKM_RSA_PKCS:
             if (type != CKK_RSA)
@@ -4924,27 +4963,15 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
     #ifdef WC_RSA_PSS
         #ifdef WOLFSSL_SHA224
         case CKM_SHA224_RSA_PKCS_PSS:
-            if (init == 0)
-                init = WP11_INIT_SHA224;
-            FALL_THROUGH;
         #endif
         #ifndef NO_SHA256
         case CKM_SHA256_RSA_PKCS_PSS:
-            if (init == 0)
-                init = WP11_INIT_SHA256;
-            FALL_THROUGH;
         #endif
         #ifdef WOLFSSL_SHA384
         case CKM_SHA384_RSA_PKCS_PSS:
-            if (init == 0)
-                init = WP11_INIT_SHA384;
-            FALL_THROUGH;
         #endif
         #ifdef WOLFSSL_SHA512
         case CKM_SHA512_RSA_PKCS_PSS:
-            if (init == 0)
-                init = WP11_INIT_SHA512;
-            FALL_THROUGH;
         #endif
         case CKM_RSA_PKCS_PSS: {
             CK_RSA_PKCS_PSS_PARAMS* params;
@@ -4996,63 +5023,34 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
 #ifndef NO_HMAC
     #ifndef NO_MD5
         case CKM_MD5_HMAC:
-            if (init == 0)
-                init = WP11_INIT_MD5;
-            FALL_THROUGH;
     #endif
     #ifndef NO_SHA
         case CKM_SHA1_HMAC:
-            if (init == 0)
-                init = WP11_INIT_SHA1;
-            FALL_THROUGH;
     #endif
     #ifdef WOLFSSL_SHA224
         case CKM_SHA224_HMAC:
-            if (init == 0)
-                init = WP11_INIT_SHA224;
-            FALL_THROUGH;
     #endif
     #ifndef NO_SHA256
         case CKM_SHA256_HMAC:
-            if (init == 0)
-                init = WP11_INIT_SHA256;
-            FALL_THROUGH;
     #endif
     #ifdef WOLFSSL_SHA384
         case CKM_SHA384_HMAC:
-            if (init == 0)
-                init = WP11_INIT_SHA384;
-            FALL_THROUGH;
     #endif
     #ifdef WOLFSSL_SHA512
         case CKM_SHA512_HMAC:
-            if (init == 0)
-                init = WP11_INIT_SHA512;
-            FALL_THROUGH;
     #endif
     #ifdef WOLFSSL_SHA3
     #ifndef WOLFSSL_NOSHA3_224
         case CKM_SHA3_224_HMAC:
-            if (init == 0)
-                init = WP11_INIT_SHA3_224;
-            FALL_THROUGH;
     #endif
     #ifndef WOLFSSL_NOSHA3_256
         case CKM_SHA3_256_HMAC:
-            if (init == 0)
-                init = WP11_INIT_SHA3_256;
-            FALL_THROUGH;
     #endif
     #ifndef WOLFSSL_NOSHA3_384
         case CKM_SHA3_384_HMAC:
-            if (init == 0)
-                init = WP11_INIT_SHA3_384;
-            FALL_THROUGH;
     #endif
     #ifndef WOLFSSL_NOSHA3_512
         case CKM_SHA3_512_HMAC:
-            if (init == 0)
-                init = WP11_INIT_SHA3_512;
     #endif
     #endif
             if (type != CKK_GENERIC_SECRET)
@@ -5061,7 +5059,7 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
                                               pMechanism->ulParameterLen != 0) {
                 return CKR_MECHANISM_PARAM_INVALID;
             }
-            ret = WP11_Hmac_Init(pMechanism->mechanism, obj, session);
+            ret = WP11_Hmac_Init(pMechanism->mechanism, obj, session, 0);
             if (ret != 0)
                 return CKR_FUNCTION_FAILED;
             init |= WP11_INIT_HMAC_VERIFY;
