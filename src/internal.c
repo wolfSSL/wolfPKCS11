@@ -1779,6 +1779,11 @@ static int wp11_storage_read_alloc_array(void* storage,
     /* Read length of array. */
     ret = wp11_storage_read_int(storage, len);
     if (ret == 0) {
+        if (*len == 0) {
+            XFREE(*buffer, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            *buffer = NULL;
+            return 0;
+        }
         /* Allocate buffer to hold data. */
         *buffer = (unsigned char*)XMALLOC(*len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         if (*buffer == NULL)
