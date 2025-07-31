@@ -49,6 +49,11 @@ examples/obj_list
 examples/slot_info
 examples/token_info
 store/wp11*
+store/object
+store/pkcs11mtt
+store/pkcs11test
+store/rsa
+store/str
 test/*
 *.gcda
 *.gcno

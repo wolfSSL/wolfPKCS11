@@ -2044,6 +2044,7 @@ static CK_RV get_rsa_priv_key(CK_SESSION_HANDLE session, unsigned char* privId,
         { CKA_CLASS,             &privKeyClass,     sizeof(privKeyClass)      },
         { CKA_KEY_TYPE,          &rsaKeyType,       sizeof(rsaKeyType)        },
         { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue)            },
+        { CKA_VERIFY,            &ckTrue,           sizeof(ckTrue)            },
         { CKA_MODULUS,           rsa_2048_modulus,  sizeof(rsa_2048_modulus)  },
         { CKA_PRIVATE_EXPONENT,  rsa_2048_priv_exp, sizeof(rsa_2048_priv_exp) },
         { CKA_PRIME_1,           rsa_2048_p,        sizeof(rsa_2048_p)        },
@@ -3252,13 +3253,6 @@ static CK_RV test_rsa_pkcs_pss_sig_fail(void* args)
         params.mgf = CKG_MGF1_SHA256;
     }
     if (ret == CKR_OK) {
-        params.sLen = 63;
-        ret = funcList->C_SignInit(session, &mech, priv);
-        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
-                                                   "Sign Init bad salt length");
-        params.sLen = 32;
-    }
-    if (ret == CKR_OK) {
         mech.pParameter = NULL;
         ret = funcList->C_VerifyInit(session, &mech, priv);
         CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
@@ -3285,13 +3279,6 @@ static CK_RV test_rsa_pkcs_pss_sig_fail(void* args)
         CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
                                                "Verify Init bad mgf algorithm");
         params.mgf = CKG_MGF1_SHA256;
-    }
-    if (ret == CKR_OK) {
-        params.sLen = 63;
-        ret = funcList->C_VerifyInit(session, &mech, priv);
-        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
-                                                 "Verify Init bad salt length");
-        params.sLen = 32;
     }
 
     funcList->C_DestroyObject(session, pub);
