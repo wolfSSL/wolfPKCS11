@@ -19,10 +19,10 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
-#include "wolfpkcs11/pkcs11.h"
 #ifdef HAVE_CONFIG_H
     #include <wolfpkcs11/config.h>
 #endif
+#include "wolfpkcs11/pkcs11.h"
 
 #ifndef WOLFSSL_USER_SETTINGS
 #include <wolfssl/options.h>
@@ -169,13 +169,13 @@ typedef struct WP11_Lock {
 #ifdef DEBUG_WOLFPKCS11
 int wolfpkcs11_debugging = 0;
 
-void wolfPKCS11_Debugging_On(void)
+WP11_API void wolfPKCS11_Debugging_On(void)
 {
     wolfpkcs11_debugging = 1;
     WOLFPKCS11_MSG("debug logging enabled");
 }
 
-void wolfPKCS11_Debugging_Off(void)
+WP11_API void wolfPKCS11_Debugging_Off(void)
 {
     WOLFPKCS11_MSG("debug logging disabled");
     wolfpkcs11_debugging = 0;
