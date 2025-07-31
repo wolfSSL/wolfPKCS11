@@ -920,6 +920,55 @@ static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
 
 /* Functions that handle storing data. */
 
+int wolfPKCS11_Store_Remove(int type, CK_ULONG id1, CK_ULONG id2)
+{
+    int ret;
+#ifndef WOLFPKCS11_NO_ENV
+    const char* str = NULL;
+#endif
+#ifdef WOLFPKCS11_TPM_STORE
+    WP11_TpmStore* tpmStore = &tpmStores[0];
+    word32 nvIndex;
+    WOLFTPM2_HANDLE parent;
+#else
+    void* storage = NULL;
+#endif
+
+#ifdef WOLFPKCS11_DEBUG_STORE
+    printf("Store remove: Type %d, id1 %ld, id2 %ld\n", type, id1, id2);
+#endif
+
+#ifndef WOLFPKCS11_NO_ENV
+    str = XGETENV("WOLFPKCS11_NO_STORE");
+    if (str != NULL) {
+        return NOT_AVAILABLE_E;
+    }
+#endif
+
+#ifdef WOLFPKCS11_TPM_STORE
+    /* Build unique handle */
+    nvIndex = WOLFPKCS11_TPM_NV_BASE +
+                ((type & 0x0F) << 16) +
+         (((word32)id1 & 0xFF) << 8) +
+          ((word32)id2 & 0xFF);
+
+    XMEMSET(&parent, 0, sizeof(parent));
+    parent.hndl = WOLFPKCS11_TPM_AUTH_TYPE;
+    ret = wolfTPM2_NVDeleteAuth(tpmStore->dev, &parent, nvIndex);
+    if (ret != 0) {
+        printf("Error %d (%s) removing NV handle 0x%x: \n",
+            ret, wolfTPM2_GetRCString(ret), nvIndex);
+    }
+#else
+    /* truncate the storage file */
+    ret = wolfPKCS11_Store_Open(type, id1, id2, 0, &storage);
+    if (ret == 0) {
+        wolfPKCS11_Store_Close(storage);
+    }
+#endif
+    return ret;
+}
+
 /**
  * Opens access to location to read/write token data.
  *
@@ -1374,6 +1423,11 @@ static int wp11_storage_open(int type, CK_ULONG id1, CK_ULONG id2,
     (void)variableSz; /* not used */
     return wolfPKCS11_Store_Open(type, id1, id2, 0, storage);
 #endif
+}
+
+static int wp11_storage_remove(int type, CK_ULONG id1, CK_ULONG id2)
+{
+    return wolfPKCS11_Store_Remove(type, id1, id2);
 }
 
 /*
@@ -2844,10 +2898,9 @@ static int wp11_Object_Store_RsaKey(WP11_Object* object, int tokenId, int objId)
 
     if (object->keyData == NULL) {
         ret = wp11_Object_Encode_RsaKey(object);
+        if (ret != 0)
+            return ret;
     }
-
-    if (ret != 0)
-        return ret;
 
     /* Determine store type - private keys may be encrypted. */
     if (object->objClass == CKO_PRIVATE_KEY)
@@ -3064,10 +3117,9 @@ static int wp11_Object_Store_EccKey(WP11_Object* object, int tokenId, int objId)
 
     if (object->keyData == NULL) {
         ret = wp11_Object_Encode_EccKey(object);
+        if (ret != 0)
+            return ret;
     }
-
-    if (ret != 0)
-        return ret;
 
     /* Determine store type - private keys may be encrypted. */
     if (object->objClass == CKO_PRIVATE_KEY)
@@ -4002,12 +4054,10 @@ static int wp11_Object_Encode(WP11_Object* object, int protect)
  */
 static void wp11_Object_Unstore(WP11_Object* object, int tokenId, int objId)
 {
-    void* storage = NULL;
     int storeObjType = -1;
 
-    /* Open access to key object. */
-    wp11_storage_open(WOLFPKCS11_STORE_OBJECT, tokenId, objId, 0, &storage);
-    wp11_storage_close(storage);
+    /* Remove store and key object */
+    wp11_storage_remove(WOLFPKCS11_STORE_OBJECT, tokenId, objId);
 
     /* CKK_* and CKC_* values overlap, check for cert separately */
     if (object->objClass == CKO_CERTIFICATE) {
@@ -4053,8 +4103,7 @@ static void wp11_Object_Unstore(WP11_Object* object, int tokenId, int objId)
             break;
         }
     }
-    wp11_storage_open(storeObjType, tokenId, objId, 0, &storage);
-    wp11_storage_close(storage);
+    wp11_storage_remove(storeObjType, tokenId, objId);
 }
 #endif /* !WOLFPKCS11_NO_STORE */
 

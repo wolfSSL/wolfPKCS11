@@ -51,6 +51,19 @@
 WP11_LOCAL int wolfPKCS11_Store_Open(int type, CK_ULONG id1, CK_ULONG id2, int read,
     void** store);
 
+
+/*
+ * Removes stored data from the specified location.
+ *
+ * @param [in]  type   Type of data to be removed. See WOLFPKCS11_STORE_* above.
+ * @param [in]  id1    Numeric identifier 1.
+ * @param [in]  id2    Numeric identifier 2.
+ * @return  0 on success.
+ * @return  -4 when data not available.
+ * @return  Other value to indicate failure.
+ */
+WP11_LOCAL int wolfPKCS11_Store_Remove(int type, CK_ULONG id1, CK_ULONG id2);
+
 /*
  * Opens access to location to read/write token data.
  *
