@@ -5803,14 +5803,33 @@ int WP11_Session_IsOpInitialized(WP11_Session* session, int init)
 
 int WP11_Session_UpdateData(WP11_Session *session, byte *data, word32 dataLen)
 {
-    byte* tmp = (byte*)XREALLOC(session->data, session->dataSz + dataLen, NULL,
+    int ret = 0;
+    byte* tmp;
+
+#ifdef XREALLOC
+    tmp = (byte*)XREALLOC(session->data, session->dataSz + dataLen, NULL,
             DYNAMIC_TYPE_TMP_BUFFER);
     if (tmp == NULL)
-        return MEMORY_E;
-    session->data = tmp;
-    XMEMCPY(session->data + session->dataSz, data, dataLen);
-    session->dataSz += dataLen;
-    return 0;
+        ret = MEMORY_E;
+#else
+    tmp = (byte*)XMALLOC(session->dataSz + dataLen, NULL,
+            DYNAMIC_TYPE_TMP_BUFFER);
+    if (tmp == NULL)
+        ret = MEMORY_E;
+    if (ret == 0) {
+        if (session->data != NULL)
+            XMEMCPY(tmp, session->data, session->dataSz);
+        XFREE(session->data, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    }
+#endif /* !XREALLOC */
+
+    if (ret == 0) {
+        session->data = tmp;
+        XMEMCPY(session->data + session->dataSz, data, dataLen);
+        session->dataSz += dataLen;
+    }
+
+    return ret;
 }
 
 void WP11_Session_GetData(WP11_Session *session, byte** data, word32* dataLen)
