@@ -702,6 +702,13 @@ static CK_RV NewObject(WP11_Session* session, CK_KEY_TYPE keyType,
     if (ret != 0)
         return CKR_FUNCTION_FAILED;
 
+    /* Now that object class is set, allocate type-specific data */
+    ret = wp11_Object_AllocateTypeData(obj);
+    if (ret == MEMORY_E)
+        return CKR_DEVICE_MEMORY;
+    if (ret != 0)
+        return CKR_FUNCTION_FAILED;
+
     rv = SetAttributeValue(session, obj, pTemplate, ulCount, CK_TRUE);
     if (rv != CKR_OK) {
         WP11_Object_Free(obj);
@@ -1136,6 +1143,18 @@ CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
     }
 
     ret = WP11_Object_New(session, keyType, &newObj);
+    if (ret == MEMORY_E)
+        return CKR_DEVICE_MEMORY;
+    if (ret != 0)
+        return CKR_FUNCTION_FAILED;
+
+    /* Set the object class from the original object */
+    ret = WP11_Object_SetClass(newObj, WP11_Object_GetClass(obj));
+    if (ret != 0)
+        return CKR_FUNCTION_FAILED;
+
+    /* Now that object class is set, allocate type-specific data */
+    ret = wp11_Object_AllocateTypeData(newObj);
     if (ret == MEMORY_E)
         return CKR_DEVICE_MEMORY;
     if (ret != 0)
