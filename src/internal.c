@@ -1919,56 +1919,130 @@ static int wp11_Object_New(WP11_Slot* slot, CK_KEY_TYPE type,
         obj->onToken = 0;
         obj->slot = slot;
         obj->keyGenMech = CK_UNAVAILABLE_INFORMATION;
-    #ifdef WOLFPKCS11_TPM
-        if (type == CKK_EC || type == CKK_RSA) {
-            obj->tpmKey = (WOLFTPM2_KEYBLOB*)XMALLOC(sizeof(WOLFTPM2_KEYBLOB),
-                NULL, DYNAMIC_TYPE_TMP_BUFFER);
-            if (obj->tpmKey == NULL) {
-                ret = MEMORY_E;
-            }
-            else {
-                XMEMSET(obj->tpmKey, 0, sizeof(WOLFTPM2_KEYBLOB));
-                obj->tpmKey->handle.hndl = TPM_RH_NULL;
-            }
-        }
-    #endif
+    /* TPM key allocation will be done later when object class is known */
     }
 
+    /* Type-specific allocation will be done later when object class is known */
+
+    if (ret != 0) {
+        WP11_Object_Free(obj);
+        obj = NULL;
+    }
+
+    *object = obj;
+
+    return ret;
+}
+
+/**
+ * Allocate type-specific data for an object based on its class and type.
+ * This should be called after the object class is known.
+ *
+ * @param  object  [in]  Object to allocate type-specific data for.
+ * @return  MEMORY_E when dynamic memory allocation fails.
+ *          NOT_AVAILABLE_E when key type not supported.
+ *          0 on success.
+ */
+int wp11_Object_AllocateTypeData(WP11_Object* object)
+{
+    int ret = 0;
+    CK_OBJECT_CLASS objClass;
+
+    if (object == NULL) {
+        return BAD_FUNC_ARG;
+    }
+
+    objClass = object->objClass;
+
+    /* If object class is not set (-1), infer it from key type */
+    if (objClass == (CK_OBJECT_CLASS)-1) {
+        switch (object->type) {
+            case CKK_RSA:
+            case CKK_EC:
+            case CKK_DH:
+                /* These could be either public or private keys, but we can't
+                 * tell at this point. The specific allocation will be done
+                 * later when the actual object class is determined from
+                 * attributes. */
+                return 0;
+            case CKK_AES:
+            case CKK_GENERIC_SECRET:
+            case CKK_HKDF:
+                objClass = CKO_SECRET_KEY;
+                break;
+            default:
+                /* Unknown type, don't allocate */
+                return 0;
+        }
+    }
+
+    /* Only allocate type-specific data for key objects, not certificates or
+     * other objects */
+    if (objClass != CKO_PRIVATE_KEY &&
+        objClass != CKO_PUBLIC_KEY &&
+        objClass != CKO_SECRET_KEY) {
+        /* For non-key objects like certificates, no type-specific allocation
+         * needed */
+        return 0;
+    }
+
+#ifdef WOLFPKCS11_TPM
+    /* Allocate TPM key data for supported key types */
+    if ((object->type == CKK_EC || object->type == CKK_RSA) &&
+        object->tpmKey == NULL) {
+        object->tpmKey = (WOLFTPM2_KEYBLOB*)XMALLOC(
+            sizeof(WOLFTPM2_KEYBLOB), NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (object->tpmKey == NULL) {
+            ret = MEMORY_E;
+        }
+        else {
+            XMEMSET(object->tpmKey, 0, sizeof(WOLFTPM2_KEYBLOB));
+            object->tpmKey->handle.hndl = TPM_RH_NULL;
+        }
+    }
+#endif
+
     if (ret == 0) {
-        switch (type) {
+        switch (object->type) {
             #ifdef HAVE_ECC
             case CKK_EC:
-                obj->data.ecKey = (ecc_key*)XMALLOC(sizeof(ecc_key), NULL,
-                    DYNAMIC_TYPE_ECC);
-                if (obj->data.ecKey == NULL) {
-                    ret = MEMORY_E;
-                }
-                else {
-                    XMEMSET(obj->data.ecKey, 0, sizeof(ecc_key));
+                if (object->data.ecKey == NULL) {
+                    object->data.ecKey = (ecc_key*)XMALLOC(sizeof(ecc_key),
+                        NULL, DYNAMIC_TYPE_ECC);
+                    if (object->data.ecKey == NULL) {
+                        ret = MEMORY_E;
+                    }
+                    else {
+                        XMEMSET(object->data.ecKey, 0, sizeof(ecc_key));
+                    }
                 }
                 break;
             #endif
             #ifndef NO_RSA
             case CKK_RSA:
-                obj->data.rsaKey = (RsaKey*)XMALLOC(sizeof(RsaKey), NULL,
-                    DYNAMIC_TYPE_RSA);
-                if (obj->data.rsaKey == NULL) {
-                    ret = MEMORY_E;
-                }
-                else {
-                    XMEMSET(obj->data.rsaKey, 0, sizeof(RsaKey));
+                if (object->data.rsaKey == NULL) {
+                    object->data.rsaKey = (RsaKey*)XMALLOC(sizeof(RsaKey),
+                        NULL, DYNAMIC_TYPE_RSA);
+                    if (object->data.rsaKey == NULL) {
+                        ret = MEMORY_E;
+                    }
+                    else {
+                        XMEMSET(object->data.rsaKey, 0, sizeof(RsaKey));
+                    }
                 }
                 break;
             #endif
             #ifndef NO_DH
             case CKK_DH:
-                obj->data.dhKey = (WP11_DhKey*)XMALLOC(sizeof(WP11_DhKey), NULL,
-                    DYNAMIC_TYPE_DH);
-                if (obj->data.dhKey == NULL) {
-                    ret = MEMORY_E;
-                }
-                else {
-                    XMEMSET(obj->data.dhKey, 0, sizeof(WP11_DhKey));
+                if (object->data.dhKey == NULL) {
+                    object->data.dhKey = (WP11_DhKey*)XMALLOC(
+                        sizeof(WP11_DhKey), NULL, DYNAMIC_TYPE_DH);
+                    if (object->data.dhKey == NULL) {
+                        ret = MEMORY_E;
+                    }
+                    else {
+                        XMEMSET(object->data.dhKey, 0, sizeof(WP11_DhKey));
+                    }
                 }
                 break;
             #endif
@@ -1979,13 +2053,15 @@ static int wp11_Object_New(WP11_Slot* slot, CK_KEY_TYPE type,
             case CKK_HKDF:
             #endif
             case CKK_GENERIC_SECRET:
-                obj->data.symmKey = (WP11_Data*)XMALLOC(sizeof(WP11_Data), NULL,
-                    DYNAMIC_TYPE_AES);
-                if (obj->data.symmKey == NULL) {
-                    ret = MEMORY_E;
-                }
-                else {
-                    XMEMSET(obj->data.symmKey, 0, sizeof(WP11_Data));
+                if (object->data.symmKey == NULL) {
+                    object->data.symmKey = (WP11_Data*)XMALLOC(
+                        sizeof(WP11_Data), NULL, DYNAMIC_TYPE_AES);
+                    if (object->data.symmKey == NULL) {
+                        ret = MEMORY_E;
+                    }
+                    else {
+                        XMEMSET(object->data.symmKey, 0, sizeof(WP11_Data));
+                    }
                 }
                 break;
             #ifdef WOLFPKCS11_NSS
@@ -1997,13 +2073,6 @@ static int wp11_Object_New(WP11_Slot* slot, CK_KEY_TYPE type,
                 ret = NOT_AVAILABLE_E;
         }
     }
-
-    if (ret != 0) {
-        WP11_Object_Free(obj);
-        obj = NULL;
-    }
-
-    *object = obj;
 
     return ret;
 }
@@ -3826,6 +3895,10 @@ static int wp11_Object_Load(WP11_Object* object, int tokenId, int objId)
     int ret;
 
     ret = wp11_Object_Load_Object(object, tokenId, objId);
+    if (ret == 0) {
+        /* Now that we know the object class, allocate type-specific data */
+        ret = wp11_Object_AllocateTypeData(object);
+    }
     if (ret == 0) {
         if (object->objClass == CKO_CERTIFICATE) {
             ret = wp11_Object_Load_Cert(object, tokenId, objId);
