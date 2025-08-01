@@ -19,6 +19,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
+#include "wolfpkcs11/pkcs11.h"
 #ifdef HAVE_CONFIG_H
     #include <wolfpkcs11/config.h>
 #endif
@@ -1974,6 +1975,9 @@ static int wp11_Object_New(WP11_Slot* slot, CK_KEY_TYPE type,
             #ifndef NO_AES
             case CKK_AES:
             #endif
+            #ifdef WOLFPKCS11_HKDF
+            case CKK_HKDF:
+            #endif
             case CKK_GENERIC_SECRET:
                 obj->data.symmKey = (WP11_Data*)XMALLOC(sizeof(WP11_Data), NULL,
                     DYNAMIC_TYPE_AES);
@@ -1984,6 +1988,11 @@ static int wp11_Object_New(WP11_Slot* slot, CK_KEY_TYPE type,
                     XMEMSET(obj->data.symmKey, 0, sizeof(WP11_Data));
                 }
                 break;
+            #ifdef WOLFPKCS11_NSS
+            case CKK_NSS_TRUST:
+                /* Nothing yet */
+                break;
+            #endif
             default:
                 ret = NOT_AVAILABLE_E;
         }
@@ -6167,7 +6176,7 @@ int WP11_Session_SetCtrParams(WP11_Session* session, CK_ULONG ulCounterBits,
     if (ret == 0) {
         if (object->onToken)
             WP11_Lock_LockRO(object->lock);
-        key = &object->data.symmKey;
+        key = object->data.symmKey;
         ret = wc_AesSetKey(&ctr->aes, key->data, key->len, cb, AES_ENCRYPTION);
         if (object->onToken)
             WP11_Lock_UnlockRO(object->lock);
@@ -6313,7 +6322,7 @@ int WP11_Session_SetCtsParams(WP11_Session* session, unsigned char* iv,
     if (ret == 0) {
         if (object->onToken)
             WP11_Lock_LockRO(object->lock);
-        key = &object->data.symmKey;
+        key = object->data.symmKey;
         ret = wc_AesSetKey(&cts->aes, key->data, key->len, iv,
                                          enc ? AES_ENCRYPTION : AES_DECRYPTION);
         if (object->onToken)
@@ -6691,8 +6700,8 @@ void WP11_Object_Free(WP11_Object* object)
             object->data.dhKey = NULL;
         }
     #endif
-        if ((object->type == CKK_AES || object->type == CKK_GENERIC_SECRET) &&
-            object->data.symmKey != NULL) {
+        if ((object->type == CKK_AES || object->type == CKK_GENERIC_SECRET ||
+             object->type == CKK_HKDF) && object->data.symmKey != NULL) {
             /* TODO: ForceZero */
             XMEMSET(object->data.symmKey->data, 0, object->data.symmKey->len);
             XFREE(object->data.symmKey, NULL, DYNAMIC_TYPE_AES);
@@ -7708,7 +7717,7 @@ static int EcObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
                 *len = CK_UNAVAILABLE_INFORMATION;
             else
 #if defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION <= 5)
-                ret = GetMPIData(object->data.ecKey->k, data, len);
+                ret = GetMPIData(&object->data.ecKey->k, data, len);
 #else
                 ret = GetMPIData(object->data.ecKey->k, data, len);
 #endif
@@ -7885,7 +7894,7 @@ static int GetEcbCheckValue(WP11_Object* secret, byte* dataOut,
     byte* hash;
     byte* input;
     word32 inLen;
-    WP11_Data* key = &secret->data.symmKey;
+    WP11_Data* key = secret->data.symmKey;
 
     if (dataOut == NULL) {
         if (outLen != NULL) {
@@ -11122,7 +11131,7 @@ int WP11_AesCcm_Encrypt(unsigned char* plain, word32 plainSz,
     if (ret == 0) {
         if (secret->onToken)
             WP11_Lock_LockRO(secret->lock);
-        key = &secret->data.symmKey;
+        key = secret->data.symmKey;
         ret = wc_AesCcmSetKey(&aes, key->data, key->len);
         if (secret->onToken)
             WP11_Lock_UnlockRO(secret->lock);
@@ -11177,7 +11186,7 @@ int WP11_AesCcm_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
     if (ret == 0) {
         if (secret->onToken)
             WP11_Lock_LockRO(secret->lock);
-        key = &secret->data.symmKey;
+        key = secret->data.symmKey;
         ret = wc_AesCcmSetKey(&aes, key->data, key->len);
         if (secret->onToken)
             WP11_Lock_UnlockRO(secret->lock);
@@ -11233,7 +11242,7 @@ int WP11_AesEcb_Encrypt(unsigned char* plain, word32 plainSz,
     if (ret == 0) {
         if (secret->onToken)
             WP11_Lock_LockRO(secret->lock);
-        key = &secret->data.symmKey;
+        key = secret->data.symmKey;
         ret = wc_AesSetKey(&aes, key->data, key->len, NULL, AES_ENCRYPTION);
         if (secret->onToken)
             WP11_Lock_UnlockRO(secret->lock);
@@ -11274,7 +11283,7 @@ int WP11_AesEcb_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
     if (ret == 0) {
         if (secret->onToken)
             WP11_Lock_LockRO(secret->lock);
-        key = &secret->data.symmKey;
+        key = secret->data.symmKey;
         ret = wc_AesSetKey(&aes, key->data, key->len, NULL, AES_DECRYPTION);
         if (secret->onToken)
             WP11_Lock_UnlockRO(secret->lock);
@@ -11500,7 +11509,7 @@ int WP11_Aes_Cmac_Init(WP11_Object* secret, WP11_Session* session,
     cmac->sigLen = (byte)sigLen;
     if (secret->onToken)
         WP11_Lock_LockRO(secret->lock);
-    key = &secret->data.symmKey;
+    key = secret->data.symmKey;
     ret = wc_InitCmac_ex(&cmac->cmac, key->data, key->len, WC_CMAC_AES, NULL,
             NULL, secret->slot->devId);
     if (secret->onToken)
