@@ -3792,7 +3792,7 @@ static CK_RV test_generate_key_pair(void* args)
 }
 #endif
 
-#ifdef HAVE_AES_KEYWRAP
+#if defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE)
 static CK_RV test_aes_wrap_unwrap_key(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -3881,7 +3881,6 @@ static CK_RV test_aes_wrap_unwrap_pad_key(void* args)
 
     return ret;
 }
-#endif /* HAVE_AES_KEYWRAP */
 
 static CK_RV test_wrap_unwrap_key(void* args)
 {
@@ -4006,6 +4005,7 @@ static CK_RV test_wrap_unwrap_key(void* args)
 
     return ret;
 }
+#endif /* HAVE_AES_KEYWRAP && !WOLFPKCS11_NO_STORE */
 
 #ifndef NO_DH
 static CK_RV test_derive_key(void* args)
@@ -13646,11 +13646,11 @@ static TEST_FUNC testFunc[] = {
 #if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN)
     PKCS11TEST_FUNC_SESS_DECL(test_generate_key_pair),
 #endif
-#ifdef HAVE_AES_KEYWRAP
+#if defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE)
     PKCS11TEST_FUNC_SESS_DECL(test_aes_wrap_unwrap_key),
     PKCS11TEST_FUNC_SESS_DECL(test_aes_wrap_unwrap_pad_key),
-#endif
     PKCS11TEST_FUNC_SESS_DECL(test_wrap_unwrap_key),
+#endif /* HAVE_AES_KEYWRAP && !WOLFPKCS11_NO_STORE */
 #ifndef NO_DH
     PKCS11TEST_FUNC_SESS_DECL(test_derive_key),
 #endif

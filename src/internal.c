@@ -763,7 +763,8 @@ static void wp11_Session_Final(WP11_Session* session)
     if (session->inUse) {
         /* Free objects in session. */
         while ((obj = session->object) != NULL) {
-            WP11_Session_RemoveObject(session, obj);
+            /* ignore return value, logged in function */
+            (void)WP11_Session_RemoveObject(session, obj);
             WP11_Object_Free(obj);
         }
         session->inUse = 0;
@@ -920,6 +921,135 @@ static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
 #endif /* WOLFPKCS11_TPM_STORE */
 
 /* Functions that handle storing data. */
+#ifdef WOLFPKCS11_TPM_STORE
+static word32 wolfPKCS11_Store_Handle(int type, CK_ULONG id1, CK_ULONG id2)
+{
+    /* Build unique handle */
+    word32 nvIndex = WOLFPKCS11_TPM_NV_BASE +
+        ((type & 0x0F) << 16) +
+            (((word32)id1 & 0xFF) << 8) +
+             ((word32)id2 & 0xFF);
+    return nvIndex;
+}
+#else
+static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* name,
+    int nameLen)
+{
+#ifndef WOLFPKCS11_NO_ENV
+    const char* str = NULL;
+#endif
+    char homePath[47]; /* Must fit within name buffer size limit */
+
+    /* Path order:
+     * 1. Environment variable WOLFPKCS11_TOKEN_PATH
+     * 2. Home directory with .wolfPKCS11 (or APPDIR with wolfPKCS11 for
+     * Windows)
+     * 3. WOLFPKCS11_DEFAULT_TOKEN_PATH, if set
+     * 4. /tmp in Linux, %TEMP% or C:\Windows\Temp in Windows
+     */
+#ifndef WOLFPKCS11_NO_ENV
+    str = XGETENV("WOLFPKCS11_TOKEN_PATH");
+#endif
+
+    if (str == NULL) {
+        const char* homeDir = NULL;
+
+    #if defined(_WIN32) || defined(_MSC_VER)
+        homeDir = XGETENV("%APPDIR%");
+        if (homeDir != NULL && XSTRLEN(homeDir) <= sizeof(homePath) - 13) {
+            int len = XSNPRINTF(homePath, sizeof(homePath), "%s\\wolfPKCS11",
+                                homeDir);
+            if (len > 0 && len < (int)sizeof(homePath)) {
+                str = homePath;
+            }
+         }
+    #else
+        homeDir = XGETENV("HOME");
+        if (homeDir != NULL && XSTRLEN(homeDir) <= sizeof(homePath) - 13) {
+            int len = XSNPRINTF(homePath, sizeof(homePath), "%s/.wolfPKCS11",
+                                homeDir);
+            if (len > 0 && len < (int)sizeof(homePath)) {
+                str = homePath;
+            }
+        }
+    #endif
+    }
+
+#ifdef WOLFPKCS11_DEFAULT_TOKEN_PATH
+    if (str == NULL) {
+        str = WC_STRINGIFY(WOLFPKCS11_DEFAULT_TOKEN_PATH);
+    }
+#else
+    if (str == NULL) {
+    #if defined(_WIN32) || defined(_MSC_VER)
+        str = XGETENV("%TEMP%");
+        if (str == NULL) {
+            str = "C:\\Windows\\Temp";
+        }
+    #else
+        str = "/tmp";
+    #endif
+    }
+#endif
+
+    /* 47 is maximum number of character to a filename and path separator. */
+    if (str == NULL || (XSTRLEN(str) > nameLen - sizeof(homePath))) {
+        return -1;
+    }
+
+    /* Set different filename for each type of data and different ids. */
+    switch (type) {
+        case WOLFPKCS11_STORE_TOKEN:
+            XSNPRINTF(name, nameLen, "%s/wp11_token_%016lx", str, id1);
+            break;
+        case WOLFPKCS11_STORE_OBJECT:
+            XSNPRINTF(name, nameLen, "%s/wp11_obj_%016lx_%016lx", str, id1,
+                    id2);
+            break;
+        case WOLFPKCS11_STORE_SYMMKEY:
+            XSNPRINTF(name, nameLen, "%s/wp11_symmkey_%016lx_%016lx", str,
+                    id1, id2);
+            break;
+        case WOLFPKCS11_STORE_RSAKEY_PRIV:
+            XSNPRINTF(name, nameLen, "%s/wp11_rsakey_priv_%016lx_%016lx",
+                    str, id1, id2);
+            break;
+        case WOLFPKCS11_STORE_RSAKEY_PUB:
+            XSNPRINTF(name, nameLen, "%s/wp11_rsakey_pub_%016lx_%016lx",
+                    str, id1, id2);
+            break;
+        case WOLFPKCS11_STORE_ECCKEY_PRIV:
+            XSNPRINTF(name, nameLen, "%s/wp11_ecckey_priv_%016lx_%016lx",
+                    str, id1, id2);
+            break;
+        case WOLFPKCS11_STORE_ECCKEY_PUB:
+            XSNPRINTF(name, nameLen, "%s/wp11_ecckey_pub_%016lx_%016lx",
+                    str, id1, id2);
+            break;
+        case WOLFPKCS11_STORE_DHKEY_PRIV:
+            XSNPRINTF(name, nameLen, "%s/wp11_dhkey_priv_%016lx_%016lx",
+                    str, id1, id2);
+            break;
+        case WOLFPKCS11_STORE_DHKEY_PUB:
+            XSNPRINTF(name, nameLen, "%s/wp11_dhkey_pub_%016lx_%016lx",
+                    str, id1, id2);
+            break;
+        case WOLFPKCS11_STORE_CERT:
+            XSNPRINTF(name, nameLen, "%s/wp11_cert_%016lx_%016lx",
+                    str, id1, id2);
+            break;
+        case WOLFPKCS11_STORE_TRUST:
+            XSNPRINTF(name, nameLen, "%s/wp11_trust_%016lx_%016lx",
+                    str, id1, id2);
+            break;
+
+        default:
+            return -1;
+            break;
+    }
+    return 0;
+}
+#endif
 
 int wolfPKCS11_Store_Remove(int type, CK_ULONG id1, CK_ULONG id2)
 {
@@ -932,7 +1062,7 @@ int wolfPKCS11_Store_Remove(int type, CK_ULONG id1, CK_ULONG id2)
     word32 nvIndex;
     WOLFTPM2_HANDLE parent;
 #else
-    void* storage = NULL;
+    char name[120] = "\0";
 #endif
 
 #ifdef WOLFPKCS11_DEBUG_STORE
@@ -947,11 +1077,8 @@ int wolfPKCS11_Store_Remove(int type, CK_ULONG id1, CK_ULONG id2)
 #endif
 
 #ifdef WOLFPKCS11_TPM_STORE
-    /* Build unique handle */
-    nvIndex = WOLFPKCS11_TPM_NV_BASE +
-                ((type & 0x0F) << 16) +
-         (((word32)id1 & 0xFF) << 8) +
-          ((word32)id2 & 0xFF);
+    /* get unique handle */
+    nvIndex = wolfPKCS11_Store_Handle(type, id1, id2);
 
     XMEMSET(&parent, 0, sizeof(parent));
     parent.hndl = WOLFPKCS11_TPM_AUTH_TYPE;
@@ -961,10 +1088,13 @@ int wolfPKCS11_Store_Remove(int type, CK_ULONG id1, CK_ULONG id2)
             ret, wolfTPM2_GetRCString(ret), nvIndex);
     }
 #else
-    /* truncate the storage file */
-    ret = wolfPKCS11_Store_Open(type, id1, id2, 0, &storage);
+    /* remove file */
+    ret = wolfPKCS11_Store_Name(type, id1, id2, name, sizeof(name));
     if (ret == 0) {
-        wolfPKCS11_Store_Close(storage);
+        ret = remove(name);
+        if (ret < 0) {
+            printf("remove(%s) failed: %d\n", name, ret);
+        }
     }
 #endif
     return ret;
@@ -1000,7 +1130,6 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
 #else
     char name[120] = "\0";
     XFILE file = XBADFILE;
-    char homePath[47]; /* Must fit within name buffer size limit */
 #endif
 
 #ifdef WOLFPKCS11_DEBUG_STORE
@@ -1021,10 +1150,7 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
     tpmStore->dev = &slot->tpmDev;
 
     /* Build unique handle */
-    nvIndex = WOLFPKCS11_TPM_NV_BASE +
-                ((type & 0x0F) << 16) +
-         (((word32)id1 & 0xFF) << 8) +
-          ((word32)id2 & 0xFF);
+    nvIndex = wolfPKCS11_Store_Handle(type, id1, id2);
 
     maxSz = wolfPKCS11_Store_GetMaxSize(type, variableSz);
     if (maxSz <= 0) {
@@ -1075,114 +1201,8 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
     #endif
 
 #else
-    /* Path order:
-     * 1. Environment variable WOLFPKCS11_TOKEN_PATH
-     * 2. Home directory with .wolfPKCS11 (or APPDIR with wolfPKCS11 for
-     * Windows)
-     * 3. WOLFPKCS11_DEFAULT_TOKEN_PATH, if set
-     * 4. /tmp in Linux, %TEMP% or C:\Windows\Temp in Windows
-     */
-    #ifndef WOLFPKCS11_NO_ENV
-    str = XGETENV("WOLFPKCS11_TOKEN_PATH");
-    #endif
-
-    if (str == NULL) {
-        const char* homeDir = NULL;
-
-        #if defined(_WIN32) || defined(_MSC_VER)
-        homeDir = XGETENV("%APPDIR%");
-        if (homeDir != NULL && XSTRLEN(homeDir) <= sizeof(homePath) - 13) {
-            int len = XSNPRINTF(homePath, sizeof(homePath), "%s\\wolfPKCS11",
-                               homeDir);
-            if (len > 0 && len < (int)sizeof(homePath)) {
-                str = homePath;
-            }
-        }
-        #else
-        homeDir = XGETENV("HOME");
-        if (homeDir != NULL && XSTRLEN(homeDir) <= sizeof(homePath) - 13) {
-            int len = XSNPRINTF(homePath, sizeof(homePath), "%s/.wolfPKCS11",
-                               homeDir);
-            if (len > 0 && len < (int)sizeof(homePath)) {
-                str = homePath;
-            }
-        }
-        #endif
-    }
-
-    #ifdef WOLFPKCS11_DEFAULT_TOKEN_PATH
-    if (str == NULL) {
-        str = WC_STRINGIFY(WOLFPKCS11_DEFAULT_TOKEN_PATH);
-    }
-    #else
-    if (str == NULL) {
-        #if defined(_WIN32) || defined(_MSC_VER)
-        str = XGETENV("%TEMP%");
-        if (str == NULL) {
-            str = "C:\\Windows\\Temp";
-        }
-        #else
-        str = "/tmp";
-        #endif
-    }
-    #endif
-
-
-    /* 47 is maximum number of character to a filename and path separator. */
-    if (str == NULL || (XSTRLEN(str) > sizeof(name) - 47)) {
-       return -1;
-    }
-
-    /* Set different filename for each type of data and different ids. */
-    switch (type) {
-        case WOLFPKCS11_STORE_TOKEN:
-            XSNPRINTF(name, sizeof(name), "%s/wp11_token_%016lx", str, id1);
-            break;
-        case WOLFPKCS11_STORE_OBJECT:
-            XSNPRINTF(name, sizeof(name), "%s/wp11_obj_%016lx_%016lx", str, id1,
-                      id2);
-            break;
-        case WOLFPKCS11_STORE_SYMMKEY:
-            XSNPRINTF(name, sizeof(name), "%s/wp11_symmkey_%016lx_%016lx", str,
-                      id1, id2);
-            break;
-        case WOLFPKCS11_STORE_RSAKEY_PRIV:
-            XSNPRINTF(name, sizeof(name), "%s/wp11_rsakey_priv_%016lx_%016lx",
-                      str, id1, id2);
-            break;
-        case WOLFPKCS11_STORE_RSAKEY_PUB:
-            XSNPRINTF(name, sizeof(name), "%s/wp11_rsakey_pub_%016lx_%016lx",
-                      str, id1, id2);
-            break;
-        case WOLFPKCS11_STORE_ECCKEY_PRIV:
-            XSNPRINTF(name, sizeof(name), "%s/wp11_ecckey_priv_%016lx_%016lx",
-                      str, id1, id2);
-            break;
-        case WOLFPKCS11_STORE_ECCKEY_PUB:
-            XSNPRINTF(name, sizeof(name), "%s/wp11_ecckey_pub_%016lx_%016lx",
-                      str, id1, id2);
-            break;
-        case WOLFPKCS11_STORE_DHKEY_PRIV:
-            XSNPRINTF(name, sizeof(name), "%s/wp11_dhkey_priv_%016lx_%016lx",
-                      str, id1, id2);
-            break;
-        case WOLFPKCS11_STORE_DHKEY_PUB:
-            XSNPRINTF(name, sizeof(name), "%s/wp11_dhkey_pub_%016lx_%016lx",
-                      str, id1, id2);
-            break;
-        case WOLFPKCS11_STORE_CERT:
-            XSNPRINTF(name, sizeof(name), "%s/wp11_cert_%016lx_%016lx",
-                      str, id1, id2);
-            break;
-        case WOLFPKCS11_STORE_TRUST:
-            XSNPRINTF(name, sizeof(name), "%s/wp11_trust_%016lx_%016lx",
-                      str, id1, id2);
-            break;
-
-        default:
-            ret = -1;
-            break;
-    }
+    /* build filename */
+    ret = wolfPKCS11_Store_Name(type, id1, id2, name, sizeof(name));
 
     /* Open file for read or write. */
     if (ret == 0) {
@@ -4232,12 +4252,20 @@ static int wp11_Object_Encode(WP11_Object* object, int protect)
  * @param [in]  tokenId  Id of token this key belongs to.
  * @param [in]  objId    Id of object for token.
  */
-static void wp11_Object_Unstore(WP11_Object* object, int tokenId, int objId)
+static int wp11_Object_Unstore(WP11_Object* object, int tokenId, int objId)
 {
+    int ret;
     int storeObjType = -1;
+    
+    if (objId < 0) {
+        return BAD_FUNC_ARG;
+    }
 
-    /* Remove store and key object */
-    wp11_storage_remove(WOLFPKCS11_STORE_OBJECT, tokenId, objId);
+    /* Remove store object */
+    ret = wp11_storage_remove(WOLFPKCS11_STORE_OBJECT, tokenId, objId);
+    if (ret != 0) {
+        return ret;
+    }
 
     /* CKK_* and CKC_* values overlap, check for cert separately */
     if (object->objClass == CKO_CERTIFICATE) {
@@ -4283,7 +4311,8 @@ static void wp11_Object_Unstore(WP11_Object* object, int tokenId, int objId)
             break;
         }
     }
-    wp11_storage_remove(storeObjType, tokenId, objId);
+    /* remove actual object by type */
+    return wp11_storage_remove(storeObjType, tokenId, objId);
 }
 #endif /* !WOLFPKCS11_NO_STORE */
 
@@ -6291,7 +6320,7 @@ int WP11_Session_SetAesWrapParams(WP11_Session* session, byte* iv, word32 ivLen,
     if (ret == 0) {
         if (object->onToken)
             WP11_Lock_LockRO(object->lock);
-        key = &object->data.symmKey;
+        key = object->data.symmKey;
         ret = wc_AesSetKey(&wrap->aes, key->data, key->len, NULL,
                 enc ? AES_ENCRYPTION : AES_DECRYPTION);
         if (object->onToken)
@@ -6494,12 +6523,16 @@ int WP11_Session_AddObject(WP11_Session* session, int onToken,
  *
  * @param  session  [in]  Session object.
  * @param  object   [in]  Key Object object.
+ * @return  -ve on failure.
+ *          0 on success.
  */
-void WP11_Session_RemoveObject(WP11_Session* session, WP11_Object* object)
+int WP11_Session_RemoveObject(WP11_Session* session, WP11_Object* object)
 {
+    int ret = 0;
     WP11_Object** curr;
     WP11_Token* token;
     int id;
+
 #ifdef WOLFPKCS11_NSS
     if (object->session && (session != object->session))
         session = object->session;
@@ -6522,19 +6555,41 @@ void WP11_Session_RemoveObject(WP11_Session* session, WP11_Object* object)
         WP11_Lock_LockRW(&session->slot->token.lock);
     }
 
+    /* walk list to get id for object to remove */
     while (*curr != NULL) {
         if (*curr == object) {
             *curr = object->next;
             break;
         }
+
+    #ifndef WOLFPKCS11_NO_STORE
+        if (object->onToken) {
+            /* remove any id's with higher value */
+            ret = wp11_Object_Unstore(*curr, (int)session->slotId, id);
+        #ifdef DEBUG_WOLFPKCS11
+            if (ret != 0) {
+                printf("Failed to unstore slot %d, id: %d, ret: %d, continuing...\n",
+                    (int)session->slotId, id, ret);
+            }
+        #endif
+        }
+    #endif
+
         curr = &(*curr)->next;
         /* Id of next object as it isn't the one being removed. */
         id--;
     }
+
     if (object->onToken) {
 #ifndef WOLFPKCS11_NO_STORE
-        int ret;
-        wp11_Object_Unstore(object, (int)session->slotId, id);
+        ret = wp11_Object_Unstore(object, (int)session->slotId, id);
+    #ifdef DEBUG_WOLFPKCS11
+        if (ret != 0) {
+            printf("Failed to unstore slot %d, id: %d, ret: %d\n",
+                (int)session->slotId, id, ret);
+        }
+    #endif
+        /* re-store the token */
         ret = wp11_Slot_Store(session->slot, (int)session->slotId);
     #ifdef DEBUG_WOLFPKCS11
         if (ret != 0) {
@@ -6542,13 +6597,13 @@ void WP11_Session_RemoveObject(WP11_Session* session, WP11_Object* object)
                 (int)session->slotId, ret);
         }
     #endif
-        (void)ret; /* store failure cannot be returned, so log and ignore */
 #endif
         WP11_Lock_UnlockRW(object->lock);
     }
     else {
         WP11_Lock_UnlockRW(&session->slot->token.lock);
     }
+    return ret;
 }
 
 /**
@@ -8265,10 +8320,12 @@ static int WP11_Object_SetKeyId(WP11_Object* object, unsigned char* keyId,
 
     if (object->keyId != NULL)
         XFREE(object->keyId, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-    object->keyId = (unsigned char*)XMALLOC(keyIdLen, NULL,
-        DYNAMIC_TYPE_TMP_BUFFER);
-    if (object->keyId == NULL)
-        ret = MEMORY_E;
+    if (keyIdLen > 0) {
+        object->keyId = (unsigned char*)XMALLOC(keyIdLen, NULL,
+            DYNAMIC_TYPE_TMP_BUFFER);
+        if (object->keyId == NULL)
+            ret = MEMORY_E;
+    }
     if (ret == 0) {
         XMEMCPY(object->keyId, keyId, keyIdLen);
         object->keyIdLen = keyIdLen;
@@ -8294,10 +8351,12 @@ static int WP11_Object_SetData(byte** attribute, int* attributeLen, byte* data,
 
     if (*attribute != NULL)
         XFREE(*attribute, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-    *attribute = (byte*)XMALLOC(dataLen, NULL,
-        DYNAMIC_TYPE_TMP_BUFFER);
-    if (*attribute == NULL)
-        ret = MEMORY_E;
+    if (dataLen > 0) {
+        *attribute = (byte*)XMALLOC(dataLen, NULL,
+            DYNAMIC_TYPE_TMP_BUFFER);
+        if (*attribute == NULL)
+            ret = MEMORY_E;
+    }
     if (ret == 0) {
         XMEMCPY(*attribute, data, dataLen);
         *attributeLen = dataLen;
@@ -8516,7 +8575,7 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                 case CKK_HKDF:
 #endif
                 case CKK_GENERIC_SECRET:
-                   break;
+                    break;
                 default:
                     ret = BAD_FUNC_ARG;
                     break;

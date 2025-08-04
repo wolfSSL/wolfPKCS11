@@ -660,7 +660,9 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
         }
         ret = WP11_Object_SetAttr(obj, attr->type, (byte*)attr->pValue,
                                                               attr->ulValueLen);
-        if (ret == BAD_FUNC_ARG)
+        if (ret == MEMORY_E)
+            return CKR_DEVICE_MEMORY;
+        else if (ret == BAD_FUNC_ARG)
             return CKR_ATTRIBUTE_VALUE_INVALID;
         else if (ret == BUFFER_E)
             return CKR_BUFFER_TOO_SMALL;
@@ -884,7 +886,8 @@ static CK_RV AddRSAPrivateKeyObject(WP11_Session* session,
 err_out:
     if (rv != CKR_OK) {
         if (*phKey != CK_INVALID_HANDLE) {
-            WP11_Session_RemoveObject(session, privKeyObject);
+            /* ignore return value, logged in function */
+            (void)WP11_Session_RemoveObject(session, privKeyObject);
             *phKey = CK_INVALID_HANDLE;
         }
         if (privKeyObject != NULL) {
@@ -1050,7 +1053,8 @@ CK_RV C_CreateObject(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate,
     }
     rv = AddObject(session, object, pTemplate, ulCount, phObject);
     if (rv != CKR_OK) {
-        WP11_Session_RemoveObject(session, object);
+        /* ignore return value, logged in function */
+        (void)WP11_Session_RemoveObject(session, object);
         WP11_Object_Free(object);
     }
 
@@ -1232,10 +1236,9 @@ CK_RV C_DestroyObject(CK_SESSION_HANDLE hSession,
         return rv;
     }
 
-    WP11_Session_RemoveObject(session, obj);
+    rv = WP11_Session_RemoveObject(session, obj);
     WP11_Object_Free(obj);
 
-    rv = CKR_OK;
     WOLFPKCS11_LEAVE("C_DestroyObject", rv);
     return rv;
 }
@@ -6731,7 +6734,8 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
             }
             if (rv != CKR_OK) {
                 if (*phKey != CK_INVALID_HANDLE) {
-                    WP11_Session_RemoveObject(session, keyObj);
+                    /* ignore return value, logged in function */
+                    (void)WP11_Session_RemoveObject(session, keyObj);
                     *phKey = CK_INVALID_HANDLE;
                 }
                 if (keyObj != NULL) {
