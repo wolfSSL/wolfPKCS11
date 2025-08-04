@@ -2282,19 +2282,19 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
             XMEMCPY(&dest->tpmKey, &src->tpmKey, sizeof(WOLFTPM2_KEYBLOB));
 
             /* Initialize TPM handle to NULL for the destination */
-            dest->tpmKey.handle.hndl = TPM_RH_NULL;
+            dest->tpmKey->handle.hndl = TPM_RH_NULL;
 
             /* Initialize the wolf key structures based on key type */
             switch (src->type) {
 #ifndef NO_RSA
                 case CKK_RSA:
-                    ret = wc_InitRsaKey_ex(&dest->data.rsaKey, NULL,
+                    ret = wc_InitRsaKey_ex(dest->data.rsaKey, NULL,
                                            dest->slot->devId);
                     break;
 #endif
 #ifdef HAVE_ECC
                 case CKK_EC:
-                    ret = wc_ecc_init_ex(&dest->data.ecKey, NULL,
+                    ret = wc_ecc_init_ex(dest->data.ecKey, NULL,
                                          dest->slot->devId);
                     break;
 #endif
@@ -2309,14 +2309,14 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                     case CKK_RSA:
                         /* Load public portion into wolf RsaKey structure */
                         ret = wolfTPM2_RsaKey_TpmToWolf(&dest->slot->tpmDev,
-                            (WOLFTPM2_KEY*)&dest->tpmKey, &dest->data.rsaKey);
+                            (WOLFTPM2_KEY*)&dest->tpmKey, dest->data.rsaKey);
                         break;
 #endif
 #ifdef HAVE_ECC
                     case CKK_EC:
                         /* Load public portion into wolf EccKey structure */
                         ret = wolfTPM2_EccKey_TpmToWolf(&dest->slot->tpmDev,
-                            (WOLFTPM2_KEY*)&dest->tpmKey, &dest->data.ecKey);
+                            (WOLFTPM2_KEY*)&dest->tpmKey, dest->data.ecKey);
                         break;
 #endif
                     default:
@@ -2335,7 +2335,7 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                     int derSz = 0;
 
                     /* Initialize destination RSA key */
-                    ret = wc_InitRsaKey_ex(&dest->data.rsaKey, NULL,
+                    ret = wc_InitRsaKey_ex(dest->data.rsaKey, NULL,
                                            dest->slot->devId);
                     if (ret != 0)
                         break;
@@ -2343,10 +2343,10 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                     /* Determine if this is a private or public key and get DER
                      * size */
                     if (src->objClass == CKO_PRIVATE_KEY) {
-                        ret = wc_RsaKeyToDer(&src->data.rsaKey, NULL, 0);
+                        ret = wc_RsaKeyToDer(src->data.rsaKey, NULL, 0);
                     }
                     else {
-                        ret = wc_RsaKeyToPublicDer(&src->data.rsaKey, NULL, 0);
+                        ret = wc_RsaKeyToPublicDer(src->data.rsaKey, NULL, 0);
                     }
 
                     if (ret == 0) /* Should not happen */
@@ -2364,10 +2364,11 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                     if (ret == 0) {
                         /* Encode the source key to DER */
                         if (src->objClass == CKO_PRIVATE_KEY) {
-                            ret = wc_RsaKeyToDer(&src->data.rsaKey, derBuf, derSz);
+                            ret = wc_RsaKeyToDer(src->data.rsaKey, derBuf,
+                                derSz);
                         }
                         else {
-                            ret = wc_RsaKeyToPublicDer(&src->data.rsaKey, derBuf,
+                            ret = wc_RsaKeyToPublicDer(src->data.rsaKey, derBuf,
                                 derSz);
                         }
                         if (ret == 0) /* Should not happen */
@@ -2380,12 +2381,12 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                         word32 idx = 0;
                         if (src->objClass == CKO_PRIVATE_KEY) {
                             ret = wc_RsaPrivateKeyDecode(derBuf, &idx,
-                                                         &dest->data.rsaKey,
+                                                         dest->data.rsaKey,
                                                          (word32)derSz);
                         }
                         else {
                             ret = wc_RsaPublicKeyDecode(derBuf, &idx,
-                                                        &dest->data.rsaKey,
+                                                        dest->data.rsaKey,
                                                         (word32)derSz);
                         }
                     }
@@ -2400,7 +2401,7 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                     int derSz = 0;
 
                     /* Initialize destination ECC key */
-                    ret = wc_ecc_init_ex(&dest->data.ecKey, NULL,
+                    ret = wc_ecc_init_ex(dest->data.ecKey, NULL,
                                          dest->slot->devId);
                     if (ret != 0)
                         break;
@@ -2408,9 +2409,9 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                     /* Determine if this is a private or public key and get DER
                      * size */
                     if (src->objClass == CKO_PRIVATE_KEY)
-                        derSz = wc_EccKeyDerSize(&src->data.ecKey, 0);
+                        derSz = wc_EccKeyDerSize(src->data.ecKey, 0);
                     else
-                        derSz = wc_EccPublicKeyDerSize(&src->data.ecKey, 1);
+                        derSz = wc_EccPublicKeyDerSize(src->data.ecKey, 1);
 
                     if (derSz < 0)
                         ret = derSz;
@@ -2426,11 +2427,11 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                     if (ret == 0) {
                         /* Encode the source key to DER with retry logic */
                         if (src->objClass == CKO_PRIVATE_KEY) {
-                            ret = wc_EccPrivateKeyToDer(&src->data.ecKey,
+                            ret = wc_EccPrivateKeyToDer(src->data.ecKey,
                                 derBuf, derSz);
                         }
                         else {
-                            ret = wc_EccPublicKeyToDer(&src->data.ecKey, derBuf,
+                            ret = wc_EccPublicKeyToDer(src->data.ecKey, derBuf,
                                                        derSz, 1);
                         }
 
@@ -2446,12 +2447,12 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                         word32 idx = 0;
                         if (src->objClass == CKO_PRIVATE_KEY) {
                             ret = wc_EccPrivateKeyDecode(derBuf, &idx,
-                                                         &dest->data.ecKey,
+                                                         dest->data.ecKey,
                                                          (word32)derSz);
                         }
                         else {
                             ret = wc_EccPublicKeyDecode(derBuf, &idx,
-                                                        &dest->data.ecKey,
+                                                        dest->data.ecKey,
                                                         (word32)derSz);
                         }
                     }
@@ -2464,7 +2465,7 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
 
                     /* Free destination key on failure */
                     if (ret != 0) {
-                        wc_ecc_free(&dest->data.ecKey);
+                        wc_ecc_free(dest->data.ecKey);
                     }
 
                     break;
@@ -2481,8 +2482,9 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                 case CKK_HKDF:
 #endif
                 case CKK_GENERIC_SECRET:
-                    XMEMCPY(&dest->data.symmKey, &src->data.symmKey,
-                            sizeof(dest->data.symmKey));
+                    XMEMCPY(dest->data.symmKey->data, src->data.symmKey->data,
+                        src->data.symmKey->len);
+                    dest->data.symmKey->len = src->data.symmKey->len;
                     break;
             }
         }
@@ -10006,7 +10008,7 @@ int WP11_Rsa_Verify_Recover(CK_MECHANISM_TYPE mechanism, unsigned char* sig,
     switch (mechanism) {
         case CKM_RSA_PKCS:
             ret = wc_RsaSSL_Verify(sig, sigLen, out, (word32)*outLen,
-                                         &pub->data.rsaKey);
+                                         pub->data.rsaKey);
             if (ret == RSA_BUFFER_E)
                 return CKR_BUFFER_TOO_SMALL;
             if (ret < 0)
@@ -10019,7 +10021,7 @@ int WP11_Rsa_Verify_Recover(CK_MECHANISM_TYPE mechanism, unsigned char* sig,
             byte* data_out = NULL;
             byte* pos;
             ret =  wc_RsaDirect(sig, sigLen, out, (word32*)outLen,
-                                &pub->data.rsaKey, RSA_PUBLIC_DECRYPT, NULL);
+                                pub->data.rsaKey, RSA_PUBLIC_DECRYPT, NULL);
             if (ret < 0)
                 return CKR_FUNCTION_FAILED;
             /* Result is front padded with 0x00 */
@@ -10695,7 +10697,7 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
     #endif
         {
             PRIVATE_KEY_UNLOCK();
-            ret = wc_ecc_shared_secret(&priv->data.ecKey, &pubKey, key, keyLen);
+            ret = wc_ecc_shared_secret(priv->data.ecKey, &pubKey, key, keyLen);
             PRIVATE_KEY_LOCK();
 
         #ifdef WOLFPKCS11_TPM
@@ -10801,8 +10803,8 @@ int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
         privLen = priv->data.genericData.dataLen;
     }
     else {
-        privData = priv->data.symmKey.data;
-        privLen = priv->data.symmKey.len;
+        privData = priv->data.symmKey->data;
+        privLen = priv->data.symmKey->len;
     }
     if (params->bExtract && !params->bExpand) {
         ret = wc_HKDF_Extract(hashType, salt, (word32)saltLen,

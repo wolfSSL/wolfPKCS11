@@ -1211,8 +1211,6 @@ CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
     if (ret != 0)
         return CKR_FUNCTION_FAILED;
 
-    /* Use get and set attribute value to fill in object. */
-    rv = C_GetAttributeValue(hSession, hObject, pTemplate, ulCount);
     /* copy all the attributes from the original object to the new object */
     rv = WP11_Object_Copy(obj, newObj);
     if (rv != CKR_OK) {
