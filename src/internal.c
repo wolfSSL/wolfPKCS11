@@ -1092,15 +1092,16 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
             ret = XSNPRINTF(name, nameLen, "%s/wp11_trust_%016lx_%016lx",
                     str, id1, id2);
             break;
+        case WOLFPKCS11_STORE_DATA:
+            ret = XSNPRINTF(name, nameLen, "%s/wp11_data_%016lx_%016lx",
+                    str, id1, id2);
+            break;
 
         default:
             ret = -1;
             break;
     }
-    if (ret > 0 && ret < (int) sizeof(name))
-         ret = 0;
-     else
-         ret = -1;
+
     return ret;
 }
 #endif
