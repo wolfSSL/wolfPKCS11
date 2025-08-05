@@ -6794,7 +6794,8 @@ int WP11_Session_SetAesWrapParams(WP11_Session* session, byte* iv, word32 ivLen,
             WP11_Lock_UnlockRO(object->lock);
     }
     if (ret == 0) {
-        XMEMCPY(wrap->iv, iv, ivLen);
+        if (iv != NULL)
+            XMEMCPY(wrap->iv, iv, ivLen);
         wrap->ivSz = ivLen;
     }
 
@@ -8123,7 +8124,8 @@ static int GetData(byte* data, CK_ULONG dataLen, byte* out, CK_ULONG* outLen)
         ret = BUFFER_E;
     else {
         *outLen = dataLen;
-        XMEMCPY(out, data, dataLen);
+        if (data != NULL)
+            XMEMCPY(out, data, dataLen);
     }
 
     return ret;
@@ -8912,10 +8914,10 @@ static int WP11_Object_SetKeyId(WP11_Object* object, unsigned char* keyId,
             DYNAMIC_TYPE_TMP_BUFFER);
         if (object->keyId == NULL)
             ret = MEMORY_E;
-    }
-    if (ret == 0) {
-        XMEMCPY(object->keyId, keyId, keyIdLen);
-        object->keyIdLen = keyIdLen;
+        if (ret == 0) {
+            XMEMCPY(object->keyId, keyId, keyIdLen);
+            object->keyIdLen = keyIdLen;
+        }
     }
 
     return ret;
@@ -8943,10 +8945,10 @@ static int WP11_Object_SetData(byte** attribute, int* attributeLen, byte* data,
             DYNAMIC_TYPE_TMP_BUFFER);
         if (*attribute == NULL)
             ret = MEMORY_E;
-    }
-    if (ret == 0) {
-        XMEMCPY(*attribute, data, dataLen);
-        *attributeLen = dataLen;
+        if (ret == 0) {
+            XMEMCPY(*attribute, data, dataLen);
+            *attributeLen = dataLen;
+        }
     }
 
     return ret;
