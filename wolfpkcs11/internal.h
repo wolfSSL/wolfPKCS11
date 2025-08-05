@@ -358,7 +358,7 @@ WP11_LOCAL int WP11_Session_SetCtsParams(WP11_Session* session, unsigned char* i
                               int enc, WP11_Object* object);
 WP11_LOCAL int WP11_Session_AddObject(WP11_Session* session, int onToken,
                            WP11_Object* object);
-WP11_LOCAL void WP11_Session_RemoveObject(WP11_Session* session, WP11_Object* object);
+WP11_LOCAL int WP11_Session_RemoveObject(WP11_Session* session, WP11_Object* object);
 WP11_LOCAL void WP11_Session_GetObject(WP11_Session* session, WP11_Object** object);
 WP11_LOCAL void WP11_Session_SetObject(WP11_Session* session, WP11_Object* object);
 
