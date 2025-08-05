@@ -2247,12 +2247,6 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
     XMEMCPY(dest->iv, src->iv, sizeof(dest->iv));
     dest->encoded = src->encoded;
 #endif
-#ifdef WOLFPKCS11_TPM
-    /* For TPM keys, copy keyData */
-    if (src->opFlag & WP11_FLAG_TPM) {
-        OBJ_COPY_DATA(src, dest, keyData);
-    }
-#endif
     dest->objClass = src->objClass;
     dest->keyGenMech = src->keyGenMech;
     dest->opFlag = src->opFlag;
@@ -2279,7 +2273,7 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
         /* Handle TPM keys - copy tpmKey structure directly */
         if (src->opFlag & WP11_FLAG_TPM) {
             /* Copy the TPM key blob structure directly */
-            XMEMCPY(&dest->tpmKey, &src->tpmKey, sizeof(WOLFTPM2_KEYBLOB));
+            XMEMCPY(dest->tpmKey, src->tpmKey, sizeof(WOLFTPM2_KEYBLOB));
 
             /* Initialize TPM handle to NULL for the destination */
             dest->tpmKey->handle.hndl = TPM_RH_NULL;
@@ -2309,14 +2303,14 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                     case CKK_RSA:
                         /* Load public portion into wolf RsaKey structure */
                         ret = wolfTPM2_RsaKey_TpmToWolf(&dest->slot->tpmDev,
-                            (WOLFTPM2_KEY*)&dest->tpmKey, dest->data.rsaKey);
+                            (WOLFTPM2_KEY*)dest->tpmKey, dest->data.rsaKey);
                         break;
 #endif
 #ifdef HAVE_ECC
                     case CKK_EC:
                         /* Load public portion into wolf EccKey structure */
                         ret = wolfTPM2_EccKey_TpmToWolf(&dest->slot->tpmDev,
-                            (WOLFTPM2_KEY*)&dest->tpmKey, dest->data.ecKey);
+                            (WOLFTPM2_KEY*)dest->tpmKey, dest->data.ecKey);
                         break;
 #endif
                     default:
