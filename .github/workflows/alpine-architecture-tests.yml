@@ -139,7 +139,7 @@ jobs:
         echo "Running autogen.sh..."
         ./autogen.sh
         echo "Running configure..."
-        ./configure
+        ./configure LDFLAGS="-Wl,-z,stack-size=1048576"
         make
       shell: alpine.sh {0}
 
@@ -152,7 +152,7 @@ jobs:
         echo "Running autogen.sh..."
         ./autogen.sh
         echo "Running configure..."
-        ./configure --enable-singlethreaded --enable-wolftpm --disable-dh C_EXTRA_FLAGS="-DWOLFPKCS11_TPM_STORE"
+        ./configure --enable-singlethreaded --enable-wolftpm --disable-dh C_EXTRA_FLAGS="-DWOLFPKCS11_TPM_STORE" LDFLAGS="-Wl,-z,stack-size=1048576"
         make
       shell: alpine.sh {0}
 
