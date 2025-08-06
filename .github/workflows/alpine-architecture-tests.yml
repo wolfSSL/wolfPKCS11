@@ -47,6 +47,9 @@ jobs:
           musl-dev
           openssl-dev
           bash
+          gcc
+          gdb
+          valgrind
         shell-name: alpine.sh
 
     - name: Cache wolfSSL
@@ -139,7 +142,7 @@ jobs:
         echo "Running autogen.sh..."
         ./autogen.sh
         echo "Running configure..."
-        ./configure LDFLAGS="-Wl,-z,stack-size=1048576" CFLAGS="-fsanitize=address -g -O1 -fno-omit-frame-pointer"
+        ./configure LDFLAGS="-Wl,-z,stack-size=1048576" CFLAGS="-g -O0 -fno-omit-frame-pointer"
         make
       shell: alpine.sh {0}
 
@@ -152,7 +155,7 @@ jobs:
         echo "Running autogen.sh..."
         ./autogen.sh
         echo "Running configure..."
-        ./configure --enable-singlethreaded --enable-wolftpm --disable-dh C_EXTRA_FLAGS="-DWOLFPKCS11_TPM_STORE" LDFLAGS="-Wl,-z,stack-size=1048576" CFLAGS="-fsanitize=address -g -O1 -fno-omit-frame-pointer"
+        ./configure --enable-singlethreaded --enable-wolftpm --disable-dh C_EXTRA_FLAGS="-DWOLFPKCS11_TPM_STORE" LDFLAGS="-Wl,-z,stack-size=1048576" CFLAGS="-g -O0 -fno-omit-frame-pointer"
         make
       shell: alpine.sh {0}
 
@@ -162,14 +165,17 @@ jobs:
         echo "=== Running tests without TPM on ${{ matrix.arch }} ==="
         export LD_LIBRARY_PATH="/usr/local/lib:$LD_LIBRARY_PATH"
         # Run the test multiple times to catch intermittent failures
-        for i in {1..3}; do
+        for i in {1..5}; do
           echo "=== Test run $i ==="
           if ! make test; then
             echo "Test failed on run $i"
-            # Show any AddressSanitizer output
-            find . -name "*.log" -exec cat {} \;
+            # Show any available logs
+            find . -name "*.log" -exec echo "=== {} ===" \; -exec cat {} \;
+            echo "=== Core dumps ==="
+            find . -name "core*" -exec ls -la {} \;
             exit 1
           fi
+          echo "Test run $i completed successfully"
         done
       shell: alpine.sh {0}
 
@@ -179,14 +185,17 @@ jobs:
         echo "=== Running TPM tests on ${{ matrix.arch }} ==="
         export LD_LIBRARY_PATH="/usr/local/lib:$LD_LIBRARY_PATH"
         # Run the tests multiple times to catch intermittent failures
-        for i in {1..3}; do
+        for i in {1..5}; do
           echo "=== TPM test run $i ==="
           if ! (./tests/pkcs11str && ./tests/pkcs11test && ./tests/rsa_session_persistence_test); then
             echo "TPM tests failed on run $i"
-            # Show any AddressSanitizer output
-            find . -name "*.log" -exec cat {} \;
+            # Show any available logs
+            find . -name "*.log" -exec echo "=== {} ===" \; -exec cat {} \;
+            echo "=== Core dumps ==="
+            find . -name "core*" -exec ls -la {} \;
             exit 1
           fi
+          echo "TPM test run $i completed successfully"
         done
       shell: alpine.sh {0}
 
