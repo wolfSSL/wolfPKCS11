@@ -139,7 +139,7 @@ jobs:
         echo "Running autogen.sh..."
         ./autogen.sh
         echo "Running configure..."
-        ./configure LDFLAGS="-Wl,-z,stack-size=1048576"
+        ./configure LDFLAGS="-Wl,-z,stack-size=1048576" CFLAGS="-fsanitize=address -g -O1 -fno-omit-frame-pointer"
         make
       shell: alpine.sh {0}
 
@@ -152,7 +152,7 @@ jobs:
         echo "Running autogen.sh..."
         ./autogen.sh
         echo "Running configure..."
-        ./configure --enable-singlethreaded --enable-wolftpm --disable-dh C_EXTRA_FLAGS="-DWOLFPKCS11_TPM_STORE" LDFLAGS="-Wl,-z,stack-size=1048576"
+        ./configure --enable-singlethreaded --enable-wolftpm --disable-dh C_EXTRA_FLAGS="-DWOLFPKCS11_TPM_STORE" LDFLAGS="-Wl,-z,stack-size=1048576" CFLAGS="-fsanitize=address -g -O1 -fno-omit-frame-pointer"
         make
       shell: alpine.sh {0}
 
@@ -161,7 +161,16 @@ jobs:
       run: |
         echo "=== Running tests without TPM on ${{ matrix.arch }} ==="
         export LD_LIBRARY_PATH="/usr/local/lib:$LD_LIBRARY_PATH"
-        make test
+        # Run the test multiple times to catch intermittent failures
+        for i in {1..3}; do
+          echo "=== Test run $i ==="
+          if ! make test; then
+            echo "Test failed on run $i"
+            # Show any AddressSanitizer output
+            find . -name "*.log" -exec cat {} \;
+            exit 1
+          fi
+        done
       shell: alpine.sh {0}
 
     - name: Run tests (with TPM)
@@ -169,7 +178,16 @@ jobs:
       run: |
         echo "=== Running TPM tests on ${{ matrix.arch }} ==="
         export LD_LIBRARY_PATH="/usr/local/lib:$LD_LIBRARY_PATH"
-        ./tests/pkcs11str && ./tests/pkcs11test && ./tests/rsa_session_persistence_test
+        # Run the tests multiple times to catch intermittent failures
+        for i in {1..3}; do
+          echo "=== TPM test run $i ==="
+          if ! (./tests/pkcs11str && ./tests/pkcs11test && ./tests/rsa_session_persistence_test); then
+            echo "TPM tests failed on run $i"
+            # Show any AddressSanitizer output
+            find . -name "*.log" -exec cat {} \;
+            exit 1
+          fi
+        done
       shell: alpine.sh {0}
 
     - name: Cleanup TPM server
