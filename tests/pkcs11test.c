@@ -87,6 +87,7 @@ static CK_OBJECT_CLASS pubKeyClass     = CKO_PUBLIC_KEY;
 static CK_OBJECT_CLASS privKeyClass    = CKO_PRIVATE_KEY;
 static CK_OBJECT_CLASS secretKeyClass  = CKO_SECRET_KEY;
 static CK_OBJECT_CLASS certificateClass = CKO_CERTIFICATE;
+static CK_OBJECT_CLASS dataClass       = CKO_DATA;
 
 #if defined(HAVE_ECC) || !defined(NO_DH)
 static CK_BBOOL ckFalse = CK_FALSE;
@@ -1674,6 +1675,948 @@ static CK_RV test_object(void* args)
     return ret;
 }
 
+static CK_RV test_copy_object_deep_copy(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE originalObj = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE copiedObj = CK_INVALID_HANDLE;
+
+    /* Test data for various attributes */
+    static byte keyData[] = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 };
+    static byte keyId[] = { 0x11, 0x22, 0x33, 0x44 };
+    static byte label[] = "test-key-label";
+    static byte modifiedKeyData[] = { 0xFF, 0xFE, 0xFD, 0xFC, 0xFB, 0xFA, 0xF9,
+                                      0xF8 };
+    static byte modifiedLabel[] = "modified-label";
+
+    /* Template for creating original object with multiple attributes */
+    CK_ATTRIBUTE originalTmpl[] = {
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
+        { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
+        { CKA_VALUE,             keyData,           sizeof(keyData)           },
+        { CKA_ID,                keyId,             sizeof(keyId)             },
+        { CKA_LABEL,             label,             sizeof(label)-1           },
+        { CKA_EXTRACTABLE,       &ckTrue,           sizeof(ckTrue)            },
+        { CKA_ENCRYPT,           &ckTrue,           sizeof(ckTrue)            },
+        { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue)            },
+    };
+    CK_ULONG originalTmplCnt = sizeof(originalTmpl) / sizeof(*originalTmpl);
+
+    /* Template for copying with modifications */
+    CK_ATTRIBUTE copyWithModTmpl[] = {
+        { CKA_LABEL,             modifiedLabel,     sizeof(modifiedLabel)-1   },
+    };
+    CK_ULONG copyWithModTmplCnt = sizeof(copyWithModTmpl) /
+                                  sizeof(*copyWithModTmpl);
+
+    /* Templates for attribute verification */
+    CK_ATTRIBUTE getOriginalAttrs[] = {
+        { CKA_VALUE,             NULL,              0                         },
+        { CKA_ID,                NULL,              0                         },
+        { CKA_LABEL,             NULL,              0                         },
+        { CKA_EXTRACTABLE,       NULL,              0                         },
+    };
+    CK_ULONG getOriginalAttrsCnt = sizeof(getOriginalAttrs) /
+                                   sizeof(*getOriginalAttrs);
+
+    CK_ATTRIBUTE getCopiedAttrs[] = {
+        { CKA_VALUE,             NULL,              0                         },
+        { CKA_ID,                NULL,              0                         },
+        { CKA_LABEL,             NULL,              0                         },
+        { CKA_EXTRACTABLE,       NULL,              0                         },
+    };
+    CK_ULONG getCopiedAttrsCnt = sizeof(getCopiedAttrs) /
+                                 sizeof(*getCopiedAttrs);
+
+    /* Buffers for retrieved attributes */
+    byte origValue[32], copiedValue[32];
+    byte origId[32], copiedId[32];
+    byte origLabel[64], copiedLabel[64];
+    CK_BBOOL origExtractable, copiedExtractable;
+
+    /* Create original object */
+    ret = funcList->C_CreateObject(session, originalTmpl, originalTmplCnt,
+                                   &originalObj);
+    CHECK_CKR(ret, "Create original object for copy test");
+
+    /* Test 1: Copy without modifications (pure copy) */
+    if (ret == CKR_OK) {
+        ret = funcList->C_CopyObject(session, originalObj, NULL, 0,
+                                     &copiedObj);
+        CHECK_CKR(ret, "Copy object without modifications");
+    }
+
+    /* Verify that both objects exist and have the same attributes */
+    if (ret == CKR_OK) {
+        /* Set up buffers for original object attributes */
+        getOriginalAttrs[0].pValue = origValue;
+        getOriginalAttrs[0].ulValueLen = sizeof(origValue);
+        getOriginalAttrs[1].pValue = origId;
+        getOriginalAttrs[1].ulValueLen = sizeof(origId);
+        getOriginalAttrs[2].pValue = origLabel;
+        getOriginalAttrs[2].ulValueLen = sizeof(origLabel);
+        getOriginalAttrs[3].pValue = &origExtractable;
+        getOriginalAttrs[3].ulValueLen = sizeof(origExtractable);
+
+        ret = funcList->C_GetAttributeValue(session, originalObj,
+                                            getOriginalAttrs,
+                                            getOriginalAttrsCnt);
+        CHECK_CKR(ret, "Get original object attributes");
+    }
+
+    if (ret == CKR_OK) {
+        /* Set up buffers for copied object attributes */
+        getCopiedAttrs[0].pValue = copiedValue;
+        getCopiedAttrs[0].ulValueLen = sizeof(copiedValue);
+        getCopiedAttrs[1].pValue = copiedId;
+        getCopiedAttrs[1].ulValueLen = sizeof(copiedId);
+        getCopiedAttrs[2].pValue = copiedLabel;
+        getCopiedAttrs[2].ulValueLen = sizeof(copiedLabel);
+        getCopiedAttrs[3].pValue = &copiedExtractable;
+        getCopiedAttrs[3].ulValueLen = sizeof(copiedExtractable);
+
+        ret = funcList->C_GetAttributeValue(session, copiedObj, getCopiedAttrs,
+                                            getCopiedAttrsCnt);
+        CHECK_CKR(ret, "Get copied object attributes");
+    }
+
+    /* Verify that all attributes match */
+    if (ret == CKR_OK) {
+        if (getOriginalAttrs[0].ulValueLen != getCopiedAttrs[0].ulValueLen ||
+            XMEMCMP(origValue, copiedValue,
+                    getOriginalAttrs[0].ulValueLen) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Copied object VALUE should match original");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (getOriginalAttrs[1].ulValueLen != getCopiedAttrs[1].ulValueLen ||
+            XMEMCMP(origId, copiedId,
+                    getOriginalAttrs[1].ulValueLen) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Copied object ID should match original");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (getOriginalAttrs[2].ulValueLen != getCopiedAttrs[2].ulValueLen ||
+            XMEMCMP(origLabel, copiedLabel,
+                    getOriginalAttrs[2].ulValueLen) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Copied object LABEL should match original");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (origExtractable != copiedExtractable) {
+            ret = -1;
+            CHECK_CKR(ret, "Copied object EXTRACTABLE should match original");
+        }
+    }
+
+    /* Clean up first copied object */
+    if (ret == CKR_OK) {
+        ret = funcList->C_DestroyObject(session, copiedObj);
+        CHECK_CKR(ret, "Destroy first copied object");
+    }
+
+    /* Test 2: Copy with modifications */
+    if (ret == CKR_OK) {
+        ret = funcList->C_CopyObject(session, originalObj, copyWithModTmpl,
+                                     copyWithModTmplCnt, &copiedObj);
+        CHECK_CKR(ret, "Copy object with modifications");
+    }
+
+    /* Verify that the copied object has the modified label but same other
+     * attributes */
+    if (ret == CKR_OK) {
+        XMEMSET(copiedLabel, 0, sizeof(copiedLabel));
+        getCopiedAttrs[2].pValue = copiedLabel;
+        getCopiedAttrs[2].ulValueLen = sizeof(copiedLabel);
+
+        ret = funcList->C_GetAttributeValue(session, copiedObj, getCopiedAttrs,
+                                            getCopiedAttrsCnt);
+        CHECK_CKR(ret, "Get modified copied object attributes");
+    }
+
+    if (ret == CKR_OK) {
+        /* Verify VALUE and ID are still the same */
+        if (getOriginalAttrs[0].ulValueLen != getCopiedAttrs[0].ulValueLen ||
+            XMEMCMP(origValue, copiedValue,
+                    getOriginalAttrs[0].ulValueLen) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Modified copied object VALUE should still match "
+                           "original");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (getOriginalAttrs[1].ulValueLen != getCopiedAttrs[1].ulValueLen ||
+            XMEMCMP(origId, copiedId,
+                    getOriginalAttrs[1].ulValueLen) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Modified copied object ID should still match "
+                           "original");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        /* Verify LABEL is different (modified) */
+        if (getCopiedAttrs[2].ulValueLen != sizeof(modifiedLabel)-1 ||
+            XMEMCMP(copiedLabel, modifiedLabel,
+                    sizeof(modifiedLabel)-1) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Modified copied object LABEL should be different");
+        }
+    }
+
+    /* Test 3: Verify independence (deep copy) by modifying original object */
+    if (ret == CKR_OK) {
+        CK_ATTRIBUTE modifyOriginalTmpl[] = {
+            { CKA_VALUE,             modifiedKeyData,
+              sizeof(modifiedKeyData)   },
+        };
+        CK_ULONG modifyOriginalTmplCnt = sizeof(modifyOriginalTmpl) /
+                                         sizeof(*modifyOriginalTmpl);
+
+        ret = funcList->C_SetAttributeValue(session, originalObj,
+                                            modifyOriginalTmpl,
+                                            modifyOriginalTmplCnt);
+        CHECK_CKR(ret, "Modify original object to test independence");
+    }
+
+    if (ret == CKR_OK) {
+        /* Get the modified original object's value */
+        XMEMSET(origValue, 0, sizeof(origValue));
+        getOriginalAttrs[0].pValue = origValue;
+        getOriginalAttrs[0].ulValueLen = sizeof(origValue);
+
+        ret = funcList->C_GetAttributeValue(session, originalObj,
+                                            getOriginalAttrs, 1);
+        CHECK_CKR(ret, "Get modified original object value");
+    }
+
+    if (ret == CKR_OK) {
+        /* Get the copied object's value (should be unchanged) */
+        XMEMSET(copiedValue, 0, sizeof(copiedValue));
+        getCopiedAttrs[0].pValue = copiedValue;
+        getCopiedAttrs[0].ulValueLen = sizeof(copiedValue);
+
+        ret = funcList->C_GetAttributeValue(session, copiedObj, getCopiedAttrs,
+                                            1);
+        CHECK_CKR(ret, "Get copied object value after original "
+                       "modification");
+    }
+
+    if (ret == CKR_OK) {
+        /* Verify original object has modified value */
+        if (getOriginalAttrs[0].ulValueLen != sizeof(modifiedKeyData) ||
+            XMEMCMP(origValue, modifiedKeyData,
+                    sizeof(modifiedKeyData)) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Original object should have modified value");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        /* Verify copied object still has original value (proving deep copy) */
+        if (getCopiedAttrs[0].ulValueLen != sizeof(keyData) ||
+            XMEMCMP(copiedValue, keyData,
+                    sizeof(keyData)) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Copied object should retain original value "
+                           "(deep copy test)");
+        }
+    }
+
+    /* Clean up */
+    if (originalObj != CK_INVALID_HANDLE) {
+        funcList->C_DestroyObject(session, originalObj);
+    }
+    if (copiedObj != CK_INVALID_HANDLE) {
+        funcList->C_DestroyObject(session, copiedObj);
+    }
+
+    return ret;
+}
+
+#if (!defined(NO_RSA) && !defined(WOLFPKCS11_TPM))
+static CK_RV test_copy_object_rsa_key(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE pubKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE privKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE copiedPrivKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE copiedPubKey = CK_INVALID_HANDLE;
+    CK_MECHANISM mech;
+    CK_ULONG bits = 2048;
+    static byte keyId[] = { 0xAA, 0xBB, 0xCC, 0xDD };
+    static byte label[] = "rsa-test-key";
+    static byte modifiedLabel[] = "rsa-copied-key";
+
+    /* RSA key generation template */
+    CK_ATTRIBUTE pubKeyTmpl[] = {
+        { CKA_MODULUS_BITS,      &bits,             sizeof(bits)              },
+        { CKA_PUBLIC_EXPONENT,   rsa_2048_pub_exp,
+          sizeof(rsa_2048_pub_exp)  },
+        { CKA_ENCRYPT,           &ckTrue,           sizeof(ckTrue)            },
+        { CKA_VERIFY,            &ckTrue,           sizeof(ckTrue)            },
+        { CKA_WRAP,              &ckTrue,           sizeof(ckTrue)            },
+        { CKA_TOKEN,             &ckFalse,          sizeof(ckFalse)           },
+        { CKA_ID,                keyId,             sizeof(keyId)             },
+        { CKA_LABEL,             label,             sizeof(label)-1           },
+    };
+    CK_ULONG pubKeyTmplCnt = sizeof(pubKeyTmpl) / sizeof(*pubKeyTmpl);
+
+    CK_ATTRIBUTE privKeyTmpl[] = {
+        { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue)            },
+        { CKA_SIGN,              &ckTrue,           sizeof(ckTrue)            },
+        { CKA_UNWRAP,            &ckTrue,           sizeof(ckTrue)            },
+        { CKA_TOKEN,             &ckFalse,          sizeof(ckFalse)           },
+        { CKA_PRIVATE,           &ckTrue,           sizeof(ckTrue)            },
+        { CKA_SENSITIVE,         &ckFalse,          sizeof(ckFalse)           },
+        { CKA_EXTRACTABLE,       &ckTrue,           sizeof(ckTrue)            },
+        { CKA_ID,                keyId,             sizeof(keyId)             },
+        { CKA_LABEL,             label,             sizeof(label)-1           },
+    };
+    CK_ULONG privKeyTmplCnt = sizeof(privKeyTmpl) / sizeof(*privKeyTmpl);
+
+    /* Template for copying with modifications */
+    CK_ATTRIBUTE copyTmpl[] = {
+        { CKA_LABEL,             modifiedLabel,     sizeof(modifiedLabel)-1   },
+    };
+    CK_ULONG copyTmplCnt = sizeof(copyTmpl) / sizeof(*copyTmpl);
+
+    /* Templates for attribute verification */
+    CK_ATTRIBUTE getOriginalAttrs[] = {
+        { CKA_ID,                NULL,              0                         },
+        { CKA_LABEL,             NULL,              0                         },
+        { CKA_EXTRACTABLE,       NULL,              0                         },
+        { CKA_MODULUS,           NULL,              0                         },
+    };
+    CK_ULONG getOriginalAttrsCnt = sizeof(getOriginalAttrs) /
+                                   sizeof(*getOriginalAttrs);
+
+    CK_ATTRIBUTE getCopiedAttrs[] = {
+        { CKA_ID,                NULL,              0                         },
+        { CKA_LABEL,             NULL,              0                         },
+        { CKA_EXTRACTABLE,       NULL,              0                         },
+        { CKA_MODULUS,           NULL,              0                         },
+    };
+    CK_ULONG getCopiedAttrsCnt = sizeof(getCopiedAttrs) /
+                                 sizeof(*getCopiedAttrs);
+
+    CK_ATTRIBUTE getOriginalPubAttrs[] = {
+        { CKA_ID,                NULL,              0                         },
+        { CKA_LABEL,             NULL,              0                         },
+        { CKA_MODULUS,           NULL,              0                         },
+        { CKA_PUBLIC_EXPONENT,   NULL,              0                         },
+    };
+    CK_ULONG getOriginalPubAttrsCnt = sizeof(getOriginalPubAttrs) /
+                                      sizeof(*getOriginalPubAttrs);
+
+    CK_ATTRIBUTE getCopiedPubAttrs[] = {
+        { CKA_ID,                NULL,              0                         },
+        { CKA_LABEL,             NULL,              0                         },
+        { CKA_MODULUS,           NULL,              0                         },
+        { CKA_PUBLIC_EXPONENT,   NULL,              0                         },
+    };
+    CK_ULONG getCopiedPubAttrsCnt = sizeof(getCopiedPubAttrs) /
+                                    sizeof(*getCopiedPubAttrs);
+
+    /* Buffers for retrieved attributes */
+    byte origId[32], copiedId[32];
+    byte origLabel[64], copiedLabel[64];
+    byte origModulus[512], copiedModulus[512];
+    CK_BBOOL origExtractable, copiedExtractable;
+    byte origPubId[32], copiedPubId[32];
+    byte origPubLabel[64], copiedPubLabel[64];
+    byte origPubModulus[512], copiedPubModulus[512];
+    byte origPubExponent[8], copiedPubExponent[8];
+
+    /* Generate RSA key pair */
+    mech.mechanism = CKM_RSA_PKCS_KEY_PAIR_GEN;
+    mech.pParameter = NULL;
+    mech.ulParameterLen = 0;
+
+    ret = funcList->C_GenerateKeyPair(session, &mech, pubKeyTmpl,
+                                      pubKeyTmplCnt, privKeyTmpl,
+                                      privKeyTmplCnt, &pubKey, &privKey);
+    CHECK_CKR(ret, "Generate RSA key pair for copy test");
+
+    /* Test: Copy RSA private key */
+    if (ret == CKR_OK) {
+        ret = funcList->C_CopyObject(session, privKey, copyTmpl, copyTmplCnt,
+                                     &copiedPrivKey);
+        CHECK_CKR(ret, "Copy RSA private key");
+    }
+
+    /* Test: Copy RSA public key */
+    if (ret == CKR_OK) {
+        ret = funcList->C_CopyObject(session, pubKey, copyTmpl, copyTmplCnt,
+                                     &copiedPubKey);
+        CHECK_CKR(ret, "Copy RSA public key");
+    }
+
+    /* Verify that both keys exist and have expected attributes */
+    if (ret == CKR_OK) {
+        /* Set up buffers for original key attributes */
+        getOriginalAttrs[0].pValue = origId;
+        getOriginalAttrs[0].ulValueLen = sizeof(origId);
+        getOriginalAttrs[1].pValue = origLabel;
+        getOriginalAttrs[1].ulValueLen = sizeof(origLabel);
+        getOriginalAttrs[2].pValue = &origExtractable;
+        getOriginalAttrs[2].ulValueLen = sizeof(origExtractable);
+        getOriginalAttrs[3].pValue = origModulus;
+        getOriginalAttrs[3].ulValueLen = sizeof(origModulus);
+
+        ret = funcList->C_GetAttributeValue(session, privKey, getOriginalAttrs,
+                                            getOriginalAttrsCnt);
+        CHECK_CKR(ret, "Get original RSA key attributes");
+    }
+
+    if (ret == CKR_OK) {
+        /* Set up buffers for copied key attributes */
+        getCopiedAttrs[0].pValue = copiedId;
+        getCopiedAttrs[0].ulValueLen = sizeof(copiedId);
+        getCopiedAttrs[1].pValue = copiedLabel;
+        getCopiedAttrs[1].ulValueLen = sizeof(copiedLabel);
+        getCopiedAttrs[2].pValue = &copiedExtractable;
+        getCopiedAttrs[2].ulValueLen = sizeof(copiedExtractable);
+        getCopiedAttrs[3].pValue = copiedModulus;
+        getCopiedAttrs[3].ulValueLen = sizeof(copiedModulus);
+
+        ret = funcList->C_GetAttributeValue(session, copiedPrivKey,
+                                            getCopiedAttrs, getCopiedAttrsCnt);
+        CHECK_CKR(ret, "Get copied RSA key attributes");
+    }
+
+    /* Verify that ID and EXTRACTABLE match, but LABEL is different */
+    if (ret == CKR_OK) {
+        if (getOriginalAttrs[0].ulValueLen != getCopiedAttrs[0].ulValueLen ||
+            XMEMCMP(origId, copiedId,
+                    getOriginalAttrs[0].ulValueLen) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Copied RSA key ID should match original");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (origExtractable != copiedExtractable) {
+            ret = -1;
+            CHECK_CKR(ret, "Copied RSA key EXTRACTABLE should match original");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        /* Verify LABEL is different (modified) */
+        if (getCopiedAttrs[1].ulValueLen != sizeof(modifiedLabel)-1 ||
+            XMEMCMP(copiedLabel, modifiedLabel,
+                    sizeof(modifiedLabel)-1) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Copied RSA key LABEL should be modified");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        /* Verify MODULUS matches (deep copy of RSA key structure) */
+        if (getOriginalAttrs[3].ulValueLen != getCopiedAttrs[3].ulValueLen ||
+            XMEMCMP(origModulus, copiedModulus,
+                    getOriginalAttrs[3].ulValueLen) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Copied RSA key MODULUS should match original");
+        }
+    }
+
+    /* Verify that both public keys exist and have expected attributes */
+    if (ret == CKR_OK) {
+        /* Set up buffers for original public key attributes */
+        getOriginalPubAttrs[0].pValue = origPubId;
+        getOriginalPubAttrs[0].ulValueLen = sizeof(origPubId);
+        getOriginalPubAttrs[1].pValue = origPubLabel;
+        getOriginalPubAttrs[1].ulValueLen = sizeof(origPubLabel);
+        getOriginalPubAttrs[2].pValue = origPubModulus;
+        getOriginalPubAttrs[2].ulValueLen = sizeof(origPubModulus);
+        getOriginalPubAttrs[3].pValue = origPubExponent;
+        getOriginalPubAttrs[3].ulValueLen = sizeof(origPubExponent);
+
+        ret = funcList->C_GetAttributeValue(session, pubKey, getOriginalPubAttrs,
+                                            getOriginalPubAttrsCnt);
+        CHECK_CKR(ret, "Get original RSA public key attributes");
+    }
+
+    if (ret == CKR_OK) {
+        /* Set up buffers for copied public key attributes */
+        getCopiedPubAttrs[0].pValue = copiedPubId;
+        getCopiedPubAttrs[0].ulValueLen = sizeof(copiedPubId);
+        getCopiedPubAttrs[1].pValue = copiedPubLabel;
+        getCopiedPubAttrs[1].ulValueLen = sizeof(copiedPubLabel);
+        getCopiedPubAttrs[2].pValue = copiedPubModulus;
+        getCopiedPubAttrs[2].ulValueLen = sizeof(copiedPubModulus);
+        getCopiedPubAttrs[3].pValue = copiedPubExponent;
+        getCopiedPubAttrs[3].ulValueLen = sizeof(copiedPubExponent);
+
+        ret = funcList->C_GetAttributeValue(session, copiedPubKey,
+                                            getCopiedPubAttrs, getCopiedPubAttrsCnt);
+        CHECK_CKR(ret, "Get copied RSA public key attributes");
+    }
+
+    /* Verify that public key attributes match */
+    if (ret == CKR_OK) {
+        if (getOriginalPubAttrs[0].ulValueLen != getCopiedPubAttrs[0].ulValueLen ||
+            XMEMCMP(origPubId, copiedPubId,
+                    getOriginalPubAttrs[0].ulValueLen) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Copied RSA public key ID should match original");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        /* Verify LABEL is different (modified) */
+        if (getCopiedPubAttrs[1].ulValueLen != sizeof(modifiedLabel)-1 ||
+            XMEMCMP(copiedPubLabel, modifiedLabel,
+                    sizeof(modifiedLabel)-1) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Copied RSA public key LABEL should be modified");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        /* Verify MODULUS matches (deep copy of RSA key structure) */
+        if (getOriginalPubAttrs[2].ulValueLen != getCopiedPubAttrs[2].ulValueLen ||
+            XMEMCMP(origPubModulus, copiedPubModulus,
+                    getOriginalPubAttrs[2].ulValueLen) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Copied RSA public key MODULUS should match original");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        /* Verify PUBLIC_EXPONENT matches */
+        if (getOriginalPubAttrs[3].ulValueLen != getCopiedPubAttrs[3].ulValueLen ||
+            XMEMCMP(origPubExponent, copiedPubExponent,
+                    getOriginalPubAttrs[3].ulValueLen) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Copied RSA public key PUBLIC_EXPONENT should match original");
+        }
+    }
+
+    /* Test that both keys can be used for signing (verifying key structure
+     * is intact) */
+    if (ret == CKR_OK) {
+        CK_MECHANISM signMech;
+        CK_BYTE data[] = "test data for signing";
+        CK_BYTE signature1[512], signature2[512];
+        CK_ULONG sigLen1 = sizeof(signature1);
+        CK_ULONG sigLen2 = sizeof(signature2);
+
+        signMech.mechanism = CKM_RSA_PKCS;
+        signMech.pParameter = NULL;
+        signMech.ulParameterLen = 0;
+
+        /* Sign with original key */
+        ret = funcList->C_SignInit(session, &signMech, privKey);
+        if (ret == CKR_OK) {
+            ret = funcList->C_Sign(session, data, sizeof(data)-1, signature1,
+                                   &sigLen1);
+            CHECK_CKR(ret, "Sign with original RSA key");
+        }
+
+        /* Sign with copied key */
+        if (ret == CKR_OK) {
+            ret = funcList->C_SignInit(session, &signMech, copiedPrivKey);
+            if (ret == CKR_OK) {
+                ret = funcList->C_Sign(session, data, sizeof(data)-1,
+                                       signature2, &sigLen2);
+                CHECK_CKR(ret, "Sign with copied RSA key");
+            }
+        }
+
+        /* Both signatures should be valid (though potentially different due
+         * to PKCS#1 v1.5 padding) */
+        if (ret == CKR_OK) {
+            /* Verify signature1 with public key */
+            ret = funcList->C_VerifyInit(session, &signMech, pubKey);
+            if (ret == CKR_OK) {
+                ret = funcList->C_Verify(session, data, sizeof(data)-1,
+                                         signature1, sigLen1);
+                CHECK_CKR(ret, "Verify signature from original RSA key");
+            }
+        }
+
+        if (ret == CKR_OK) {
+            /* Verify signature2 with public key */
+            ret = funcList->C_VerifyInit(session, &signMech, pubKey);
+            if (ret == CKR_OK) {
+                ret = funcList->C_Verify(session, data, sizeof(data)-1,
+                                         signature2, sigLen2);
+                CHECK_CKR(ret, "Verify signature from copied RSA key");
+            }
+        }
+
+        /* Also verify with copied public key */
+        if (ret == CKR_OK) {
+            ret = funcList->C_VerifyInit(session, &signMech, copiedPubKey);
+            if (ret == CKR_OK) {
+                ret = funcList->C_Verify(session, data, sizeof(data)-1,
+                                         signature1, sigLen1);
+                CHECK_CKR(ret, "Verify signature with copied RSA public key");
+            }
+        }
+    }
+
+    /* Clean up */
+    if (pubKey != CK_INVALID_HANDLE) {
+        funcList->C_DestroyObject(session, pubKey);
+    }
+    if (privKey != CK_INVALID_HANDLE) {
+        funcList->C_DestroyObject(session, privKey);
+    }
+    if (copiedPrivKey != CK_INVALID_HANDLE) {
+        funcList->C_DestroyObject(session, copiedPrivKey);
+    }
+    if (copiedPubKey != CK_INVALID_HANDLE) {
+        funcList->C_DestroyObject(session, copiedPubKey);
+    }
+
+    return ret;
+}
+#endif /* !NO_RSA */
+
+#ifdef HAVE_ECC
+static CK_RV test_copy_object_ecc_key(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE pubKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE privKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE copiedPrivKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE copiedPubKey = CK_INVALID_HANDLE;
+    CK_MECHANISM mech;
+    static byte keyId[] = { 0xEE, 0xCC, 0xAA, 0xBB };
+    static byte label[] = "ecc-test-key";
+    static byte modifiedLabel[] = "ecc-copied-key";
+
+    /* ECC key generation template */
+    CK_ATTRIBUTE pubKeyTmpl[] = {
+        { CKA_EC_PARAMS,         ecc_p256_params,
+          sizeof(ecc_p256_params)   },
+        { CKA_VERIFY,            &ckTrue,           sizeof(ckTrue)            },
+        { CKA_TOKEN,             &ckFalse,          sizeof(ckFalse)           },
+        { CKA_ID,                keyId,             sizeof(keyId)             },
+        { CKA_LABEL,             label,             sizeof(label)-1           },
+    };
+    CK_ULONG pubKeyTmplCnt = sizeof(pubKeyTmpl) / sizeof(*pubKeyTmpl);
+
+    CK_ATTRIBUTE privKeyTmpl[] = {
+        { CKA_EC_PARAMS,         ecc_p256_params,
+          sizeof(ecc_p256_params)   },
+        { CKA_SIGN,              &ckTrue,           sizeof(ckTrue)            },
+        { CKA_TOKEN,             &ckFalse,          sizeof(ckFalse)           },
+        { CKA_PRIVATE,           &ckTrue,           sizeof(ckTrue)            },
+        { CKA_SENSITIVE,         &ckFalse,          sizeof(ckFalse)           },
+        { CKA_EXTRACTABLE,       &ckTrue,           sizeof(ckTrue)            },
+        { CKA_ID,                keyId,             sizeof(keyId)             },
+        { CKA_LABEL,             label,             sizeof(label)-1           },
+    };
+    CK_ULONG privKeyTmplCnt = sizeof(privKeyTmpl) / sizeof(*privKeyTmpl);
+
+    /* Template for copying with modifications */
+    CK_ATTRIBUTE copyTmpl[] = {
+        { CKA_LABEL,             modifiedLabel,
+          sizeof(modifiedLabel)-1   },
+    };
+    CK_ULONG copyTmplCnt = sizeof(copyTmpl) / sizeof(*copyTmpl);
+
+    /* Templates for attribute verification */
+    CK_ATTRIBUTE getOriginalPrivAttrs[] = {
+        { CKA_ID,                NULL,              0                         },
+        { CKA_LABEL,             NULL,              0                         },
+        { CKA_EXTRACTABLE,       NULL,              0                         },
+        { CKA_EC_PARAMS,         NULL,              0                         },
+    };
+    CK_ULONG getOriginalPrivAttrsCnt = sizeof(getOriginalPrivAttrs) /
+                                       sizeof(*getOriginalPrivAttrs);
+
+    CK_ATTRIBUTE getCopiedPrivAttrs[] = {
+        { CKA_ID,                NULL,              0                         },
+        { CKA_LABEL,             NULL,              0                         },
+        { CKA_EXTRACTABLE,       NULL,              0                         },
+        { CKA_EC_PARAMS,         NULL,              0                         },
+    };
+    CK_ULONG getCopiedPrivAttrsCnt = sizeof(getCopiedPrivAttrs) /
+                                     sizeof(*getCopiedPrivAttrs);
+
+    CK_ATTRIBUTE getOriginalPubAttrs[] = {
+        { CKA_ID,                NULL,              0                         },
+        { CKA_LABEL,             NULL,              0                         },
+        { CKA_EC_PARAMS,         NULL,              0                         },
+        { CKA_EC_POINT,          NULL,              0                         },
+    };
+    CK_ULONG getOriginalPubAttrsCnt = sizeof(getOriginalPubAttrs) /
+                                      sizeof(*getOriginalPubAttrs);
+
+    CK_ATTRIBUTE getCopiedPubAttrs[] = {
+        { CKA_ID,                NULL,              0                         },
+        { CKA_LABEL,             NULL,              0                         },
+        { CKA_EC_PARAMS,         NULL,              0                         },
+        { CKA_EC_POINT,          NULL,              0                         },
+    };
+    CK_ULONG getCopiedPubAttrsCnt = sizeof(getCopiedPubAttrs) /
+                                    sizeof(*getCopiedPubAttrs);
+
+    /* Buffers for retrieved attributes */
+    byte origPrivId[32], copiedPrivId[32];
+    byte origPrivLabel[64], copiedPrivLabel[64];
+    byte origPrivParams[32], copiedPrivParams[32];
+    byte origPubId[32], copiedPubId[32];
+    byte origPubLabel[64], copiedPubLabel[64];
+    byte origPubParams[32], copiedPubParams[32];
+    byte origPubPoint[128], copiedPubPoint[128];
+    CK_BBOOL origPrivExtractable, copiedPrivExtractable;
+
+    /* Generate ECC key pair */
+    mech.mechanism = CKM_EC_KEY_PAIR_GEN;
+    mech.pParameter = NULL;
+    mech.ulParameterLen = 0;
+
+    ret = funcList->C_GenerateKeyPair(session, &mech, pubKeyTmpl,
+                                      pubKeyTmplCnt, privKeyTmpl,
+                                      privKeyTmplCnt, &pubKey, &privKey);
+    CHECK_CKR(ret, "Generate ECC key pair for copy test");
+
+    /* Test: Copy ECC private key */
+    if (ret == CKR_OK) {
+        ret = funcList->C_CopyObject(session, privKey, copyTmpl, copyTmplCnt,
+                                     &copiedPrivKey);
+        CHECK_CKR(ret, "Copy ECC private key");
+    }
+
+    /* Test: Copy ECC public key */
+    if (ret == CKR_OK) {
+        ret = funcList->C_CopyObject(session, pubKey, copyTmpl, copyTmplCnt,
+                                     &copiedPubKey);
+        CHECK_CKR(ret, "Copy ECC public key");
+    }
+
+    /* Verify that both private keys exist and have expected attributes */
+    if (ret == CKR_OK) {
+        /* Set up buffers for original private key attributes */
+        getOriginalPrivAttrs[0].pValue = origPrivId;
+        getOriginalPrivAttrs[0].ulValueLen = sizeof(origPrivId);
+        getOriginalPrivAttrs[1].pValue = origPrivLabel;
+        getOriginalPrivAttrs[1].ulValueLen = sizeof(origPrivLabel);
+        getOriginalPrivAttrs[2].pValue = &origPrivExtractable;
+        getOriginalPrivAttrs[2].ulValueLen = sizeof(origPrivExtractable);
+        getOriginalPrivAttrs[3].pValue = origPrivParams;
+        getOriginalPrivAttrs[3].ulValueLen = sizeof(origPrivParams);
+
+        ret = funcList->C_GetAttributeValue(session, privKey,
+                                            getOriginalPrivAttrs,
+                                            getOriginalPrivAttrsCnt);
+        CHECK_CKR(ret, "Get original ECC private key attributes");
+    }
+
+    if (ret == CKR_OK) {
+        /* Set up buffers for copied private key attributes */
+        getCopiedPrivAttrs[0].pValue = copiedPrivId;
+        getCopiedPrivAttrs[0].ulValueLen = sizeof(copiedPrivId);
+        getCopiedPrivAttrs[1].pValue = copiedPrivLabel;
+        getCopiedPrivAttrs[1].ulValueLen = sizeof(copiedPrivLabel);
+        getCopiedPrivAttrs[2].pValue = &copiedPrivExtractable;
+        getCopiedPrivAttrs[2].ulValueLen = sizeof(copiedPrivExtractable);
+        getCopiedPrivAttrs[3].pValue = copiedPrivParams;
+        getCopiedPrivAttrs[3].ulValueLen = sizeof(copiedPrivParams);
+
+        ret = funcList->C_GetAttributeValue(session, copiedPrivKey,
+                                            getCopiedPrivAttrs,
+                                            getCopiedPrivAttrsCnt);
+        CHECK_CKR(ret, "Get copied ECC private key attributes");
+    }
+
+    /* Verify private key attributes */
+    if (ret == CKR_OK) {
+        if (getOriginalPrivAttrs[0].ulValueLen !=
+            getCopiedPrivAttrs[0].ulValueLen ||
+            XMEMCMP(origPrivId, copiedPrivId,
+                    getOriginalPrivAttrs[0].ulValueLen) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Copied ECC private key ID should match original");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (origPrivExtractable != copiedPrivExtractable) {
+            ret = -1;
+            CHECK_CKR(ret,
+                      "Copied ECC private key EXTRACTABLE should match original");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        /* Verify LABEL is different (modified) */
+        if (getCopiedPrivAttrs[1].ulValueLen != sizeof(modifiedLabel)-1 ||
+            XMEMCMP(copiedPrivLabel, modifiedLabel,
+                    sizeof(modifiedLabel)-1) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Copied ECC private key LABEL should be modified");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        /* Verify EC_PARAMS matches */
+        if (getOriginalPrivAttrs[3].ulValueLen !=
+            getCopiedPrivAttrs[3].ulValueLen ||
+            XMEMCMP(origPrivParams, copiedPrivParams,
+                    getOriginalPrivAttrs[3].ulValueLen) != 0) {
+            ret = -1;
+            CHECK_CKR(ret,
+                      "Copied ECC private key EC_PARAMS should match original");
+        }
+    }
+
+    /* Verify that both public keys exist and have expected attributes */
+    if (ret == CKR_OK) {
+        /* Set up buffers for original public key attributes */
+        getOriginalPubAttrs[0].pValue = origPubId;
+        getOriginalPubAttrs[0].ulValueLen = sizeof(origPubId);
+        getOriginalPubAttrs[1].pValue = origPubLabel;
+        getOriginalPubAttrs[1].ulValueLen = sizeof(origPubLabel);
+        getOriginalPubAttrs[2].pValue = origPubParams;
+        getOriginalPubAttrs[2].ulValueLen = sizeof(origPubParams);
+        getOriginalPubAttrs[3].pValue = origPubPoint;
+        getOriginalPubAttrs[3].ulValueLen = sizeof(origPubPoint);
+
+        ret = funcList->C_GetAttributeValue(session, pubKey,
+                                            getOriginalPubAttrs,
+                                            getOriginalPubAttrsCnt);
+        CHECK_CKR(ret, "Get original ECC public key attributes");
+    }
+
+    if (ret == CKR_OK) {
+        /* Set up buffers for copied public key attributes */
+        getCopiedPubAttrs[0].pValue = copiedPubId;
+        getCopiedPubAttrs[0].ulValueLen = sizeof(copiedPubId);
+        getCopiedPubAttrs[1].pValue = copiedPubLabel;
+        getCopiedPubAttrs[1].ulValueLen = sizeof(copiedPubLabel);
+        getCopiedPubAttrs[2].pValue = copiedPubParams;
+        getCopiedPubAttrs[2].ulValueLen = sizeof(copiedPubParams);
+        getCopiedPubAttrs[3].pValue = copiedPubPoint;
+        getCopiedPubAttrs[3].ulValueLen = sizeof(copiedPubPoint);
+
+        ret = funcList->C_GetAttributeValue(session, copiedPubKey,
+                                            getCopiedPubAttrs,
+                                            getCopiedPubAttrsCnt);
+        CHECK_CKR(ret, "Get copied ECC public key attributes");
+    }
+
+    /* Verify public key attributes */
+    if (ret == CKR_OK) {
+        if (getOriginalPubAttrs[0].ulValueLen !=
+            getCopiedPubAttrs[0].ulValueLen ||
+            XMEMCMP(origPubId, copiedPubId,
+                    getOriginalPubAttrs[0].ulValueLen) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Copied ECC public key ID should match original");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        /* Verify public key LABEL is different (modified) */
+        if (getCopiedPubAttrs[1].ulValueLen != sizeof(modifiedLabel)-1 ||
+            XMEMCMP(copiedPubLabel, modifiedLabel,
+                    sizeof(modifiedLabel)-1) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "Copied ECC public key LABEL should be modified");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        /* Verify EC_POINT matches (deep copy of ECC key structure) */
+        if (getOriginalPubAttrs[3].ulValueLen !=
+            getCopiedPubAttrs[3].ulValueLen ||
+            XMEMCMP(origPubPoint, copiedPubPoint,
+                    getOriginalPubAttrs[3].ulValueLen) != 0) {
+            ret = -1;
+            CHECK_CKR(ret,
+                      "Copied ECC public key EC_POINT should match original");
+        }
+    }
+
+    /* Test that both private keys can be used for signing (verifying key
+     * structure is intact) */
+    if (ret == CKR_OK) {
+        CK_MECHANISM signMech;
+        CK_BYTE data[] = "test data for ECC signing";
+        CK_BYTE signature1[128], signature2[128];
+        CK_ULONG sigLen1 = sizeof(signature1);
+        CK_ULONG sigLen2 = sizeof(signature2);
+
+        signMech.mechanism = CKM_ECDSA;
+        signMech.pParameter = NULL;
+        signMech.ulParameterLen = 0;
+
+        /* Sign with original private key */
+        ret = funcList->C_SignInit(session, &signMech, privKey);
+        if (ret == CKR_OK) {
+            ret = funcList->C_Sign(session, data, sizeof(data)-1,
+                                   signature1, &sigLen1);
+            CHECK_CKR(ret, "Sign with original ECC private key");
+        }
+
+        /* Sign with copied private key */
+        if (ret == CKR_OK) {
+            ret = funcList->C_SignInit(session, &signMech, copiedPrivKey);
+            if (ret == CKR_OK) {
+                ret = funcList->C_Sign(session, data, sizeof(data)-1,
+                                       signature2, &sigLen2);
+                CHECK_CKR(ret, "Sign with copied ECC private key");
+            }
+        }
+
+        /* Both signatures should be valid */
+        if (ret == CKR_OK) {
+            /* Verify signature1 with original public key */
+            ret = funcList->C_VerifyInit(session, &signMech, pubKey);
+            if (ret == CKR_OK) {
+                ret = funcList->C_Verify(session, data, sizeof(data)-1,
+                                         signature1, sigLen1);
+                CHECK_CKR(ret, "Verify signature from original ECC key");
+            }
+        }
+
+        if (ret == CKR_OK) {
+            /* Verify signature2 with copied public key */
+            ret = funcList->C_VerifyInit(session, &signMech, copiedPubKey);
+            if (ret == CKR_OK) {
+                ret = funcList->C_Verify(session, data, sizeof(data)-1,
+                                         signature2, sigLen2);
+                CHECK_CKR(ret, "Verify signature from copied ECC key");
+            }
+        }
+    }
+
+    /* Clean up */
+    if (pubKey != CK_INVALID_HANDLE) {
+        funcList->C_DestroyObject(session, pubKey);
+    }
+    if (privKey != CK_INVALID_HANDLE) {
+        funcList->C_DestroyObject(session, privKey);
+    }
+    if (copiedPrivKey != CK_INVALID_HANDLE) {
+        funcList->C_DestroyObject(session, copiedPrivKey);
+    }
+    if (copiedPubKey != CK_INVALID_HANDLE) {
+        funcList->C_DestroyObject(session, copiedPubKey);
+    }
+
+    return ret;
+}
+#endif /* HAVE_ECC */
+
 #if ((defined(WOLFPKCS11_NSS)) && ((WP11_SESSION_CNT_MAX != 1) || \
     (WP11_SESSION_CNT_MIN != 1)))
 static CK_RV test_cross_session_object(void* args)
@@ -2240,6 +3183,475 @@ static CK_RV test_attribute_get(void* args)
     return ret;
 }
 
+static CK_RV test_data_object(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE dataObj = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE dataObjToken = CK_INVALID_HANDLE;
+
+    /* Sample data for the data object */
+    static byte testData[] = {
+        0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x20, 0x57, 0x6F,
+        0x72, 0x6C, 0x64, 0x21  /* "Hello World!" */
+    };
+    static byte testLabel[] = "TestDataObject";
+    static byte testApplication[] = "TestApplication";
+    static byte testObjectId[] = {0x01, 0x02, 0x03, 0x04};
+
+    /* Template for creating a session data object */
+    CK_ATTRIBUTE dataTemplate[] = {
+        { CKA_CLASS,        &dataClass,        sizeof(dataClass)        },
+        { CKA_LABEL,        testLabel,         sizeof(testLabel)        },
+        { CKA_VALUE,        testData,          sizeof(testData)         },
+        { CKA_TOKEN,        &ckFalse,          sizeof(ckFalse)          },
+        { CKA_PRIVATE,      &ckFalse,          sizeof(ckFalse)          },
+        { CKA_MODIFIABLE,   &ckTrue,           sizeof(ckTrue)           },
+        { CKA_APPLICATION,  testApplication,   sizeof(testApplication)  },
+        { CKA_OBJECT_ID,    testObjectId,      sizeof(testObjectId)     }
+    };
+    CK_ULONG dataTemplateCnt = sizeof(dataTemplate) / sizeof(*dataTemplate);
+
+    /* Template for creating a token data object */
+    CK_ATTRIBUTE tokenDataTemplate[] = {
+        { CKA_CLASS,        &dataClass,        sizeof(dataClass)        },
+        { CKA_LABEL,        testLabel,         sizeof(testLabel)        },
+        { CKA_VALUE,        testData,          sizeof(testData)         },
+        { CKA_TOKEN,        &ckTrue,           sizeof(ckTrue)           },
+        { CKA_PRIVATE,      &ckFalse,          sizeof(ckFalse)          },
+        { CKA_MODIFIABLE,   &ckTrue,           sizeof(ckTrue)           },
+        { CKA_APPLICATION,  testApplication,   sizeof(testApplication)  },
+        { CKA_OBJECT_ID,    testObjectId,      sizeof(testObjectId)     }
+    };
+    CK_ULONG tokenDataTemplateCnt = sizeof(tokenDataTemplate) /
+                                    sizeof(*tokenDataTemplate);
+
+    /* Templates for retrieving attributes */
+    CK_ATTRIBUTE getTemplate[] = {
+        { CKA_CLASS,        NULL,   0 },
+        { CKA_LABEL,        NULL,   0 },
+        { CKA_VALUE,        NULL,   0 },
+        { CKA_TOKEN,        NULL,   0 },
+        { CKA_PRIVATE,      NULL,   0 },
+        { CKA_MODIFIABLE,   NULL,   0 },
+        { CKA_APPLICATION,  NULL,   0 },
+        { CKA_OBJECT_ID,    NULL,   0 }
+    };
+    CK_ULONG getTemplateCnt = sizeof(getTemplate) / sizeof(*getTemplate);
+
+    /* Buffers for retrieved attributes */
+    CK_OBJECT_CLASS retClass;
+    byte retLabel[32];
+    byte retValue[32];
+    CK_BBOOL retToken;
+    CK_BBOOL retPrivate;
+    CK_BBOOL retModifiable;
+    byte retApplication[32];
+    byte retObjectId[32];
+
+
+
+    /* Test creating a session data object */
+    ret = funcList->C_CreateObject(session, dataTemplate, dataTemplateCnt,
+                                   &dataObj);
+    CHECK_CKR(ret, "Create CKO_DATA session object");
+
+    /* Test creating a token data object */
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, tokenDataTemplate,
+                                       tokenDataTemplateCnt, &dataObjToken);
+        CHECK_CKR(ret, "Create CKO_DATA token object");
+    }
+
+    /* Test C_GetAttributeValue - first get the lengths */
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, dataObj, getTemplate,
+                                            getTemplateCnt);
+        CHECK_CKR(ret, "Get CKO_DATA attribute lengths");
+    }
+
+    /* Allocate buffers and set up pointers */
+    if (ret == CKR_OK) {
+        getTemplate[0].pValue = &retClass;
+        getTemplate[0].ulValueLen = sizeof(retClass);
+
+        getTemplate[1].pValue = retLabel;
+        getTemplate[1].ulValueLen = sizeof(retLabel);
+
+        getTemplate[2].pValue = retValue;
+        getTemplate[2].ulValueLen = sizeof(retValue);
+
+        getTemplate[3].pValue = &retToken;
+        getTemplate[3].ulValueLen = sizeof(retToken);
+
+        getTemplate[4].pValue = &retPrivate;
+        getTemplate[4].ulValueLen = sizeof(retPrivate);
+
+        getTemplate[5].pValue = &retModifiable;
+        getTemplate[5].ulValueLen = sizeof(retModifiable);
+
+        getTemplate[6].pValue = retApplication;
+        getTemplate[6].ulValueLen = sizeof(retApplication);
+
+        getTemplate[7].pValue = retObjectId;
+        getTemplate[7].ulValueLen = sizeof(retObjectId);
+    }
+
+    /* Test C_GetAttributeValue - get the actual values */
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, dataObj, getTemplate,
+                                            getTemplateCnt);
+        CHECK_CKR(ret, "Get CKO_DATA attribute values");
+    }
+
+    /* Verify the retrieved values match what we set */
+    if (ret == CKR_OK) {
+        if (retClass != dataClass) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA class attribute verification");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (XMEMCMP(retLabel, testLabel, sizeof(testLabel)) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA label attribute verification");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (XMEMCMP(retValue, testData, sizeof(testData)) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA value attribute verification");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (retToken != ckFalse) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA token attribute verification");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (retPrivate != ckFalse) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA private attribute verification");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (retModifiable != ckTrue) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA modifiable attribute verification");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (XMEMCMP(retApplication, testApplication, sizeof(testApplication)) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA application attribute verification");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (XMEMCMP(retObjectId, testObjectId, sizeof(testObjectId)) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA object ID attribute verification");
+        }
+    }
+
+    /* Test getting individual attributes */
+    if (ret == CKR_OK) {
+        CK_ATTRIBUTE singleAttr = { CKA_VALUE, retValue, sizeof(retValue) };
+        XMEMSET(retValue, 0, sizeof(retValue));
+
+        ret = funcList->C_GetAttributeValue(session, dataObj, &singleAttr,
+                                            1);
+        CHECK_CKR(ret, "Get single CKO_DATA attribute");
+
+        if (ret == CKR_OK) {
+            if (XMEMCMP(retValue, testData, sizeof(testData)) != 0) {
+                ret = -1;
+                CHECK_CKR(ret, "Single CKO_DATA value verification");
+            }
+        }
+    }
+
+    /* Test error cases */
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(CK_INVALID_HANDLE, dataObj,
+                                            getTemplate, 1);
+        CHECK_CKR_FAIL(ret, CKR_SESSION_HANDLE_INVALID,
+                       "Get attribute invalid session");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, CK_INVALID_HANDLE,
+                                            getTemplate, 1);
+        CHECK_CKR_FAIL(ret, CKR_OBJECT_HANDLE_INVALID,
+                       "Get attribute invalid object");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, dataObj, NULL, 1);
+        CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD,
+                       "Get attribute null template");
+    }
+
+    /* Test token data object attribute retrieval */
+    if (ret == CKR_OK) {
+        CK_ATTRIBUTE tokenAttr = { CKA_TOKEN, &retToken, sizeof(retToken) };
+
+        ret = funcList->C_GetAttributeValue(session, dataObjToken,
+                                            &tokenAttr, 1);
+        CHECK_CKR(ret, "Get token CKO_DATA attribute");
+
+        if (ret == CKR_OK) {
+            if (retToken != ckTrue) {
+                ret = -1;
+                CHECK_CKR(ret,
+                          "Token CKO_DATA token attribute verification");
+            }
+        }
+    }
+
+    /* Clean up */
+    if (dataObj != CK_INVALID_HANDLE) {
+        funcList->C_DestroyObject(session, dataObj);
+    }
+    if (dataObjToken != CK_INVALID_HANDLE) {
+        funcList->C_DestroyObject(session, dataObjToken);
+    }
+
+    return ret;
+}
+
+static CK_RV test_data_object_null_value(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE dataObj = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE dataObjToken = CK_INVALID_HANDLE;
+
+    /* Test data for the data object - no value data */
+    static byte testLabel[] = "TestDataObjectNullValue";
+    static byte testApplication[] = "TestApplicationNull";
+    static byte testObjectId[] = {0x05, 0x06, 0x07, 0x08};
+
+    /* Template for creating a session data object with NULL value */
+    static CK_BBOOL sessionFalse = CK_FALSE;
+    CK_ATTRIBUTE dataTemplate[] = {
+        { CKA_CLASS,        &dataClass,        sizeof(dataClass)        },
+        { CKA_LABEL,        testLabel,         sizeof(testLabel)        },
+        { CKA_VALUE,        NULL,              0                        },
+        { CKA_TOKEN,        &sessionFalse,     sizeof(sessionFalse)     },
+        { CKA_PRIVATE,      &sessionFalse,     sizeof(sessionFalse)     },
+        { CKA_MODIFIABLE,   &ckTrue,           sizeof(ckTrue)           },
+        { CKA_APPLICATION,  testApplication,   sizeof(testApplication)  },
+        { CKA_OBJECT_ID,    testObjectId,      sizeof(testObjectId)     }
+    };
+    CK_ULONG dataTemplateCnt = sizeof(dataTemplate) / sizeof(*dataTemplate);
+
+    /* Template for creating a token data object with NULL value */
+    CK_ATTRIBUTE tokenDataTemplate[] = {
+        { CKA_CLASS,        &dataClass,        sizeof(dataClass)        },
+        { CKA_LABEL,        testLabel,         sizeof(testLabel)        },
+        { CKA_VALUE,        NULL,              0                        },
+        { CKA_TOKEN,        &ckTrue,           sizeof(ckTrue)           },
+        { CKA_PRIVATE,      &ckTrue,           sizeof(ckTrue)           },
+        { CKA_MODIFIABLE,   &ckTrue,           sizeof(ckTrue)           },
+        { CKA_APPLICATION,  testApplication,   sizeof(testApplication)  },
+        { CKA_OBJECT_ID,    testObjectId,      sizeof(testObjectId)     }
+    };
+    CK_ULONG tokenDataTemplateCnt = sizeof(tokenDataTemplate) /
+                                    sizeof(*tokenDataTemplate);
+
+    /* Template for retrieving attributes */
+    CK_ATTRIBUTE getTemplate[] = {
+        { CKA_CLASS,        NULL,   0 },
+        { CKA_LABEL,        NULL,   0 },
+        { CKA_VALUE,        NULL,   0 },
+        { CKA_TOKEN,        NULL,   0 },
+        { CKA_PRIVATE,      NULL,   0 },
+        { CKA_MODIFIABLE,   NULL,   0 },
+        { CKA_APPLICATION,  NULL,   0 },
+        { CKA_OBJECT_ID,    NULL,   0 }
+    };
+    CK_ULONG getTemplateCnt = sizeof(getTemplate) / sizeof(*getTemplate);
+
+    /* Buffers for retrieved attributes */
+    CK_OBJECT_CLASS retClass;
+    byte retLabel[32];
+    byte retValue[32];
+    CK_BBOOL retToken;
+    CK_BBOOL retPrivate;
+    CK_BBOOL retModifiable;
+    byte retApplication[32];
+    byte retObjectId[32];
+
+    /* Test creating a session data object with NULL value */
+    ret = funcList->C_CreateObject(session, dataTemplate, dataTemplateCnt,
+                                   &dataObj);
+    CHECK_CKR(ret, "Create CKO_DATA session object with NULL value");
+
+    /* Test creating a token data object with NULL value */
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, tokenDataTemplate,
+                                       tokenDataTemplateCnt, &dataObjToken);
+        CHECK_CKR(ret, "Create CKO_DATA token object with NULL value");
+    }
+
+    /* Test C_GetAttributeValue - first get the lengths */
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, dataObj, getTemplate,
+                                            getTemplateCnt);
+        CHECK_CKR(ret, "Get CKO_DATA attribute lengths for NULL value");
+    }
+
+    /* Verify that CKA_VALUE has length 0 */
+    if (ret == CKR_OK) {
+        if (getTemplate[2].ulValueLen != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA NULL value should have length 0");
+        }
+    }
+
+    /* Allocate buffers and set up pointers */
+    if (ret == CKR_OK) {
+        getTemplate[0].pValue = &retClass;
+        getTemplate[0].ulValueLen = sizeof(retClass);
+
+        getTemplate[1].pValue = retLabel;
+        getTemplate[1].ulValueLen = sizeof(retLabel);
+
+        getTemplate[2].pValue = retValue;
+        getTemplate[2].ulValueLen = sizeof(retValue);
+
+        getTemplate[3].pValue = &retToken;
+        getTemplate[3].ulValueLen = sizeof(retToken);
+
+        getTemplate[4].pValue = &retPrivate;
+        getTemplate[4].ulValueLen = sizeof(retPrivate);
+
+        getTemplate[5].pValue = &retModifiable;
+        getTemplate[5].ulValueLen = sizeof(retModifiable);
+
+        getTemplate[6].pValue = retApplication;
+        getTemplate[6].ulValueLen = sizeof(retApplication);
+
+        getTemplate[7].pValue = retObjectId;
+        getTemplate[7].ulValueLen = sizeof(retObjectId);
+    }
+
+    /* Test C_GetAttributeValue - get the actual values */
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, dataObj, getTemplate,
+                                            getTemplateCnt);
+        CHECK_CKR(ret, "Get CKO_DATA attribute values for NULL value");
+    }
+
+    /* Verify the retrieved values match what we set */
+    if (ret == CKR_OK) {
+        if (retClass != dataClass) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA NULL value class attribute verification");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (XMEMCMP(retLabel, testLabel, sizeof(testLabel)) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA NULL value label attribute verification");
+        }
+    }
+
+    /* Verify that CKA_VALUE is indeed empty/NULL */
+    if (ret == CKR_OK) {
+        if (getTemplate[2].ulValueLen != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA NULL value should remain length 0");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (retToken != sessionFalse) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA NULL value token attribute verification");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (retPrivate != sessionFalse) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA NULL value private attribute verification");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (retModifiable != ckTrue) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA NULL value modifiable attribute verification");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (XMEMCMP(retApplication, testApplication, sizeof(testApplication)) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA NULL value application attribute verification");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        if (XMEMCMP(retObjectId, testObjectId, sizeof(testObjectId)) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "CKO_DATA NULL value object ID attribute verification");
+        }
+    }
+
+    /* Test getting CKA_VALUE individually to confirm it's NULL/empty */
+    if (ret == CKR_OK) {
+        CK_ATTRIBUTE singleAttr = { CKA_VALUE, NULL, 0 };
+        
+        ret = funcList->C_GetAttributeValue(session, dataObj, &singleAttr, 1);
+        CHECK_CKR(ret, "Get single CKA_VALUE attribute for NULL value");
+
+        if (ret == CKR_OK) {
+            if (singleAttr.ulValueLen != 0) {
+                ret = -1;
+                CHECK_CKR(ret, "Single CKA_VALUE NULL verification");
+            }
+        }
+    }
+
+    /* Test token data object attribute retrieval */
+    if (ret == CKR_OK) {
+        CK_ATTRIBUTE tokenAttr = { CKA_TOKEN, &retToken, sizeof(retToken) };
+
+        ret = funcList->C_GetAttributeValue(session, dataObjToken,
+                                            &tokenAttr, 1);
+        CHECK_CKR(ret, "Get token CKO_DATA attribute for NULL value");
+
+        if (ret == CKR_OK) {
+            if (retToken != ckTrue) {
+                ret = -1;
+                CHECK_CKR(ret,
+                          "Token CKO_DATA NULL value token attribute verification");
+            }
+        }
+    }
+
+    /* Clean up */
+    if (dataObj != CK_INVALID_HANDLE) {
+        funcList->C_DestroyObject(session, dataObj);
+    }
+    if (dataObjToken != CK_INVALID_HANDLE) {
+        funcList->C_DestroyObject(session, dataObjToken);
+    }
+
+    return ret;
+}
+
 static CK_RV get_generic_key(CK_SESSION_HANDLE session, unsigned char* data,
                              CK_ULONG len, CK_BBOOL extractable,
                              CK_OBJECT_HANDLE* key)
@@ -2569,6 +3981,8 @@ static CK_RV get_aes_128_key(CK_SESSION_HANDLE session, unsigned char* id,
 #endif
         { CKA_ENCRYPT,           &ckTrue,           sizeof(ckTrue)            },
         { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue)            },
+        { CKA_SIGN,              &ckTrue,           sizeof(ckTrue)            },
+        { CKA_VERIFY,            &ckTrue,           sizeof(ckTrue)            },
 #ifndef NO_AES
         { CKA_VALUE,             aes_128_key,       sizeof(aes_128_key)       },
 #endif
@@ -4126,6 +5540,7 @@ static CK_RV get_rsa_priv_key(CK_SESSION_HANDLE session, unsigned char* privId,
         { CKA_CLASS,             &privKeyClass,     sizeof(privKeyClass)      },
         { CKA_KEY_TYPE,          &rsaKeyType,       sizeof(rsaKeyType)        },
         { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue)            },
+        { CKA_VERIFY,            &ckTrue,           sizeof(ckTrue)            },
         { CKA_MODULUS,           rsa_2048_modulus,  sizeof(rsa_2048_modulus)  },
         { CKA_PRIVATE_EXPONENT,  rsa_2048_priv_exp, sizeof(rsa_2048_priv_exp) },
         { CKA_PRIME_1,           rsa_2048_p,        sizeof(rsa_2048_p)        },
@@ -4301,9 +5716,11 @@ static CK_RV find_rsa_pub_key_label(CK_SESSION_HANDLE session,
     CK_ATTRIBUTE      pubKeyTmpl[] = {
 #ifndef WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL
         { CKA_LABEL,     (unsigned char*)"", 0 },
+        { CKA_TOKEN,     &ckFalse,      sizeof(ckFalse) },
 #else
         { CKA_CLASS,     &pubKeyClass,  sizeof(privKeyClass) },
         { CKA_KEY_TYPE,  &rsaKeyType,    sizeof(rsaKeyType)  },
+        { CKA_TOKEN,     &ckFalse,      sizeof(ckFalse) },
 #endif
     };
     CK_ULONG pubKeyTmplCnt = sizeof(pubKeyTmpl) / sizeof(*pubKeyTmpl);
@@ -4335,6 +5752,7 @@ static CK_RV find_rsa_priv_key_label(CK_SESSION_HANDLE session,
         { CKA_CLASS,     &privKeyClass,  sizeof(privKeyClass) },
         { CKA_KEY_TYPE,  &rsaKeyType,    sizeof(rsaKeyType)   },
         { CKA_LABEL,     (unsigned char*)"priv_label", 10 },
+        { CKA_TOKEN,     &ckFalse,       sizeof(ckFalse) },
     };
     CK_ULONG privKeyTmplCnt = sizeof(privKeyTmpl) / sizeof(*privKeyTmpl);
     CK_ULONG count;
@@ -4353,6 +5771,127 @@ static CK_RV find_rsa_priv_key_label(CK_SESSION_HANDLE session,
         ret = -1;
         CHECK_CKR(ret, "RSA Private Key Find Objects Count");
     }
+
+    return ret;
+}
+#endif
+
+#ifndef WOLFPKCS11_NO_STORE
+static CK_RV test_rsa_wrap_unwrap_key(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_MECHANISM mech = { CKM_RSA_PKCS, NULL, 0 };
+    CK_OBJECT_HANDLE wrappingPrivKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE wrappingPubKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE unwrappedKey = CK_INVALID_HANDLE;
+    byte wrappedKey[256], keyData[32];
+    CK_ULONG wrappedKeyLen;
+    CK_KEY_TYPE keyType = CKK_GENERIC_SECRET;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)},
+        { CKA_KEY_TYPE,          &keyType,          sizeof(keyType)       },
+    };
+    CK_ULONG tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
+
+    memset(keyData, 7, sizeof(keyData));
+    wrappedKeyLen = sizeof(wrappedKey);
+
+    /* Get RSA key pair for wrapping */
+    ret = get_rsa_priv_key(session, NULL, 0, CK_FALSE, &wrappingPrivKey);
+    if (ret == CKR_OK) {
+        ret = get_rsa_pub_key(session, NULL, 0, &wrappingPubKey);
+    }
+
+    /* Create a secret key to wrap */
+    if (ret == CKR_OK) {
+        ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE,
+                              &key);
+    }
+
+    /* Test wrapping with RSA public key */
+    if (ret == CKR_OK) {
+        ret = funcList->C_WrapKey(session, &mech, wrappingPubKey, key,
+                                  wrappedKey, &wrappedKeyLen);
+        CHECK_CKR(ret, "RSA Wrap Key mechanism");
+    }
+
+    /* Destroy original key since unwrap returns new handle */
+    funcList->C_DestroyObject(session, key);
+    key = CK_INVALID_HANDLE;
+
+    /* Test unwrapping with RSA private key */
+    if (ret == CKR_OK) {
+        ret = funcList->C_UnwrapKey(session, &mech, wrappingPrivKey,
+                                    wrappedKey, wrappedKeyLen, tmpl, tmplCnt,
+                                    &unwrappedKey);
+        CHECK_CKR(ret, "RSA UnWrap Key mechanism");
+    }
+
+    /* Test getting wrapped key length */
+    if (ret == CKR_OK) {
+        ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE,
+                              &key);
+        if (ret == CKR_OK) {
+            CK_ULONG testLen = 0;
+            ret = funcList->C_WrapKey(session, &mech, wrappingPubKey, key,
+                                      NULL, &testLen);
+            CHECK_CKR(ret, "RSA Wrap Key get length");
+            if (ret == CKR_OK && testLen != wrappedKeyLen) {
+                ret = CKR_GENERAL_ERROR;
+                printf("ERROR: Expected wrapped key length %lu, got %lu\n",
+                       wrappedKeyLen, testLen);
+            }
+        }
+    }
+
+    /* Test with wrong key type for wrapping */
+    if (ret == CKR_OK) {
+        CK_OBJECT_HANDLE aesKey = CK_INVALID_HANDLE;
+        ret = get_aes_128_key(session, NULL, 0, &aesKey);
+        if (ret == CKR_OK) {
+            CK_RV wrapRet = funcList->C_WrapKey(session, &mech, aesKey, key,
+                                                wrappedKey, &wrappedKeyLen);
+            CHECK_CKR_FAIL(wrapRet, CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
+                           "RSA Wrap Key with AES key");
+            funcList->C_DestroyObject(session, aesKey);
+        }
+    }
+
+    /* Test with wrong key type for unwrapping */
+    if (ret == CKR_OK) {
+        CK_OBJECT_HANDLE aesKey = CK_INVALID_HANDLE;
+        ret = get_aes_128_key(session, NULL, 0, &aesKey);
+        if (ret == CKR_OK) {
+            CK_RV unwrapRet = funcList->C_UnwrapKey(session, &mech, aesKey,
+                                                    wrappedKey, wrappedKeyLen,
+                                                    tmpl, tmplCnt, &key);
+            CHECK_CKR_FAIL(unwrapRet, CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT,
+                           "RSA UnWrap Key with AES key");
+            funcList->C_DestroyObject(session, aesKey);
+        }
+    }
+
+    /* Test buffer too small error */
+    if (ret == CKR_OK) {
+        /* Create fresh key for this test since original was destroyed */
+        ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE,
+                              &key);
+        if (ret == CKR_OK) {
+            CK_ULONG smallLen = 1;
+            CK_RV wrapRet = funcList->C_WrapKey(session, &mech, wrappingPubKey,
+                                                key, wrappedKey, &smallLen);
+            CHECK_CKR_FAIL(wrapRet, CKR_BUFFER_TOO_SMALL,
+                           "RSA Wrap Key with buffer too small");
+        }
+    }
+
+    /* Clean up */
+    funcList->C_DestroyObject(session, wrappingPrivKey);
+    funcList->C_DestroyObject(session, wrappingPubKey);
+    funcList->C_DestroyObject(session, key);
+    funcList->C_DestroyObject(session, unwrappedKey);
 
     return ret;
 }
@@ -5718,14 +7257,14 @@ static CK_RV test_rsa_pkcs_sig_fail(void* args)
     }
     if (ret == CKR_OK) {
         mech.pParameter = data;
-        ret = funcList->C_VerifyInit(session, &mech, priv);
+        ret = funcList->C_VerifyInit(session, &mech, pub);
         CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
                                                    "Verify Init bad parameter");
         mech.pParameter = NULL;
     }
     if (ret == CKR_OK) {
         mech.ulParameterLen = 1;
-        ret = funcList->C_VerifyInit(session, &mech, priv);
+        ret = funcList->C_VerifyInit(session, &mech, pub);
         CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
                                             "Verify Init bad parameter length");
         mech.ulParameterLen = 0;
@@ -5786,46 +7325,32 @@ static CK_RV test_rsa_pkcs_pss_sig_fail(void* args)
         params.mgf = CKG_MGF1_SHA256;
     }
     if (ret == CKR_OK) {
-        params.sLen = 63;
-        ret = funcList->C_SignInit(session, &mech, priv);
-        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
-                                                   "Sign Init bad salt length");
-        params.sLen = 32;
-    }
-    if (ret == CKR_OK) {
         mech.pParameter = NULL;
-        ret = funcList->C_VerifyInit(session, &mech, priv);
+        ret = funcList->C_VerifyInit(session, &mech, pub);
         CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
                                                   "Verify Init NULL parameter");
         mech.pParameter = &params;
     }
     if (ret == CKR_OK) {
         mech.ulParameterLen = 0;
-        ret = funcList->C_VerifyInit(session, &mech, priv);
+        ret = funcList->C_VerifyInit(session, &mech, pub);
         CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
                                             "Verify Init bad parameter length");
         mech.ulParameterLen = sizeof(params);
     }
     if (ret == CKR_OK) {
         params.hashAlg = CKM_RSA_PKCS;
-        ret = funcList->C_VerifyInit(session, &mech, priv);
+        ret = funcList->C_VerifyInit(session, &mech, pub);
         CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
                                               "Verify Init bad hash algorithm");
         params.hashAlg = CKM_SHA256;
     }
     if (ret == CKR_OK) {
         params.mgf = 0;
-        ret = funcList->C_VerifyInit(session, &mech, priv);
+        ret = funcList->C_VerifyInit(session, &mech, pub);
         CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
                                                "Verify Init bad mgf algorithm");
         params.mgf = CKG_MGF1_SHA256;
-    }
-    if (ret == CKR_OK) {
-        params.sLen = 63;
-        ret = funcList->C_VerifyInit(session, &mech, priv);
-        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
-                                                 "Verify Init bad salt length");
-        params.sLen = 32;
     }
 
     return ret;
@@ -6980,6 +8505,25 @@ static CK_RV test_ecdsa_sig_fail(void* args)
         CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
                                             "Verify Init bad parameter length");
         mech.ulParameterLen = 0;
+    }
+
+    return ret;
+}
+
+static CK_RV test_ecdh_x963(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+
+    ret = get_ecc_priv_key(session, CK_FALSE, &priv);
+    if (ret == CKR_OK)
+        ret = get_ecc_pub_key(session, &pub);
+    if (ret == CKR_OK) {
+        /* Test with x963 data */
+        ret = ecdh_test(session, priv, ecc_p256_x963_point,
+                       sizeof(ecc_p256_x963_point), 0);
     }
 
     return ret;
@@ -9272,6 +10816,7 @@ static CK_RV test_aes_ccm_encdec(CK_SESSION_HANDLE session,
     encSz = sizeof(enc);
     decSz = sizeof(dec);
 
+    ccmParams.ulDataLen = 0;
     ccmParams.pIv    = iv;
     ccmParams.ulIvLen = sizeof(iv);
     ccmParams.pAAD      = aad;
@@ -13613,6 +15158,13 @@ static TEST_FUNC testFunc[] = {
 #endif
     PKCS11TEST_FUNC_SESS_DECL(test_op_state_fail),
     PKCS11TEST_FUNC_SESS_DECL(test_object),
+    PKCS11TEST_FUNC_SESS_DECL(test_copy_object_deep_copy),
+#if (!defined(NO_RSA) && !defined(WOLFPKCS11_TPM))
+    PKCS11TEST_FUNC_SESS_DECL(test_copy_object_rsa_key),
+#endif
+#ifdef HAVE_ECC
+    PKCS11TEST_FUNC_SESS_DECL(test_copy_object_ecc_key),
+#endif
 #if ((defined(WOLFPKCS11_NSS)) && ((WP11_SESSION_CNT_MAX != 1) || \
     (WP11_SESSION_CNT_MIN != 1)))
     PKCS11TEST_FUNC_SESS_DECL(test_cross_session_object),
@@ -13620,6 +15172,8 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_attribute),
     PKCS11TEST_FUNC_SESS_DECL(test_attribute_types),
     PKCS11TEST_FUNC_SESS_DECL(test_attribute_get),
+    PKCS11TEST_FUNC_SESS_DECL(test_data_object),
+    PKCS11TEST_FUNC_SESS_DECL(test_data_object_null_value),
     PKCS11TEST_FUNC_SESS_DECL(test_attributes_secret),
 #ifndef NO_RSA
     PKCS11TEST_FUNC_SESS_DECL(test_attributes_rsa),
@@ -13651,6 +15205,9 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_aes_wrap_unwrap_pad_key),
     PKCS11TEST_FUNC_SESS_DECL(test_wrap_unwrap_key),
 #endif /* HAVE_AES_KEYWRAP && !WOLFPKCS11_NO_STORE */
+#if (!defined(NO_RSA) && !defined(WOLFPKCS11_NO_STORE))
+    PKCS11TEST_FUNC_SESS_DECL(test_rsa_wrap_unwrap_key),
+#endif
 #ifndef NO_DH
     PKCS11TEST_FUNC_SESS_DECL(test_derive_key),
 #endif
@@ -13700,6 +15257,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_ecc_gen_keys_token),
     PKCS11TEST_FUNC_SESS_DECL(test_ecc_token_keys_ecdsa),
     PKCS11TEST_FUNC_SESS_DECL(test_ecdsa_sig_fail),
+    PKCS11TEST_FUNC_SESS_DECL(test_ecdh_x963),
 #endif /* HAVE_ECC */
 #ifndef NO_DH
     PKCS11TEST_FUNC_SESS_DECL(test_dh_fixed_keys),

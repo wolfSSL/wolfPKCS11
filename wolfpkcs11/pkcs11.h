@@ -256,8 +256,10 @@ extern "C" {
 #define CKM_RSA_PKCS_KEY_PAIR_GEN             0x00000000UL
 #define CKM_RSA_PKCS                          0x00000001UL
 #define CKM_RSA_X_509                         0x00000003UL
+#define CKM_SHA1_RSA_PKCS                     0x00000006UL
 #define CKM_RSA_PKCS_OAEP                     0x00000009UL
 #define CKM_RSA_PKCS_PSS                      0x0000000DUL
+#define CKM_SHA1_RSA_PKCS_PSS                 0x0000000EUL
 #define CKM_DH_PKCS_KEY_PAIR_GEN              0x00000020UL
 #define CKM_DH_PKCS_DERIVE                    0x00000021UL
 #define CKM_SHA256_RSA_PKCS                   0x00000040UL
@@ -322,6 +324,7 @@ extern "C" {
 #define CKM_HKDF_KEY_GEN                      0x0000402CUL
 
 #ifdef WOLFPKCS11_NSS
+#define CKM_NSS_TLS_PRF_GENERAL_SHA256            (CKM_NSS + 21)
 #define CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE    (CKM_NSS + 25)
 #define CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_DH (CKM_NSS + 26)
 #endif
@@ -607,6 +610,9 @@ typedef struct CK_C_INITIALIZE_ARGS {
     CK_LOCKMUTEX LockMutex;
     CK_UNLOCKMUTEX UnlockMutex;
     CK_FLAGS flags;
+#ifdef WOLFPKCS11_NSS
+    CK_CHAR_PTR *LibraryParameters;
+#endif
     CK_VOID_PTR pReserved;
 } CK_C_INITIALIZE_ARGS;
 typedef CK_C_INITIALIZE_ARGS* CK_C_INITIALIZE_ARGS_PTR;

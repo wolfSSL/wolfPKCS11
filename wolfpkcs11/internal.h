@@ -124,7 +124,11 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 
 /* Maximum number of objects in a token. */
 #ifndef WP11_TOKEN_OBJECT_CNT_MAX
+#ifdef WOLFPKCS11_NSS
+#define WP11_TOKEN_OBJECT_CNT_MAX      6400
+#else
 #define WP11_TOKEN_OBJECT_CNT_MAX      64
+#endif
 #endif
 
 /* Session was opened read-only or read/write. */
@@ -148,7 +152,11 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #define WP11_FIND_STATE_FOUND          2
 /* Maximum number of matching objects to hold handles of. */
 #ifndef WP11_FIND_MAX
+#ifdef WOLFPKCS11_NSS
+#define WP11_FIND_MAX                  100
+#else
 #define WP11_FIND_MAX                  10
+#endif
 #endif
 
 /* Flags for object. */
@@ -374,6 +382,7 @@ WP11_LOCAL int WP11_Object_New(WP11_Session* session, CK_KEY_TYPE type,
                     WP11_Object** object);
 WP11_LOCAL int wp11_Object_AllocateTypeData(WP11_Object* object);
 WP11_LOCAL void WP11_Object_Free(WP11_Object* object);
+WP11_LOCAL int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest);
 
 WP11_LOCAL CK_OBJECT_HANDLE WP11_Object_GetHandle(WP11_Object* object);
 WP11_LOCAL CK_KEY_TYPE WP11_Object_GetType(WP11_Object* object);
@@ -388,6 +397,8 @@ WP11_LOCAL int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** dat
                              CK_ULONG* len);
 WP11_LOCAL int WP11_Object_SetCert(WP11_Object* object, unsigned char** data,
                              CK_ULONG* len);
+WP11_LOCAL int WP11_Object_DataObject(WP11_Object* object, unsigned char** data,
+                           CK_ULONG* len);
 
 WP11_LOCAL int WP11_Object_SetClass(WP11_Object* object, CK_OBJECT_CLASS objClass);
 WP11_LOCAL CK_OBJECT_CLASS WP11_Object_GetClass(WP11_Object* object);
@@ -395,6 +406,7 @@ WP11_LOCAL CK_OBJECT_CLASS WP11_Object_GetClass(WP11_Object* object);
 #ifdef WOLFPKCS11_NSS
 WP11_LOCAL int WP11_Object_SetTrust(WP11_Object* object, unsigned char** data,
                          CK_ULONG* len);
+int WP11_SetStoreDir(const char *dir, size_t dirSz);
 #endif
 
 WP11_LOCAL int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
@@ -464,7 +476,7 @@ WP11_LOCAL int WP11_Ec_Sign(unsigned char* hash, word32 hashLen, unsigned char* 
 WP11_LOCAL int WP11_Ec_Verify(unsigned char* sig, word32 sigLen, unsigned char* hash,
                    word32 hashLen, int* stat, WP11_Object* pub);
 WP11_LOCAL int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
-                   word32 keyLen, WP11_Object* priv);
+                   word32* keyLen, WP11_Object* priv);
 
 WP11_LOCAL int WP11_Dh_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
                             WP11_Slot* slot);

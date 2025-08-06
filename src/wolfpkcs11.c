@@ -111,7 +111,7 @@ CK_RV C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList)
 {
     CK_RV ret;
     WOLFPKCS11_ENTER("C_GetFunctionList");
-    
+
     if (ppFunctionList == NULL) {
         ret = CKR_ARGUMENTS_BAD;
         WOLFPKCS11_LEAVE("C_GetFunctionList", ret);
@@ -124,6 +124,63 @@ CK_RV C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList)
     return ret;
 }
 
+#if (defined(WOLFPKCS11_NSS) && !defined(WOLFPKCS11_NO_STORE))
+/*
+ * Parse a string of NSS configuration parameters. For now only the
+ * configdir parameter is supported.
+ */
+static CK_RV ParseNssConfigString(char *nssArgs,
+        char **configdir, size_t *configdirLen)
+{
+    while (*nssArgs != '\0') {
+        char* keyStart;
+        size_t keyLen;
+        char* valueStart;
+        size_t valueLen;
+
+        while (*nssArgs == ' ')
+            nssArgs++;
+        if (*nssArgs == '\0')
+            break;
+
+        keyStart = nssArgs;
+        while (*nssArgs != '=' && *nssArgs != '\0')
+            nssArgs++;
+        if (*nssArgs == '\0')
+            return CKR_ARGUMENTS_BAD;
+
+        keyLen = nssArgs - keyStart;
+        nssArgs++;
+        if (keyLen == 0)
+            return CKR_ARGUMENTS_BAD;
+
+        if (*nssArgs != '\'')
+            return CKR_ARGUMENTS_BAD;
+        nssArgs++;
+        valueStart = nssArgs;
+        while (*nssArgs != '\'' && *nssArgs != '\0')
+            nssArgs++;
+        if (*nssArgs != '\'')
+            return CKR_ARGUMENTS_BAD;
+        valueLen = nssArgs - valueStart;
+        nssArgs++;
+        if (valueLen == 0)
+            return CKR_ARGUMENTS_BAD;
+        if (*nssArgs != ' ' && *nssArgs != '\0')
+            return CKR_ARGUMENTS_BAD;
+
+        if (keyLen == XSTR_SIZEOF("configdir")
+                && XMEMCMP(keyStart, "configdir", keyLen) == 0) {
+            *configdir = valueStart;
+            *configdirLen = valueLen;
+            /* Exit since we only support configdir */
+            break;
+        }
+    }
+    return CKR_OK;
+}
+#endif
+
 /**
  * Initialize the Crypto-Ki library.
  *
@@ -133,17 +190,43 @@ CK_RV C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList)
  */
 CK_RV C_Initialize(CK_VOID_PTR pInitArgs)
 {
-    CK_RV ret;
+    CK_RV ret = CKR_OK;
+    CK_C_INITIALIZE_ARGS *args = (CK_C_INITIALIZE_ARGS *)pInitArgs;
     WOLFPKCS11_ENTER("C_Initialize");
-    
-    if (WP11_Library_Init() != 0) {
-        ret = CKR_FUNCTION_FAILED;
-        WOLFPKCS11_LEAVE("C_Initialize", ret);
-        return ret;
+
+    if (args != NULL) {
+        WOLFPKCS11_MSG("Warning: C_Initialize called with arguments, but most "
+                       "are ignored.");
+#if (defined(WOLFPKCS11_NSS) && !defined(WOLFPKCS11_NO_STORE))
+        if (args->LibraryParameters != NULL) {
+            char* configdir = NULL;
+            size_t configdirLen = 0;
+
+            ret = ParseNssConfigString((char*)args->LibraryParameters,
+                    &configdir, &configdirLen);
+            if (ret == CKR_OK) {
+                if (configdir != NULL && configdirLen > 0) {
+                    /* Set the configuration directory for NSS */
+                    if (WP11_SetStoreDir(configdir, configdirLen) != 0) {
+                        WOLFPKCS11_MSG(
+                            "Failed to set NSS configuration directory.");
+                        ret = CKR_FUNCTION_FAILED;
+                    } else {
+                        WOLFPKCS11_MSG(
+                            "wolfPKCS11 configuration directory set to: %.*s",
+                            (int)configdirLen, configdir);
+                    }
+                }
+            }
+        }
+#endif
     }
 
+    if (ret == CKR_OK)
+        ret = WP11_Library_Init() == 0 ? CKR_OK : CKR_FUNCTION_FAILED;
+
+
     (void)pInitArgs;
-    ret = CKR_OK;
     WOLFPKCS11_LEAVE("C_Initialize", ret);
     return ret;
 }
@@ -158,7 +241,7 @@ CK_RV C_Finalize(CK_VOID_PTR pReserved)
 {
     CK_RV ret;
     WOLFPKCS11_ENTER("C_Finalize");
-    
+
     WP11_Library_Final();
 
     (void)pReserved;
@@ -188,7 +271,7 @@ CK_RV C_GetInfo(CK_INFO_PTR pInfo)
 {
     CK_RV ret;
     WOLFPKCS11_ENTER("C_GetInfo");
-    
+
     if (!WP11_Library_IsInitialized()) {
         ret = CKR_CRYPTOKI_NOT_INITIALIZED;
         WOLFPKCS11_LEAVE("C_GetInfo", ret);
@@ -205,4 +288,3 @@ CK_RV C_GetInfo(CK_INFO_PTR pInfo)
     WOLFPKCS11_LEAVE("C_GetInfo", ret);
     return ret;
 }
-
