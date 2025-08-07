@@ -76,6 +76,7 @@ jobs:
       uses: actions/checkout@v4
       with:
         repository: LinuxJedi/nss
+        ref: nss-tests
         path: nss
 
     - name: Cache NSS build
