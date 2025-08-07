@@ -1025,6 +1025,26 @@ static word32 wolfPKCS11_Store_Handle(int type, CK_ULONG id1, CK_ULONG id2)
     return nvIndex;
 }
 #else
+
+#ifdef WOLFPKCS11_NSS
+static char* storeDir = NULL;
+
+int WP11_SetStoreDir(const char *dir, size_t dirSz)
+{
+    if (storeDir != NULL)
+        XFREE(storeDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    storeDir = NULL;
+    if (dir != NULL) {
+        storeDir = (char*) XMALLOC(dirSz + 1, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (storeDir == NULL)
+            return MEMORY_E;
+        XMEMCPY(storeDir, dir, dirSz);
+        storeDir[dirSz] = '\0'; /* Ensure null termination */
+    }
+    return 0;
+}
+#endif
+
 static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* name,
     int nameLen)
 {
@@ -1036,13 +1056,19 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
 
     /* Path order:
      * 1. Environment variable WOLFPKCS11_TOKEN_PATH
-     * 2. Home directory with .wolfPKCS11 (or APPDIR with wolfPKCS11 for
+     * 2. NSS store directory, if set using C_Initialize
+     * 3. Home directory with .wolfPKCS11 (or APPDIR with wolfPKCS11 for
      * Windows)
-     * 3. WOLFPKCS11_DEFAULT_TOKEN_PATH, if set
-     * 4. /tmp in Linux, %TEMP% or C:\Windows\Temp in Windows
+     * 4. WOLFPKCS11_DEFAULT_TOKEN_PATH, if set
+     * 5. /tmp in Linux, %TEMP% or C:\Windows\Temp in Windows
      */
 #ifndef WOLFPKCS11_NO_ENV
     str = XGETENV("WOLFPKCS11_TOKEN_PATH");
+#endif
+
+#ifdef WOLFPKCS11_NSS
+    if (str == NULL)
+        str = storeDir;
 #endif
 
     if (str == NULL) {
@@ -1198,24 +1224,6 @@ int wolfPKCS11_Store_Remove(int type, CK_ULONG id1, CK_ULONG id2)
 #endif
     return ret;
 }
-#ifdef WOLFPKCS11_NSS
-static char* storeDir = NULL;
-
-int WP11_SetStoreDir(const char *dir, size_t dirSz)
-{
-    if (storeDir != NULL)
-        XFREE(storeDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-    storeDir = NULL;
-    if (dir != NULL) {
-        storeDir = (char*) XMALLOC(dirSz + 1, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        if (storeDir == NULL)
-            return MEMORY_E;
-        XMEMCPY(storeDir, dir, dirSz);
-        storeDir[dirSz] = '\0'; /* Ensure null termination */
-    }
-    return 0;
-}
-#endif
 
 /**
  * Opens access to location to read/write token data.
@@ -8937,8 +8945,9 @@ static int WP11_Object_SetKeyId(WP11_Object* object, unsigned char* keyId,
 {
     int ret = 0;
 
-    if (object->keyId != NULL)
-        XFREE(object->keyId, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    XFREE(object->keyId, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    object->keyId = NULL;
+    object->keyIdLen = 0;
     if (keyIdLen > 0) {
         object->keyId = (unsigned char*)XMALLOC(keyIdLen, NULL,
             DYNAMIC_TYPE_TMP_BUFFER);
@@ -8968,8 +8977,9 @@ static int WP11_Object_SetData(byte** attribute, int* attributeLen, byte* data,
 {
     int ret = 0;
 
-    if (*attribute != NULL)
-        XFREE(*attribute, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    XFREE(*attribute, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    *attribute = NULL;
+    *attributeLen = 0;
     if (dataLen > 0) {
         *attribute = (byte*)XMALLOC(dataLen, NULL,
             DYNAMIC_TYPE_TMP_BUFFER);
