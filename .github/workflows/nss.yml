@@ -1,0 +1,139 @@
+name: wolfPKCS11 NSS gtests
+
+on:
+  push:
+    branches: [ main, master, nss ]
+  pull_request:
+    branches: [ main, master, nss ]
+  workflow_dispatch:
+
+env:
+  NSPR_VERSION: NSPR_4_36_BRANCH
+  WOLFSSL_VERSION: v5.8.0-stable
+  #NSS_DEBUG_PKCS11_MODULE: wolfPKCS11
+  #NSPR_LOG_MODULES: all:5
+  #NSPR_LOG_FILE: /logs/nss.log
+  #NSS_OUTPUT_FILE: /logs/stats.log
+  #NSS_STRICT_NOFORK: 1
+  #NSS_DEBUG: all
+  HOST: localhost
+  DOMSUF: localdomain
+  NSS_TESTS: ssl_gtests
+
+jobs:
+  nss-cmsutil-test:
+    runs-on: ubuntu-24.04
+    if: github.repository_owner == 'wolfssl'
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+          mercurial \
+          python3 \
+          python-is-python3 \
+          python3-pip \
+          gyp \
+          ninja-build \
+          build-essential \
+          automake \
+          libtool \
+          git \
+          pkg-config \
+          poppler-utils \
+          wget \
+          enscript \
+          ghostscript \
+          gdb \
+          vim \
+          hexedit \
+          openssl \
+          ca-certificates
+
+    - name: Cache NSPR
+      id: cache-nspr
+      uses: actions/cache@v4
+      with:
+        path: nspr
+        key: nspr-${{ env.NSPR_VERSION }}
+
+    - name: Clone NSPR
+      if: steps.cache-nspr.outputs.cache-hit != 'true'
+      run: hg clone https://hg.mozilla.org/projects/nspr -r ${{ env.NSPR_VERSION }}
+
+    - name: Cache NSS source
+      id: cache-nss-source
+      uses: actions/cache@v4
+      with:
+        path: nss
+        key: nss-source-fork
+
+    - name: Clone NSS
+      if: steps.cache-nss-source.outputs.cache-hit != 'true'
+      uses: actions/checkout@v4
+      with:
+        repository: LinuxJedi/nss
+        path: nss
+
+    - name: Cache NSS build
+      id: cache-nss-build
+      uses: actions/cache@v4
+      with:
+        path: dist
+        key: nss-build-fork
+
+    - name: Build NSS
+      if: steps.cache-nss-build.outputs.cache-hit != 'true'
+      working-directory: nss
+      # Build NSS in release mode enabled (omit --opt to build in debug mode)
+      run: ./build.sh -v --opt
+
+    - name: Restore wolfSSL
+      id: cache-wolfssl
+      uses: actions/cache/restore@v4
+      with:
+        path: build-dir
+        key: wolfssl-${{ env.WOLFSSL_VERSION }}
+
+    - name: Clone and Build wolfSSL
+      uses: wolfSSL/actions-build-autotools-project@v1
+      if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+      with:
+        repository: wolfssl/wolfssl
+        ref: ${{ env.WOLFSSL_VERSION }}
+        path: wolfssl
+        configure: >-
+          --enable-all --enable-aescfb --enable-cryptocb --enable-rsapss
+          --enable-keygen --enable-pwdbased --enable-scrypt --with-eccminsz=192
+          --with-max-rsa-bits=8192 --enable-rsapss
+          CFLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT -DRSA_MIN_SIZE=1024 -DWOLFSSL_PSS_LONG_SALT"
+        install: true
+
+    - name: Cache wolfSSL
+      uses: actions/cache/save@v4
+      if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+      with:
+        path: build-dir
+        key: wolfssl-${{ env.WOLFSSL_VERSION }}
+
+    - name: Build wolfPKCS11
+      uses: wolfSSL/actions-build-autotools-project@v1
+      with:
+        path: wolfpkcs11
+        configure: >-
+          --enable-nss --enable-rsa --enable-rsaoaep --enable-rsapss
+          --enable-keygen --enable-ecc --enable-dh --enable-aes
+          --enable-aeskeywrap --enable-aescbc --enable-aesgcm --enable-aesctr
+          --enable-aesccm --enable-aesecb --enable-aescmac --enable-hmac
+          --enable-md5 --enable-sha --enable-sha1 --enable-sha224 --enable-sha256
+          --enable-sha384 --enable-sha512
+          CFLAGS="-I$GITHUB_WORKSPACE/build-dir/include -L$GITHUB_WORKSPACE/build-dir/lib"
+        install: true
+
+    - name: Run NSS tests
+      working-directory: nss/tests
+      run: LD_LIBRARY_PATH=$GITHUB_WORKSPACE/build-dir/lib ./all.sh
+ 
