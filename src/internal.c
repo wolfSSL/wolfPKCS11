@@ -510,6 +510,50 @@ struct WP11_Slot {
 #endif
 };
 
+#if defined(HAVE_FIPS) && FIPS_VERSION_LT(6,0)
+#define USE_LOCAL_CURVE_OID_LOOKUP
+typedef struct WP11_Ecc_Curve
+{
+    ecc_curve_id curve_id;
+    byte curve_oid[9];
+    CK_LONG curve_size;
+} WP11_Ecc_Curve;
+
+const WP11_Ecc_Curve DefinedCurves[] = {
+    { ECC_SECP192R1,  {0x2A,0x86,0x48,0xCE,0x3D,0x03,0x01,0x01}, 8 },
+    { ECC_PRIME192V2, {0x2A,0x86,0x48,0xCE,0x3D,0x03,0x01,0x02}, 8 },
+    { ECC_PRIME192V3, {0x2A,0x86,0x48,0xCE,0x3D,0x03,0x01,0x03}, 8 },
+    { ECC_PRIME239V1, {0x2A,0x86,0x48,0xCE,0x3D,0x03,0x01,0x04}, 8 },
+    { ECC_PRIME239V2, {0x2A,0x86,0x48,0xCE,0x3D,0x03,0x01,0x05}, 8 },
+    { ECC_PRIME239V3, {0x2A,0x86,0x48,0xCE,0x3D,0x03,0x01,0x06}, 8 },
+    { ECC_SECP256R1,  {0x2A,0x86,0x48,0xCE,0x3D,0x03,0x01,0x07}, 8 },
+
+    { ECC_SECP112R1,  {0x2B,0x81,0x04,0x00,0x06}, 5 },
+    { ECC_SECP112R2,  {0x2B,0x81,0x04,0x00,0x07}, 5 },
+    { ECC_SECP128R1,  {0x2B,0x81,0x04,0x00,0x1C}, 5 },
+    { ECC_SECP128R2,  {0x2B,0x81,0x04,0x00,0x1D}, 5 },
+    { ECC_SECP160R1,  {0x2B,0x81,0x04,0x00,0x08}, 5 },
+    { ECC_SECP160R2,  {0x2B,0x81,0x04,0x00,0x1E}, 5 },
+    { ECC_SECP224R1,  {0x2B,0x81,0x04,0x00,0x21}, 5 },
+    { ECC_SECP384R1,  {0x2B,0x81,0x04,0x00,0x22}, 5 },
+    { ECC_SECP521R1,  {0x2B,0x81,0x04,0x00,0x23}, 5 },
+
+    { ECC_SECP160K1,  {0x2B,0x81,0x04,0x00,0x09}, 5 },
+    { ECC_SECP192K1,  {0x2B,0x81,0x04,0x00,0x1F}, 5 },
+    { ECC_SECP224K1,  {0x2B,0x81,0x04,0x00,0x20}, 5 },
+    { ECC_SECP256K1,  {0x2B,0x81,0x04,0x00,0x0A}, 5 },
+
+    { ECC_BRAINPOOLP160R1, {0x2B,0x24,0x03,0x03,0x02,0x08,0x01,0x01,0x01}, 9 },
+    { ECC_BRAINPOOLP192R1, {0x2B,0x24,0x03,0x03,0x02,0x08,0x01,0x01,0x03}, 9 },
+    { ECC_BRAINPOOLP224R1, {0x2B,0x24,0x03,0x03,0x02,0x08,0x01,0x01,0x05}, 9 },
+    { ECC_BRAINPOOLP256R1, {0x2B,0x24,0x03,0x03,0x02,0x08,0x01,0x01,0x07}, 9 },
+    { ECC_BRAINPOOLP320R1, {0x2B,0x24,0x03,0x03,0x02,0x08,0x01,0x01,0x09}, 9 },
+    { ECC_BRAINPOOLP384R1, {0x2B,0x24,0x03,0x03,0x02,0x08,0x01,0x01,0x0B}, 9 },
+    { ECC_BRAINPOOLP512R1, {0x2B,0x24,0x03,0x03,0x02,0x08,0x01,0x01,0x0D}, 9 },
+
+    { ECC_CURVE_MAX, { 0x0 }, 0 }
+};
+#endif
 
 /* Number of slots. */
 #define slotCnt 1
@@ -7489,38 +7533,21 @@ int WP11_Object_SetRsaKey(WP11_Object* object, unsigned char** data,
 #endif
 
 #ifdef HAVE_ECC
-
-#if defined(HAVE_FIPS) && \
-    (defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION <= 2))
-#define USE_LOCAL_CURVE_OID_LOOKUP
-/* This function is not in the FIPS 140-2 version */
-/* ecc_sets is exposed in ecc.h */
-static int ecc_get_curve_id_from_oid(const byte* oid, word32 len)
+#ifdef USE_LOCAL_CURVE_OID_LOOKUP
+static int ecc_lookup_curve(const byte* oid, word32 len)
 {
-    int curve_idx;
+    const WP11_Ecc_Curve* curve;
 
-    if (oid == NULL)
-        return BAD_FUNC_ARG;
-
-    for (curve_idx = 0; ecc_sets[curve_idx].size != 0; curve_idx++) {
-        if (
-        #ifndef WOLFSSL_ECC_CURVE_STATIC
-            ecc_sets[curve_idx].oid &&
-        #endif
-            ecc_sets[curve_idx].oidSz == len &&
-                XMEMCMP(ecc_sets[curve_idx].oid, oid, len) == 0
-        ) {
-            break;
+    for (curve = DefinedCurves; curve->curve_id < ECC_CURVE_MAX; curve++)
+    {
+        if (XMEMCMP(oid, curve->curve_oid, MIN(len, curve->curve_size)) == 0) {
+            return curve->curve_id;
         }
     }
-    if (ecc_sets[curve_idx].size == 0) {
-        return ECC_CURVE_INVALID;
-    }
-
-    return ecc_sets[curve_idx].id;
+    return ECC_CURVE_INVALID;
 }
-
 #endif
+
 /**
  * Set the EC Parameters based on the DER encoding of the OID.
  *
@@ -7546,12 +7573,15 @@ static int EcSetParams(ecc_key* key, byte* der, int len)
     if (ret == 0 && der[1] != len - 2)
         ret = BUFFER_E;
     if (ret == 0) {
+#ifdef USE_LOCAL_CURVE_OID_LOOKUP
         /* Find the curve matching the OID. */
-    #ifdef USE_LOCAL_CURVE_OID_LOOKUP
-        curveId = ecc_get_curve_id_from_oid(der + 2, der[1]);
-    #else
+        /* wc_ecc_get_curve_id_from_oid() is broken in FIPSv5 and ecc_sets is
+         * not accessible in FIPS, so we have our own lookup.
+         */
+        curveId = ecc_lookup_curve(der +2, der[1]);
+#else
         curveId = wc_ecc_get_curve_id_from_oid(der + 2, der[1]);
-    #endif
+#endif
         if (curveId == ECC_CURVE_INVALID)
             ret = BAD_FUNC_ARG;
     }
