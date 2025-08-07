@@ -21,7 +21,7 @@ env:
   NSS_TESTS: ssl_gtests
 
 jobs:
-  nss-cmsutil-test:
+  nss-test:
     runs-on: ubuntu-24.04
     if: github.repository_owner == 'wolfssl'
     steps:
