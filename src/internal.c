@@ -10435,25 +10435,30 @@ static word32 Pkcs11ECDSASig_Encode(byte* sig, word32 sigSz, byte* encSig)
     else
         seqLen = 2;
 
-    /* Move s and then r integers into their final places. */
-    XMEMCPY(encSig + seqLen + rSz + (sSz - sLen), sig + sz + sStart, sLen);
-    XMEMCPY(encSig + seqLen       + (rSz - rLen), sig      + rStart, rLen);
-
     /* Put the ASN.1 DER encoding around data. */
     i = 0;
     encSig[i++] = ASN_CONSTRUCTED | ASN_SEQUENCE;
     if (seqLen == 3)
         encSig[i++] = ASN_LONG_LENGTH | 0x01;
     encSig[i++] = sigSz;
+    
+    /* r integer */
     encSig[i++] = ASN_INTEGER;
-    encSig[i++] = rHigh + (sz - rStart);
+    encSig[i++] = rHigh + rLen;
     if (rHigh)
         encSig[i++] = 0x00;
-    i += sz - rStart;
+    /* Copy r data now that we know the exact position */
+    XMEMCPY(encSig + i, sig + rStart, rLen);
+    i += rLen;
+    
+    /* s integer */
     encSig[i++] = ASN_INTEGER;
-    encSig[i++] = sHigh + (sz - sStart);
+    encSig[i++] = sHigh + sLen;
     if (sHigh)
         encSig[i++] = 0x00;
+    /* Copy s data now that we know the exact position */
+    XMEMCPY(encSig + i, sig + sz + sStart, sLen);
+    i += sLen;
 
     return seqLen + sigSz;
 }
