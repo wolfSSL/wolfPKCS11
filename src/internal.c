@@ -10404,12 +10404,25 @@ int WP11_Ec_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
  * @param  encSig  [in]  Buffer to hold encoded signature.
  * @return  Length of encoded signature.
  */
+#define WOLFPKCS11_DEBUG_ECDSA_RSTART
 static word32 Pkcs11ECDSASig_Encode(byte* sig, word32 sigSz, byte* encSig)
 {
     word32 rHigh, sHigh, seqLen;
     word32 rStart = 0, sStart = 0;
     word32 sz, rSz, rLen, sSz, sLen;
     word32 i;
+
+    /* Debug: Log function entry */
+    #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+    printf("=== Pkcs11ECDSASig_Encode ENTRY ===\n");
+    printf("Input sigSz: %u\n", sigSz);
+    printf("Input sig (raw r,s): ");
+    for (i = 0; i < sigSz && i < 64; i++) {
+        printf("%02x", sig[i]);
+        if (i == sigSz/2 - 1) printf(" | ");
+    }
+    printf("\n");
+    #endif
 
     /* Ordinate size. */
     sz = sigSz / 2;
@@ -10419,6 +10432,20 @@ static word32 Pkcs11ECDSASig_Encode(byte* sig, word32 sigSz, byte* encSig)
         rStart++;
     while (sig[sz + sStart] == 0x00 && sStart < sz - 1)
         sStart++;
+
+    #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+    printf("After finding starts: rStart=%u, sStart=%u\n", rStart, sStart);
+    if (rStart == 1) {
+        printf("*** BUG TRIGGER: rStart=1 detected! ***\n");
+        printf("r bytes: sig[0]=0x%02x, sig[1]=0x%02x\n", sig[0], sig[1]);
+    }
+    if (sStart == 1) {
+        printf("*** sStart=1 detected! ***\n");
+        printf("s bytes: sig[%u]=0x%02x, sig[%u]=0x%02x\n",
+               sz, sig[sz], sz+1, sig[sz+1]);
+    }
+    #endif
+
     /* Check if 0 needs to be prepended to make integer a positive number. */
     rHigh = sig[rStart] >> 7;
     sHigh = sig[sz + sStart] >> 7;
@@ -10435,30 +10462,81 @@ static word32 Pkcs11ECDSASig_Encode(byte* sig, word32 sigSz, byte* encSig)
     else
         seqLen = 2;
 
+    #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+    printf("Calculated values:\n");
+    printf("  sz=%u, rStart=%u, sStart=%u\n", sz, rStart, sStart);
+    printf("  rHigh=%u, sHigh=%u\n", rHigh, sHigh);
+    printf("  rLen=%u, sLen=%u\n", rLen, sLen);
+    printf("  rSz=%u, sSz=%u, sigSz=%u, seqLen=%u\n", rSz, sSz, sigSz, seqLen);
+    #endif
+
     /* Put the ASN.1 DER encoding around data. */
     i = 0;
     encSig[i++] = ASN_CONSTRUCTED | ASN_SEQUENCE;
     if (seqLen == 3)
         encSig[i++] = ASN_LONG_LENGTH | 0x01;
     encSig[i++] = sigSz;
-    
+
+    #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+    printf("ASN.1 header: i=%u after sequence header\n", i);
+    #endif
+
     /* r integer */
     encSig[i++] = ASN_INTEGER;
     encSig[i++] = rHigh + rLen;
-    if (rHigh)
+    #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+    printf("r integer: tag at i=%u, len=%u at i=%u\n", i-2, rHigh + rLen, i-1);
+    #endif
+    if (rHigh) {
         encSig[i++] = 0x00;
+        #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+        printf("r: added high padding 0x00 at i=%u\n", i-1);
+        #endif
+    }
     /* Copy r data now that we know the exact position */
+    #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+    printf("r: copying %u bytes from sig[%u] to encSig[%u]\n", rLen, rStart, i);
+    printf("r data being copied: ");
+    for (word32 j = 0; j < rLen; j++) {
+        printf("%02x", sig[rStart + j]);
+    }
+    printf("\n");
+    #endif
     XMEMCPY(encSig + i, sig + rStart, rLen);
     i += rLen;
-    
+
     /* s integer */
     encSig[i++] = ASN_INTEGER;
     encSig[i++] = sHigh + sLen;
-    if (sHigh)
+    #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+    printf("s integer: tag at i=%u, len=%u at i=%u\n", i-2, sHigh + sLen, i-1);
+    #endif
+    if (sHigh) {
         encSig[i++] = 0x00;
+        #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+        printf("s: added high padding 0x00 at i=%u\n", i-1);
+        #endif
+    }
     /* Copy s data now that we know the exact position */
+    #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+    printf("s: copying %u bytes from sig[%u] to encSig[%u]\n", sLen, sz + sStart, i);
+    printf("s data being copied: ");
+    for (word32 j = 0; j < sLen; j++) {
+        printf("%02x", sig[sz + sStart + j]);
+    }
+    printf("\n");
+    #endif
     XMEMCPY(encSig + i, sig + sz + sStart, sLen);
     i += sLen;
+
+    #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+    printf("Final encoded signature (%u bytes): ", seqLen + sigSz);
+    for (word32 j = 0; j < seqLen + sigSz && j < 128; j++) {
+        printf("%02x", encSig[j]);
+    }
+    printf("\n");
+    printf("=== Pkcs11ECDSASig_Encode EXIT ===\n");
+    #endif
 
     return seqLen + sigSz;
 }
@@ -10480,6 +10558,16 @@ static int Pkcs11ECDSASig_Decode(const byte* in, word32 inSz, byte* sig,
     word32 i = 0;
     int len, seqLen = 2;
 
+    #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+    printf("=== Pkcs11ECDSASig_Decode ENTRY ===\n");
+    printf("Input inSz: %u, expected output sz: %u\n", inSz, sz);
+    printf("Input encoded sig: ");
+    for (word32 j = 0; j < inSz && j < 128; j++) {
+        printf("%02x", in[j]);
+    }
+    printf("\n");
+    #endif
+
     /* Make sure zeros in place when decoding short integers. */
     XMEMSET(sig, 0, sz * 2);
 
@@ -10500,6 +10588,10 @@ static int Pkcs11ECDSASig_Decode(const byte* in, word32 inSz, byte* sig,
     if (ret == 0 && in[i++] != inSz - seqLen)
         ret = ASN_PARSE_E;
 
+    #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+    printf("After sequence header: i=%u, seqLen=%d\n", i, seqLen);
+    #endif
+
     /* Check INT */
     if (ret == 0 && in[i++] != ASN_INTEGER)
         ret = ASN_PARSE_E;
@@ -10508,12 +10600,54 @@ static int Pkcs11ECDSASig_Decode(const byte* in, word32 inSz, byte* sig,
     /* Check there is space for INT data */
     if (ret == 0 && i + len > inSz)
         ret = ASN_PARSE_E;
+
+    #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
     if (ret == 0) {
-        /* Skip leading zero */
-        if (in[i] == 0x00) {
+        printf("s integer: tag found, len=%d at position i=%u\n", len, i-1);
+    }
+    #endif
+
+    #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+    if (ret == 0) {
+        printf("r integer: tag found, len=%d at position i=%u\n", len, i-1);
+    }
+    #endif
+    if (ret == 0) {
+        #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+        printf("r: before processing - len=%d, first byte=0x%02x\n", len, in[i]);
+        if (len == 1 && in[i] == 0x00) {
+            printf("*** BUG CONDITION: r encoded as single 0x00 byte! ***\n");
+        }
+        #endif
+
+        /* Skip leading zero only if there are multiple bytes (padding case) */
+        /* If len=1 and value=0x00, that's the actual integer value 0, don't skip */
+        if (len > 1 && in[i] == 0x00) {
             i++;
             len--;
+            #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+            printf("r: skipped leading zero padding, new len=%d\n", len);
+            #endif
         }
+        #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+        else if (len == 1 && in[i] == 0x00) {
+            printf("r: keeping single 0x00 byte (represents integer value 0)\n");
+        }
+        #endif
+
+        #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+        printf("r: copying %d bytes from in[%u] to sig[%u]\n", len, i, sz - len);
+        if (len > 0) {
+            printf("r data: ");
+            for (int j = 0; j < len; j++) {
+                printf("%02x", in[i + j]);
+            }
+            printf("\n");
+        } else {
+            printf("*** WARNING: r has zero length after processing! ***\n");
+        }
+        #endif
+
         /* Copy r into sig - ensure we don't underflow when len could be 0 */
         if (len > 0) {
             XMEMCPY(sig + (sz - len), in + i, len);
@@ -10533,16 +10667,57 @@ static int Pkcs11ECDSASig_Decode(const byte* in, word32 inSz, byte* sig,
     if (ret == 0 && i + len > inSz)
         ret = ASN_PARSE_E;
     if (ret == 0) {
-        /* Skip leading zero */
-        if (in[i] == 0x00) {
+        #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+        printf("s: before processing - len=%d, first byte=0x%02x\n", len, in[i]);
+        if (len == 1 && in[i] == 0x00) {
+            printf("*** BUG CONDITION: s encoded as single 0x00 byte! ***\n");
+        }
+        #endif
+
+        /* Skip leading zero only if there are multiple bytes (padding case) */
+        /* If len=1 and value=0x00, that's the actual integer value 0, don't skip */
+        if (len > 1 && in[i] == 0x00) {
             i++;
             len--;
+            #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+            printf("s: skipped leading zero padding, new len=%d\n", len);
+            #endif
         }
+        #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+        else if (len == 1 && in[i] == 0x00) {
+            printf("s: keeping single 0x00 byte (represents integer value 0)\n");
+        }
+        #endif
+
+        #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+        printf("s: copying %d bytes from in[%u] to sig[%u]\n", len, i, sz + (sz - len));
+        if (len > 0) {
+            printf("s data: ");
+            for (int j = 0; j < len; j++) {
+                printf("%02x", in[i + j]);
+            }
+            printf("\n");
+        } else {
+            printf("*** WARNING: s has zero length after processing! ***\n");
+        }
+        #endif
+
         /* Copy s into sig - ensure we don't underflow when len could be 0 */
         if (len > 0) {
             XMEMCPY(sig + sz + (sz - len), in + i, len);
         }
     }
+
+    #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+    printf("Final decoded signature (%u bytes): ", sz * 2);
+    for (word32 j = 0; j < sz * 2 && j < 64; j++) {
+        printf("%02x", sig[j]);
+        if (j == sz - 1) printf(" | ");
+    }
+    printf("\n");
+    printf("Return value: %d\n", ret);
+    printf("=== Pkcs11ECDSASig_Decode EXIT ===\n");
+    #endif
 
     return ret;
 }
@@ -10582,6 +10757,16 @@ int WP11_Ec_Sign(unsigned char* hash, word32 hashLen, unsigned char* sig,
     word32 ordSz;
     WC_RNG rng;
 
+    #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+    printf("\n=== WP11_Ec_Sign ENTRY ===\n");
+    printf("hashLen: %u, *sigLen: %u\n", hashLen, *sigLen);
+    printf("hash: ");
+    for (word32 i = 0; i < hashLen && i < 32; i++) {
+        printf("%02x", hash[i]);
+    }
+    printf("\n");
+    #endif
+
     if (priv->onToken)
         WP11_Lock_LockRO(priv->lock);
     ordSz = priv->data.ecKey->dp->size;
@@ -10617,11 +10802,30 @@ int WP11_Ec_Sign(unsigned char* hash, word32 hashLen, unsigned char* sig,
             WP11_Lock_UnlockRO(priv->lock);
 
         if (ret == 0) {
+            #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+            printf("WP11_Ec_Sign: About to decode signature, encSigLen=%u, ordSz=%u\n", encSigLen, ordSz);
+            #endif
             ret = Pkcs11ECDSASig_Decode(encSig, encSigLen, sig, ordSz);
+            #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+            printf("WP11_Ec_Sign: Decode returned %d\n", ret);
+            if (ret == 0) {
+                printf("WP11_Ec_Sign: Final output sig: ");
+                for (word32 i = 0; i < ordSz * 2 && i < 64; i++) {
+                    printf("%02x", sig[i]);
+                    if (i == ordSz - 1) printf(" | ");
+                }
+                printf("\n");
+            }
+            #endif
         }
         if (ret == 0)
             *sigLen = ordSz * 2;
     }
+
+    #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+    printf("WP11_Ec_Sign: EXIT with ret=%d\n", ret);
+    printf("=== WP11_Ec_Sign EXIT ===\n\n");
+    #endif
 
     return ret;
 }
@@ -10646,18 +10850,49 @@ int WP11_Ec_Verify(unsigned char* sig, word32 sigLen, unsigned char* hash,
     byte encSig[ECC_MAX_SIG_SIZE];
     word32 encSigLen;
 
+    #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+    printf("\n=== WP11_Ec_Verify ENTRY ===\n");
+    printf("sigLen: %u, hashLen: %u\n", sigLen, hashLen);
+    printf("Input sig: ");
+    for (word32 i = 0; i < sigLen && i < 64; i++) {
+        printf("%02x", sig[i]);
+        if (i == sigLen/2 - 1) printf(" | ");
+    }
+    printf("\n");
+    printf("hash: ");
+    for (word32 i = 0; i < hashLen && i < 32; i++) {
+        printf("%02x", hash[i]);
+    }
+    printf("\n");
+    #endif
+
     *stat = 0;
     if (pub->onToken)
         WP11_Lock_LockRO(pub->lock);
     if (sigLen != (word32)(2 * pub->data.ecKey->dp->size))
         ret = BAD_FUNC_ARG;
     if (ret == 0) {
+        #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+        printf("WP11_Ec_Verify: About to encode signature for verification\n");
+        #endif
         encSigLen = Pkcs11ECDSASig_Encode(sig, sigLen, encSig);
+        #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+        printf("WP11_Ec_Verify: Encoded signature length: %u\n", encSigLen);
+        printf("WP11_Ec_Verify: About to call wc_ecc_verify_hash\n");
+        #endif
         ret = wc_ecc_verify_hash(encSig, encSigLen, hash, hashLen, stat,
                                                               pub->data.ecKey);
+        #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+        printf("WP11_Ec_Verify: wc_ecc_verify_hash returned %d, *stat=%d\n", ret, *stat);
+        #endif
     }
     if (pub->onToken)
         WP11_Lock_UnlockRO(pub->lock);
+
+    #ifdef WOLFPKCS11_DEBUG_ECDSA_RSTART
+    printf("WP11_Ec_Verify: EXIT with ret=%d, *stat=%d\n", ret, *stat);
+    printf("=== WP11_Ec_Verify EXIT ===\n\n");
+    #endif
 
     return ret;
 }
