@@ -10453,7 +10453,7 @@ static word32 Pkcs11ECDSASig_Encode(byte* sig, word32 sigSz, byte* encSig)
     encSig[i++] = ASN_INTEGER;
     encSig[i++] = sHigh + (sz - sStart);
     if (sHigh)
-        encSig[i] = 0x00;
+        encSig[i++] = 0x00;
 
     return seqLen + sigSz;
 }
