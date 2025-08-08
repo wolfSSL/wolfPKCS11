@@ -10514,8 +10514,10 @@ static int Pkcs11ECDSASig_Decode(const byte* in, word32 inSz, byte* sig,
             i++;
             len--;
         }
-        /* Copy r into sig. */
-        XMEMCPY(sig + (sz - len), in + i, len);
+        /* Copy r into sig - ensure we don't underflow when len could be 0 */
+        if (len > 0) {
+            XMEMCPY(sig + (sz - len), in + i, len);
+        }
         i += len;
     }
 
@@ -10536,8 +10538,10 @@ static int Pkcs11ECDSASig_Decode(const byte* in, word32 inSz, byte* sig,
             i++;
             len--;
         }
-        /* Copy s into sig. */
-        XMEMCPY(sig + sz + (sz - len), in + i, len);
+        /* Copy s into sig - ensure we don't underflow when len could be 0 */
+        if (len > 0) {
+            XMEMCPY(sig + sz + (sz - len), in + i, len);
+        }
     }
 
     return ret;
