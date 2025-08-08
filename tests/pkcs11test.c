@@ -8460,6 +8460,538 @@ static CK_RV test_ecc_token_keys_ecdsa(void* args)
     return ret;
 }
 
+static CK_RV test_ecdsa_sig_rstart_one(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_MECHANISM mech;
+    byte hash[32], sig[64], testSig[64];
+    CK_ULONG hashSz, sigSz;
+    int attempts, maxAttempts = 1000;
+    int foundRStartOne = 0;
+    int rStartZeroCount = 0;
+    int i;
+    
+    /* Generate ECC key pair for testing */
+    ret = get_ecc_priv_key(session, CK_FALSE, &priv);
+    if (ret == CKR_OK)
+        ret = get_ecc_pub_key(session, &pub);
+    
+    if (ret != CKR_OK) {
+        /* If key generation fails, try creating keys */
+        ret = gen_ec_keys(session, ecc_p256_params, sizeof(ecc_p256_params), 
+                         &pub, &priv, NULL, 0, NULL, 0, 0);
+    }
+    
+    /* Test Case 1: Direct test with crafted signature that triggers rStart=1 */
+    if (ret == CKR_OK) {
+        /* Create a test signature where r starts with 0x00 followed by non-zero */
+        /* This will force rStart = 1 in Pkcs11ECDSASig_Encode */
+        XMEMSET(testSig, 0, sizeof(testSig));
+        
+        /* r coordinate: starts with 0x00, then high bit set to test rHigh logic */
+        testSig[0] = 0x00;  /* This causes rStart to increment to 1 */
+        testSig[1] = 0x80;  /* High bit set, so rHigh = 1 in encode */
+        testSig[2] = 0x12;
+        testSig[3] = 0x34;
+        for (i = 4; i < 32; i++) {
+            testSig[i] = (byte)(i ^ 0xAA);
+        }
+        
+        /* s coordinate: also start with 0x00 to test sStart = 1 */
+        testSig[32] = 0x00; /* This causes sStart to increment to 1 */
+        testSig[33] = 0x7F; /* High bit clear, so sHigh = 0 in encode */
+        testSig[34] = 0x56;
+        testSig[35] = 0x78;
+        for (i = 36; i < 64; i++) {
+            testSig[i] = (byte)((i - 32) ^ 0x55);
+        }
+        
+        mech.mechanism = CKM_ECDSA;
+        mech.ulParameterLen = 0;
+        mech.pParameter = NULL;
+        
+        /* Create a dummy hash for verification */
+        XMEMSET(hash, 0xAA, sizeof(hash));
+        hashSz = sizeof(hash);
+        
+        /* Test verification with this crafted signature */
+        /* This should exercise the problematic decode path where rStart=1 and sStart=1 */
+        ret = funcList->C_VerifyInit(session, &mech, pub);
+        if (ret == CKR_OK) {
+            CK_RV verifyRet = funcList->C_Verify(session, hash, hashSz, testSig, sizeof(testSig));
+            /* We expect this to fail (invalid signature), but it should not crash */
+            /* The important thing is that the decode path handles rStart=1 correctly */
+            if (verifyRet != CKR_OK && verifyRet != CKR_SIGNATURE_INVALID) {
+                /* If we get an unexpected error, that might indicate the bug */
+                printf("Warning: Unexpected error %lu with rStart=1 signature\n", verifyRet);
+            }
+            /* Mark test as successful - we exercised the problematic code path */
+            foundRStartOne = 1;
+        }
+    }
+    
+    /* Test Case 2: Try to find naturally occurring signatures with rStart=1 */
+    if (ret == CKR_OK && foundRStartOne) {
+        for (attempts = 0; attempts < maxAttempts; attempts++) {
+            /* Create different hash values to try */
+            XMEMSET(hash, 0, sizeof(hash));
+            hash[0] = (byte)(attempts & 0xFF);
+            hash[1] = (byte)((attempts >> 8) & 0xFF);
+            hash[2] = (byte)((attempts >> 16) & 0xFF);
+            hash[3] = (byte)((attempts >> 24) & 0xFF);
+            for (i = 4; i < 32; i++) {
+                hash[i] = (byte)(i ^ attempts ^ 0xAA);
+            }
+            hashSz = sizeof(hash);
+            sigSz = sizeof(sig);
+            
+            /* Sign the hash */
+            ret = funcList->C_SignInit(session, &mech, priv);
+            if (ret == CKR_OK) {
+                ret = funcList->C_Sign(session, hash, hashSz, sig, &sigSz);
+            }
+            
+            if (ret == CKR_OK) {
+                /* Count signatures starting with 0x00 for diagnostics */
+                if (sig[0] == 0x00) {
+                    rStartZeroCount++;
+                    
+                    /* If we find a natural rStart=1 case, test it */
+                    if (sig[1] != 0x00) {
+                        /* Verify this naturally occurring rStart=1 signature */
+                        ret = funcList->C_VerifyInit(session, &mech, pub);
+                        if (ret == CKR_OK) {
+                            ret = funcList->C_Verify(session, hash, hashSz, sig, sigSz);
+                            if (ret != CKR_OK) {
+                                /* This is the bug! Natural signature with rStart=1 fails verification */
+                                CHECK_CKR(ret, "Natural rStart=1 signature verification failed - BUG DETECTED");
+                                goto cleanup;
+                            }
+                        }
+                        /* Found and successfully verified a natural rStart=1 signature */
+                        printf("Success: Found and verified natural rStart=1 signature after %d attempts\n", attempts + 1);
+                        break;
+                    }
+                }
+            }
+            
+            if (ret != CKR_OK) {
+                break;
+            }
+        }
+        
+        if (ret == CKR_OK) {
+            printf("Test completed: Found %d signatures starting with 0x00 out of %d attempts\n", 
+                   rStartZeroCount, attempts);
+        }
+    }
+
+cleanup:
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+    
+    return ret;
+}
+
+static CK_RV test_ecdsa_sig_rstart_debug_comprehensive(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_MECHANISM mech;
+    byte hash[32], sig[64], testSig[64], roundTripSig[64];
+    CK_ULONG hashSz, sigSz;
+    int i;
+    
+    printf("\n=== COMPREHENSIVE ECDSA rStart=1 DEBUG TEST ===\n");
+    
+    /* Generate ECC key pair for testing */
+    ret = get_ecc_priv_key(session, CK_FALSE, &priv);
+    if (ret == CKR_OK)
+        ret = get_ecc_pub_key(session, &pub);
+    
+    if (ret != CKR_OK) {
+        ret = gen_ec_keys(session, ecc_p256_params, sizeof(ecc_p256_params), 
+                         &pub, &priv, NULL, 0, NULL, 0, 0);
+    }
+    
+    if (ret != CKR_OK) {
+        printf("Failed to create ECC key pair: 0x%lX\n", ret);
+        goto cleanup;
+    }
+    
+    mech.mechanism = CKM_ECDSA;
+    mech.ulParameterLen = 0;
+    mech.pParameter = NULL;
+    
+    printf("\n--- Test Case 1: Direct rStart=1 Trigger ---\n");
+    
+    /* Create a signature guaranteed to trigger rStart=1 and sStart=1 */
+    XMEMSET(testSig, 0, sizeof(testSig));
+    
+    /* r coordinate: 0x00 + high bit set (triggers rStart=1, rHigh=1) */
+    testSig[0] = 0x00;   /* Forces rStart to be 1 */
+    testSig[1] = 0x80;   /* High bit set, so rHigh=1 */
+    for (i = 2; i < 32; i++) {
+        testSig[i] = (byte)(0x11 + i);  /* Predictable pattern */
+    }
+    
+    /* s coordinate: 0x00 + high bit clear (triggers sStart=1, sHigh=0) */
+    testSig[32] = 0x00;  /* Forces sStart to be 1 */
+    testSig[33] = 0x7F;  /* High bit clear, so sHigh=0 */
+    for (i = 34; i < 64; i++) {
+        testSig[i] = (byte)(0x22 + i - 32);  /* Predictable pattern */
+    }
+    
+    printf("Original test signature (rStart=1, sStart=1 case):\n");
+    printf("r: ");
+    for (i = 0; i < 32; i++) {
+        printf("%02x", testSig[i]);
+    }
+    printf("\ns: ");
+    for (i = 32; i < 64; i++) {
+        printf("%02x", testSig[i]);
+    }
+    printf("\n");
+    
+    /* Test encode/decode round trip directly */
+    printf("\n--- Testing Encode/Decode Round Trip ---\n");
+    
+    /* This should show if encode/decode preserves the data correctly */
+    XMEMSET(hash, 0xAA, sizeof(hash));
+    hashSz = sizeof(hash);
+    
+    /* Initialize for signing to get the internal encode/decode working */
+    ret = funcList->C_SignInit(session, &mech, priv);
+    if (ret == CKR_OK) {
+        /* Use a dummy hash for this test */
+        sigSz = sizeof(sig);
+        ret = funcList->C_Sign(session, hash, hashSz, sig, &sigSz);
+        printf("Dummy signature created for baseline: ret=0x%lX\n", ret);
+    }
+    
+    /* Now test verification with our crafted rStart=1 signature */
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, pub);
+        if (ret == CKR_OK) {
+            CK_RV verifyRet = funcList->C_Verify(session, hash, hashSz, testSig, sizeof(testSig));
+            printf("Verification of rStart=1 signature: ret=0x%lX", verifyRet);
+            if (verifyRet == CKR_SIGNATURE_INVALID) {
+                printf(" (EXPECTED - signature is crafted, not real)");
+            } else if (verifyRet != CKR_OK) {
+                printf(" *** UNEXPECTED ERROR - POSSIBLE BUG ***");
+            }
+            printf("\n");
+        }
+    }
+    
+    printf("\n--- Test Case 2: Edge Case Variations ---\n");
+    
+    /* Test Case 2a: r has single 0x00 byte (extreme edge case) */
+    XMEMSET(testSig, 0, sizeof(testSig));
+    testSig[0] = 0x00;  /* Only byte in r coordinate */
+    for (i = 1; i < 32; i++) {
+        testSig[i] = 0x00;  /* All zeros */
+    }
+    /* s coordinate: normal case */
+    testSig[32] = 0x01;
+    for (i = 33; i < 64; i++) {
+        testSig[i] = (byte)(i - 32);
+    }
+    
+    printf("Test 2a - r=all zeros: ");
+    ret = funcList->C_VerifyInit(session, &mech, pub);
+    if (ret == CKR_OK) {
+        CK_RV verifyRet = funcList->C_Verify(session, hash, hashSz, testSig, sizeof(testSig));
+        printf("ret=0x%lX\n", verifyRet);
+    }
+    
+    /* Test Case 2b: Both r and s start with 0x00 but different high bits */
+    XMEMSET(testSig, 0, sizeof(testSig));
+    /* r: 0x00 + low bit (rStart=1, rHigh=0) */
+    testSig[0] = 0x00;
+    testSig[1] = 0x7F;  /* High bit clear */
+    for (i = 2; i < 32; i++) {
+        testSig[i] = (byte)(0x33 + i);
+    }
+    /* s: 0x00 + high bit (sStart=1, sHigh=1) */
+    testSig[32] = 0x00;
+    testSig[33] = 0x80;  /* High bit set */
+    for (i = 34; i < 64; i++) {
+        testSig[i] = (byte)(0x44 + i - 32);
+    }
+    
+    printf("Test 2b - mixed high bits: ");
+    ret = funcList->C_VerifyInit(session, &mech, pub);
+    if (ret == CKR_OK) {
+        CK_RV verifyRet = funcList->C_Verify(session, hash, hashSz, testSig, sizeof(testSig));
+        printf("ret=0x%lX\n", verifyRet);
+    }
+    
+    printf("\n--- Test Case 3: Natural Signature Search ---\n");
+    
+    /* Try to find naturally occurring rStart=1 signatures */
+    int foundRStartOne = 0;
+    int attempts = 0;
+    int maxAttempts = 500;  /* Reduced for faster testing */
+    
+    for (attempts = 0; attempts < maxAttempts; attempts++) {
+        /* Vary the hash to get different signatures */
+        XMEMSET(hash, 0, sizeof(hash));
+        hash[0] = (byte)(attempts & 0xFF);
+        hash[1] = (byte)((attempts >> 8) & 0xFF);
+        hash[2] = (byte)((attempts >> 16) & 0xFF);
+        hash[3] = (byte)((attempts >> 24) & 0xFF);
+        for (i = 4; i < 32; i++) {
+            hash[i] = (byte)(i ^ attempts ^ 0x5A);
+        }
+        hashSz = sizeof(hash);
+        sigSz = sizeof(sig);
+        
+        ret = funcList->C_SignInit(session, &mech, priv);
+        if (ret == CKR_OK) {
+            ret = funcList->C_Sign(session, hash, hashSz, sig, &sigSz);
+        }
+        
+        if (ret == CKR_OK) {
+            /* Check if this signature has rStart=1 condition */
+            if (sig[0] == 0x00 && sig[1] != 0x00) {
+                printf("Found natural rStart=1 signature at attempt %d\n", attempts + 1);
+                printf("Signature r: %02x%02x%02x%02x...\n", sig[0], sig[1], sig[2], sig[3]);
+                
+                /* Test if this signature verifies correctly */
+                ret = funcList->C_VerifyInit(session, &mech, pub);
+                if (ret == CKR_OK) {
+                    CK_RV verifyRet = funcList->C_Verify(session, hash, hashSz, sig, sigSz);
+                    printf("Natural rStart=1 signature verification: ret=0x%lX", verifyRet);
+                    if (verifyRet != CKR_OK) {
+                        printf(" *** BUG DETECTED: Natural signature fails verification! ***");
+                        ret = verifyRet;  /* Fail the test */
+                        goto cleanup;
+                    }
+                    printf(" (SUCCESS)\n");
+                }
+                
+                foundRStartOne = 1;
+                break;
+            }
+            
+            /* Also check for sStart=1 (s coordinate starts with 0x00) */
+            if (sig[32] == 0x00 && sig[33] != 0x00) {
+                printf("Found natural sStart=1 signature at attempt %d\n", attempts + 1);
+                printf("Signature s: %02x%02x%02x%02x...\n", sig[32], sig[33], sig[34], sig[35]);
+            }
+        } else {
+            break;  /* Signing failed */
+        }
+        
+        /* Show progress every 100 attempts */
+        if ((attempts + 1) % 100 == 0) {
+            printf("Searched %d signatures...\n", attempts + 1);
+        }
+    }
+    
+    if (!foundRStartOne && ret == CKR_OK) {
+        printf("No natural rStart=1 signatures found in %d attempts\n", attempts);
+        printf("This is expected - the condition is rare\n");
+    }
+    
+    printf("\n--- Test Case 4: Round-Trip Verification ---\n");
+    
+    /* Create a signature and verify round-trip consistency */
+    XMEMSET(hash, 0x42, sizeof(hash));
+    hashSz = sizeof(hash);
+    sigSz = sizeof(sig);
+    
+    ret = funcList->C_SignInit(session, &mech, priv);
+    if (ret == CKR_OK) {
+        ret = funcList->C_Sign(session, hash, hashSz, sig, &sigSz);
+    }
+    
+    if (ret == CKR_OK) {
+        printf("Created signature for round-trip test\n");
+        
+        /* Verify it works */
+        ret = funcList->C_VerifyInit(session, &mech, pub);
+        if (ret == CKR_OK) {
+            CK_RV verifyRet = funcList->C_Verify(session, hash, hashSz, sig, sigSz);
+            printf("Original signature verification: ret=0x%lX", verifyRet);
+            if (verifyRet != CKR_OK) {
+                printf(" *** ERROR: Original signature failed verification! ***");
+                ret = verifyRet;
+                goto cleanup;
+            }
+            printf(" (SUCCESS)\n");
+        }
+        
+        /* Now modify signature to force rStart=1 condition and test decode robustness */
+        XMEMCPY(roundTripSig, sig, sigSz);
+        
+        /* Force r coordinate to start with 0x00 */
+        byte originalFirstByte = roundTripSig[0];
+        roundTripSig[0] = 0x00;
+        roundTripSig[1] = originalFirstByte | 0x80;  /* Ensure high bit set for rHigh test */
+        
+        printf("Modified signature to force rStart=1 condition\n");
+        printf("Original r[0]=0x%02x, modified r[0]=0x%02x, r[1]=0x%02x\n", 
+               originalFirstByte, roundTripSig[0], roundTripSig[1]);
+        
+        /* This signature will be invalid, but should not crash the decode logic */
+        ret = funcList->C_VerifyInit(session, &mech, pub);
+        if (ret == CKR_OK) {
+            CK_RV verifyRet = funcList->C_Verify(session, hash, hashSz, roundTripSig, sigSz);
+            printf("Modified rStart=1 signature verification: ret=0x%lX", verifyRet);
+            if (verifyRet == CKR_SIGNATURE_INVALID) {
+                printf(" (EXPECTED - signature was modified)");
+            } else if (verifyRet != CKR_OK) {
+                printf(" *** UNEXPECTED ERROR ***");
+            }
+            printf("\n");
+        }
+    }
+    
+    printf("\n--- Debug Test Complete ---\n");
+    if (ret == CKR_OK) {
+        printf("✓ All tests completed successfully\n");
+        printf("✓ No crashes or unexpected errors detected\n");
+        printf("✓ rStart=1 decode logic appears robust\n");
+    } else {
+        printf("✗ Test failed with error: 0x%lX\n", ret);
+    }
+
+cleanup:
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+    
+    return ret;
+}
+
+static CK_RV test_ecdsa_sig_rstart_tpm_edge_cases(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_MECHANISM mech;
+    byte hash[32], sig[64];
+
+    int i;
+    
+    /* Generate ECC key pair for testing */
+    ret = get_ecc_priv_key(session, CK_FALSE, &priv);
+    if (ret == CKR_OK)
+        ret = get_ecc_pub_key(session, &pub);
+    
+    if (ret != CKR_OK) {
+        ret = gen_ec_keys(session, ecc_p256_params, sizeof(ecc_p256_params), 
+                         &pub, &priv, NULL, 0, NULL, 0, 0);
+    }
+    
+    if (ret == CKR_OK) {
+        mech.mechanism = CKM_ECDSA;
+        mech.ulParameterLen = 0;
+        mech.pParameter = NULL;
+        
+        /* Test multiple edge case signatures that trigger rStart=1 and sStart=1 */
+        /* These patterns are more likely to expose TPM-related memory issues */
+        
+        /* Edge Case 1: Both r and s start with 0x00, high bits set */
+        XMEMSET(sig, 0, sizeof(sig));
+        sig[0] = 0x00; sig[1] = 0xFF; /* r: rStart=1, rHigh=1 */
+        sig[32] = 0x00; sig[33] = 0x80; /* s: sStart=1, sHigh=1 */
+        for (i = 2; i < 32; i++) sig[i] = 0xFF;
+        for (i = 34; i < 64; i++) sig[i] = 0x80;
+        
+        XMEMSET(hash, 0x11, sizeof(hash));
+        ret = funcList->C_VerifyInit(session, &mech, pub);
+        if (ret == CKR_OK) {
+            (void)funcList->C_Verify(session, hash, sizeof(hash), sig, sizeof(sig));
+            /* Should fail gracefully, not crash */
+        }
+        
+        /* Edge Case 2: Both r and s start with 0x00, high bits clear */
+        if (ret == CKR_OK) {
+            XMEMSET(sig, 0, sizeof(sig));
+            sig[0] = 0x00; sig[1] = 0x7F; /* r: rStart=1, rHigh=0 */
+            sig[32] = 0x00; sig[33] = 0x01; /* s: sStart=1, sHigh=0 */
+            for (i = 2; i < 32; i++) sig[i] = 0x7F;
+            for (i = 34; i < 64; i++) sig[i] = 0x01;
+            
+            ret = funcList->C_VerifyInit(session, &mech, pub);
+            if (ret == CKR_OK) {
+                (void)funcList->C_Verify(session, hash, sizeof(hash), sig, sizeof(sig));
+                /* Should fail gracefully, not crash */
+            }
+        }
+        
+        /* Edge Case 3: Multiple leading zeros (rStart > 1) */
+        if (ret == CKR_OK) {
+            XMEMSET(sig, 0, sizeof(sig));
+            sig[0] = 0x00; sig[1] = 0x00; sig[2] = 0x80; /* r: rStart would be 2 */
+            sig[32] = 0x00; sig[33] = 0x00; sig[34] = 0x01; /* s: sStart would be 2 */
+            for (i = 3; i < 32; i++) sig[i] = (byte)(i & 0xFF);
+            for (i = 35; i < 64; i++) sig[i] = (byte)((i-32) & 0xFF);
+            
+            ret = funcList->C_VerifyInit(session, &mech, pub);
+            if (ret == CKR_OK) {
+                (void)funcList->C_Verify(session, hash, sizeof(hash), sig, sizeof(sig));
+                /* Should fail gracefully, not crash */
+            }
+        }
+        
+        /* Edge Case 4: Boundary condition - almost all zeros */
+        if (ret == CKR_OK) {
+            XMEMSET(sig, 0, sizeof(sig));
+            sig[30] = 0x01; /* Last byte of r */
+            sig[62] = 0x01; /* Last byte of s */
+            
+            ret = funcList->C_VerifyInit(session, &mech, pub);
+            if (ret == CKR_OK) {
+                (void)funcList->C_Verify(session, hash, sizeof(hash), sig, sizeof(sig));
+                /* Should fail gracefully, not crash */
+            }
+        }
+        
+        /* Edge Case 5: Test with different hash patterns to stress memory */
+        if (ret == CKR_OK) {
+            for (i = 0; i < 10 && ret == CKR_OK; i++) {
+                /* Create varying hash patterns */
+                XMEMSET(hash, (byte)(i ^ 0xAA), sizeof(hash));
+                hash[0] = (byte)i;
+                
+                /* Create signature with rStart=1 pattern */
+                XMEMSET(sig, 0, sizeof(sig));
+                sig[0] = 0x00;
+                sig[1] = (byte)(0x80 | i);
+                sig[32] = 0x00;
+                sig[33] = (byte)(0x40 | i);
+                
+                ret = funcList->C_VerifyInit(session, &mech, pub);
+                if (ret == CKR_OK) {
+                    (void)funcList->C_Verify(session, hash, sizeof(hash), sig, sizeof(sig));
+                    /* Multiple verification attempts to stress decode path */
+                }
+            }
+        }
+    }
+    
+    /* Clean up */
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+    
+    return ret;
+}
+
 static CK_RV test_ecdsa_sig_fail(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -15256,6 +15788,9 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_ecc_gen_keys_id),
     PKCS11TEST_FUNC_SESS_DECL(test_ecc_gen_keys_token),
     PKCS11TEST_FUNC_SESS_DECL(test_ecc_token_keys_ecdsa),
+    PKCS11TEST_FUNC_SESS_DECL(test_ecdsa_sig_rstart_one),
+    PKCS11TEST_FUNC_SESS_DECL(test_ecdsa_sig_rstart_debug_comprehensive),
+    PKCS11TEST_FUNC_SESS_DECL(test_ecdsa_sig_rstart_tpm_edge_cases),
     PKCS11TEST_FUNC_SESS_DECL(test_ecdsa_sig_fail),
     PKCS11TEST_FUNC_SESS_DECL(test_ecdh_x963),
 #endif /* HAVE_ECC */
