@@ -5396,6 +5396,11 @@ int WP11_Library_Init(void)
                 ret = wc_SetSeed_Cb(wc_GenerateSeed);
             }
 #endif
+#ifdef HAVE_FIPS
+            if (ret == 0) {
+                ret = wc_RunAllCast_fips();
+            }
+#endif
             if (ret == 0) {
 #ifdef WOLFSSL_MAXQ10XX_CRYPTO
                 ret = wc_InitRng_ex(&globalRandom, NULL, MAXQ_DEVICE_ID);
