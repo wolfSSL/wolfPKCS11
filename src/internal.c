@@ -5715,10 +5715,14 @@ int WP11_Slot_HasSession(WP11_Slot* slot)
  *          -ve on failure.
  */
 static int HashPIN(char* pin, int pinLen, byte* seed, int seedLen, byte* hash,
-                   int hashLen)
+                   int hashLen, WP11_Slot* slot)
 {
-#ifdef HAVE_SCRYPT
+#ifdef HAVE_FIPS
+        return wc_PBKDF2_ex(hash, (byte*)pin, pinLen, seed, seedLen,
+            PBKDF2_ITERATIONS, hashLen, WC_SHA256, NULL, slot->devId);
+#elif defined(HAVE_SCRYPT)
     /* Convert PIN into secret using scrypt algorithm. */
+    (void)slot;
     return wc_scrypt(hash, (byte*)pin, pinLen, seed, seedLen,
                                     WP11_HASH_PIN_COST, WP11_HASH_PIN_BLOCKSIZE,
                                     WP11_HASH_PIN_PARALLEL, hashLen);
@@ -5726,6 +5730,7 @@ static int HashPIN(char* pin, int pinLen, byte* seed, int seedLen, byte* hash,
     /* fallback to simple SHA2-256 hash of pin */
     (void)seed;
     (void)seedLen;
+    (void)slot;
     XMEMSET(hash, 0, hashLen);
     return wc_Sha256Hash((const byte*)pin, pinLen, hash);
 #else
@@ -5735,6 +5740,7 @@ static int HashPIN(char* pin, int pinLen, byte* seed, int seedLen, byte* hash,
     (void)seedLen;
     (void)hash;
     (void)hashLen;
+    (void)slot;
     return NOT_COMPILED_IN;
 #endif
 }
@@ -5800,7 +5806,7 @@ int WP11_Slot_CheckSOPin(WP11_Slot* slot, char* pin, int pinLen)
 
         /* Costly Operation done out of lock. */
         ret = HashPIN(pin, pinLen, token->soPinSeed, sizeof(token->soPinSeed),
-                                                            hash, sizeof(hash));
+                                                    hash, sizeof(hash), slot);
 
         WP11_Lock_LockRO(&slot->lock);
     }
@@ -5840,7 +5846,7 @@ int WP11_Slot_CheckUserPin(WP11_Slot* slot, char* pin, int pinLen)
 
         /* Costly Operation done out of lock. */
         ret = HashPIN(pin, pinLen, token->userPinSeed,
-                                sizeof(token->userPinSeed), hash, sizeof(hash));
+                        sizeof(token->userPinSeed), hash, sizeof(hash), slot);
 
         WP11_Lock_LockRO(&slot->lock);
     }
@@ -6004,7 +6010,7 @@ int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen)
     #ifndef WOLFPKCS11_NO_STORE
         if (ret == 0) {
             ret = HashPIN(pin, pinLen, token->seed, sizeof(token->seed),
-                token->key, sizeof(token->key));
+                token->key, sizeof(token->key), slot);
         }
     #endif
         WP11_Lock_LockRW(&slot->lock);
@@ -6076,7 +6082,7 @@ int WP11_Slot_SetSOPin(WP11_Slot* slot, char* pin, int pinLen)
         /* Costly Operation done out of lock. */
         ret = HashPIN(pin, pinLen, token->soPinSeed,
                                          sizeof(token->soPinSeed), token->soPin,
-                                         sizeof(token->soPin));
+                                         sizeof(token->soPin), slot);
         WP11_Lock_LockRW(&slot->lock);
     }
     if (ret == 0) {
@@ -6125,11 +6131,11 @@ int WP11_Slot_SetUserPin(WP11_Slot* slot, char* pin, int pinLen)
         token->userPinEmpty = 0;
         ret = HashPIN(pin, pinLen, token->userPinSeed,
                                      sizeof(token->userPinSeed), token->userPin,
-                                     sizeof(token->userPin));
+                                     sizeof(token->userPin), slot);
     #ifndef WOLFPKCS11_NO_STORE
         if (ret == 0) {
             ret = HashPIN(pin, pinLen, token->seed, sizeof(token->seed),
-                token->key, sizeof(token->key));
+                token->key, sizeof(token->key), slot);
         }
     #endif
         WP11_Lock_LockRW(&slot->lock);
