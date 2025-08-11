@@ -41,6 +41,12 @@ extern "C" {
 
 #ifdef HAVE_FIPS
     #define NO_MD5
+    #define WOLFPKCS11_PBKDF2
+#endif
+
+/* FIPS has no scrypt and SHA256 is not strong enough */
+#ifndef PBKDF2_ITERATIONS
+    #define PBKDF2_ITERATIONS 600000
 #endif
 
 #ifdef WOLFPKCS11_NO_MD5

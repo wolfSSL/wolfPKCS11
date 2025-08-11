@@ -332,6 +332,26 @@ then
     AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_HKDF"
 fi
 
+AC_ARG_ENABLE([pbkdf2],
+    [AS_HELP_STRING([--enable-pbkdf2],[Enable internal PBKDF2 for PIN hashing (default: disabled)])],
+    [ ENABLED_PBKDF2=$enableval ],
+    [ ENABLED_PBKDF2=no ]
+    )
+if test "$ENABLED_PBKDF2" = "yes"
+then
+    AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_PBKDF2"
+fi
+
+AC_ARG_WITH([pbkdf2-iterations],
+    [AS_HELP_STRING([--with-pbkdf2-iterations=NUM],[Set PBKDF2 iterations (default: 600000)])],
+    [ PBKDF2_ITERATIONS=$withval ],
+    [ PBKDF2_ITERATIONS=600000 ]
+    )
+if test "$ENABLED_PBKDF2" = "yes"
+then
+    AM_CFLAGS="$AM_CFLAGS -DPBKDF2_ITERATIONS=$PBKDF2_ITERATIONS"
+fi
+
 AC_ARG_ENABLE([md5],
     [AS_HELP_STRING([--enable-md5],[Enable MD5 (default: enabled)])],
     [ ENABLED_MD5=$enableval ],
