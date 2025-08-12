@@ -7,7 +7,7 @@
 #
 AC_COPYRIGHT([Copyright (C) 2014-2023 wolfSSL Inc.])
 AC_PREREQ([2.63])
-AC_INIT([wolfpkcs11],[1.3.0],[https://github.com/wolfssl/wolfpkcs11/issues],[wolfpkcs11],[http://www.wolfssl.com])
+AC_INIT([wolfpkcs11],[2.0.0],[https://github.com/wolfssl/wolfpkcs11/issues],[wolfpkcs11],[http://www.wolfssl.com])
 AC_CONFIG_AUX_DIR([build-aux])
 
 # The following sets CFLAGS to empty if unset on command line.
@@ -36,11 +36,11 @@ AC_CONFIG_HEADERS([wolfpkcs11/config.h])
 # The three numbers in the libpkcs11.so.*.*.* file name. Unfortunately
 
 # increment if interfaces have been removed or changed
-WOLFPKCS11_LIBRARY_VERSION_FIRST=3
+WOLFPKCS11_LIBRARY_VERSION_FIRST=4
 
 # increment if interfaces have been added
 # set to zero if WOLFPKCS11_LIBRARY_VERSION_FIRST is incremented
-WOLFPKCS11_LIBRARY_VERSION_SECOND=1
+WOLFPKCS11_LIBRARY_VERSION_SECOND=0
 
 # increment if source code has changed
 # set to zero if WOLFPKCS11_LIBRARY_VERSION_FIRST is incremented or
