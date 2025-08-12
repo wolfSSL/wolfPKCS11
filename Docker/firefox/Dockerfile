@@ -71,16 +71,13 @@ RUN ./configure --enable-all --enable-aescfb --enable-cryptocb --enable-rsapss -
 RUN make && make install
 WORKDIR /
 
-# Clone and prepare patch for NSS
-RUN git clone https://github.com/LinuxJedi/nss.git
-WORKDIR /nss
-RUN git diff origin/master origin/wolfPKCS11 > /nss.patch
-WORKDIR /
+# Clone osp to get the NSS patch
+RUN git clone https://github.com/wolfSSL/osp
 
 WORKDIR /firefox
 RUN git checkout $FIREFOX_TAG
 WORKDIR /firefox/security/nss
-RUN patch -p1 < /nss.patch
+RUN patch -p1 < /osp/nss/nss-tests-2025-04-11-978205bd37c33d862a5798d8158df7091412d3a7.patch
 RUN touch /mozconfig
 # Enable ASan specific code and build workarounds
 #RUN echo ac_add_options --enable-address-sanitizer >> /firefox/mozconfig

@@ -15,7 +15,7 @@ DPKG_EXPORT_BUILDFLAGS = 1
 include /usr/share/dpkg/buildflags.mk
 
 # Configure options for the build
-CONFIGURE_OPTS = --enable-debug --enable-aesecb --enable-nss
+CONFIGURE_OPTS = --enable-aesctr --enable-aesccm --enable-aeskeywrap --enable-aesecb --enable-nss
 
 %:
 	dh $@ --with autoreconf
