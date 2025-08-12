@@ -125,6 +125,37 @@ jobs:
         path: /tmp/src/dist
         key: nss-build-${{ env.NSS_VERSION }}-latest
 
+    - name: Clone NSS and apply wolfSSL patches
+      if: steps.cache-nss-source.outputs.cache-hit != 'true'
+      run: |
+        mkdir -p /tmp/src
+        cd /tmp/src
+
+        # Clone official Mozilla NSS with specific tag
+        hg clone https://hg.mozilla.org/projects/nss -r ${{ env.NSS_VERSION }}
+
+        # Clone wolfSSL OSP repository for patches
+        git clone https://github.com/wolfSSL/osp.git
+
+        cd nss
+
+        # Apply patches from wolfSSL/osp/nss directory
+        echo "Applying wolfSSL NSS patches..."
+        if [ -d "../osp/nss" ]; then
+          for patch in ../osp/nss/*.patch; do
+            if [ -f "$patch" ]; then
+              echo "Applying patch: $(basename $patch)"
+              patch -p1 < "$patch" || {
+                echo "Warning: Patch $(basename $patch) failed to apply cleanly"
+                echo "Attempting to apply with --reject-file option..."
+                patch -p1 --reject-file=/tmp/$(basename $patch).rej < "$patch" || true
+              }
+            fi
+          done
+        else
+          echo "No patches found in wolfSSL/osp/nss directory"
+        fi
+
     - name: Build NSS
       if: steps.cache-nss-build.outputs.cache-hit != 'true'
       run: |

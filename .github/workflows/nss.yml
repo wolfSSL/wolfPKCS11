@@ -9,6 +9,7 @@ on:
 
 env:
   NSPR_VERSION: NSPR_4_36_BRANCH
+  NSS_VERSION: NSS_3_112_RTM
   WOLFSSL_VERSION: v5.8.0-stable
   #NSS_DEBUG_PKCS11_MODULE: wolfPKCS11
   #NSPR_LOG_MODULES: all:5
@@ -65,27 +66,49 @@ jobs:
       if: steps.cache-nspr.outputs.cache-hit != 'true'
       run: hg clone https://hg.mozilla.org/projects/nspr -r ${{ env.NSPR_VERSION }}
 
-    - name: Cache NSS source
+    - name: Cache NSS source and patches
       id: cache-nss-source
       uses: actions/cache@v4
       with:
-        path: nss
+        path: |
+          nss
+          osp
         key: nss-source-fork
 
-    - name: Clone NSS
+    - name: Clone NSS and apply wolfSSL patches
       if: steps.cache-nss-source.outputs.cache-hit != 'true'
-      uses: actions/checkout@v4
-      with:
-        repository: LinuxJedi/nss
-        ref: nss-tests
-        path: nss
+      run: |
+        # Clone official Mozilla NSS with specific tag
+        hg clone https://hg.mozilla.org/projects/nss -r ${{ env.NSS_VERSION }}
+
+        # Clone wolfSSL OSP repository for patches
+        git clone https://github.com/wolfSSL/osp.git
+
+        cd nss
+
+        # Apply patches from wolfSSL/osp/nss directory
+        echo "Applying wolfSSL NSS patches..."
+        if [ -d "../osp/nss" ]; then
+          for patch in ../osp/nss/*.patch; do
+            if [ -f "$patch" ]; then
+              echo "Applying patch: $(basename $patch)"
+              patch -p1 < "$patch" || {
+                echo "Warning: Patch $(basename $patch) failed to apply cleanly"
+                echo "Attempting to apply with --reject-file option..."
+                patch -p1 --reject-file=/tmp/$(basename $patch).rej < "$patch" || true
+              }
+            fi
+          done
+        else
+          echo "No patches found in wolfSSL/osp/nss directory"
+        fi
 
     - name: Cache NSS build
       id: cache-nss-build
       uses: actions/cache@v4
       with:
         path: dist
-        key: nss-build-fork
+        key: nss-fork-${{ env.NSS_VERSION }}-latest
 
     - name: Build NSS
       if: steps.cache-nss-build.outputs.cache-hit != 'true'
@@ -138,4 +161,3 @@ jobs:
     - name: Run NSS tests
       working-directory: nss/tests
       run: LD_LIBRARY_PATH=$GITHUB_WORKSPACE/build-dir/lib ./all.sh
- 
