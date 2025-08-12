@@ -10347,15 +10347,10 @@ int WP11_RsaPKCSPSS_Verify(unsigned char* sig, word32 sigLen,
                                           pss->hashType, pss->saltLen, 0);
         if (ret == 0)
             *stat = 1;
-        /* Both can indicate that the verification failed */
-        if (ret == BAD_PADDING_E || ret == PSS_SALTLEN_E) {
-            *stat = 0;
-            ret = 0;
-        }
     }
-    /* Make sure bad padding returns success, but verify failed.
+    /* Make sure bad padding/salt length returns success, but verify failed.
      * Calling code expects this. */
-    if (ret == BAD_PADDING_E) {
+    if (ret == BAD_PADDING_E || ret == PSS_SALTLEN_E) {
         ret = 0;
         *stat = 0;
     }
