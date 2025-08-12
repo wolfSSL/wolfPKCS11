@@ -64,7 +64,6 @@ RUN python3 bootstrap.py --no-interactive --application-choice browser
 
 # Clone and build wolfSSL
 RUN git clone --depth 1 --branch $WOLFSSL_TAG https://github.com/wolfssl/wolfssl.git
-#RUN git clone https://github.com/wolfssl/wolfssl.git
 WORKDIR /wolfssl
 RUN autoreconf -if
 RUN ./configure --enable-all --enable-aescfb --enable-cryptocb --enable-rsapss --enable-keygen \
@@ -79,7 +78,6 @@ RUN git diff origin/master origin/wolfPKCS11 > /nss.patch
 WORKDIR /
 
 WORKDIR /firefox
-#RUN git pull
 RUN git checkout $FIREFOX_TAG
 WORKDIR /firefox/security/nss
 RUN patch -p1 < /nss.patch

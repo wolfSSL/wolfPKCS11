@@ -21,7 +21,6 @@ jobs:
       uses: actions/checkout@v4
       with:
         path: wolfpkcs11
-
     - name: Build and install wolfPKCS11
       working-directory: wolfpkcs11
       run: |
