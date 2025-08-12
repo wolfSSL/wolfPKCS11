@@ -1,0 +1,25 @@
+{
+	"manifest_version": 2,
+	"name": "Firefox Extensions With Selenium",
+	"version": "1.0.0",
+	"applications": {
+		"gecko": {
+			"id": "firefox-extension-with-selenium@wolfssl.com"
+		}
+	},
+	"content_scripts": [
+		{
+			"matches": ["*://*/*"],
+			"js": ["content.js"],
+			"run_at": "document_start"
+		}
+	],
+	"permissions": [
+		"pkcs11"
+	],
+	"background": {
+		"scripts": ["background-script.js"],
+		"persistent": true,
+		"type": "module"
+	}
+}

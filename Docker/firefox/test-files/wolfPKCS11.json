@@ -1,0 +1,8 @@
+{
+	"name": "wolfPKCS11",
+	"description": "wolfPKCS11 crypto module",
+	"type": "pkcs11",
+	"path": "libwolfpkcs11.so",
+	"allowed_extensions": ["firefox-extension-with-selenium@wolfssl.com"]
+}
+

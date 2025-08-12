@@ -1,0 +1,4 @@
+library=libwolfpkcs11.so
+name=wolfPKCS11
+parameters=configdir='' certPrefix='' keyPrefix='' secmod='secmod.db' flags= updatedir='' updateCertPrefix='' updateKeyPrefix='' updateid='' updateTokenDescription='' manufacturerID='wolfSSL' libraryDescription='wolfPKCS11 Crypto Module' cryptoTokenDescription='wolfPKCS11 Crypto Module' dbTokenDescription='wolfPKCS11 Crypto Module' cryptoSlotDescription='wolfPKCS11 Crypto Module' dbSlotDescription='wolfCrypt FIPS Module' FIPSSlotDescription='wolfCrypt FIPS Module FIPS-140-3 Cryptographic Module' FIPSTokenDescription='wolfCrypt FIPS Module FIPS-140-3 Cryptographic Module'
+NSS=Flags=internal,critical cipherOrder=100 slotParams={0x00000001=[slotFlags=ECC,RSA,DSA,DH,RC2,RC4,DES,RANDOM,SHA1,MD5,MD2,SSL,TLS,AES,Camellia,SEED,SHA256,SHA512] }
