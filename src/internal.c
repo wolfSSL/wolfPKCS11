@@ -10716,7 +10716,7 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
     ecc_key pubKey;
     unsigned char* x963Data = point;
     word32 x963Len = pointLen;
-    int dataLen;
+    word32 expectedPointLen;
     int i = 0;
 #if defined(ECC_TIMING_RESISTANT) && (!defined(HAVE_FIPS) || \
     (defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION > 2)))
@@ -10738,13 +10738,13 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
             }
         }
         if (i < (int)pointLen) {
-            dataLen = point[i++];
-            if (dataLen == (int)(pointLen - i)) {
+            expectedPointLen = priv->data.ecKey->dp->size * 2 + 1;
+            if (pointLen > expectedPointLen) {
+                x963Len = point[i++];
                 x963Data = point + i;
-                x963Len = dataLen;
             }
             else {
-                /* Length mismatch, treat as raw X9.63 data */
+                /* Treat as raw X9.63 data */
                 x963Data = point;
                 x963Len = pointLen;
             }
