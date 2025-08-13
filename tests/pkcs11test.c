@@ -409,6 +409,55 @@ static CK_RV test_not_initialized(void* args)
     return ret;
 }
 
+#if defined(WOLFPKCS11_NSS) && !defined(WOLFPKCS11_NO_STORE)
+static CK_RV test_nss_config_string_parsing(void* args)
+{
+    CK_RV ret;
+    CK_C_INITIALIZE_ARGS initArgs;
+    CK_CHAR_PTR nssConfigStr = (CK_CHAR_PTR)"configdir='' certPrefix='' keyPrefix='' secmod='' flags=readOnly,noCertDB,noModDB,forceOpen,optimizeSpace updatedir='' updateCertPrefix='' updateKeyPrefix='' updateid='' updateTokenDescription=''";
+    
+    (void)args;
+    
+    /* Test with the problematic NSS config string that has unquoted flags */
+    XMEMSET(&initArgs, 0x00, sizeof(initArgs));
+    initArgs.flags = CKF_OS_LOCKING_OK;
+    initArgs.LibraryParameters = (CK_CHAR_PTR *)nssConfigStr;
+    
+    /* This should succeed - the parser should handle unquoted flag values */
+    ret = funcList->C_Initialize(&initArgs);
+    CHECK_CKR(ret, "Initialize with NSS config string");
+    
+    if (ret == CKR_OK) {
+        funcList->C_Finalize(NULL);
+    }
+    
+    return ret;
+}
+
+static CK_RV test_nss_config_string_mixed_values(void* args)
+{
+    CK_RV ret;
+    CK_C_INITIALIZE_ARGS initArgs;
+    CK_CHAR_PTR nssConfigStr = (CK_CHAR_PTR)"configdir='/tmp/test' certPrefix='' keyPrefix=cert flags=readOnly,noCertDB updatedir='' updateid=test123";
+    
+    (void)args;
+    
+    /* Test with mixed quoted and unquoted values */
+    XMEMSET(&initArgs, 0x00, sizeof(initArgs));
+    initArgs.flags = CKF_OS_LOCKING_OK;
+    initArgs.LibraryParameters = (CK_CHAR_PTR *)nssConfigStr;
+    
+    /* This should succeed - the parser should handle mixed quoted/unquoted values */
+    ret = funcList->C_Initialize(&initArgs);
+    CHECK_CKR(ret, "Initialize with mixed NSS config string");
+    
+    if (ret == CKR_OK) {
+        funcList->C_Finalize(NULL);
+    }
+    
+    return ret;
+}
+#endif
 
 static CK_RV test_no_token_init(void* args)
 {
@@ -15224,6 +15273,10 @@ static CK_RV test_private_object_access(void* args)
 static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_NO_INIT_DECL(test_get_function_list),
     PKCS11TEST_FUNC_NO_INIT_DECL(test_not_initialized),
+#if defined(WOLFPKCS11_NSS) && !defined(WOLFPKCS11_NO_STORE)
+    PKCS11TEST_FUNC_NO_INIT_DECL(test_nss_config_string_parsing),
+    PKCS11TEST_FUNC_NO_INIT_DECL(test_nss_config_string_mixed_values),
+#endif
     PKCS11TEST_FUNC_NO_TOKEN_DECL(test_no_token_init),
     PKCS11TEST_FUNC_TOKEN_DECL(test_get_info),
     PKCS11TEST_FUNC_TOKEN_DECL(test_slot),
