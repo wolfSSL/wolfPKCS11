@@ -45,6 +45,12 @@ noinst_PROGRAMS += examples/token_info
 examples_token_info_SOURCES = examples/token_info.c
 examples_token_info_LDADD =
 
+if ENABLED_NSS
+noinst_PROGRAMS += examples/nss_pkcs12_pbe_example
+examples_nss_pkcs12_pbe_example_SOURCES = examples/nss_pkcs12_pbe_example.c
+examples_nss_pkcs12_pbe_example_LDADD =
+endif
+
 dist_noinst_SCRIPTS += examples/examples.test
 EXTRA_DIST += examples/rsa-2048.der
 
@@ -60,5 +66,7 @@ examples_mech_info_LDADD        += src/libwolfpkcs11.la
 examples_obj_list_LDADD         += src/libwolfpkcs11.la
 examples_slot_info_LDADD        += src/libwolfpkcs11.la
 examples_token_info_LDADD       += src/libwolfpkcs11.la
+if ENABLED_NSS
+examples_nss_pkcs12_pbe_example_LDADD += src/libwolfpkcs11.la
 endif
-
+endif

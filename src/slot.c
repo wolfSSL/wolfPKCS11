@@ -460,11 +460,16 @@ static CK_MECHANISM_TYPE mechanismList[] = {
 #ifdef WOLFPKCS11_NSS
     /* Only advertise CKM_SSL3_MASTER_KEY_DERIVE. Not implemented. */
     CKM_SSL3_MASTER_KEY_DERIVE,
+    CKM_NSS_PKCS12_PBE_SHA224_HMAC_KEY_GEN,
+    CKM_NSS_PKCS12_PBE_SHA256_HMAC_KEY_GEN,
+    CKM_NSS_PKCS12_PBE_SHA384_HMAC_KEY_GEN,
+    CKM_NSS_PKCS12_PBE_SHA512_HMAC_KEY_GEN,
 #endif
 #ifdef WOLFSSL_HAVE_PRF
     CKM_TLS_MAC,
 #endif
     CKM_GENERIC_SECRET_KEY_GEN,
+    CKM_PKCS5_PBKD2
 };
 
 /* Count of mechanisms in list. */
@@ -650,6 +655,18 @@ static CK_MECHANISM_INFO nssTls12MasterKeyDeriveDhInfo = {
 static CK_MECHANISM_INFO nssTls12MasterKeyDeriveInfo = {
     48, 128, CKF_DERIVE
 };
+static CK_MECHANISM_INFO nssPkcs12PbeSha224HmacKeyGenMechInfo = {
+    224, 224, CKF_GENERATE
+};
+static CK_MECHANISM_INFO nssPkcs12PbeSha256HmacKeyGenMechInfo = {
+    256, 256, CKF_GENERATE
+};
+static CK_MECHANISM_INFO nssPkcs12PbeSha384HmacKeyGenMechInfo = {
+    384, 384, CKF_GENERATE
+};
+static CK_MECHANISM_INFO nssPkcs12PbeSha512HmacKeyGenMechInfo = {
+    512, 512, CKF_GENERATE
+};
 #endif
 #endif
 #ifdef WOLFPKCS11_NSS
@@ -799,6 +816,10 @@ static CK_MECHANISM_INFO sha3MechInfo = {
 #endif
 static CK_MECHANISM_INFO genSecKeyGenMechInfo = {
     1, 32, CKF_GENERATE
+};
+
+static CK_MECHANISM_INFO pkcs5Pbkdf2MechInfo = {
+    1, 256, CKF_GENERATE
 };
 
 /**
@@ -1114,6 +1135,22 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
             XMEMCPY(pInfo, &nssTls12MasterKeyDeriveDhInfo,
                     sizeof(CK_MECHANISM_INFO));
             break;
+        case CKM_NSS_PKCS12_PBE_SHA224_HMAC_KEY_GEN:
+            XMEMCPY(pInfo, &nssPkcs12PbeSha224HmacKeyGenMechInfo,
+                    sizeof(CK_MECHANISM_INFO));
+            break;
+        case CKM_NSS_PKCS12_PBE_SHA256_HMAC_KEY_GEN:
+            XMEMCPY(pInfo, &nssPkcs12PbeSha256HmacKeyGenMechInfo,
+                    sizeof(CK_MECHANISM_INFO));
+            break;
+        case CKM_NSS_PKCS12_PBE_SHA384_HMAC_KEY_GEN:
+            XMEMCPY(pInfo, &nssPkcs12PbeSha384HmacKeyGenMechInfo,
+                    sizeof(CK_MECHANISM_INFO));
+            break;
+        case CKM_NSS_PKCS12_PBE_SHA512_HMAC_KEY_GEN:
+            XMEMCPY(pInfo, &nssPkcs12PbeSha512HmacKeyGenMechInfo,
+                    sizeof(CK_MECHANISM_INFO));
+            break;
 #endif
 #endif
 #ifdef WOLFPKCS11_NSS
@@ -1131,6 +1168,10 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
 #endif
         case CKM_GENERIC_SECRET_KEY_GEN:
             XMEMCPY(pInfo, &genSecKeyGenMechInfo,
+                    sizeof(CK_MECHANISM_INFO));
+            break;
+        case CKM_PKCS5_PBKD2:
+            XMEMCPY(pInfo, &pkcs5Pbkdf2MechInfo,
                     sizeof(CK_MECHANISM_INFO));
             break;
         default:

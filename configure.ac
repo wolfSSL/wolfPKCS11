@@ -449,6 +449,8 @@ then
     AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_NSS"
 fi
 
+AM_CONDITIONAL([ENABLED_NSS],[test "x$enable_nss" = "xyes"])
+
 AC_ARG_WITH([default-token-path],
     [AS_HELP_STRING([--with-default-token-path=PATH],[Set default token storage path (default: none)])],
     [ WOLFPKCS11_DEFAULT_TOKEN_PATH=$withval ],

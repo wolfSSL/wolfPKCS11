@@ -611,6 +611,11 @@ WP11_LOCAL int WP11_Aes_Cmac_Verify(unsigned char* data, word32 dataLen,
 WP11_LOCAL int WP11_Aes_Cmac_Verify_Final(unsigned char* sig, word32 sigLen, int* stat,
         WP11_Session* session);
 
+WP11_LOCAL int WP11_PBKDF2(byte* output, const byte* passwd, int pLen,
+    const byte* salt, int sLen, int iterations, int kLen, int hashType);
+WP11_LOCAL int WP11_PKCS12_PBKDF(byte* output, const byte* passwd, int pLen,
+    const byte* salt, int sLen, int iterations, int kLen, int hashType);
+
 WP11_LOCAL int WP11_Hmac_SigLen(WP11_Session* session);
 WP11_LOCAL int WP11_Hmac_Init(CK_MECHANISM_TYPE mechanism, WP11_Object* secret,
                    WP11_Session* session, CK_ULONG digestSize);

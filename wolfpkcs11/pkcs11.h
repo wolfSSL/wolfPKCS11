@@ -252,6 +252,9 @@ extern "C" {
 #define CKA_TRUST_STEP_UP_APPROVED            (CKA_TRUST + 16)
 #define CKA_CERT_SHA1_HASH                    (CKA_TRUST + 100)
 #define CKA_CERT_MD5_HASH                     (CKA_TRUST + 101)
+
+/* A legacy attribute we need to know exists, but skip */
+#define CKA_NSS_DB                            0xD5A0DB00L
 #endif
 
 #define CKM_RSA_PKCS_KEY_PAIR_GEN             0x00000000UL
@@ -294,6 +297,7 @@ extern "C" {
 #define CKM_GENERIC_SECRET_KEY_GEN            0x00000350UL
 #define CKM_SSL3_MASTER_KEY_DERIVE            0x00000371UL
 #define CKM_TLS_PRF                           0x00000378UL
+#define CKM_PKCS5_PBKD2                       0x000003B0UL
 #define CKM_TLS12_MASTER_KEY_DERIVE           0x000003E0UL
 #define CKM_TLS12_KEY_AND_MAC_DERIVE          0x000003E1UL
 #define CKM_TLS12_MASTER_KEY_DERIVE_DH        0x000003E2UL
@@ -328,6 +332,11 @@ extern "C" {
 #define CKM_NSS_TLS_PRF_GENERAL_SHA256            (CKM_NSS + 21)
 #define CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE    (CKM_NSS + 25)
 #define CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_DH (CKM_NSS + 26)
+
+#define CKM_NSS_PKCS12_PBE_SHA224_HMAC_KEY_GEN    (CKM_NSS + 29)
+#define CKM_NSS_PKCS12_PBE_SHA256_HMAC_KEY_GEN    (CKM_NSS + 30)
+#define CKM_NSS_PKCS12_PBE_SHA384_HMAC_KEY_GEN    (CKM_NSS + 31)
+#define CKM_NSS_PKCS12_PBE_SHA512_HMAC_KEY_GEN    (CKM_NSS + 32)
 #endif
 
 #define CKR_OK                                0x00000000UL
@@ -428,6 +437,7 @@ extern "C" {
 #define CKG_MGF1_SHA512                       0x00000004UL
 
 #define CKZ_DATA_SPECIFIED                    0x00000001UL
+#define CKZ_SALT_SPECIFIED                    0x00000001UL
 
 #define CKC_X_509                             0x00000000UL
 #define CKC_X_509_ATTR_CERT                   0x00000001UL
@@ -716,6 +726,52 @@ typedef struct CK_TLS12_KEY_MAT_PARAMS {
     CK_MECHANISM_TYPE prfHashMechanism;
 } CK_TLS12_KEY_MAT_PARAMS;
 
+typedef CK_ULONG CK_PKCS5_PBKD2_PSEUDO_RANDOM_FUNCTION_TYPE;
+typedef CK_PKCS5_PBKD2_PSEUDO_RANDOM_FUNCTION_TYPE* CK_PKCS5_PBKD2_PSEUDO_RANDOM_FUNCTION_TYPE_PTR;
+
+#define CKP_PKCS5_PBKD2_HMAC_SHA1       0x00000001UL
+#define CKP_PKCS5_PBKD2_HMAC_GOSTR3411  0x00000002UL  /* Not implemented */
+#define CKP_PKCS5_PBKD2_HMAC_SHA224     0x00000003UL
+#define CKP_PKCS5_PBKD2_HMAC_SHA256     0x00000004UL
+#define CKP_PKCS5_PBKD2_HMAC_SHA384     0x00000005UL
+#define CKP_PKCS5_PBKD2_HMAC_SHA512     0x00000006UL
+#define CKP_PKCS5_PBKD2_HMAC_SHA512_224 0x00000007UL
+#define CKP_PKCS5_PBKD2_HMAC_SHA512_256 0x00000008UL
+
+typedef CK_ULONG CK_PKCS5_PBKDF2_SALT_SOURCE_TYPE;
+typedef CK_PKCS5_PBKDF2_SALT_SOURCE_TYPE* CK_PKCS5_PBKDF2_SALT_SOURCE_TYPE_PTR;
+
+typedef struct CK_PKCS5_PBKD2_PARAMS {
+    CK_PKCS5_PBKDF2_SALT_SOURCE_TYPE saltSource;
+    CK_VOID_PTR pSaltSourceData;
+    CK_ULONG ulSaltSourceDataLen;
+    CK_ULONG iterations;
+    CK_PKCS5_PBKD2_PSEUDO_RANDOM_FUNCTION_TYPE prf;
+    CK_VOID_PTR pPrfData;
+    CK_ULONG ulPrfDataLen;
+    CK_UTF8CHAR_PTR pPassword;
+    CK_ULONG_PTR ulPasswordLen;
+} CK_PKCS5_PBKD2_PARAMS;
+
+/* ulPasswordLen was an error in the 2.10 spec which was corrected with the
+ * below in the 2.40 spec. Both need to be supported. */
+
+typedef struct CK_PKCS5_PBKD2_PARAMS2 {
+    CK_PKCS5_PBKDF2_SALT_SOURCE_TYPE saltSource;
+    CK_VOID_PTR pSaltSourceData;
+    CK_ULONG ulSaltSourceDataLen;
+    CK_ULONG iterations;
+    CK_PKCS5_PBKD2_PSEUDO_RANDOM_FUNCTION_TYPE prf;
+    CK_VOID_PTR pPrfData;
+    CK_ULONG ulPrfDataLen;
+    CK_UTF8CHAR_PTR pPassword;
+    CK_ULONG ulPasswordLen;
+} CK_PKCS5_PBKD2_PARAMS2;
+
+/* If len is greated than this we assume it is a pointer, and therefore
+ * CK_PKCS5_PBKD2_PARAMS (NSS does this too) */
+#define CK_PKCS5_PBKD2_PARAMS_MAX_PWD_LEN 8192
+
 #ifdef WOLFPKCS11_NSS
 typedef struct CK_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_PARAMS {
     CK_MECHANISM_TYPE prfHashMechanism;
@@ -723,8 +779,17 @@ typedef struct CK_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_PARAMS {
     CK_ULONG ulSessionHashLen;
     CK_VERSION_PTR pVersion;
 } CK_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_PARAMS;
-#endif
 
+typedef struct CK_PBE_PARAMS {
+    CK_BYTE_PTR pInitVector;
+    CK_UTF8CHAR_PTR pPassword;
+    CK_ULONG ulPasswordLen;
+    CK_BYTE_PTR pSalt;
+    CK_ULONG ulSaltLen;
+    CK_ULONG ulIteration;
+} CK_PBE_PARAMS;
+typedef CK_PBE_PARAMS* CK_PBE_PARAMS_PTR;
+#endif
 typedef struct CK_TLS_MAC_PARAMS {
     CK_MECHANISM_TYPE prfHashMechanism;
     CK_ULONG ulMacLength;

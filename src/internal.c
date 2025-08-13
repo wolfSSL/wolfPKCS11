@@ -9276,6 +9276,10 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
         case CKA_TRUST_CODE_SIGNING:
         case CKA_TRUST_STEP_UP_APPROVED:
             /* Handled in WP11_Object_SetTrust */
+#ifdef WOLFPKCS11_NSS
+        case CKA_NSS_DB:
+            /* Ignored legacy field */
+#endif
 #endif
         case CKA_CERTIFICATE_TYPE:
             /* Handled in WP11_Object_SetCert */
@@ -12708,6 +12712,20 @@ static int wp11_hmac_hash_type(CK_MECHANISM_TYPE hmacMech, int* hashType)
     return ret;
 }
 
+int WP11_PBKDF2(byte* output, const byte* passwd, int pLen,
+    const byte* salt, int sLen, int iterations, int kLen, int hashType)
+{
+    return wc_PBKDF2(output, passwd, pLen, salt, sLen, iterations, kLen,
+        hashType);
+}
+
+int WP11_PKCS12_PBKDF(byte* output, const byte* passwd, int pLen,
+    const byte* salt, int sLen, int iterations, int kLen, int hashType)
+{
+    /* For PKCS#12 MAC key derivation, purpose should be 3 */
+    return wc_PKCS12_PBKDF(output, passwd, pLen, salt, sLen, iterations,
+        kLen, hashType, 3);
+}
 /**
  * Return the length of a signature in bytes.
  *
