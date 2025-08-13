@@ -232,6 +232,7 @@ extern "C" {
 #define CKA_ALLOWED_MECHANISMS                0x40000600UL
 
 #ifdef WOLFPKCS11_NSS
+#define CKA_NSS_EMAIL                         (CKA_NSS + 2)
 #define CKA_TRUST                             (CKA_NSS + 0x2000)
 #define CKA_TRUST_DIGITAL_SIGNATURE           (CKA_TRUST + 1)
 #define CKA_TRUST_NON_REPUDIATION             (CKA_TRUST + 2)
