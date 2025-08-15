@@ -228,6 +228,7 @@ static AttributeType attrType[] = {
 #ifdef WOLFPKCS11_NSS
     { CKA_CERT_SHA1_HASH,              ATTR_TYPE_DATA  },
     { CKA_CERT_MD5_HASH,               ATTR_TYPE_DATA  },
+    { CKA_NSS_EMAIL,                   ATTR_TYPE_DATA  },
     { CKA_TRUST_SERVER_AUTH,           ATTR_TYPE_ULONG },
     { CKA_TRUST_CLIENT_AUTH,           ATTR_TYPE_ULONG },
     { CKA_TRUST_EMAIL_PROTECTION,      ATTR_TYPE_ULONG },

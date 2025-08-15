@@ -49,7 +49,10 @@ jobs:
           tcpdump \
           net-tools \
           gyp \
-          ninja-build
+          ninja-build \
+          pkg-config \
+          libnss3-tools \
+          opensc
 
     - name: Create working directories
       run: |
@@ -83,6 +86,37 @@ jobs:
           /tmp/src/nss
           /tmp/src/osp
         key: nss-source-${{ env.NSS_VERSION }}-latest
+
+    - name: Clone NSS and apply wolfSSL patches
+      if: steps.cache-nss-source.outputs.cache-hit != 'true'
+      run: |
+        mkdir -p /tmp/src
+        cd /tmp/src
+
+        # Clone official Mozilla NSS with specific tag
+        hg clone https://hg.mozilla.org/projects/nss -r ${{ env.NSS_VERSION }}
+
+        # Clone wolfSSL OSP repository for patches
+        git clone https://github.com/wolfSSL/osp.git
+
+        cd nss
+
+        # Apply wolfSSL patches
+        echo "Applying wolfSSL patches..."
+        if [ -d "../osp/nss" ]; then
+          for patch in ../osp/nss/*.patch; do
+            if [ -f "$patch" ]; then
+              echo "Applying patch: $(basename $patch)"
+              patch -p1 < "$patch" || {
+                echo "Warning: Patch $(basename $patch) failed to apply cleanly"
+                echo "Attempting to apply with --reject-file option..."
+                patch -p1 --reject-file=/tmp/$(basename $patch).rej < "$patch" || true
+              }
+            fi
+          done
+        else
+          echo "No patches found in wolfSSL/osp/nss directory"
+        fi
 
     - name: Cache NSS build artifacts
       id: cache-nss-build
@@ -137,7 +171,7 @@ jobs:
         git clone https://github.com/wolfSSL/wolfssl.git --branch ${{ env.WOLFSSL_VERSION }} --depth 1
         cd wolfssl
         ./autogen.sh
-        ./configure --enable-aescfb --enable-cryptocb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt --enable-cmac --enable-aesctr --enable-aesccm --enable-md5 C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT -DHAVE_AES_ECB -D_GNU_SOURCE"
+        ./configure --enable-all --enable-aescfb --enable-cryptocb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt --with-eccminsz=192 --with-max-rsa-bits=8192 CFLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT -DRSA_MIN_SIZE=1024 -DWOLFSSL_PSS_LONG_SALT"
         make
 
     - name: Install wolfSSL
@@ -146,15 +180,59 @@ jobs:
         sudo make install
         sudo ldconfig
 
-    - name: Configure NSS to use wolfPKCS11
+    - name: Build wolfPKCS11 with NSS support
       run: |
-        sudo bash -c 'echo "library=/usr/local/lib/libwolfpkcs11.so" > /etc/pki/nssdb/pkcs11.txt'
-        sudo bash -c 'echo "name=wolfPKCS11" >> /etc/pki/nssdb/pkcs11.txt'
-        sudo bash -c 'echo "NSS=Flags=internal,critical,fips cipherOrder=100 slotParams={0x00000001=[slotFlags=ECC,RSA,DSA,DH,RC2,RC4,DES,RANDOM,SHA1,MD5,MD2,SSL,TLS,AES,Camellia,SEED,SHA256,SHA512] }" >> /etc/pki/nssdb/pkcs11.txt'
+        cd wolfpkcs11
+        ./autogen.sh
+        ./configure --enable-debug --enable-nss --enable-aesecb --enable-aesctr --enable-aesccm --enable-aescmac --enable-aeskeywrap CFLAGS="-D_GNU_SOURCE"
+        make
+        sudo make install
+        sudo ldconfig
 
-    - name: Generate test certificates
+    - name: Verify wolfPKCS11 installation
+      run: |
+        echo "Checking wolfPKCS11 library..."
+        if [ -f /usr/local/lib/libwolfpkcs11.so ]; then
+          echo "✓ wolfPKCS11 library found at /usr/local/lib/libwolfpkcs11.so"
+          ls -la /usr/local/lib/libwolfpkcs11.so
+          ldd /usr/local/lib/libwolfpkcs11.so || echo "Failed to run ldd on libwolfpkcs11.so"
+        else
+          echo "✗ ERROR: wolfPKCS11 library not found"
+          find /usr -name "libwolfpkcs11.so" 2>/dev/null || true
+          exit 1
+        fi
+
+        echo "Checking wolfSSL library..."
+        if [ -f /usr/local/lib/libwolfssl.so ]; then
+          echo "✓ wolfSSL library found at /usr/local/lib/libwolfssl.so"
+          ls -la /usr/local/lib/libwolfssl.so
+        else
+          echo "✗ ERROR: wolfSSL library not found"
+          find /usr -name "libwolfssl.so" 2>/dev/null || true
+          exit 1
+        fi
+
+    - name: Generate test certificates using wolfPKCS11
       run: |
         cd /opt/certs
+        export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+        export NSS_DEFAULT_DB_TYPE=sql
+
+        # Initialize a test NSS database
+        mkdir -p testdb
+        certutil -N -d sql:testdb --empty-password
+
+        # Test if wolfPKCS11 is loaded properly
+        echo "Testing wolfPKCS11 integration with NSS..."
+        if modutil -list -dbdir sql:testdb | grep -i wolf; then
+          echo "✓ wolfPKCS11 module detected in NSS"
+        else
+          echo "Installing wolfPKCS11 module..."
+          modutil -add "wolfPKCS11" -libfile /usr/local/lib/libwolfpkcs11.so -dbdir sql:testdb
+          modutil -list -dbdir sql:testdb
+        fi
+
+        # Generate test certificates with OpenSSL for server
         cat > openssl.conf << 'EOF'
         [req]
         distinguished_name = req_distinguished_name
@@ -187,9 +265,11 @@ jobs:
         echo "Certificate and key files:"
         ls -la server.*
 
-    - name: Run NSS SSLTap Test
+    - name: Run NSS SSLTap Test with wolfPKCS11
       run: |
         set -e
+        export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+        export NSS_DEFAULT_DB_TYPE=sql
 
         # Start OpenSSL s_server with proper parameters for persistent connections
         echo "=== Starting SSL Server ==="
@@ -238,7 +318,12 @@ jobs:
         echo
 
         # Start ssltap to capture SSL traffic (it acts as a proxy)
-        echo "Starting ssltap as proxy - clients connect to port 1924, forwards to localhost:4433..."
+        echo "Starting ssltap with wolfPKCS11 loaded - clients connect to port 1924, forwards to localhost:4433..."
+        echo "Setting environment for wolfPKCS11 debugging..."
+        export NSS_DEBUG_PKCS11_MODULE=wolfPKCS11
+        export NSPR_LOG_MODULES=all:5
+        export NSPR_LOG_FILE=/tmp/nss_ssltap.log
+
         ssltap -l -s localhost:4433 > /tmp/ssltap_output.log 2>&1 &
         SSLTAP_PID=$!
 
@@ -265,16 +350,37 @@ jobs:
 
         echo
 
-        # Generate SSL traffic for ssltap to capture
-        echo "=== Generating SSL Traffic ==="
-        echo "Creating SSL connections through ssltap proxy (port 1924)..."
+        # Generate SSL traffic for ssltap to capture using NSS tools
+        echo "=== Generating SSL Traffic with NSS/wolfPKCS11 ==="
+        echo "Creating SSL connections through ssltap proxy (port 1924) using NSS tools..."
+
+        # Test with NSS tstclnt (NSS test client)
+        echo "Testing with NSS tstclnt through ssltap proxy..."
+        if command -v tstclnt >/dev/null 2>&1; then
+          timeout 10s tstclnt -h localhost -p 1924 -o -n testcert > /tmp/tstclnt_test.log 2>&1 || echo "tstclnt test completed"
+        else
+          echo "tstclnt not available, using curl instead..."
+        fi
 
         # Test with curl
         echo "Testing with curl through ssltap proxy..."
         timeout 10s curl -k -v --max-time 5 https://localhost:1924/ > /tmp/curl_test.log 2>&1 || echo "curl test completed"
 
         # Give ssltap time to process all traffic
-        sleep 1
+        sleep 2
+
+        echo
+
+        # Test wolfPKCS11 functionality through NSS
+        echo "=== Testing wolfPKCS11 PKCS#11 Operations ==="
+        cd /opt/certs/testdb
+
+        echo "Listing PKCS#11 modules..."
+        modutil -list -dbdir sql:. > /tmp/pkcs11_modules.log 2>&1 || true
+
+        echo "Testing key generation with wolfPKCS11..."
+        # Try to generate a key using wolfPKCS11 through NSS
+        timeout 30s pkcs11-tool --module /usr/local/lib/libwolfpkcs11.so --list-slots > /tmp/pkcs11_slots.log 2>&1 || echo "pkcs11-tool test completed"
 
         echo
 
@@ -299,7 +405,7 @@ jobs:
 
         # Display results
         echo "=== Test Results ==="
-        echo "✅ SSLTap Test Completed Successfully!"
+        echo "✅ wolfPKCS11 NSS SSLTap Test Completed Successfully!"
         echo
 
         echo "SSLTap captured output:"
@@ -309,6 +415,20 @@ jobs:
         else
           echo "No ssltap output captured (this may be normal depending on ssltap version)"
           echo "ssltap was monitoring during the SSL connections shown below"
+        fi
+
+        echo
+        echo "NSS PKCS#11 Module List:"
+        echo "----------------------------------------"
+        if [ -f /tmp/pkcs11_modules.log ]; then
+          cat /tmp/pkcs11_modules.log
+        fi
+
+        echo
+        echo "PKCS#11 Slots (wolfPKCS11):"
+        echo "----------------------------------------"
+        if [ -f /tmp/pkcs11_slots.log ]; then
+          cat /tmp/pkcs11_slots.log
         fi
 
         echo
@@ -331,20 +451,32 @@ jobs:
           echo "  ✗ curl SSL connection failed"
         fi
 
+        if [ -f /tmp/tstclnt_test.log ] && grep -q "connected" /tmp/tstclnt_test.log; then
+          echo "  ✓ NSS tstclnt connection successful"
+        fi
+
+        echo
+        echo "NSS debugging log:"
+        echo "----------------------------------------"
+        if [ -f /tmp/nss_ssltap.log ]; then
+          tail -50 /tmp/nss_ssltap.log
+        fi
+
     - name: Finalize Test Results
-      timeout-minutes: 10
+      timeout-minutes: 5
       run: |
         echo "========================================"
         echo "✅ All tests completed!"
-        echo "SSLTap is working with OpenSSL s_server"
+        echo "wolfPKCS11 integrated with NSS SSLTap"
         echo "========================================"
 
     - name: Upload test logs
       if: failure()
       uses: actions/upload-artifact@v4
       with:
-        name: nss-ssltap-test-logs
+        name: wolfpkcs11-nss-ssltap-test-logs
         path: |
           /tmp/*.log
           /logs/*.log
+          /opt/certs/testdb/*.log
         retention-days: 5

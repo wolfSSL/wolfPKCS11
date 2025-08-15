@@ -132,6 +132,7 @@ CK_RV C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList)
 static CK_RV ParseNssConfigString(char *nssArgs,
         char **configdir, size_t *configdirLen)
 {
+
     while (*nssArgs != '\0') {
         char* keyStart;
         size_t keyLen;
@@ -154,18 +155,30 @@ static CK_RV ParseNssConfigString(char *nssArgs,
         if (keyLen == 0)
             return CKR_ARGUMENTS_BAD;
 
-        if (*nssArgs != '\'')
-            return CKR_ARGUMENTS_BAD;
-        nssArgs++;
-        valueStart = nssArgs;
-        while (*nssArgs != '\'' && *nssArgs != '\0')
+        /* Handle both quoted and unquoted values */
+        if (*nssArgs == '\'') {
+            /* Quoted value */
+
             nssArgs++;
-        if (*nssArgs != '\'')
-            return CKR_ARGUMENTS_BAD;
-        valueLen = nssArgs - valueStart;
-        nssArgs++;
+            valueStart = nssArgs;
+            while (*nssArgs != '\'' && *nssArgs != '\0')
+                nssArgs++;
+            if (*nssArgs != '\'')
+                return CKR_ARGUMENTS_BAD;
+            valueLen = nssArgs - valueStart;
+            nssArgs++;
+        } else {
+            /* Unquoted value - read until space or end of string */
+
+            valueStart = nssArgs;
+            while (*nssArgs != ' ' && *nssArgs != '\0')
+                nssArgs++;
+            valueLen = nssArgs - valueStart;
+        }
+        
+        
         if (valueLen == 0)
-            return CKR_ARGUMENTS_BAD;
+            continue;
         if (*nssArgs != ' ' && *nssArgs != '\0')
             return CKR_ARGUMENTS_BAD;
 
@@ -177,6 +190,7 @@ static CK_RV ParseNssConfigString(char *nssArgs,
             break;
         }
     }
+
     return CKR_OK;
 }
 #endif

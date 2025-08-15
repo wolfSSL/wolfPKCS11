@@ -209,7 +209,7 @@ jobs:
         # Generate a test certificate and key
         echo "2. Generating CA and user certificates:"
 
-        # Step 1: Create a CA certificate
+        # Step 1: Create a CA certificate using OpenSSL
         echo "   Creating CA certificate..."
         cat > ca-openssl.conf << 'CAEOF'
         [req]
@@ -236,32 +236,21 @@ jobs:
         # Import CA certificate into NSS database
         certutil -A -n "TestCA" -i ca-cert.pem -t "CT,C,C" -d /nss-test/nssdb
 
-        # Step 2: Create user certificate signed by CA
-        echo "   Creating user certificate signed by CA..."
-        cat > user-openssl.conf << 'USEREOF'
-        [req]
-        distinguished_name = req_distinguished_name
-        prompt = no
+        # Step 2: Generate user certificate and key pair directly in NSS
+        echo "   Generating user certificate and key pair in NSS database..."
+        
+        # Create random seed for key generation
+        dd if=/dev/urandom of=noise.bin bs=20 count=1 2>/dev/null
+        
+        # Generate certificate request with key pair (creates DER format)
+        printf '\n\n' | certutil -R -s "CN=Test User,O=NSS Test,C=US" \
+        -o user-req.der -d /nss-test/nssdb -z noise.bin
 
-        [req_distinguished_name]
-        CN = Test User
-        O = NSS Test
-        C = US
-        emailAddress = test@example.com
+        # Convert DER format certificate request to PEM format for OpenSSL
+        openssl req -in user-req.der -inform DER -out user-req.pem -outform PEM
 
-        [v3_user]
-        keyUsage = critical, digitalSignature, keyEncipherment
-        extendedKeyUsage = critical, emailProtection
-        basicConstraints = critical, CA:false
-        subjectKeyIdentifier = hash
-        subjectAltName = email:test@example.com
-        USEREOF
-
-        # Create user certificate request (without authority key identifier)
-        openssl req -new -newkey rsa:2048 -keyout user-key.pem -out user-req.pem -nodes \
-        -config user-openssl.conf
-
-        # Create signing config with authority key identifier
+        # Sign the certificate request with CA
+        echo "   Signing user certificate with CA..."
         cat > signing.conf << 'SIGNEOF'
         [v3_user_sign]
         keyUsage = critical, digitalSignature, keyEncipherment
@@ -272,20 +261,12 @@ jobs:
         subjectAltName = email:test@example.com
         SIGNEOF
 
-        # Sign user certificate with CA
         openssl x509 -req -in user-req.pem -CA ca-cert.pem -CAkey ca-key.pem -CAcreateserial \
         -out user-cert.pem -days 365 -extensions v3_user_sign -extfile signing.conf
 
-        # Convert user certificate to PKCS#12 format
-        openssl pkcs12 -export -in user-cert.pem -inkey user-key.pem -out user-cert.p12 \
-        -name "testcert" -passout pass:
-
-        # Import user certificate into NSS database
-        echo "   Importing user certificate into NSS database..."
-        pk12util -i user-cert.p12 -d /nss-test/nssdb -W ""
-
-        # Set proper trust attributes
-        certutil -M -n "testcert" -t "u,u,u" -d /nss-test/nssdb
+        # Import the signed certificate back into NSS database
+        echo "   Importing signed user certificate..."
+        certutil -A -n "testcert" -i user-cert.pem -t "u,u,u" -d /nss-test/nssdb
 
         echo "   ✓ CA and user certificates created successfully"
 

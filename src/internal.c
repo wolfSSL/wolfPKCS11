@@ -283,6 +283,10 @@ struct WP11_Object {
     int serialLen;                     /* Length of certificate serial number */
     unsigned char* subject;            /* Subject of the object               */
     int subjectLen;                    /* Length of subject                   */
+#ifdef WOLFPKCS11_NSS
+    unsigned char* email;              /* Certificate email (NSS extension)   */
+    int emailLen;                      /* Length of certificate email         */
+#endif
 
     word32 category;                   /* Category of certificate             */
 
@@ -4379,6 +4383,15 @@ static int wp11_Object_Load_Object(WP11_Object* object, int tokenId, int objId)
                     /* Read the category of the object. (4) */
                     ret = wp11_storage_read_word32(storage, &object->category);
                 }
+#ifdef WOLFPKCS11_NSS
+                if (ret == 0) {
+                    /* Read email of the object. (variable emailLen) */
+                    ret = wp11_storage_read_alloc_array(storage,
+                        &object->email, &object->emailLen);
+                    if (ret == BUFFER_E)
+                        ret = 0;
+                }
+#endif
             }
             else if (ret == BUFFER_E) {
                 /* Older version of the storage format, doesn't have these, so
@@ -4464,7 +4477,11 @@ static int wp11_Object_Store_Object(WP11_Object* object, int tokenId, int objId)
     void* storage = NULL;
     word32 dummy = 0;
     int variableSz = (object->keyIdLen + object->labelLen +
-        object->issuerLen + object->serialLen + object->subjectLen);
+        object->issuerLen + object->serialLen + object->subjectLen
+#ifdef WOLFPKCS11_NSS
+        + object->emailLen
+#endif
+        );
 
     /* Open access to key object. */
     ret = wp11_storage_open(WOLFPKCS11_STORE_OBJECT, tokenId, objId, variableSz,
@@ -4541,6 +4558,13 @@ static int wp11_Object_Store_Object(WP11_Object* object, int tokenId, int objId)
             /* Write the category of the object. (4) */
             ret = wp11_storage_write_word32(storage, object->category);
         }
+#ifdef WOLFPKCS11_NSS
+        if (ret == 0) {
+            /* Write email of the object. (variable emailLen) */
+            ret = wp11_storage_write_array(storage, object->email,
+                                            object->emailLen);
+        }
+#endif
 
         wp11_storage_close(storage);
     }
@@ -7353,6 +7377,10 @@ void WP11_Object_Free(WP11_Object* object)
         XFREE(object->serial, NULL, DYNAMIC_TYPE_CERT);
     if (object->subject != NULL)
         XFREE(object->subject, NULL, DYNAMIC_TYPE_CERT);
+#ifdef WOLFPKCS11_NSS
+    if (object->email != NULL)
+        XFREE(object->email, NULL, DYNAMIC_TYPE_CERT);
+#endif
     if (object->objClass == CKO_CERTIFICATE) {
         XFREE(object->data.cert.data, NULL, DYNAMIC_TYPE_CERT);
         certFreed = 1;
@@ -8196,6 +8224,11 @@ static int GetCertAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
         case CKA_SUBJECT:
             ret = GetData(object->subject, object->subjectLen, data, len);
             break;
+#ifdef WOLFPKCS11_NSS
+        case CKA_NSS_EMAIL:
+            ret = GetData(object->email, object->emailLen, data, len);
+            break;
+#endif
         default:
             ret = NOT_AVAILABLE_E;
             break;
@@ -9263,6 +9296,12 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             ret = WP11_Object_SetData(&object->subject, &object->subjectLen,
                                       data, (int)len);
             break;
+#ifdef WOLFPKCS11_NSS
+        case CKA_NSS_EMAIL:
+            ret = WP11_Object_SetData(&object->email, &object->emailLen,
+                                      data, (int)len);
+            break;
+#endif
 
         case CKA_AC_ISSUER:
         case CKA_ATTR_TYPES:

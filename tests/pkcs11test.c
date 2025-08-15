@@ -409,6 +409,55 @@ static CK_RV test_not_initialized(void* args)
     return ret;
 }
 
+#if defined(WOLFPKCS11_NSS) && !defined(WOLFPKCS11_NO_STORE)
+static CK_RV test_nss_config_string_parsing(void* args)
+{
+    CK_RV ret;
+    CK_C_INITIALIZE_ARGS initArgs;
+    CK_CHAR_PTR nssConfigStr = (CK_CHAR_PTR)"configdir='' certPrefix='' keyPrefix='' secmod='' flags=readOnly,noCertDB,noModDB,forceOpen,optimizeSpace updatedir='' updateCertPrefix='' updateKeyPrefix='' updateid='' updateTokenDescription=''";
+    
+    (void)args;
+    
+    /* Test with the problematic NSS config string that has unquoted flags */
+    XMEMSET(&initArgs, 0x00, sizeof(initArgs));
+    initArgs.flags = CKF_OS_LOCKING_OK;
+    initArgs.LibraryParameters = (CK_CHAR_PTR *)nssConfigStr;
+    
+    /* This should succeed - the parser should handle unquoted flag values */
+    ret = funcList->C_Initialize(&initArgs);
+    CHECK_CKR(ret, "Initialize with NSS config string");
+    
+    if (ret == CKR_OK) {
+        funcList->C_Finalize(NULL);
+    }
+    
+    return ret;
+}
+
+static CK_RV test_nss_config_string_mixed_values(void* args)
+{
+    CK_RV ret;
+    CK_C_INITIALIZE_ARGS initArgs;
+    CK_CHAR_PTR nssConfigStr = (CK_CHAR_PTR)"configdir='/tmp/test' certPrefix='' keyPrefix=cert flags=readOnly,noCertDB updatedir='' updateid=test123";
+    
+    (void)args;
+    
+    /* Test with mixed quoted and unquoted values */
+    XMEMSET(&initArgs, 0x00, sizeof(initArgs));
+    initArgs.flags = CKF_OS_LOCKING_OK;
+    initArgs.LibraryParameters = (CK_CHAR_PTR *)nssConfigStr;
+    
+    /* This should succeed - the parser should handle mixed quoted/unquoted values */
+    ret = funcList->C_Initialize(&initArgs);
+    CHECK_CKR(ret, "Initialize with mixed NSS config string");
+    
+    if (ret == CKR_OK) {
+        funcList->C_Finalize(NULL);
+    }
+    
+    return ret;
+}
+#endif
 
 static CK_RV test_no_token_init(void* args)
 {
@@ -14955,6 +15004,87 @@ static CK_RV test_nss_derive_tls12_master_key(void* args) {
 
     return ret;
 }
+
+/* Test CKA_NSS_EMAIL attribute for certificate objects */
+static CK_RV test_nss_email_attribute(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_CERTIFICATE_TYPE certType = CKC_X_509;
+    
+    /* Test email address */
+    static CK_UTF8CHAR test_email[] = "test@wolfssl.com";
+    static CK_UTF8CHAR label[] = "NSS Email Test Certificate";
+    static CK_BYTE subject[] = "CN=Test User,O=wolfSSL,C=US";
+    static CK_BYTE id[] = {0x01, 0x02, 0x03, 0x04, 0x05};
+    
+    /* Minimal X.509 certificate data for testing */
+    static CK_BYTE certificate[] = {
+        0x30, 0x82, 0x01, 0x22, 0x30, 0x0D, 0x06, 0x09, 0x2A, 0x86,
+        0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01, 0x05, 0x00, 0x03,
+        0x82, 0x01, 0x0F, 0x00, 0x30, 0x82, 0x01, 0x0A, 0x02, 0x82,
+        0x01, 0x01, 0x00, 0xC0, 0x95, 0x08, 0xE1, 0x57, 0x41, 0xF2
+    };
+    
+    /* Template for creating the certificate object with NSS email attribute */
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS, &certificateClass, sizeof(certificateClass) },
+        { CKA_CERTIFICATE_TYPE, &certType, sizeof(certType) },
+        { CKA_TOKEN, &ckTrue, sizeof(ckTrue) },
+        { CKA_LABEL, label, sizeof(label)-1 },
+        { CKA_SUBJECT, subject, sizeof(subject)-1 },
+        { CKA_ID, id, sizeof(id) },
+        { CKA_VALUE, certificate, sizeof(certificate) },
+        { CKA_NSS_EMAIL, test_email, sizeof(test_email)-1 }
+    };
+    CK_ULONG tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
+    
+    /* Buffer to retrieve the email attribute */
+    CK_BYTE emailBuffer[64];
+    CK_ATTRIBUTE getEmailAttr = {
+        CKA_NSS_EMAIL, emailBuffer, sizeof(emailBuffer)
+    };
+    
+    /* Create the certificate object with NSS email attribute */
+    ret = funcList->C_CreateObject(session, tmpl, tmplCnt, &obj);
+    CHECK_CKR(ret, "Create Certificate Object with NSS Email");
+    
+    /* Verify the NSS_EMAIL attribute can be retrieved */
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, obj, &getEmailAttr, 1);
+        CHECK_CKR(ret, "Get NSS_EMAIL attribute");
+    }
+    
+    /* Verify the email value matches what was set */
+    if (ret == CKR_OK) {
+        if (getEmailAttr.ulValueLen != sizeof(test_email)-1 ||
+            XMEMCMP(emailBuffer, test_email, sizeof(test_email)-1) != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "NSS_EMAIL attribute value incorrect");
+        }
+    }
+    
+    /* Test getting the attribute length first (NULL buffer) */
+    if (ret == CKR_OK) {
+        CK_ATTRIBUTE getLenAttr = { CKA_NSS_EMAIL, NULL, 0 };
+        ret = funcList->C_GetAttributeValue(session, obj, &getLenAttr, 1);
+        CHECK_CKR(ret, "Get NSS_EMAIL attribute length");
+        
+        if (ret == CKR_OK && getLenAttr.ulValueLen != sizeof(test_email)-1) {
+            ret = -1;
+            CHECK_CKR(ret, "NSS_EMAIL attribute length incorrect");
+        }
+    }
+    
+    /* Clean up - destroy the object */
+    if (ret == CKR_OK) {
+        ret = funcList->C_DestroyObject(session, obj);
+        CHECK_CKR(ret, "Destroy NSS Email Certificate Object");
+    }
+    
+    return ret;
+}
 #endif
 #endif
 
@@ -15143,6 +15273,10 @@ static CK_RV test_private_object_access(void* args)
 static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_NO_INIT_DECL(test_get_function_list),
     PKCS11TEST_FUNC_NO_INIT_DECL(test_not_initialized),
+#if defined(WOLFPKCS11_NSS) && !defined(WOLFPKCS11_NO_STORE)
+    PKCS11TEST_FUNC_NO_INIT_DECL(test_nss_config_string_parsing),
+    PKCS11TEST_FUNC_NO_INIT_DECL(test_nss_config_string_mixed_values),
+#endif
     PKCS11TEST_FUNC_NO_TOKEN_DECL(test_no_token_init),
     PKCS11TEST_FUNC_TOKEN_DECL(test_get_info),
     PKCS11TEST_FUNC_TOKEN_DECL(test_slot),
@@ -15393,6 +15527,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_nss_trust_object),
     PKCS11TEST_FUNC_SESS_DECL(test_nss_trust_object_token_storage),
     PKCS11TEST_FUNC_SESS_DECL(test_nss_derive_tls12_master_key),
+    PKCS11TEST_FUNC_SESS_DECL(test_nss_email_attribute),
 #endif
 #endif
 #ifndef NO_SHA
