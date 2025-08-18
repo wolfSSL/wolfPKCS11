@@ -1,0 +1,229 @@
+name: wolfPKCS11 TPM 2.0 Store Test
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  get_current_wolfssl_versions:
+    runs-on: ubuntu-latest
+    outputs:
+      wolfssl_versions: ${{ steps.json.outputs.wolfssl_versions }}
+    steps:
+    - name: Get current wolfSSL versions
+      id: json
+      run: |
+        current=`curl -s https://api.github.com/repos/wolfssl/wolfssl/releases | grep tag_name | cut -d : -f 2,3 | tr -d \" | tr -d , | tr -d ' ' | head -1`
+        VERSIONS=$(echo "[ \"$current\" ]")
+        echo "wolfSSL versions found: $VERSIONS"
+        echo "wolfssl_versions=$VERSIONS" >> $GITHUB_OUTPUT
+
+  get_current_wolftpm_versions:
+    runs-on: ubuntu-latest
+    outputs:
+      wolftpm_versions: ${{ steps.json.outputs.wolftpm_versions }}
+    steps:
+    - name: Get current wolfTPM version
+      id: json
+      run: |
+        current=`curl -s https://api.github.com/repos/wolfssl/wolftpm/releases | grep tag_name | cut -d : -f 2,3 | tr -d \" | tr -d , | tr -d ' ' | head -1`
+        VERSIONS=$(echo "[ \"$current\" ]")
+        echo "wolfTPM versions found: $VERSIONS"
+        echo "wolftpm_versions=$VERSIONS" >> $GITHUB_OUTPUT
+
+  build_wolfssl:
+    runs-on: ubuntu-latest
+    needs: [get_current_wolfssl_versions]
+    strategy:
+      matrix:
+        wolfssl_version: ${{ fromJson(needs.get_current_wolfssl_versions.outputs.wolfssl_versions) }}
+    name: Build wolfSSL
+    timeout-minutes: 4
+    steps:
+    - name: Checking cache for wolfssl
+      uses: actions/cache@v4
+      id: cache-wolfssl
+      with:
+        path: build-dir/
+        key: wolfssl-${{ matrix.wolfssl_version }}
+        lookup-only: true
+
+    - name: debug
+      run: echo wolfssl version ${{ matrix.wolfssl_version }}
+
+    - name: Checkout, build, and install wolfssl
+      if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+      uses: wolfSSL/actions-build-autotools-project@v1
+      with:
+        repository: wolfssl/wolfssl
+        ref: ${{ matrix.wolfssl_version }}
+        path: wolfssl/
+        configure: --enable-all CPPFLAGS=-DWC_RSA_DIRECT
+        check: false
+        install: true 
+
+  build_wolftpm:
+    runs-on: ubuntu-latest
+    needs: [build_wolfssl, get_current_wolftpm_versions, get_current_wolfssl_versions]
+    strategy:
+      matrix:
+        wolftpm_version: ${{ fromJson(needs.get_current_wolftpm_versions.outputs.wolftpm_versions) }}
+        wolfssl_version: ${{ fromJson(needs.get_current_wolfssl_versions.outputs.wolfssl_versions) }}
+    name: Build wolfTPM
+    timeout-minutes: 4
+    steps:
+    - name: Checking cache for wolftpm
+      uses: actions/cache@v4
+      id: cache-wolftpm
+      with:
+        path: build-dir/
+        key: wolftpm-${{ matrix.wolftpm_version }}
+        lookup-only: true
+
+    - name: Checking cache for wolfssl
+      uses: actions/cache@v4
+      with:
+        path: build-dir/
+        key: wolfssl-${{ matrix.wolfssl_version }}
+        fail-on-cache-miss: true
+
+    - name: debug
+      run: echo wolftpm version ${{ matrix.wolftpm_version }}
+
+    - name: Checkout, build, and install wolftpm
+      if: steps.cache-wolftpm.outputs.cache-hit != 'true'
+      uses: wolfSSL/actions-build-autotools-project@v1
+      with:
+        repository: wolfssl/wolftpm
+        ref: ${{ matrix.wolftpm_version }}
+        path: wolftpm
+        configure: --enable-swtpm --with-wolfcrypt=${{ github.workspace }}/build-dir/ LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include"
+        check: false
+        install: true
+
+    - name: Build wolfTPM examples
+      if: steps.cache-wolftpm.outputs.cache-hit != 'true'
+      working-directory: ./wolftpm
+      run: |
+        make examples
+
+    - name: Cache wolfTPM examples
+      if: steps.cache-wolftpm.outputs.cache-hit != 'true'
+      uses: actions/cache@v4
+      with:
+        path: wolftpm/examples/
+        key: wolftpm-examples-${{ matrix.wolftpm_version }}
+
+  tpm2-store-test:
+    runs-on: ubuntu-latest
+    needs: [build_wolfssl, build_wolftpm, get_current_wolfssl_versions, get_current_wolftpm_versions]
+    strategy:
+      matrix:
+        wolfssl_version: ${{ fromJson(needs.get_current_wolfssl_versions.outputs.wolfssl_versions) }}
+        wolftpm_version: ${{ fromJson(needs.get_current_wolftpm_versions.outputs.wolftpm_versions) }}
+    steps:
+    - name: Checkout wolfPKCS11
+      uses: actions/checkout@v4
+      with:
+        submodules: true
+
+    - name: Checking cache for wolfssl
+      uses: actions/cache@v4
+      with:
+        path: build-dir/
+        key: wolfssl-${{ matrix.wolfssl_version }}
+        fail-on-cache-miss: true
+
+    - name: Checking cache for wolftpm
+      uses: actions/cache@v4
+      with:
+        path: build-dir/
+        key: wolftpm-${{ matrix.wolftpm_version }}
+        fail-on-cache-miss: true
+
+    - name: Restore wolfTPM examples from cache
+      uses: actions/cache@v4
+      id: cache-wolftpm-examples
+      with:
+        path: wolftpm/examples/
+        key: wolftpm-examples-${{ matrix.wolftpm_version }}
+
+    - name: Debug wolftpm directory structure
+      run: |
+        echo "=== Debugging wolftpm directory structure ==="
+        ls -la wolftpm/ || echo "wolftpm directory not found"
+        ls -la wolftpm/examples/ || echo "wolftpm/examples directory not found"
+        ls -la wolftpm/examples/tpm2/ || echo "wolftpm/examples/tpm2 directory not found"
+        echo "=== Directory structure debug completed ==="
+
+    - name: Build wolfTPM examples if cache miss
+      if: steps.cache-wolftpm-examples.outputs.cache-hit != 'true'
+      run: |
+        echo "=== Building wolfTPM examples due to cache miss ==="
+        git clone https://github.com/wolfSSL/wolftpm.git
+        cd wolftpm
+        ./autogen.sh
+        ./configure --enable-swtpm
+        make examples
+        cd ..
+        echo "=== wolfTPM examples build completed ==="
+
+    - name: Setup ibmswtpm2
+      uses: actions/checkout@v4
+      with:
+        repository: kgoldman/ibmswtpm2
+        path: ibmswtpm2
+
+    - name: ibmswtpm2 make
+      working-directory: ./ibmswtpm2/src
+      run: |
+          make
+          ./tpm_server &
+
+    - name: Build wolfPKCS11 with TPM Store
+      run: |
+        echo "=== Building wolfPKCS11 with TPM Store ==="
+
+        ./autogen.sh
+        ./configure --enable-singlethreaded --enable-wolftpm --disable-dh \
+            LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-DWOLFPKCS11_TPM_STORE -I${{ github.workspace }}/build-dir/include"
+        make -j$(nproc)
+
+        echo "=== wolfPKCS11 TPM Store build completed ==="
+
+    - name: Test TPM Store Basic Functionality
+      run: |
+        echo "=== Testing TPM Store Basic Functionality ==="
+        echo "Running basic PKCS11 tests with TPM store..."
+
+        # Test basic functionality
+        ./tests/pkcs11str
+        echo "=== Basic TPM store tests completed ==="
+
+    - name: Test TPM Store Object Operations
+      run: |
+        echo "=== Testing TPM Store Object Operations ==="
+        echo "Testing object creation, storage, and retrieval with TPM..."
+
+        # Test object operations
+        ./tests/pkcs11test
+        echo "=== TPM store object operations completed ==="
+
+    - name: Test TPM Store Examples
+      run: |
+        echo "=== Testing TPM Store Examples ==="
+        echo "Testing example programs with TPM storage..."
+
+        # Test key generation examples
+        echo "Testing RSA key generation..."
+        ./examples/add_rsa_key
+
+        echo "Testing AES key operations..."
+        ./examples/add_aes_key
+
+        echo "Testing HMAC key operations..."
+        ./examples/add_hmac_key
+
+        echo "=== TPM store examples completed ==="

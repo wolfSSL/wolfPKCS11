@@ -5923,7 +5923,7 @@ CK_RV C_VerifyRecover(CK_SESSION_HANDLE hSession,
                       CK_BYTE_PTR pData, CK_ULONG_PTR pulDataLen)
 {
     WP11_Session* session;
-#ifndef NO_RSA
+#if !defined(NO_RSA) && defined(WC_RSA_DIRECT)
     int ret;
     WP11_Object* obj = NULL;
     word32 decDataLen;
@@ -5954,7 +5954,7 @@ CK_RV C_VerifyRecover(CK_SESSION_HANDLE hSession,
         return rv;
     }
 
-#ifdef NO_RSA
+#if defined(NO_RSA) || !defined(WC_RSA_DIRECT)
     (void) pData;
     return CKR_MECHANISM_INVALID;
 #else
