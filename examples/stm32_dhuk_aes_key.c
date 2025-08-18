@@ -371,13 +371,8 @@ static CK_RV pkcs11_compare_results(CK_SESSION_HANDLE session)
      };
     byte cipher[16];
     byte output[16];
-    byte expected[] = {                        
-         0xf3,0xee,0xd1,0xbd,0xb5,0xd2,0xa0,0x3c,                                
-         0x06,0x4b,0x5a,0x7e,0x3d,0xb1,0x81,0xf8
-    };
     byte iv[16];
     CK_ULONG cipherLen = sizeof(cipher);
-    CK_ULONG plainLen = sizeof(plain);
     CK_ULONG outputLen = sizeof(output);
     CK_OBJECT_HANDLE key;
     int i;
@@ -432,26 +427,6 @@ static CK_RV pkcs11_compare_results(CK_SESSION_HANDLE session)
     return ret;
 }
 
-/* Match the command line argument with the string.
- *
- * arg  Command line argument.
- * str  String to check for.
- * return 1 if the command line argument matches the string, 0 otherwise.
- */
-static int string_matches(const char* arg, const char* str)
-{
-    int len = (int)XSTRLEN(str) + 1;
-    return XSTRNCMP(arg, str, len) == 0;
-}
-
-
-/* Display the usage options of the benchmark program. */
-static void Usage(void)
-{
-    printf("add_aes_key\n");
-    printf("-?                 Help, print this usage\n");
-}
-
 
 #ifndef NO_MAIN_DRIVER
 int main(int argc, char* argv[])
@@ -461,7 +436,6 @@ int stm32_dhuk_aes_key(int argc, char* argv[])
 {
     int ret;
     CK_RV rv;
-    const char* libName = WOLFPKCS11_DLL_FILENAME;
     CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
 
 #ifndef WOLFPKCS11_NO_ENV
@@ -469,24 +443,8 @@ int stm32_dhuk_aes_key(int argc, char* argv[])
         XSETENV("WOLFPKCS11_TOKEN_PATH", "./store", 1);
     }
 #endif
-    printf("Testing PKCS11 DHUK AES use\n\r");
-    
-    argc--;
-    argv++;
-    while (argc > 0) {
-        if (string_matches(*argv, "-?")) {
-            Usage();
-            return 0;
-        }
-        else {
-            fprintf(stderr, "Unrecognized command line argument\n  %s\n",
-                argv[0]);
-            return 1;
-        }
+    printf("Example PKCS11 DHUK AES use\n\r");
 
-        argc--;
-        argv++;
-    }
 
     rv = pkcs11_init(&session);
     if (rv == CKR_OK) {

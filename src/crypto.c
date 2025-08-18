@@ -6703,7 +6703,7 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
 
             if (WP11_Object_GetDevId(wrappingKey) == WOLFSSL_STM32U5_DHUK_DEVID) {
                 if (wc_Stm32_Aes_Wrap(NULL, serialBuff, serialSize, pWrappedKey,
-                        pulWrappedKeyLen, NULL) != 0) {
+                        (word32*)pulWrappedKeyLen, NULL) != 0) {
                     rv = CKR_FUNCTION_FAILED;
                     goto err_out;
                 }
