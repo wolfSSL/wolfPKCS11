@@ -12151,6 +12151,7 @@ int WP11_AesEcb_Encrypt(unsigned char* plain, word32 plainSz,
         wc_AesFree(&aes);
     }
 
+    (void)session;
     return ret;
 }
 
@@ -12194,6 +12195,7 @@ int WP11_AesEcb_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
         wc_AesFree(&aes);
     }
 
+    (void)session;
     return ret;
 }
 #endif /* HAVE_AESECB */
