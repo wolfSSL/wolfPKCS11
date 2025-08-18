@@ -57,6 +57,13 @@ extern "C" {
 #define CKA_NSS (CKA_VENDOR_DEFINED | CK_VENDOR_NSS)
 #endif
 
+#ifdef WOLFPKCS11_DHUK
+#define CK_VENDOR_DEVID 0x1L
+/* Set the crypto callback device ID to be used with the object */
+#define CKA_DEVID (CKA_VENDOR_DEFINED | CK_VENDOR_DEVID)
+
+#endif
+
 #ifndef NULL_PTR
 #define NULL_PTR        0
 #endif
@@ -444,6 +451,7 @@ typedef CK_BYTE           CK_UTF8CHAR;
 typedef CK_BYTE           CK_BBOOL;
 typedef unsigned long int CK_ULONG;
 typedef long int          CK_LONG;
+typedef int               CK_INT;
 typedef CK_ULONG          CK_FLAGS;
 typedef CK_BYTE*          CK_BYTE_PTR;
 typedef CK_CHAR*          CK_CHAR_PTR;

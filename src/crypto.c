@@ -40,6 +40,7 @@
 #define ATTR_TYPE_BOOL         1
 #define ATTR_TYPE_DATA         2
 #define ATTR_TYPE_DATE         3
+#define ATTR_TYPE_INT          4
 
 #define PRF_KEY_SIZE            48
 
@@ -235,6 +236,7 @@ static AttributeType attrType[] = {
     { CKA_TRUST_CODE_SIGNING,          ATTR_TYPE_ULONG },
     { CKA_TRUST_STEP_UP_APPROVED,      ATTR_TYPE_BOOL  },
 #endif
+    { CKA_DEVID,                       ATTR_TYPE_INT  },
 };
 /* Count of elements in attribute type list. */
 #define ATTR_TYPE_SIZE     (sizeof(attrType) / sizeof(*attrType))
@@ -311,6 +313,13 @@ static CK_RV CheckAttributes(CK_ATTRIBUTE* pTemplate, CK_ULONG ulCount, int set)
                 return CKR_ATTRIBUTE_VALUE_INVALID;
             if ((attr->pValue != NULL) &&
                 (attr->ulValueLen != sizeof(CK_ULONG)))
+                return CKR_BUFFER_TOO_SMALL;
+        }
+        else if (attrType[j].type == ATTR_TYPE_INT) {
+            if (attr->pValue == NULL && set)
+                return CKR_ATTRIBUTE_VALUE_INVALID;
+            if ((attr->pValue != NULL) &&
+                (attr->ulValueLen != sizeof(CK_INT)))
                 return CKR_BUFFER_TOO_SMALL;
         }
         else if (attrType[j].type == ATTR_TYPE_BOOL) {
@@ -6627,11 +6636,12 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
     keyClass = WP11_Object_GetClass(key);
 
     rv = CHECK_WRAPPABLE(keyClass, keyType);
-    if (rv != CKR_OK)
+    if (rv != CKR_OK) {
+        WOLFPKCS11_MSG("Not a wrappable key: keyClass %d keyType %d\n", keyClass, keyType);
         return rv;
+    }
 
     switch (keyType) {
-#ifndef WOLFPKCS11_NO_STORE
 #ifndef NO_RSA
         case CKK_RSA:
             ret = WP11_Rsa_SerializeKeyPTPKC8(key, NULL, &serialSize);
@@ -6672,7 +6682,6 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
                 goto err_out;
             }
             break;
-#endif
         default:
             rv = CKR_KEY_NOT_WRAPPABLE;
             goto err_out;
@@ -6692,14 +6701,22 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
                 goto err_out;
             }
 
-            rv = EncryptInit(hSession, pMechanism, hWrappingKey, 1);
-            if (rv != CKR_OK)
-                goto err_out;
+            if (WP11_Object_GetDevId(wrappingKey) == WOLFSSL_STM32U5_DHUK_DEVID) {
+                if (wc_Stm32_Aes_Wrap(NULL, serialBuff, serialSize, pWrappedKey,
+                        pulWrappedKeyLen, NULL) != 0) {
+                    rv = CKR_FUNCTION_FAILED;
+                    goto err_out;
+                }
+            }
+            else {
+                rv = EncryptInit(hSession, pMechanism, hWrappingKey, 1);
+                if (rv != CKR_OK)
+                    goto err_out;
 
-            rv = C_Encrypt(hSession, serialBuff, serialSize, pWrappedKey, pulWrappedKeyLen);
-            if (rv != CKR_OK)
-                goto err_out;
-
+                rv = C_Encrypt(hSession, serialBuff, serialSize, pWrappedKey, pulWrappedKeyLen);
+                if (rv != CKR_OK)
+                    goto err_out;
+            }
             break;
 #endif
 #ifndef NO_RSA
