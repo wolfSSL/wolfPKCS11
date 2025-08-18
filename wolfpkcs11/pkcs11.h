@@ -57,12 +57,9 @@ extern "C" {
 #define CKA_NSS (CKA_VENDOR_DEFINED | CK_VENDOR_NSS)
 #endif
 
-#ifdef WOLFPKCS11_DHUK
-#define CK_VENDOR_DEVID 0x1L
+#define CK_VENDOR_DEVID 0x1000L
 /* Set the crypto callback device ID to be used with the object */
 #define CKA_DEVID (CKA_VENDOR_DEFINED | CK_VENDOR_DEVID)
-
-#endif
 
 #ifndef NULL_PTR
 #define NULL_PTR        0

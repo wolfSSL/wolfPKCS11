@@ -6701,19 +6701,24 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
                 goto err_out;
             }
 
-            if (WP11_Object_GetDevId(wrappingKey) == WOLFSSL_STM32U5_DHUK_DEVID) {
+        #ifdef WOLFPKCS11_DHUK
+            if (WP11_Object_GetDevId(wrappingKey) ==
+                    WOLFSSL_STM32U5_DHUK_DEVID) {
                 if (wc_Stm32_Aes_Wrap(NULL, serialBuff, serialSize, pWrappedKey,
                         (word32*)pulWrappedKeyLen, NULL) != 0) {
                     rv = CKR_FUNCTION_FAILED;
                     goto err_out;
                 }
             }
-            else {
+            else
+        #endif
+            {
                 rv = EncryptInit(hSession, pMechanism, hWrappingKey, 1);
                 if (rv != CKR_OK)
                     goto err_out;
 
-                rv = C_Encrypt(hSession, serialBuff, serialSize, pWrappedKey, pulWrappedKeyLen);
+                rv = C_Encrypt(hSession, serialBuff, serialSize, pWrappedKey,
+                    pulWrappedKeyLen);
                 if (rv != CKR_OK)
                     goto err_out;
             }
