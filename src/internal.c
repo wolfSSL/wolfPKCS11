@@ -5355,6 +5355,8 @@ static int wp11_Slot_Init(WP11_Slot* slot, int id)
         ret = wp11_TpmInit(slot);
     #elif defined (WOLFSSL_MAXQ10XX_CRYPTO)
         slot->devId = MAXQ_DEVICE_ID;
+    #elif defined (WOLFSSL_STM32U5_DHUK)
+        slot->devId = WOLFSSL_STM32U5_SAES_DEVID;
     #endif
         /* Create the minimum number of unused sessions. */
         for (i = 0; ret == 0 && i < WP11_SESSION_CNT_MIN; i++) {

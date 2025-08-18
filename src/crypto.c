@@ -6637,7 +6637,6 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
 
     rv = CHECK_WRAPPABLE(keyClass, keyType);
     if (rv != CKR_OK) {
-        WOLFPKCS11_MSG("Not a wrappable key: keyClass %d keyType %d\n", keyClass, keyType);
         return rv;
     }
 
