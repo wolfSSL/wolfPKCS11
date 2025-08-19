@@ -6641,7 +6641,7 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
     }
 
     switch (keyType) {
-#ifndef NO_RSA
+#if !defined(NO_RSA) && !defined(WOLFPKCS11_NO_STORE)
         case CKK_RSA:
             ret = WP11_Rsa_SerializeKeyPTPKC8(key, NULL, &serialSize);
             if (ret != 0)
@@ -6659,6 +6659,7 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
             }
             break;
 #endif
+#if defined(WOLFSSL_STM32U5_DHUK) || !defined(WOLFPKCS11_NO_STORE)
 #ifndef NO_AES
         case CKK_AES:
 #endif
@@ -6681,6 +6682,7 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
                 goto err_out;
             }
             break;
+#endif
         default:
             rv = CKR_KEY_NOT_WRAPPABLE;
             goto err_out;

@@ -7161,6 +7161,7 @@ int WP11_Session_RemoveObject(WP11_Session* session, WP11_Object* object)
     else {
         WP11_Lock_UnlockRW(&session->slot->token.lock);
     }
+    (void)id; /* set but not used with WOLFPKCS11_NO_STORE */
     return ret;
 }
 
