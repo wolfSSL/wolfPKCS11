@@ -10347,15 +10347,10 @@ int WP11_RsaPKCSPSS_Verify(unsigned char* sig, word32 sigLen,
                                           pss->hashType, pss->saltLen, 0);
         if (ret == 0)
             *stat = 1;
-        /* Both can indicate that the verification failed */
-        if (ret == BAD_PADDING_E || ret == PSS_SALTLEN_E) {
-            *stat = 0;
-            ret = 0;
-        }
     }
-    /* Make sure bad padding returns success, but verify failed.
+    /* Make sure bad padding/salt length returns success, but verify failed.
      * Calling code expects this. */
-    if (ret == BAD_PADDING_E) {
+    if (ret == BAD_PADDING_E || ret == PSS_SALTLEN_E) {
         ret = 0;
         *stat = 0;
     }
@@ -10716,7 +10711,7 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
     ecc_key pubKey;
     unsigned char* x963Data = point;
     word32 x963Len = pointLen;
-    int dataLen;
+    word32 expectedPointLen;
     int i = 0;
 #if defined(ECC_TIMING_RESISTANT) && (!defined(HAVE_FIPS) || \
     (defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION > 2)))
@@ -10738,13 +10733,13 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
             }
         }
         if (i < (int)pointLen) {
-            dataLen = point[i++];
-            if (dataLen == (int)(pointLen - i)) {
+            expectedPointLen = priv->data.ecKey->dp->size * 2 + 1;
+            if (pointLen > expectedPointLen) {
+                x963Len = point[i++];
                 x963Data = point + i;
-                x963Len = dataLen;
             }
             else {
-                /* Length mismatch, treat as raw X9.63 data */
+                /* Treat as raw X9.63 data */
                 x963Data = point;
                 x963Len = pointLen;
             }
