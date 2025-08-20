@@ -108,7 +108,7 @@ Set to any value to stop storage of token data.
 
 ## Release Notes
 
-### wolfPKCS11 Release 2.0 (TBD)
+### wolfPKCS11 Release 2.0 (August 26, 2025)
 
 **Summary**
 
@@ -157,6 +157,8 @@ This release contains many new features so that it can be the PKCS11 backend for
   - `CKM_SHA1_RSA_PKCS_PSS`
   - `CKM_SHA3*`
   - `CKM_MD5`
+  - `CKM_NSS_PKCS12_PBE_SHA*_HMAC_KEY_GEN` (NSS builds only)
+  - `CKM_PKCS5_PBKD2`
 * Added new types:
   - `CKO_DATA`
   - `CKO_NSS_TRUST` (NSS builds only)
@@ -179,6 +181,8 @@ This release contains many new features so that it can be the PKCS11 backend for
   - `CKA_TRUST_EMAIL_PROTECTION` (NSS builds only)
   - `CKA_TRUST_CODE_SIGNING` (NSS builds only)
   - `CKA_TRUST_STEP_UP_APPROVED` (NSS builds only)
+  - `CKA_NSS_EMAIL` (NSS builds only)
+  - `CKA_NSS_DB` (NSS builds only, not stored)
 * Added SHA3 support for digest and HMAC
 * Added AES key gen and key wrap
 * Added `--enable-nss` for NSS specific PKCS11 quirks
@@ -204,7 +208,12 @@ This release contains many new features so that it can be the PKCS11 backend for
 * Fixed ECC curve lookup for FIPSv5
 * Fixed default attributes for keys
 * `C_DestroyObject` now deletes files instead of leaving truncated files
-
+* Added support for STM32U5 DHUK wrapping
+* Added PBKDF2 support for pins
+  - Enabled by default for FIPS
+  - Enabled using `--enable-pbkdf2` or defining `WOLFPKCS11_PBKDF2`
+* Added `--pbkdf2-iterations` and `PBKDF2_ITERATIONS` to set the number of
+  PBKDF2 iterations for pin handling (default 600,000).
 
 ### wolfPKCS11 Release 1.3 (Mar 22, 2024)
 
