@@ -40,7 +40,6 @@
 #define ATTR_TYPE_BOOL         1
 #define ATTR_TYPE_DATA         2
 #define ATTR_TYPE_DATE         3
-#define ATTR_TYPE_INT          4
 
 #define PRF_KEY_SIZE            48
 
@@ -236,7 +235,7 @@ static AttributeType attrType[] = {
     { CKA_TRUST_CODE_SIGNING,          ATTR_TYPE_ULONG },
     { CKA_TRUST_STEP_UP_APPROVED,      ATTR_TYPE_BOOL  },
 #endif
-    { CKA_DEVID,                       ATTR_TYPE_INT  },
+    { CKA_WOLFSSL_DEVID,               ATTR_TYPE_ULONG },
 };
 /* Count of elements in attribute type list. */
 #define ATTR_TYPE_SIZE     (sizeof(attrType) / sizeof(*attrType))
@@ -313,13 +312,6 @@ static CK_RV CheckAttributes(CK_ATTRIBUTE* pTemplate, CK_ULONG ulCount, int set)
                 return CKR_ATTRIBUTE_VALUE_INVALID;
             if ((attr->pValue != NULL) &&
                 (attr->ulValueLen != sizeof(CK_ULONG)))
-                return CKR_BUFFER_TOO_SMALL;
-        }
-        else if (attrType[j].type == ATTR_TYPE_INT) {
-            if (attr->pValue == NULL && set)
-                return CKR_ATTRIBUTE_VALUE_INVALID;
-            if ((attr->pValue != NULL) &&
-                (attr->ulValueLen != sizeof(CK_INT)))
                 return CKR_BUFFER_TOO_SMALL;
         }
         else if (attrType[j].type == ATTR_TYPE_BOOL) {

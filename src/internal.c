@@ -7470,9 +7470,9 @@ CK_KEY_TYPE WP11_Object_GetType(WP11_Object* object)
  * @param  object  [in]  Object object.
  * @return  Object's devId.
  */
-CK_INT WP11_Object_GetDevId(WP11_Object* object)
+CK_ULONG WP11_Object_GetDevId(WP11_Object* object)
 {
-    return object->devId;
+    return (CK_ULONG)object->devId;
 }
 
 /**
@@ -8195,22 +8195,6 @@ static int GetULong(CK_ULONG value, byte* data, CK_ULONG* len)
     return ret;
 }
 
-static int GetAttributeInt(int value, byte* data, CK_ULONG* len)
-{
-    int ret = 0;
-    CK_ULONG dataLen = sizeof(value);
-
-    if (data == NULL)
-        *len = dataLen;
-    else if (*len < dataLen)
-        ret = BUFFER_E;
-    else {
-        *len = dataLen;
-        *(int*)data = value;
-    }
-
-    return ret;
-}
 
 /**
  * Get the data of a data array.
@@ -8984,8 +8968,8 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                 break;
             }
 
-        case CKA_DEVID:
-            ret = GetAttributeInt(object->devId, data, len);
+        case CKA_WOLFSSL_DEVID:
+            ret = GetULong(object->devId, data, len);
             break;
     }
 
@@ -9359,8 +9343,8 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             }
             break;
 
-        case CKA_DEVID:
-            object->devId = *(CK_INT*)data;
+        case CKA_WOLFSSL_DEVID:
+            object->devId = (int)(*(CK_ULONG*)data);
             break;
 
         default:

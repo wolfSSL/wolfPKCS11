@@ -386,7 +386,7 @@ WP11_LOCAL int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest);
 
 WP11_LOCAL CK_OBJECT_HANDLE WP11_Object_GetHandle(WP11_Object* object);
 WP11_LOCAL CK_KEY_TYPE WP11_Object_GetType(WP11_Object* object);
-WP11_LOCAL int WP11_Object_GetDevId(WP11_Object* object);
+WP11_LOCAL CK_ULONG WP11_Object_GetDevId(WP11_Object* object);
 
 WP11_LOCAL int WP11_Object_SetRsaKey(WP11_Object* object, unsigned char** data,
                           CK_ULONG* len);

@@ -113,11 +113,11 @@ static CK_KEY_TYPE aesKeyType  = CKK_AES;
 static CK_KEY_TYPE genericKeyType  = CKK_GENERIC_SECRET;
 #endif
 
-static unsigned char aes_256_key[] = {                           
-    0x60,0x3d,0xeb,0x10,0x15,0xca,0x71,0xbe,                                
-    0x2b,0x73,0xae,0xf0,0x85,0x7d,0x77,0x81,                                
-    0x1f,0x35,0x2c,0x07,0x3b,0x61,0x08,0xd7,                                
-    0x2d,0x98,0x10,0xa3,0x09,0x14,0xdf,0xf4 
+static unsigned char aes_256_key[] = {
+    0x60,0x3d,0xeb,0x10,0x15,0xca,0x71,0xbe,
+    0x2b,0x73,0xae,0xf0,0x85,0x7d,0x77,0x81,
+    0x1f,0x35,0x2c,0x07,0x3b,0x61,0x08,0xd7,
+    0x2d,0x98,0x10,0xa3,0x09,0x14,0xdf,0xf4
  };
 
 
@@ -125,7 +125,7 @@ CK_RV pkcs11_add_aes_dhuk_key(CK_SESSION_HANDLE session);
 CK_RV pkcs11_add_aes_dhuk_key(CK_SESSION_HANDLE session)
 {
     CK_RV ret;
-    int devId = WOLFSSL_STM32U5_DHUK_DEVID; /* signal use of hardware key */
+    CK_ULONG devId = WOLFSSL_STM32U5_DHUK_DEVID;/* signal use of hardware key */
     CK_ATTRIBUTE aes_dhuk_secret_key[] = {
         { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
 #ifndef NO_AES
@@ -137,7 +137,7 @@ CK_RV pkcs11_add_aes_dhuk_key(CK_SESSION_HANDLE session)
         { CKA_UNWRAP,            &ckTrue,           sizeof(ckTrue)            },
         { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
         { CKA_VALUE,             aes_256_key,       sizeof(aes_256_key)       },
-        { CKA_DEVID,             &devId,            sizeof(devId)             },
+        { CKA_WOLFSSL_DEVID,     &devId,            sizeof(devId)             },
     };
     CK_ULONG cnt = sizeof(aes_dhuk_secret_key)/sizeof(*aes_dhuk_secret_key);
     CK_OBJECT_HANDLE obj;
@@ -152,7 +152,7 @@ CK_RV pkcs11_add_aes_software_key(CK_SESSION_HANDLE session);
 CK_RV pkcs11_add_aes_software_key(CK_SESSION_HANDLE session)
 {
     CK_RV ret;
-    int devId = WOLFSSL_STM32U5_SAES_DEVID;
+    CK_ULONG devId = WOLFSSL_STM32U5_SAES_DEVID;
     CK_ATTRIBUTE aes_256_secret_key[] = {
         { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
 #ifndef NO_AES
@@ -164,7 +164,7 @@ CK_RV pkcs11_add_aes_software_key(CK_SESSION_HANDLE session)
         { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue)            },
         { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
         { CKA_VALUE,             aes_256_key,       sizeof(aes_256_key)       },
-        { CKA_DEVID,             &devId,            sizeof(devId)             },
+        { CKA_WOLFSSL_DEVID,     &devId,            sizeof(devId)             },
     };
     CK_ULONG cnt = sizeof(aes_256_secret_key)/sizeof(*aes_256_secret_key);
     CK_OBJECT_HANDLE obj;
@@ -188,10 +188,10 @@ CK_OBJECT_HANDLE find_key_type(CK_SESSION_HANDLE session, int devId)
     CHECK_CKR(ret, "Initialize Find");
 
     while (ret == CKR_OK) {
-        int devIdFound;
+        CK_ULONG devIdFound;
         CK_ULONG devIdLen = sizeof(devIdFound);
         CK_ATTRIBUTE getTmpl[] = {
-            { CKA_DEVID, &devIdFound, devIdLen },
+            { CKA_WOLFSSL_DEVID, &devIdFound, devIdLen },
         };
         CK_ULONG getTmplCnt = sizeof(getTmpl) / sizeof(CK_ATTRIBUTE);
 
@@ -201,7 +201,7 @@ CK_OBJECT_HANDLE find_key_type(CK_SESSION_HANDLE session, int devId)
             /* check devId match */
             ret = funcList->C_GetAttributeValue(session, obj, getTmpl, getTmplCnt);
             printf("Return value from GetAttributeValue = %d, {%d, %d}\n", ret, devIdFound, getTmpl[0].ulValueLen);
-            if (devIdFound == devId) {
+            if ((int)devIdFound == devId) {
                 match = obj;
                 break;
             }
@@ -260,13 +260,12 @@ static CK_OBJECT_HANDLE find_wrapped_key(CK_SESSION_HANDLE session)
 CK_RV pkcs11_wrap_aes_key(CK_SESSION_HANDLE session);
 CK_RV pkcs11_wrap_aes_key(CK_SESSION_HANDLE session)
 {
-    
     CK_OBJECT_HANDLE wrappedKey;
     CK_OBJECT_HANDLE dhuk;
     CK_OBJECT_HANDLE key;
     CK_BYTE wrappedKeyBuffer[32];
     CK_ULONG wrappedKeyBufferLen = sizeof(wrappedKeyBuffer);
-    int devId = WOLFSSL_STM32U5_DHUK_WRAPPED_DEVID;
+    CK_ULONG devId = WOLFSSL_STM32U5_DHUK_WRAPPED_DEVID;
     CK_MECHANISM mech = {CKM_AES_ECB, NULL, 0};
     int i;
     CK_RV rv;
@@ -304,7 +303,7 @@ CK_RV pkcs11_wrap_aes_key(CK_SESSION_HANDLE session)
         { CKA_ENCRYPT,           &ckTrue,           sizeof(ckTrue)            },
         { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue)            },
         { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
-        { CKA_DEVID, &devId, sizeof(devId) },
+        { CKA_WOLFSSL_DEVID,     &devId,            sizeof(devId) },
     };
     CK_ULONG wrapped_key_template_len = sizeof(wrapped_key_template) / sizeof(CK_ATTRIBUTE);
 
