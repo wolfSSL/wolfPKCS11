@@ -113,7 +113,7 @@ static CK_KEY_TYPE aesKeyType  = CKK_AES;
 static CK_KEY_TYPE genericKeyType  = CKK_GENERIC_SECRET;
 #endif
 
-static unsigned char aes_256_key[] = {
+static unsigned char aes256Key[] = {
     0x60,0x3d,0xeb,0x10,0x15,0xca,0x71,0xbe,
     0x2b,0x73,0xae,0xf0,0x85,0x7d,0x77,0x81,
     0x1f,0x35,0x2c,0x07,0x3b,0x61,0x08,0xd7,
@@ -136,7 +136,7 @@ CK_RV pkcs11_add_aes_dhuk_key(CK_SESSION_HANDLE session)
         { CKA_WRAP,              &ckTrue,           sizeof(ckTrue)            },
         { CKA_UNWRAP,            &ckTrue,           sizeof(ckTrue)            },
         { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
-        { CKA_VALUE,             aes_256_key,       sizeof(aes_256_key)       },
+        { CKA_VALUE,             aes256Key,         sizeof(aes256Key)         },
         { CKA_WOLFSSL_DEVID,     &devId,            sizeof(devId)             },
     };
     CK_ULONG cnt = sizeof(aes_dhuk_secret_key)/sizeof(*aes_dhuk_secret_key);
@@ -153,7 +153,7 @@ CK_RV pkcs11_add_aes_software_key(CK_SESSION_HANDLE session)
 {
     CK_RV ret;
     CK_ULONG devId = WOLFSSL_STM32U5_SAES_DEVID;
-    CK_ATTRIBUTE aes_256_secret_key[] = {
+    CK_ATTRIBUTE aes256SecretKey[] = {
         { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
 #ifndef NO_AES
         { CKA_KEY_TYPE,          &aesKeyType,       sizeof(aesKeyType)        },
@@ -163,13 +163,13 @@ CK_RV pkcs11_add_aes_software_key(CK_SESSION_HANDLE session)
         { CKA_ENCRYPT,           &ckTrue,           sizeof(ckTrue)            },
         { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue)            },
         { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
-        { CKA_VALUE,             aes_256_key,       sizeof(aes_256_key)       },
+        { CKA_VALUE,             aes256Key,         sizeof(aes256Key)         },
         { CKA_WOLFSSL_DEVID,     &devId,            sizeof(devId)             },
     };
-    CK_ULONG cnt = sizeof(aes_256_secret_key)/sizeof(*aes_256_secret_key);
+    CK_ULONG cnt = sizeof(aes256SecretKey)/sizeof(*aes256SecretKey);
     CK_OBJECT_HANDLE obj;
 
-    ret = funcList->C_CreateObject(session, aes_256_secret_key, cnt, &obj);
+    ret = funcList->C_CreateObject(session, aes256SecretKey, cnt, &obj);
     CHECK_CKR(ret, "CreateObject AES 256-bit key");
 
     return ret;
@@ -199,8 +199,10 @@ CK_OBJECT_HANDLE find_key_type(CK_SESSION_HANDLE session, int devId)
         CHECK_CKR(ret, "Find Object");
         if (cnt == 1) {
             /* check devId match */
-            ret = funcList->C_GetAttributeValue(session, obj, getTmpl, getTmplCnt);
-            printf("Return value from GetAttributeValue = %d, {%d, %d}\n", ret, devIdFound, getTmpl[0].ulValueLen);
+            ret = funcList->C_GetAttributeValue(session, obj, getTmpl,
+                getTmplCnt);
+            printf("Return value from GetAttributeValue = %d, {%d, %d}\n",
+                ret, devIdFound, getTmpl[0].ulValueLen);
             if ((int)devIdFound == devId) {
                 match = obj;
                 break;
@@ -269,19 +271,31 @@ CK_RV pkcs11_wrap_aes_key(CK_SESSION_HANDLE session)
     CK_MECHANISM mech = {CKM_AES_ECB, NULL, 0};
     int i;
     CK_RV rv;
+    CK_ATTRIBUTE wrappedKeyTemplate[] = {
+        { CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE, &aesKeyType, sizeof(aesKeyType) },
+        { CKA_VALUE, wrappedKeyBuffer, wrappedKeyBufferLen },
+        { CKA_ENCRYPT,           &ckTrue,           sizeof(ckTrue)            },
+        { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue)            },
+        { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
+        { CKA_WOLFSSL_DEVID,     &devId,            sizeof(devId) },
+    };
+    CK_ULONG wrappedKeyTemplateLen = sizeof(wrappedKeyTemplate) /
+        sizeof(CK_ATTRIBUTE);
+
 
     key = find_software_key(session);
     if (key == 0) {
         return CKR_FUNCTION_FAILED;
     }
 
-    // Wrap the key using the DHUK key
+    /* Wrap the key using the DHUK key */
     dhuk = find_dhuk_key(session);
     if (dhuk == 0) {
         return CKR_FUNCTION_FAILED;
     }
 
-    // Perform the wrapping operation
+    /* Perform the wrapping operation */
     rv = funcList->C_WrapKey(session, &mech, dhuk, key, wrappedKeyBuffer,
         &wrappedKeyBufferLen);
     if (rv != CKR_OK) {
@@ -296,18 +310,8 @@ CK_RV pkcs11_wrap_aes_key(CK_SESSION_HANDLE session)
     printf("\n");
 
     /* Create a wrapped key object */
-    CK_ATTRIBUTE wrapped_key_template[] = {
-        { CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass) },
-        { CKA_KEY_TYPE, &aesKeyType, sizeof(aesKeyType) },
-        { CKA_VALUE, wrappedKeyBuffer, wrappedKeyBufferLen },
-        { CKA_ENCRYPT,           &ckTrue,           sizeof(ckTrue)            },
-        { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue)            },
-        { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
-        { CKA_WOLFSSL_DEVID,     &devId,            sizeof(devId) },
-    };
-    CK_ULONG wrapped_key_template_len = sizeof(wrapped_key_template) / sizeof(CK_ATTRIBUTE);
-
-    rv = funcList->C_CreateObject(session, wrapped_key_template, wrapped_key_template_len, &wrappedKey);
+    rv = funcList->C_CreateObject(session, wrappedKeyTemplate,
+        wrappedKeyTemplateLen, &wrappedKey);
     if (rv != CKR_OK) {
         return rv;
     }
@@ -318,11 +322,12 @@ CK_RV pkcs11_wrap_aes_key(CK_SESSION_HANDLE session)
 }
 
 
-static CK_RV pkcs11_encrypt_with_key(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE key,
-    byte* data, CK_ULONG dataLen, byte* iv, byte* out, CK_ULONG_PTR outLen)
+static CK_RV pkcs11_encrypt_with_key(CK_SESSION_HANDLE session,
+    CK_OBJECT_HANDLE key, byte* data, CK_ULONG dataLen, byte* iv, byte* out,
+    CK_ULONG_PTR outLen)
 {
     CK_MECHANISM mech = {CKM_AES_CBC, iv, 16};
-    //CK_MECHANISM mech = {CKM_AES_ECB, NULL, 0};
+    /* CK_MECHANISM mech = {CKM_AES_ECB, NULL, 0}; */
     CK_RV rv;
 
     rv = funcList->C_EncryptInit(session, &mech, key);
@@ -339,11 +344,12 @@ static CK_RV pkcs11_encrypt_with_key(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE
 }
 
 
-static CK_RV pkcs11_decrypt_with_key(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE key,
-    byte* data, CK_ULONG dataLen, byte* iv, byte* out, CK_ULONG_PTR outLen)
+static CK_RV pkcs11_decrypt_with_key(CK_SESSION_HANDLE session,
+    CK_OBJECT_HANDLE key, byte* data, CK_ULONG dataLen, byte* iv, byte* out,
+    CK_ULONG_PTR outLen)
 {
     CK_MECHANISM mech = {CKM_AES_CBC, iv, 16};
-    //CK_MECHANISM mech = {CKM_AES_ECB, NULL, 0};
+    /* CK_MECHANISM mech = {CKM_AES_ECB, NULL, 0}; */
     CK_RV rv;
 
     rv = funcList->C_DecryptInit(session, &mech, key);
@@ -364,9 +370,9 @@ static CK_RV pkcs11_decrypt_with_key(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE
 static CK_RV pkcs11_compare_results(CK_SESSION_HANDLE session)
 {
     CK_RV ret = 0;
-    byte plain[] = {                         
-         0x6b,0xc1,0xbe,0xe2,0x2e,0x40,0x9f,0x96,                                
-         0xe9,0x3d,0x7e,0x11,0x73,0x93,0x17,0x2a                                 
+    byte plain[] = {
+         0x6b,0xc1,0xbe,0xe2,0x2e,0x40,0x9f,0x96,
+         0xe9,0x3d,0x7e,0x11,0x73,0x93,0x17,0x2a
      };
     byte cipher[16];
     byte output[16];
@@ -378,7 +384,7 @@ static CK_RV pkcs11_compare_results(CK_SESSION_HANDLE session)
 
     printf("Software key and wrapped key should produce the same results\n");
 
-    /* in applications a random IV should be used, for this example it is constant */
+    /* in applications a random IV should be used */
     for (i = 0; i < 16; i++) {
         iv[i] = i;
     }
@@ -386,7 +392,8 @@ static CK_RV pkcs11_compare_results(CK_SESSION_HANDLE session)
     /* Encrypt plain text using software only key */
     key = find_software_key(session);
     memset(cipher, 0, sizeof(cipher));
-    ret = pkcs11_encrypt_with_key(session, key, plain, sizeof(plain), iv, cipher, &cipherLen);
+    ret = pkcs11_encrypt_with_key(session, key, plain, sizeof(plain), iv,
+        cipher, &cipherLen);
     if (ret != CKR_OK) {
         return ret;
     }
@@ -400,7 +407,8 @@ static CK_RV pkcs11_compare_results(CK_SESSION_HANDLE session)
     /* encrypt using wrapped key */
     memset(cipher, 0, sizeof(cipher));
     key = find_wrapped_key(session);
-    ret = pkcs11_encrypt_with_key(session, key, plain, sizeof(plain), iv, cipher, &cipherLen);
+    ret = pkcs11_encrypt_with_key(session, key, plain, sizeof(plain), iv,
+        cipher, &cipherLen);
     if (ret != CKR_OK) {
         return ret;
     }
@@ -412,8 +420,9 @@ static CK_RV pkcs11_compare_results(CK_SESSION_HANDLE session)
     printf("\n");
 
     memset(output, 0, sizeof(output));
-    ret = pkcs11_decrypt_with_key(session, key, cipher, cipherLen, iv, output, &outputLen);
-        if (ret != CKR_OK) {
+    ret = pkcs11_decrypt_with_key(session, key, cipher, cipherLen, iv, output,
+        &outputLen);
+    if (ret != CKR_OK) {
         return ret;
     }
 
