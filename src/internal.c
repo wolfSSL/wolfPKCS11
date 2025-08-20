@@ -43,7 +43,7 @@
 #include <wolfssl/wolfcrypt/cmac.h>
 #include <wolfssl/wolfcrypt/kdf.h>
 
-#ifndef WOLFPKCS11_NO_STORE
+#if !defined(WOLFPKCS11_NO_STORE) && !defined(WOLFPKCS11_CUSTOM_STORE)
 /* OS-specific includes for directory creation */
 #if defined(_WIN32) || defined(_MSC_VER)
     #include <direct.h>
