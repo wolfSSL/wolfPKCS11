@@ -61,6 +61,10 @@ extern "C" {
 /* Set the crypto callback device ID to be used with the object */
 #define CKA_WOLFSSL_DEVID (CKA_VENDOR_DEFINED | CK_VENDOR_WOLFSSL_DEVID)
 
+#ifdef WOLFSSL_STM32U5_DHUK
+#define CKA_WOLFSSL_DHUK_IV (CKA_VENDOR_DEFINED | (CK_VENDOR_WOLFSSL_DEVID + 1))
+#endif
+
 #ifndef NULL_PTR
 #define NULL_PTR        0
 #endif
