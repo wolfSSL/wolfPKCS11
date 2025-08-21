@@ -235,6 +235,9 @@ static AttributeType attrType[] = {
     { CKA_TRUST_CODE_SIGNING,          ATTR_TYPE_ULONG },
     { CKA_TRUST_STEP_UP_APPROVED,      ATTR_TYPE_BOOL  },
 #endif
+#ifdef WOLFSSL_STM32U5_DHUK
+    { CKA_WOLFSSL_DHUK_IV,             ATTR_TYPE_DATA },
+#endif
     { CKA_WOLFSSL_DEVID,               ATTR_TYPE_ULONG },
 };
 /* Count of elements in attribute type list. */
@@ -6694,11 +6697,18 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
                 goto err_out;
             }
 
-        #ifdef WOLFPKCS11_DHUK
+        #ifdef WOLFSSL_STM32U5_DHUK
             if (WP11_Object_GetDevId(wrappingKey) ==
                     WOLFSSL_STM32U5_DHUK_DEVID) {
+                if (pMechanism->pParameter != NULL &&
+                    pMechanism->ulParameterLen != AES_IV_SIZE) {
+                    rv = CKR_ATTRIBUTE_VALUE_INVALID;
+                    goto err_out;
+                }
+
                 if (wc_Stm32_Aes_Wrap(NULL, serialBuff, serialSize, pWrappedKey,
-                        (word32*)pulWrappedKeyLen, NULL) != 0) {
+                        (word32*)pulWrappedKeyLen, pMechanism->pParameter,
+                        pMechanism->ulParameterLen) != 0) {
                     rv = CKR_FUNCTION_FAILED;
                     goto err_out;
                 }

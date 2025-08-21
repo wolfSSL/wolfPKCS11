@@ -253,6 +253,10 @@ struct WP11_Object {
 #ifdef WOLFPKCS11_TPM
     WOLFTPM2_KEYBLOB* tpmKey;
 #endif
+#ifdef WOLFSSL_STM32U5_DHUK
+    unsigned char* dhukIv; /* IV used with wrapping and unwrapping AES key.  */
+    int dhukIvLen;
+#endif
     CK_KEY_TYPE type;                  /* Key type of this object             */
     word32 size;                       /* Size of the key in bits or bytes    */
 #ifndef WOLFPKCS11_NO_STORE
@@ -6813,6 +6817,12 @@ int WP11_Session_SetCbcParams(WP11_Session* session, unsigned char* iv,
 
     /* AES object on session. */
     ret = wc_AesInit(&cbc->aes, NULL, object->devId);
+#ifdef WOLFSSL_STM32U5_DHUK
+    if (ret == 0 && object->dhukIvLen > 0) {
+        ret = wc_Stm32_Aes_SetDHUK_IV(&cbc->aes, object->dhukIv,
+            object->dhukIvLen);
+    }
+#endif
     if (ret == 0) {
         if (object->onToken)
             WP11_Lock_LockRO(object->lock);
@@ -8967,6 +8977,12 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                 }
                 break;
             }
+    #ifdef WOLFSSL_STM32U5_DHUK
+        case CKA_WOLFSSL_DHUK_IV:
+            ret = GetData((byte*)object->dhukIv, object->dhukIvLen,
+                    data, len);
+            break;
+    #endif
 
         case CKA_WOLFSSL_DEVID:
             ret = GetULong(object->devId, data, len);
@@ -9346,6 +9362,13 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
         case CKA_WOLFSSL_DEVID:
             object->devId = (int)(*(CK_ULONG*)data);
             break;
+
+    #ifdef WOLFSSL_STM32U5_DHUK
+        case CKA_WOLFSSL_DHUK_IV:
+            ret = WP11_Object_SetData(&object->dhukIv, &object->dhukIvLen,
+                                      data, (int)len);
+            break;
+    #endif
 
         default:
             ret = BAD_FUNC_ARG;
@@ -12115,6 +12138,11 @@ int WP11_AesEcb_Encrypt(unsigned char* plain, word32 plainSz,
     WP11_Data* key;
 
     ret = wc_AesInit(&aes, NULL, secret->devId);
+#ifdef WOLFSSL_STM32U5_DHUK
+    if (ret == 0 && secret->dhukIvLen > 0) {
+        ret = wc_Stm32_Aes_SetDHUK_IV(&aes, secret->dhukIv, secret->dhukIvLen);
+    }
+#endif
     if (ret == 0) {
         if (secret->onToken)
             WP11_Lock_LockRO(secret->lock);
@@ -12157,6 +12185,11 @@ int WP11_AesEcb_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
     WP11_Data* key;
 
     ret = wc_AesInit(&aes, NULL, secret->devId);
+#ifdef WOLFSSL_STM32U5_DHUK
+    if (ret == 0 && secret->dhukIvLen > 0) {
+        ret = wc_Stm32_Aes_SetDHUK_IV(&aes, secret->dhukIv, secret->dhukIvLen);
+    }
+#endif
     if (ret == 0) {
         if (secret->onToken)
             WP11_Lock_LockRO(secret->lock);

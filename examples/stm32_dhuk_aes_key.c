@@ -65,11 +65,12 @@ extern int uart_printf(const char* format, ...);
 static CK_FUNCTION_LIST* funcList;
 static CK_SLOT_ID slot = WOLFPKCS11_DLL_SLOT;
 
-static byte* userPin = (byte*)"wolfpkcs11-test";
+static byte* userDefaultPin = (byte*)"wolfpkcs11-test";
 static CK_ULONG userPinLen;
 
 
-static CK_RV pkcs11_init(CK_SESSION_HANDLE* session)
+static CK_RV pkcs11_init(CK_SESSION_HANDLE* session, char* userPin,
+    int userPinLen)
 {
     CK_RV ret = CKR_OK;
 
@@ -126,7 +127,7 @@ CK_RV pkcs11_add_aes_dhuk_key(CK_SESSION_HANDLE session)
 {
     CK_RV ret;
     CK_ULONG devId = WOLFSSL_STM32U5_DHUK_DEVID;/* signal use of hardware key */
-    CK_ATTRIBUTE aes_dhuk_secret_key[] = {
+    CK_ATTRIBUTE aesDhukSecretKey[] = {
         { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
 #ifndef NO_AES
         { CKA_KEY_TYPE,          &aesKeyType,       sizeof(aesKeyType)        },
@@ -135,14 +136,13 @@ CK_RV pkcs11_add_aes_dhuk_key(CK_SESSION_HANDLE session)
 #endif
         { CKA_WRAP,              &ckTrue,           sizeof(ckTrue)            },
         { CKA_UNWRAP,            &ckTrue,           sizeof(ckTrue)            },
-        { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
         { CKA_VALUE,             aes256Key,         sizeof(aes256Key)         },
         { CKA_WOLFSSL_DEVID,     &devId,            sizeof(devId)             },
     };
-    CK_ULONG cnt = sizeof(aes_dhuk_secret_key)/sizeof(*aes_dhuk_secret_key);
+    CK_ULONG cnt = sizeof(aesDhukSecretKey)/sizeof(*aesDhukSecretKey);
     CK_OBJECT_HANDLE obj;
 
-    ret = funcList->C_CreateObject(session, aes_dhuk_secret_key, cnt, &obj);
+    ret = funcList->C_CreateObject(session, aesDhukSecretKey, cnt, &obj);
     CHECK_CKR(ret, "CreateObject AES DHUK key");
 
     return ret;
@@ -162,7 +162,6 @@ CK_RV pkcs11_add_aes_software_key(CK_SESSION_HANDLE session)
 #endif
         { CKA_ENCRYPT,           &ckTrue,           sizeof(ckTrue)            },
         { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue)            },
-        { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
         { CKA_VALUE,             aes256Key,         sizeof(aes256Key)         },
         { CKA_WOLFSSL_DEVID,     &devId,            sizeof(devId)             },
     };
@@ -268,21 +267,27 @@ CK_RV pkcs11_wrap_aes_key(CK_SESSION_HANDLE session)
     CK_BYTE wrappedKeyBuffer[32];
     CK_ULONG wrappedKeyBufferLen = sizeof(wrappedKeyBuffer);
     CK_ULONG devId = WOLFSSL_STM32U5_DHUK_WRAPPED_DEVID;
-    CK_MECHANISM mech = {CKM_AES_ECB, NULL, 0};
+    byte iv[16];
+    /* CK_MECHANISM mech = {CKM_AES_ECB, NULL, 0}; */
+    CK_MECHANISM mech = {CKM_AES_CBC_PAD, iv, 16};
     int i;
     CK_RV rv;
     CK_ATTRIBUTE wrappedKeyTemplate[] = {
         { CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass) },
         { CKA_KEY_TYPE, &aesKeyType, sizeof(aesKeyType) },
         { CKA_VALUE, wrappedKeyBuffer, wrappedKeyBufferLen },
-        { CKA_ENCRYPT,           &ckTrue,           sizeof(ckTrue)            },
-        { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue)            },
-        { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
-        { CKA_WOLFSSL_DEVID,     &devId,            sizeof(devId) },
+        { CKA_ENCRYPT,           &ckTrue,           sizeof(ckTrue) },
+        { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue) },
+        { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue) },
+        { CKA_WOLFSSL_DHUK_IV,   iv,                sizeof(iv)     },
+        { CKA_WOLFSSL_DEVID,     &devId,            sizeof(devId)  },
     };
     CK_ULONG wrappedKeyTemplateLen = sizeof(wrappedKeyTemplate) /
         sizeof(CK_ATTRIBUTE);
 
+    for (i = 0; i < 16; i++) {
+        iv[i] = i;
+    }
 
     key = find_software_key(session);
     if (key == 0) {
@@ -388,7 +393,6 @@ static CK_RV pkcs11_compare_results(CK_SESSION_HANDLE session)
     for (i = 0; i < 16; i++) {
         iv[i] = i;
     }
-
     /* Encrypt plain text using software only key */
     key = find_software_key(session);
     memset(cipher, 0, sizeof(cipher));
@@ -435,6 +439,25 @@ static CK_RV pkcs11_compare_results(CK_SESSION_HANDLE session)
     return ret;
 }
 
+/* Match the command line argument with the string.
+ *
+ * arg  Command line argument.
+ * str  String to check for.
+ * return 1 if the command line argument matches the string, 0 otherwise.
+ */
+static int string_matches(const char* arg, const char* str)
+{
+    int len = (int)XSTRLEN(str) + 1;
+    return XSTRNCMP(arg, str, len) == 0;
+}
+
+/* Display the usage options of the benchmark program. */
+static void Usage(void)
+{
+    printf("stm32_dhuk_aes_key\n");
+    printf("-?                 Help, print this usage\n");
+    printf("-userPin <string>  User PIN\n");
+}
 
 #ifndef NO_MAIN_DRIVER
 int main(int argc, char* argv[])
@@ -445,16 +468,39 @@ int stm32_dhuk_aes_key(int argc, char* argv[])
     int ret;
     CK_RV rv;
     CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    char* userPin = userDefaultPin;
 
-#ifndef WOLFPKCS11_NO_ENV
-    if (!XGETENV("WOLFPKCS11_TOKEN_PATH")) {
-        XSETENV("WOLFPKCS11_TOKEN_PATH", "./store", 1);
-    }
-#endif
     printf("Example PKCS11 DHUK AES use\n\r");
 
+    argc--;
+    argv++;
+    while (argc > 0) {
+        if (string_matches(*argv, "-?")) {
+            Usage();
+            return 0;
+        }
+        else if (string_matches(*argv, "-userPin")) {
+            argc--;
+            argv++;
+            if (argc == 0) {
+                printf("User PIN not supplied\n");
+                return 1;
+            }
+            userPin = (byte*)*argv;
+        }
+        else {
+            printf("Unrecognized command line argument\n  %s\n",
+                argv[0]);
+            return 1;
+        }
 
-    rv = pkcs11_init(&session);
+        argc--;
+        argv++;
+    }
+    userPinLen = (int)XSTRLEN((const char*)userPin);
+
+
+    rv = pkcs11_init(&session, userPin, userPinLen);
     if (rv == CKR_OK) {
         rv = pkcs11_add_aes_dhuk_key(session);
     }
