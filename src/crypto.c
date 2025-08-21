@@ -235,6 +235,7 @@ static AttributeType attrType[] = {
     { CKA_TRUST_CODE_SIGNING,          ATTR_TYPE_ULONG },
     { CKA_TRUST_STEP_UP_APPROVED,      ATTR_TYPE_BOOL  },
 #endif
+    { CKA_WOLFSSL_DEVID,               ATTR_TYPE_ULONG },
 };
 /* Count of elements in attribute type list. */
 #define ATTR_TYPE_SIZE     (sizeof(attrType) / sizeof(*attrType))
@@ -6627,12 +6628,12 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
     keyClass = WP11_Object_GetClass(key);
 
     rv = CHECK_WRAPPABLE(keyClass, keyType);
-    if (rv != CKR_OK)
+    if (rv != CKR_OK) {
         return rv;
+    }
 
     switch (keyType) {
-#ifndef WOLFPKCS11_NO_STORE
-#ifndef NO_RSA
+#if !defined(NO_RSA) && !defined(WOLFPKCS11_NO_STORE)
         case CKK_RSA:
             ret = WP11_Rsa_SerializeKeyPTPKC8(key, NULL, &serialSize);
             if (ret != 0)
@@ -6650,6 +6651,7 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
             }
             break;
 #endif
+#if defined(WOLFSSL_STM32U5_DHUK) || !defined(WOLFPKCS11_NO_STORE)
 #ifndef NO_AES
         case CKK_AES:
 #endif
@@ -6692,14 +6694,27 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
                 goto err_out;
             }
 
-            rv = EncryptInit(hSession, pMechanism, hWrappingKey, 1);
-            if (rv != CKR_OK)
-                goto err_out;
+        #ifdef WOLFPKCS11_DHUK
+            if (WP11_Object_GetDevId(wrappingKey) ==
+                    WOLFSSL_STM32U5_DHUK_DEVID) {
+                if (wc_Stm32_Aes_Wrap(NULL, serialBuff, serialSize, pWrappedKey,
+                        (word32*)pulWrappedKeyLen, NULL) != 0) {
+                    rv = CKR_FUNCTION_FAILED;
+                    goto err_out;
+                }
+            }
+            else
+        #endif
+            {
+                rv = EncryptInit(hSession, pMechanism, hWrappingKey, 1);
+                if (rv != CKR_OK)
+                    goto err_out;
 
-            rv = C_Encrypt(hSession, serialBuff, serialSize, pWrappedKey, pulWrappedKeyLen);
-            if (rv != CKR_OK)
-                goto err_out;
-
+                rv = C_Encrypt(hSession, serialBuff, serialSize, pWrappedKey,
+                    pulWrappedKeyLen);
+                if (rv != CKR_OK)
+                    goto err_out;
+            }
             break;
 #endif
 #ifndef NO_RSA

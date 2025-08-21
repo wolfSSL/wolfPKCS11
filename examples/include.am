@@ -47,6 +47,7 @@ examples_token_info_LDADD =
 
 dist_noinst_SCRIPTS += examples/examples.test
 EXTRA_DIST += examples/rsa-2048.der
+EXTRA_DIST += examples/stm32_dhuk_aes_key.c
 
 if BUILD_STATIC
 examples_add_aes_key_LDADD      += src/libwolfpkcs11.la
