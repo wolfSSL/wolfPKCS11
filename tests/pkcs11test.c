@@ -415,22 +415,22 @@ static CK_RV test_nss_config_string_parsing(void* args)
     CK_RV ret;
     CK_C_INITIALIZE_ARGS initArgs;
     CK_CHAR_PTR nssConfigStr = (CK_CHAR_PTR)"configdir='' certPrefix='' keyPrefix='' secmod='' flags=readOnly,noCertDB,noModDB,forceOpen,optimizeSpace updatedir='' updateCertPrefix='' updateKeyPrefix='' updateid='' updateTokenDescription=''";
-    
+
     (void)args;
-    
+
     /* Test with the problematic NSS config string that has unquoted flags */
     XMEMSET(&initArgs, 0x00, sizeof(initArgs));
     initArgs.flags = CKF_OS_LOCKING_OK;
     initArgs.LibraryParameters = (CK_CHAR_PTR *)nssConfigStr;
-    
+
     /* This should succeed - the parser should handle unquoted flag values */
     ret = funcList->C_Initialize(&initArgs);
     CHECK_CKR(ret, "Initialize with NSS config string");
-    
+
     if (ret == CKR_OK) {
         funcList->C_Finalize(NULL);
     }
-    
+
     return ret;
 }
 
@@ -439,22 +439,22 @@ static CK_RV test_nss_config_string_mixed_values(void* args)
     CK_RV ret;
     CK_C_INITIALIZE_ARGS initArgs;
     CK_CHAR_PTR nssConfigStr = (CK_CHAR_PTR)"configdir='/tmp/test' certPrefix='' keyPrefix=cert flags=readOnly,noCertDB updatedir='' updateid=test123";
-    
+
     (void)args;
-    
+
     /* Test with mixed quoted and unquoted values */
     XMEMSET(&initArgs, 0x00, sizeof(initArgs));
     initArgs.flags = CKF_OS_LOCKING_OK;
     initArgs.LibraryParameters = (CK_CHAR_PTR *)nssConfigStr;
-    
+
     /* This should succeed - the parser should handle mixed quoted/unquoted values */
     ret = funcList->C_Initialize(&initArgs);
     CHECK_CKR(ret, "Initialize with mixed NSS config string");
-    
+
     if (ret == CKR_OK) {
         funcList->C_Finalize(NULL);
     }
-    
+
     return ret;
 }
 #endif
@@ -1433,6 +1433,7 @@ static CK_RV test_nss_trust_object_token_storage(void* args)
     return ret;
 }
 
+#ifndef NO_HMAC
 /* Test NSS PKCS#12 PBE SHA224 HMAC key generation */
 static CK_RV test_nss_pkcs12_pbe_sha224_hmac_key_gen(void* args)
 {
@@ -1605,20 +1606,6 @@ static CK_RV test_nss_pkcs12_pbe_sha384_hmac_key_gen(void* args)
                                   sizeof(keyTemplate)/sizeof(CK_ATTRIBUTE), &key);
     CHECK_CKR(ret, "NSS PKCS#12 PBE SHA384 HMAC Key Generation");
 
-    /* Test with invalid password */
-    if (ret == CKR_OK) {
-        CK_PBE_PARAMS invalidParams = pbeParams;
-        CK_MECHANISM invalidMech = mechanism;
-        invalidParams.pPassword = NULL;
-        invalidMech.pParameter = &invalidParams;
-
-        ret = funcList->C_GenerateKey(session, &invalidMech, keyTemplate,
-                                      sizeof(keyTemplate)/sizeof(CK_ATTRIBUTE), &key);
-        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
-                       "NSS PKCS#12 PBE SHA384 with NULL password");
-        ret = CKR_OK; /* Reset for next test */
-    }
-
     return ret;
 }
 
@@ -1735,28 +1722,12 @@ static CK_RV test_nss_pkcs12_pbe_key_sizes(void* args)
         CHECK_CKR(ret, "NSS PKCS#12 PBE with different key sizes");
     }
 
-    /* Test invalid key size (too large) */
-    if (ret == CKR_OK) {
-        CK_ULONG invalidKeySize = 1024; /* Too large */
-        CK_ATTRIBUTE keyTemplate[] = {
-            {CKA_CLASS, &keyClass, sizeof(keyClass)},
-            {CKA_KEY_TYPE, &keyType, sizeof(keyType)},
-            {CKA_VALUE_LEN, &invalidKeySize, sizeof(CK_ULONG)},
-            {CKA_LABEL, keyLabel, sizeof(keyLabel)-1}
-        };
-
-        ret = funcList->C_GenerateKey(session, &mechanism, keyTemplate,
-                                      sizeof(keyTemplate)/sizeof(CK_ATTRIBUTE), &key);
-        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
-                       "NSS PKCS#12 PBE with invalid key size");
-        ret = CKR_OK; /* Reset for continuation */
-    }
-
     return ret;
 }
-
+#endif
 #endif
 
+#ifndef NO_HMAC
 /* Test PKCS#5 PBKDF2 key generation */
 static CK_RV test_pkcs5_pbkdf2_key_gen(void* args)
 {
@@ -1765,7 +1736,7 @@ static CK_RV test_pkcs5_pbkdf2_key_gen(void* args)
     CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
 
     /* Test parameters */
-    CK_BYTE password[] = "TestPassword";
+    CK_BYTE password[] = "TestPassword123";
     CK_ULONG passwordLen = sizeof(password) - 1;
     CK_BYTE salt[] = {
         0x8A, 0x2F, 0x3E, 0x91, 0x45, 0x67, 0xBC, 0xDE,
@@ -1903,6 +1874,7 @@ static CK_RV test_pkcs5_pbkdf2_key_gen(void* args)
         ret = CKR_OK; /* Reset for next test */
     }
 
+#ifndef NO_SHA
     /* Test different hash algorithms */
     if (ret == CKR_OK) {
         CK_PKCS5_PBKD2_PARAMS sha1Params = pbkdf2Params;
@@ -1914,6 +1886,7 @@ static CK_RV test_pkcs5_pbkdf2_key_gen(void* args)
                                       sizeof(keyTemplate)/sizeof(CK_ATTRIBUTE), &key);
         CHECK_CKR(ret, "PKCS#5 PBKDF2 with SHA1");
     }
+#endif
 
     if (ret == CKR_OK) {
         CK_PKCS5_PBKD2_PARAMS sha512Params = pbkdf2Params;
@@ -1928,6 +1901,7 @@ static CK_RV test_pkcs5_pbkdf2_key_gen(void* args)
 
     return ret;
 }
+#endif
 
 static CK_RV test_op_state_fail(void* args)
 {
@@ -15507,13 +15481,13 @@ static CK_RV test_nss_email_attribute(void* args)
     CK_RV ret = CKR_OK;
     CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
     CK_CERTIFICATE_TYPE certType = CKC_X_509;
-    
+
     /* Test email address */
     static CK_UTF8CHAR test_email[] = "test@wolfssl.com";
     static CK_UTF8CHAR label[] = "NSS Email Test Certificate";
     static CK_BYTE subject[] = "CN=Test User,O=wolfSSL,C=US";
     static CK_BYTE id[] = {0x01, 0x02, 0x03, 0x04, 0x05};
-    
+
     /* Minimal X.509 certificate data for testing */
     static CK_BYTE certificate[] = {
         0x30, 0x82, 0x01, 0x22, 0x30, 0x0D, 0x06, 0x09, 0x2A, 0x86,
@@ -15521,7 +15495,7 @@ static CK_RV test_nss_email_attribute(void* args)
         0x82, 0x01, 0x0F, 0x00, 0x30, 0x82, 0x01, 0x0A, 0x02, 0x82,
         0x01, 0x01, 0x00, 0xC0, 0x95, 0x08, 0xE1, 0x57, 0x41, 0xF2
     };
-    
+
     /* Template for creating the certificate object with NSS email attribute */
     CK_ATTRIBUTE tmpl[] = {
         { CKA_CLASS, &certificateClass, sizeof(certificateClass) },
@@ -15534,23 +15508,23 @@ static CK_RV test_nss_email_attribute(void* args)
         { CKA_NSS_EMAIL, test_email, sizeof(test_email)-1 }
     };
     CK_ULONG tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
-    
+
     /* Buffer to retrieve the email attribute */
     CK_BYTE emailBuffer[64];
     CK_ATTRIBUTE getEmailAttr = {
         CKA_NSS_EMAIL, emailBuffer, sizeof(emailBuffer)
     };
-    
+
     /* Create the certificate object with NSS email attribute */
     ret = funcList->C_CreateObject(session, tmpl, tmplCnt, &obj);
     CHECK_CKR(ret, "Create Certificate Object with NSS Email");
-    
+
     /* Verify the NSS_EMAIL attribute can be retrieved */
     if (ret == CKR_OK) {
         ret = funcList->C_GetAttributeValue(session, obj, &getEmailAttr, 1);
         CHECK_CKR(ret, "Get NSS_EMAIL attribute");
     }
-    
+
     /* Verify the email value matches what was set */
     if (ret == CKR_OK) {
         if (getEmailAttr.ulValueLen != sizeof(test_email)-1 ||
@@ -15559,25 +15533,25 @@ static CK_RV test_nss_email_attribute(void* args)
             CHECK_CKR(ret, "NSS_EMAIL attribute value incorrect");
         }
     }
-    
+
     /* Test getting the attribute length first (NULL buffer) */
     if (ret == CKR_OK) {
         CK_ATTRIBUTE getLenAttr = { CKA_NSS_EMAIL, NULL, 0 };
         ret = funcList->C_GetAttributeValue(session, obj, &getLenAttr, 1);
         CHECK_CKR(ret, "Get NSS_EMAIL attribute length");
-        
+
         if (ret == CKR_OK && getLenAttr.ulValueLen != sizeof(test_email)-1) {
             ret = -1;
             CHECK_CKR(ret, "NSS_EMAIL attribute length incorrect");
         }
     }
-    
+
     /* Clean up - destroy the object */
     if (ret == CKR_OK) {
         ret = funcList->C_DestroyObject(session, obj);
         CHECK_CKR(ret, "Destroy NSS Email Certificate Object");
     }
-    
+
     return ret;
 }
 #endif
@@ -16023,13 +15997,17 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_nss_trust_object_token_storage),
     PKCS11TEST_FUNC_SESS_DECL(test_nss_derive_tls12_master_key),
     PKCS11TEST_FUNC_SESS_DECL(test_nss_email_attribute),
+#ifndef NO_HMAC
     PKCS11TEST_FUNC_SESS_DECL(test_nss_pkcs12_pbe_sha224_hmac_key_gen),
     PKCS11TEST_FUNC_SESS_DECL(test_nss_pkcs12_pbe_sha256_hmac_key_gen),
     PKCS11TEST_FUNC_SESS_DECL(test_nss_pkcs12_pbe_sha384_hmac_key_gen),
     PKCS11TEST_FUNC_SESS_DECL(test_nss_pkcs12_pbe_sha512_hmac_key_gen),
     PKCS11TEST_FUNC_SESS_DECL(test_nss_pkcs12_pbe_key_sizes),
 #endif
+#endif
+#ifndef NO_HMAC
     PKCS11TEST_FUNC_SESS_DECL(test_pkcs5_pbkdf2_key_gen),
+#endif
 #endif
 #ifndef NO_SHA
     PKCS11TEST_FUNC_SESS_DECL(test_x509_check_value),

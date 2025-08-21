@@ -6295,6 +6295,7 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
         case CKM_GENERIC_SECRET_KEY_GEN:
             keyType = CKK_GENERIC_SECRET;
             break;
+#ifndef NO_HMAC
         case CKM_PKCS5_PBKD2:
             {
                 CK_ATTRIBUTE *keyTypeAttr = NULL;
@@ -6318,6 +6319,7 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
             keyType = CKK_GENERIC_SECRET;
             break;
 #endif
+#endif
         default:
             rv = CKR_MECHANISM_INVALID;
             break;
@@ -6326,6 +6328,7 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
     if (rv == CKR_OK) {
         CK_ATTRIBUTE *lenAttr = NULL;
 
+#ifndef NO_HMAC
         /* PKCS#5 PBKDF2 key generation */
         if (pMechanism->mechanism == CKM_PKCS5_PBKD2) {
             CK_BYTE* derivedKey;
@@ -6335,7 +6338,7 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
             CK_ULONG secretKeyLen[2] = { 0, 0 };
             int ret;
             int hashType;
-            int pwLen;
+            CK_ULONG pwLen;
             CK_PKCS5_PBKD2_PARAMS2* params;
 
             CK_ULONG size1 = sizeof(CK_PKCS5_PBKD2_PARAMS2);
@@ -6380,27 +6383,41 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
             }
 
             switch (params->prf) {
+#ifndef NO_SHA
                 case CKP_PKCS5_PBKD2_HMAC_SHA1:
                     hashType = WC_SHA;
                     break;
+#endif
+#ifdef WOLFSSL_SHA224
                 case CKP_PKCS5_PBKD2_HMAC_SHA224:
                     hashType = WC_SHA224;
                     break;
+#endif
+#ifndef NO_SHA256
                 case CKP_PKCS5_PBKD2_HMAC_SHA256:
                     hashType = WC_SHA256;
                     break;
+#endif
+#ifdef WOLFSSL_SHA384
                 case CKP_PKCS5_PBKD2_HMAC_SHA384:
                     hashType = WC_SHA384;
                     break;
+#endif
+#ifdef WOLFSSL_SHA512
                 case CKP_PKCS5_PBKD2_HMAC_SHA512:
                     hashType = WC_SHA512;
                     break;
+#endif
+#ifndef WOLFSSL_NOSHA512_224
                 case CKP_PKCS5_PBKD2_HMAC_SHA512_224:
                     hashType = WC_SHA512_224;
                     break;
+#endif
+#ifndef WOLFSSL_NOSHA512_256
                 case CKP_PKCS5_PBKD2_HMAC_SHA512_256:
                     hashType = WC_SHA512_256;
                     break;
+#endif
                 default:
                     return CKR_MECHANISM_PARAM_INVALID;
             }
@@ -6423,7 +6440,7 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
                 return CKR_HOST_MEMORY;
 
             ret = WP11_PBKDF2(derivedKey,
-                             params->pPassword, pwLen,
+                             params->pPassword, (int)pwLen,
                              (const byte*)params->pSaltSourceData,
                              (int)params->ulSaltSourceDataLen,
                              (int)params->iterations,
@@ -6521,9 +6538,9 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
             if (derivedKey == NULL)
                 return CKR_HOST_MEMORY;
 
-            ret = WP11_PKCS12_PBKDF(derivedKey, password, passwordLen,
-                                  salt, saltLen, iterationCount,
-                                  derivedKeyLen, hashType);
+            ret = WP11_PKCS12_PBKDF(derivedKey, password, (int)passwordLen,
+                                  salt, (int)saltLen, (int)iterationCount,
+                                  (int)derivedKeyLen, hashType);
 
             if (ret != 0) {
                 XFREE(derivedKey, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -6554,6 +6571,7 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
             XFREE(derivedKey, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             return rv;
         }
+#endif
 #endif
 
         /* Standard key generation for non-PBE mechanisms */

@@ -12666,7 +12666,35 @@ int WP11_Digest_Single(unsigned char* data, word32 dataLen,
     return ret;
 }
 
+int WP11_PBKDF2(byte* output, const byte* passwd, int pLen,
+    const byte* salt, int sLen, int iterations, int kLen, int hashType)
+{
+    return wc_PBKDF2(output, passwd, pLen, salt, sLen, iterations, kLen,
+        hashType);
+}
+
+int WP11_PKCS12_PBKDF(byte* output, const byte* passwd, int pLen,
+    const byte* salt, int sLen, int iterations, int kLen, int hashType)
+{
+    /* For PKCS#12 MAC key derivation, purpose should be 3 */
+    return wc_PKCS12_PBKDF(output, passwd, pLen, salt, sLen, iterations,
+        kLen, hashType, 3);
+}
+
 #ifndef NO_HMAC
+/**
+ * Return the length of a signature in bytes.
+ *
+ * @param  session  [in]  Session object.
+ * @return  Length of HMAC signature in bytes.
+ */
+int WP11_Hmac_SigLen(WP11_Session* session)
+{
+    WP11_Hmac* hmac = &session->params.hmac;
+
+    return hmac->hmacSz;
+}
+
 /**
  * Convert the HMAC mechanism to a wolfCrypt hash type.
  *
@@ -12717,34 +12745,6 @@ static int wp11_hmac_hash_type(CK_MECHANISM_TYPE hmacMech, int* hashType)
 
     return ret;
 }
-
-int WP11_PBKDF2(byte* output, const byte* passwd, int pLen,
-    const byte* salt, int sLen, int iterations, int kLen, int hashType)
-{
-    return wc_PBKDF2(output, passwd, pLen, salt, sLen, iterations, kLen,
-        hashType);
-}
-
-int WP11_PKCS12_PBKDF(byte* output, const byte* passwd, int pLen,
-    const byte* salt, int sLen, int iterations, int kLen, int hashType)
-{
-    /* For PKCS#12 MAC key derivation, purpose should be 3 */
-    return wc_PKCS12_PBKDF(output, passwd, pLen, salt, sLen, iterations,
-        kLen, hashType, 3);
-}
-/**
- * Return the length of a signature in bytes.
- *
- * @param  session  [in]  Session object.
- * @return  Length of HMAC signature in bytes.
- */
-int WP11_Hmac_SigLen(WP11_Session* session)
-{
-    WP11_Hmac* hmac = &session->params.hmac;
-
-    return hmac->hmacSz;
-}
-
 
 /**
  * Initialize the HMAC operation.

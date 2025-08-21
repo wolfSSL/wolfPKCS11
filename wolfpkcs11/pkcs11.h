@@ -768,7 +768,7 @@ typedef struct CK_PKCS5_PBKD2_PARAMS2 {
     CK_ULONG ulPasswordLen;
 } CK_PKCS5_PBKD2_PARAMS2;
 
-/* If len is greated than this we assume it is a pointer, and therefore
+/* If len is greater than this we assume it is a pointer, and therefore
  * CK_PKCS5_PBKD2_PARAMS (NSS does this too) */
 #define CK_PKCS5_PBKD2_PARAMS_MAX_PWD_LEN 8192
 
