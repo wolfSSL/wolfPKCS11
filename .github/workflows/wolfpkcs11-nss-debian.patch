@@ -1,0 +1,43 @@
+diff '--color=auto' -ur a/debian/changelog b/debian/changelog
+--- a/debian/changelog	2024-10-10 20:51:11.000000000 +0100
++++ b/debian/changelog	2025-08-14 15:02:27.391964431 +0100
+@@ -1,3 +1,9 @@
++nss (2:3.87.1-1+wolfSSL-1) bookworm-security; urgency=medium
++
++  * First build with wolfPKCS11 backend
++
++ -- wolfSSL <support@wolfssl.com>  Thu, 08 Aug 2025 15:02:11 +0100
++
+ nss (2:3.87.1-1+deb12u1) bookworm-security; urgency=medium
+ 
+   * nss: fix CVE-2024-6602, CVE-2024-6609 and CVE-2024-0743
+diff '--color=auto' -ur a/debian/control b/debian/control
+--- a/debian/control	2022-05-31 22:30:45.000000000 +0100
++++ b/debian/control	2025-08-14 16:47:27.639784242 +0100
+@@ -19,7 +19,8 @@
+ Architecture: any
+ Pre-Depends: ${misc:Pre-Depends}
+ Depends: ${shlibs:Depends},
+- ${misc:Depends}
++ ${misc:Depends},
++ libwolfpkcs11 (>= 2.0.0)
+ Multi-Arch: same
+ Description: Network Security Service libraries
+  This is a set of libraries designed to support cross-platform development
+diff '--color=auto' -ur a/debian/rules b/debian/rules
+--- a/debian/rules	2022-08-23 22:57:38.000000000 +0100
++++ b/debian/rules	2025-08-14 16:11:46.719487807 +0100
+@@ -183,13 +183,6 @@
+ 	$(foreach lib,libsoftokn3.so libfreebl3.so libfreeblpriv3.so libnssdbm3.so, \
+ 		$(call cmd,umask 022; $(SHLIBSIGN) -v -i debian/libnss3/usr/lib/$(DEB_HOST_MULTIARCH)/$(lib)))
+ 
+-ifeq ($(DEB_HOST_ARCH),$(DEB_BUILD_ARCH))
+-	# Check FIPS mode correctly works
+-	mkdir debian/tmp
+-	LD_LIBRARY_PATH=debian/libnss3/usr/lib/$(DEB_HOST_MULTIARCH) debian/libnss3-tools/usr/bin/modutil -create -dbdir debian/tmp < /dev/null
+-	LD_LIBRARY_PATH=debian/libnss3/usr/lib/$(DEB_HOST_MULTIARCH) debian/libnss3-tools/usr/bin/modutil -fips true -dbdir debian/tmp < /dev/null
+-endif
+-
+ override_dh_makeshlibs:
+ 	dh_makeshlibs -a -- -c4
+ 

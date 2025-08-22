@@ -1,0 +1,409 @@
+name: wolfPKCS11 NSS pk12util Debian Package Test
+
+on:
+  push:
+    branches: [ main, master, nss ]
+  pull_request:
+    branches: [ main, master, nss ]
+  workflow_dispatch:
+
+env:
+  WOLFSSL_VERSION: v5.8.0-stable
+  NSS_DEBUG_PKCS11_MODULE: wolfPKCS11
+  NSPR_LOG_MODULES: all:5
+  NSPR_LOG_FILE: /logs/nss.log
+  NSS_OUTPUT_FILE: /logs/stats.log
+  NSS_STRICT_NOFORK: 1
+  NSS_DEBUG: all
+
+jobs:
+  nss-pk12util-debian-test:
+    runs-on: ubuntu-latest
+    container:
+      image: debian:bookworm
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install system dependencies
+      run: |
+        apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y \
+          build-essential \
+          automake \
+          libtool \
+          git \
+          pkg-config \
+          wget \
+          ca-certificates \
+          devscripts \
+          dpkg-dev \
+          fakeroot \
+          lintian \
+          dh-make \
+          debhelper \
+          dh-autoreconf \
+          openssl \
+          patch \
+          curl \
+          gnupg2 \
+          software-properties-common
+
+    - name: Setup Debian source repositories
+      run: |
+        # Add source repositories for apt-get source
+        echo "deb-src http://deb.debian.org/debian bookworm main" >> /etc/apt/sources.list
+        echo "deb-src http://deb.debian.org/debian-security bookworm-security main" >> /etc/apt/sources.list
+        echo "deb-src http://deb.debian.org/debian bookworm-updates main" >> /etc/apt/sources.list
+        apt-get update
+
+    - name: Build wolfSSL Debian package
+      run: |
+        cd /tmp
+        git clone https://github.com/wolfSSL/wolfssl.git --branch ${{ env.WOLFSSL_VERSION }} --depth 1
+        cd wolfssl
+
+        # Configure wolfSSL for PKCS#11 compatibility
+        ./autogen.sh
+        ./configure --enable-aescfb --enable-cryptocb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt --enable-cmac --enable-aesctr --enable-aesccm --enable-md5 C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT -DHAVE_AES_ECB -D_GNU_SOURCE"
+
+        # Build Debian package
+        make deb
+
+        # Install wolfSSL packages
+        dpkg -i *.deb
+
+    - name: Build wolfPKCS11 Debian package
+      run: |
+        # Build wolfPKCS11
+        ./autogen.sh
+        ./configure --enable-debug --enable-nss --enable-aesecb --enable-aesctr --enable-aesccm --enable-aescmac CFLAGS="-D_GNU_SOURCE"
+        make
+
+        # Build Debian package
+        make deb
+
+        # Install wolfPKCS11 packages
+        dpkg -i *.deb
+
+    - name: Clone wolfSSL OSP repository for patches
+      run: |
+        mkdir -p /tmp/src
+        cd /tmp/src
+
+        # Clone wolfSSL OSP repository for patches (always needed for potential patch application)
+        git clone https://github.com/wolfSSL/osp.git
+
+    - name: Cache NSS source and patches
+      id: cache-nss-source
+      uses: actions/cache@v4
+      with:
+        path: /tmp/nss-build
+        key: nss-debian-source-${{ hashFiles('.github/workflows/wolfpkcs11-nss-debian.patch') }}-${{ env.WOLFSSL_VERSION }}
+
+    - name: Cache NSS built packages
+      id: cache-nss-packages
+      uses: actions/cache@v4
+      with:
+        path: /tmp/nss-packages
+        key: nss-debian-packages-${{ hashFiles('.github/workflows/wolfpkcs11-nss-debian.patch') }}-${{ env.WOLFSSL_VERSION }}
+
+    - name: Get NSS Debian sources and apply wolfPKCS11 patch
+      if: steps.cache-nss-source.outputs.cache-hit != 'true'
+      run: |
+        mkdir -p /tmp/nss-build
+        cd /tmp/nss-build
+
+        # Get NSS Debian source package
+        apt-get source libnss3
+
+        # Find the NSS source directory
+        NSS_DIR=$(find . -maxdepth 1 -type d -name "nss-*" | head -1)
+        echo "Found NSS directory: $NSS_DIR"
+
+        if [ -z "$NSS_DIR" ]; then
+          echo "Error: NSS source directory not found"
+          exit 1
+        fi
+
+        cd "$NSS_DIR"
+
+        # Apply the wolfPKCS11 NSS Debian patch
+        echo "Applying wolfPKCS11 NSS Debian patch..."
+
+        # Copy patch file from workspace to current directory for reliable access
+        cp "${GITHUB_WORKSPACE}/.github/workflows/wolfpkcs11-nss-debian.patch" ./wolfpkcs11-nss-debian.patch
+
+        # Apply the patch
+        patch -p1 < ./wolfpkcs11-nss-debian.patch
+
+        echo "Patch applied successfully"
+
+        # Apply the wolfPKCS11 NSS code patch
+        echo "Applying wolfPKCS11 NSS code patch..."
+        patch -p1 < /tmp/src/osp/nss/nss-fixes-3.87.patch
+
+        echo "Patches applied successfully"
+
+    - name: Build NSS Debian package with wolfPKCS11 support
+      if: steps.cache-nss-packages.outputs.cache-hit != 'true'
+      run: |
+        cd /tmp/nss-build
+        NSS_DIR=$(find . -maxdepth 1 -type d -name "nss-*" | head -1)
+        cd "$NSS_DIR"
+
+        # Install build dependencies
+        apt-get build-dep -y libnss3
+
+        # Build the NSS packages
+        echo "Building NSS Debian packages..."
+        dpkg-buildpackage -us -uc -b
+
+        # Copy built packages to cache directory
+        cd ..
+        mkdir -p /tmp/nss-packages
+        cp *.deb /tmp/nss-packages/
+
+        echo "NSS packages built and cached:"
+        ls -la /tmp/nss-packages/
+
+    - name: Install NSS packages
+      run: |
+        echo "Installing NSS packages..."
+
+        # Ensure cache directory exists (in case cache was restored)
+        mkdir -p /tmp/nss-packages
+
+        # Check if packages exist in cache
+        if [ -f "/tmp/nss-packages/libnss3_"*.deb ]; then
+          echo "Using cached NSS packages:"
+          ls -la /tmp/nss-packages/
+          cd /tmp/nss-packages
+        else
+          echo "Using freshly built NSS packages:"
+          cd /tmp/nss-build
+          ls -la *.deb
+        fi
+
+        dpkg -i libnss3_*.deb libnss3-dev_*.deb libnss3-tools_*.deb
+
+    - name: Verify package installations
+      run: |
+        echo "=== Installed Package Versions ==="
+        dpkg -l | grep -E "(wolfssl|wolfpkcs11|libnss3)"
+        echo
+
+        echo "=== Library Dependencies ==="
+        ldd /usr/lib/*/libwolfpkcs11.so* || echo "wolfPKCS11 library not found"
+        ldd /usr/lib/*/libnss3.so* || echo "NSS library not found"
+        echo
+
+        echo "=== Available NSS Tools ==="
+        which certutil cmsutil || echo "NSS tools not found in PATH"
+        certutil --version || echo "certutil not working"
+
+    - name: Configure NSS database and wolfPKCS11
+      run: |
+        mkdir -p /nss-test/nssdb
+        chmod -R 777 /nss-test
+        mkdir -p /logs
+
+        # Configure NSS to use wolfPKCS11 from installed package
+        cat > /nss-test/pkcs11.txt << 'EOF'
+        library=/usr/lib/libwolfpkcs11.so
+        name=wolfPKCS11
+        NSS=Flags=internal,critical,fips cipherOrder=100 slotParams={0x00000001=[slotFlags=ECC,RSA,DSA,DH,RC2,RC4,DES,RANDOM,SHA1,MD5,MD2,SSL,TLS,AES,Camellia,SEED,SHA256,SHA512] }
+        EOF
+
+        # Initialize NSS database
+        certutil -N -d /nss-test/nssdb/ --empty-password
+
+        echo "NSS database initialized successfully"
+
+    - name: Run NSS pk12util tests with installed packages
+      run: |
+        cd /nss-test
+        set -e
+
+        echo "=== NSS pk12util Test Script (Using Installed Packages) ==="
+        echo "NSS Database location: /nss-test/nssdb"
+        echo "wolfPKCS11 library: /usr/lib/libwolfpkcs11.so"
+        echo
+
+        # Create test data
+        echo "1. Creating test data file:"
+        echo "This is test data for CMS signing and encryption" > test-data.txt
+        cat test-data.txt
+        echo
+
+        # Generate a test certificate and key
+        echo "2. Generating CA and user certificates:"
+
+        # Step 1: Create a CA certificate
+        echo "   Creating CA certificate..."
+        cat > ca-openssl.conf << 'CAEOF'
+        [req]
+        distinguished_name = req_distinguished_name
+        req_extensions = v3_ca
+        prompt = no
+
+        [req_distinguished_name]
+        CN = Test CA
+        O = NSS Test CA
+        C = US
+
+        [v3_ca]
+        keyUsage = critical, keyCertSign, cRLSign
+        basicConstraints = critical, CA:true
+        subjectKeyIdentifier = hash
+        authorityKeyIdentifier = keyid:always,issuer
+        CAEOF
+
+        # Create CA certificate and key
+        openssl req -x509 -newkey rsa:2048 -keyout ca-key.pem -out ca-cert.pem -days 365 -nodes \
+        -config ca-openssl.conf -extensions v3_ca
+
+        # Import CA certificate into NSS database
+        certutil -A -n "TestCA" -i ca-cert.pem -t "CT,C,C" -d /nss-test/nssdb
+
+        # Step 2: Create user certificate signed by CA
+        echo "   Creating user certificate signed by CA..."
+        cat > user-openssl.conf << 'USEREOF'
+        [req]
+        distinguished_name = req_distinguished_name
+        prompt = no
+
+        [req_distinguished_name]
+        CN = Test User
+        O = NSS Test
+        C = US
+        emailAddress = test@example.com
+
+        [v3_user]
+        keyUsage = critical, digitalSignature, keyEncipherment
+        extendedKeyUsage = critical, emailProtection
+        basicConstraints = critical, CA:false
+        subjectKeyIdentifier = hash
+        subjectAltName = email:test@example.com
+        USEREOF
+
+        # Create user certificate request (without authority key identifier)
+        openssl req -new -newkey rsa:2048 -keyout user-key.pem -out user-req.pem -nodes \
+        -config user-openssl.conf
+
+        # Create signing config with authority key identifier
+        cat > signing.conf << 'SIGNEOF'
+        [v3_user_sign]
+        keyUsage = critical, digitalSignature, keyEncipherment
+        extendedKeyUsage = critical, emailProtection
+        basicConstraints = critical, CA:false
+        subjectKeyIdentifier = hash
+        authorityKeyIdentifier = keyid:always,issuer:always
+        subjectAltName = email:test@example.com
+        SIGNEOF
+
+        # Sign user certificate with CA
+        openssl x509 -req -in user-req.pem -CA ca-cert.pem -CAkey ca-key.pem -CAcreateserial \
+        -out user-cert.pem -days 365 -extensions v3_user_sign -extfile signing.conf
+
+        # Convert user certificate to PKCS#12 format
+        openssl pkcs12 -export -in user-cert.pem -inkey user-key.pem -out user-cert.p12 \
+        -name "testcert" -passout pass:
+
+        # Import user certificate into NSS database
+        echo "   Importing user certificate into NSS database..."
+        pk12util -i user-cert.p12 -d /nss-test/nssdb -W ""
+
+        # Set proper trust attributes
+        certutil -M -n "testcert" -t "u,u,u" -d /nss-test/nssdb
+
+        echo "   ✓ CA and user certificates created successfully"
+
+        echo "3. Listing certificates in NSS database:"
+        certutil -L -d /nss-test/nssdb
+        echo
+        echo "Private keys in NSS database:"
+        certutil -K -d /nss-test/nssdb
+        echo
+        echo "Certificate details:"
+        if certutil -L -n "testcert" -d /nss-test/nssdb >/dev/null 2>&1; then
+        echo "User certificate 'testcert':"
+        certutil -L -n "testcert" -d /nss-test/nssdb
+        echo
+        fi
+        if certutil -L -n "TestCA" -d /nss-test/nssdb >/dev/null 2>&1; then
+        echo "CA certificate 'TestCA':"
+        certutil -L -n "TestCA" -d /nss-test/nssdb
+        fi
+
+        echo "4. Testing CMS operations with cmsutil:"
+
+        # Test CMS signing with additional options to handle trust
+        echo "   a) Signing data with CMS:"
+        cmsutil -S -N "testcert" -i test-data.txt -o signed-data.p7s -d /nss-test/nssdb -p "" -G
+
+        if [ -f signed-data.p7s ]; then
+        echo "   ✓ CMS signing successful - created signed-data.p7s"
+        ls -la signed-data.p7s
+        else
+        echo "   ✗ CMS signing failed"
+        fi
+
+        # Test CMS verification
+        echo "   b) Verifying CMS signature:"
+        openssl smime -verify -in signed-data.p7s -CAfile test-cert.pem -inform DER -noverify 2>/dev/null && echo "   ✓ OpenSSL verification successful"
+
+        # Test CMS encryption (envelope)
+        echo "   c) Creating CMS encrypted envelope:"
+        cmsutil -E -r "testcert" -i test-data.txt -o encrypted-data.p7e -d /nss-test/nssdb
+        if [ -f encrypted-data.p7e ]; then
+        echo "   ✓ CMS encryption successful - created encrypted-data.p7e"
+        ls -la encrypted-data.p7e
+        else
+        echo "   ✗ CMS encryption failed"
+        fi
+
+        # Test CMS decryption
+        echo "   d) Decrypting CMS envelope:"
+        cmsutil -D -i encrypted-data.p7e -o decrypted-data.txt -d /nss-test/nssdb -p ""
+        if [ -f decrypted-data.txt ]; then
+        echo "   ✓ CMS decryption successful"
+        echo "   Original data:"
+        cat test-data.txt
+        echo "   Decrypted data:"
+        cat decrypted-data.txt
+        echo "   Data match:" $(cmp -s test-data.txt decrypted-data.txt && echo "YES" || echo "NO")
+        else
+        echo "   ✗ CMS decryption failed"
+        fi
+
+        echo
+        echo "=== pk12util Test Complete ==="
+        echo "Files created:"
+        ls -la *.p7s *.p7e *.txt *.pem *.p12 2>/dev/null || echo "No files found"
+
+        # Create tar archive with all test artifacts
+        mkdir -p /tmp/artifacts
+        cp -r /logs /tmp/artifacts/ 2>/dev/null || true
+        cp -r /nss-test /tmp/artifacts/ 2>/dev/null || true
+        tar -czf /tmp/nss-pk12util-debian-test-artifacts.tar.gz -C /tmp/artifacts . 2>/dev/null || true
+
+    - name: Upload test artifacts
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: nss-pk12util-debian-test-artifacts
+        path: /tmp/nss-pk12util-debian-test-artifacts.tar.gz
+        retention-days: 5
+
+    - name: Upload built packages
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: debian-packages
+        path: |
+          /tmp/wolfssl/*.deb
+          *.deb
+          /tmp/nss-packages/*.deb
+        retention-days: 5
