@@ -130,7 +130,8 @@ static CK_RV pkcs11_init(const char* library, CK_SESSION_HANDLE* session)
         if (ret != CKR_OK) {
             CHECK_CKR(ret, "Login");
             printf("Note: Login failed, continuing without authentication\n");
-            printf("      Some operations may not work without proper login\n");
+            printf("      Some operations may not work without proper "
+                   "login\n");
             /* Don't fail completely - some operations might work without login */
             ret = CKR_OK;
         }
@@ -166,6 +167,104 @@ static int demonstrate_pkcs12_pbe_key_generation(const char* library)
     CK_RV rv;
     CK_SESSION_HANDLE session;
     CK_OBJECT_HANDLE key;
+    /* Example password and salt (in real use, these should be secure) */
+    CK_BYTE password[] = "MySecurePassword2024";
+    CK_BYTE salt[] = {
+        0x8A, 0x2F, 0x3E, 0x91, 0x45, 0x67, 0xBC, 0xDE,
+        0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0
+    };
+    CK_ULONG iterationCount = 100000; /* Modern recommended minimum */
+    CK_ULONG keyLength = 32; /* 256-bit AES key */
+    CK_PBE_PARAMS pbeParams;
+    CK_MECHANISM mechanism;
+    CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE keyType = CKK_GENERIC_SECRET;
+    CK_BBOOL ckTrue = CK_TRUE;
+    CK_BBOOL ckFalse = CK_FALSE;
+    CK_BYTE keyLabel[] = "PKCS12-PBE-Generated-Key";
+    CK_ATTRIBUTE keyTemplate[] = {
+        {CKA_CLASS, &keyClass, sizeof(keyClass)},
+        {CKA_KEY_TYPE, &keyType, sizeof(keyType)},
+        {CKA_VALUE_LEN, &keyLength, sizeof(keyLength)},
+        {CKA_LABEL, keyLabel, sizeof(keyLabel) - 1},
+        {CKA_ENCRYPT, &ckTrue, sizeof(ckTrue)},
+        {CKA_DECRYPT, &ckTrue, sizeof(ckTrue)},
+        {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
+        {CKA_TOKEN, &ckFalse, sizeof(ckFalse)}
+    };
+    CK_ULONG keyTemplateCount = sizeof(keyTemplate) / sizeof(keyTemplate[0]);
+    CK_BYTE keyValue[64];
+    CK_ULONG keyValueLen = sizeof(keyValue);
+    CK_ATTRIBUTE getTemplate[] = {
+        {CKA_VALUE, keyValue, keyValueLen}
+    };
+    struct {
+        CK_ULONG length;
+        const char* purpose;
+    } keyLengths[] = {
+        {16, "AES-128 encryption"},
+        {24, "AES-192 encryption"},
+        {32, "AES-256 encryption"},
+        {64, "HMAC-SHA512 authentication"}
+    };
+    CK_OBJECT_HANDLE testKey;
+    CK_ULONG testLen;
+    CK_OBJECT_HANDLE prodKey;
+    CK_BBOOL sensitive = CK_TRUE;
+    CK_BBOOL nonExtractable = CK_FALSE; /* Set to CK_TRUE for production */
+    CK_BYTE prodLabel[] = "Production-PKCS12-Key";
+    CK_ATTRIBUTE prodTemplate[] = {
+        {CKA_CLASS, &keyClass, sizeof(keyClass)},
+        {CKA_KEY_TYPE, &keyType, sizeof(keyType)},
+        {CKA_VALUE_LEN, &keyLength, sizeof(keyLength)},
+        {CKA_LABEL, prodLabel, sizeof(prodLabel) - 1},
+        {CKA_ENCRYPT, &ckTrue, sizeof(ckTrue)},
+        {CKA_DECRYPT, &ckTrue, sizeof(ckTrue)},
+        {CKA_SENSITIVE, &sensitive, sizeof(sensitive)},
+        {CKA_EXTRACTABLE, &nonExtractable, sizeof(nonExtractable)},
+        {CKA_TOKEN, &ckFalse, sizeof(ckFalse)}
+    };
+    CK_ULONG prodTemplateCount = sizeof(prodTemplate) / sizeof(prodTemplate[0]);
+    CK_OBJECT_HANDLE aesKey;
+    CK_OBJECT_CLASS aesKeyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE aesKeyType = CKK_AES;
+    CK_ULONG aesKeyLength = 32; /* 256-bit AES key */
+    CK_BYTE aesKeyLabel[] = "PKCS12-PBE-AES-Key";
+    CK_ATTRIBUTE aesKeyTemplate[] = {
+        {CKA_CLASS, &aesKeyClass, sizeof(aesKeyClass)},
+        {CKA_KEY_TYPE, &aesKeyType, sizeof(aesKeyType)},
+        {CKA_VALUE_LEN, &aesKeyLength, sizeof(aesKeyLength)},
+        {CKA_LABEL, aesKeyLabel, sizeof(aesKeyLabel) - 1},
+        {CKA_ENCRYPT, &ckTrue, sizeof(ckTrue)},
+        {CKA_DECRYPT, &ckTrue, sizeof(ckTrue)},
+        {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
+        {CKA_TOKEN, &ckFalse, sizeof(ckFalse)}
+    };
+    CK_ULONG aesKeyTemplateCount = sizeof(aesKeyTemplate) / 
+                                   sizeof(aesKeyTemplate[0]);
+    CK_BYTE plaintext[] = "Hello, PKCS#12 PBE!";
+    CK_BYTE ciphertext[256];
+    CK_ULONG ciphertextLen = sizeof(ciphertext);
+    CK_BYTE decrypted[256];
+    CK_ULONG decryptedLen = sizeof(decrypted);
+    CK_BYTE iv[16] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+                      0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F};
+    CK_MECHANISM encMech = { CKM_AES_CBC_PAD, iv, sizeof(iv) };
+    CK_ULONG plaintextLen;
+    CK_BYTE extractedKeyValue[32];
+    CK_ULONG extractedKeyValueLen = sizeof(extractedKeyValue);
+    CK_ATTRIBUTE extractTemplate[] = {
+        {CKA_VALUE, extractedKeyValue, extractedKeyValueLen}
+    };
+    CK_OBJECT_HANDLE newAesKey;
+    CK_ATTRIBUTE newKeyTemplate[] = {
+        {CKA_CLASS, &aesKeyClass, sizeof(aesKeyClass)},
+        {CKA_KEY_TYPE, &aesKeyType, sizeof(aesKeyType)},
+        {CKA_VALUE, extractedKeyValue, 0}, /* Will be set later */
+        {CKA_ENCRYPT, &ckTrue, sizeof(ckTrue)},
+        {CKA_DECRYPT, &ckTrue, sizeof(ckTrue)},
+        {CKA_TOKEN, &ckFalse, sizeof(ckFalse)}
+    };
 
     printf("=== NSS PKCS#12 PBE SHA-256 HMAC Key Generation Example ===\n\n");
 
@@ -180,54 +279,22 @@ static int demonstrate_pkcs12_pbe_key_generation(const char* library)
     printf("1. Basic Key Generation\n");
     printf("   Purpose: Generate a 256-bit encryption key from password\n\n");
 
-    /* Example password and salt (in real use, these should be secure) */
-    CK_BYTE password[] = "MySecurePassword2024";
-    CK_BYTE salt[] = {
-        0x8A, 0x2F, 0x3E, 0x91, 0x45, 0x67, 0xBC, 0xDE,
-        0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0
-    };
-    CK_ULONG iterationCount = 100000; /* Modern recommended minimum */
-    CK_ULONG keyLength = 32; /* 256-bit AES key */
-
     printf("   Password: %s\n", (char*)password);
     print_hex("   Salt", salt, sizeof(salt));
     printf("   Iterations: %lu\n", iterationCount);
     printf("   Key Length: %lu bytes (%lu bits)\n\n", keyLength, keyLength * 8);
 
     /* Set up PBE parameters */
-    CK_PBE_PARAMS pbeParams = {
-        NULL,
-        password,
-        strlen((char*)password),
-        salt,
-        sizeof(salt),
-        iterationCount
-    };
+    pbeParams.pInitVector = NULL;
+    pbeParams.pPassword = password;
+    pbeParams.ulPasswordLen = strlen((char*)password);
+    pbeParams.pSalt = salt;
+    pbeParams.ulSaltLen = sizeof(salt);
+    pbeParams.ulIteration = iterationCount;
 
-    CK_MECHANISM mechanism = {
-        CKM_NSS_PKCS12_PBE_SHA256_HMAC_KEY_GEN,
-        &pbeParams,
-        sizeof(pbeParams)
-    };
-
-    /* Define key attributes */
-    CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
-    CK_KEY_TYPE keyType = CKK_GENERIC_SECRET;
-    CK_BBOOL ckTrue = CK_TRUE;
-    CK_BBOOL ckFalse = CK_FALSE;
-    CK_BYTE keyLabel[] = "PKCS12-PBE-Generated-Key";
-
-    CK_ATTRIBUTE keyTemplate[] = {
-        {CKA_CLASS, &keyClass, sizeof(keyClass)},
-        {CKA_KEY_TYPE, &keyType, sizeof(keyType)},
-        {CKA_VALUE_LEN, &keyLength, sizeof(keyLength)},
-        {CKA_LABEL, keyLabel, sizeof(keyLabel) - 1},
-        {CKA_ENCRYPT, &ckTrue, sizeof(ckTrue)},
-        {CKA_DECRYPT, &ckTrue, sizeof(ckTrue)},
-        {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
-        {CKA_TOKEN, &ckFalse, sizeof(ckFalse)}
-    };
-    CK_ULONG keyTemplateCount = sizeof(keyTemplate) / sizeof(keyTemplate[0]);
+    mechanism.mechanism = CKM_NSS_PKCS12_PBE_SHA256_HMAC_KEY_GEN;
+    mechanism.pParameter = &pbeParams;
+    mechanism.ulParameterLen = sizeof(pbeParams);
 
     /* Generate the key */
     printf("   Generating key...\n");
@@ -236,25 +303,24 @@ static int demonstrate_pkcs12_pbe_key_generation(const char* library)
     if (rv != CKR_OK) {
         printf("ERROR: C_GenerateKey failed: 0x%08lX\n", rv);
         if (rv == CKR_MECHANISM_INVALID) {
-            printf("       CKM_NSS_PKCS12_PBE_SHA256_HMAC_KEY_GEN mechanism not supported\n");
-            printf("       This indicates the NSS extension is not available in this build\n");
+            printf("       CKM_NSS_PKCS12_PBE_SHA256_HMAC_KEY_GEN mechanism "
+                   "not supported\n");
+            printf("       This indicates the NSS extension is not available "
+                   "in this build\n");
         } else if (rv == CKR_USER_NOT_LOGGED_IN) {
-            printf("       User not logged in - authentication may be required\n");
+            printf("       User not logged in - authentication may be "
+                   "required\n");
         } else if (rv == CKR_FUNCTION_NOT_SUPPORTED) {
-            printf("       Function not supported by this PKCS#11 implementation\n");
+            printf("       Function not supported by this PKCS#11 "
+                   "implementation\n");
         }
         pkcs11_final(session);
         return -1;
     }
 
-    printf("   ✓ Key generated successfully (handle: %lu)\n\n", key);
+    printf("   + Key generated successfully (handle: %lu)\n\n", key);
 
     /* Retrieve and display key information */
-    CK_BYTE keyValue[64];
-    CK_ULONG keyValueLen = sizeof(keyValue);
-    CK_ATTRIBUTE getTemplate[] = {
-        {CKA_VALUE, keyValue, keyValueLen}
-    };
 
     rv = funcList->C_GetAttributeValue(session, key, getTemplate, 1);
     if (rv == CKR_OK) {
@@ -271,31 +337,23 @@ static int demonstrate_pkcs12_pbe_key_generation(const char* library)
     printf("2. Multiple Key Lengths Example\n");
     printf("   Purpose: Generate keys for different cryptographic needs\n\n");
 
-    struct {
-        CK_ULONG length;
-        const char* purpose;
-    } keyLengths[] = {
-        {16, "AES-128 encryption"},
-        {24, "AES-192 encryption"},
-        {32, "AES-256 encryption"},
-        {64, "HMAC-SHA512 authentication"}
-    };
+    {
+        int keyLengthIndex;
+        for (keyLengthIndex = 0; keyLengthIndex < 4; keyLengthIndex++) {
+            testLen = keyLengths[keyLengthIndex].length;
 
-    for (int i = 0; i < 4; i++) {
-        CK_OBJECT_HANDLE testKey;
-        CK_ULONG testLen = keyLengths[i].length;
+            keyTemplate[2].pValue = &testLen; /* Update CKA_VALUE_LEN */
 
-        keyTemplate[2].pValue = &testLen; /* Update CKA_VALUE_LEN */
+            printf("   Generating %lu-byte key for %s...\n",
+                   testLen, keyLengths[keyLengthIndex].purpose);
 
-        printf("   Generating %lu-byte key for %s...\n",
-               testLen, keyLengths[i].purpose);
-
-        rv = funcList->C_GenerateKey(session, &mechanism, keyTemplate,
-                                    keyTemplateCount, &testKey);
-        if (rv == CKR_OK) {
-            printf("   ✓ Success (handle: %lu)\n", testKey);
-        } else {
-            printf("   ✗ Failed: 0x%08lX\n", rv);
+            rv = funcList->C_GenerateKey(session, &mechanism, keyTemplate,
+                                        keyTemplateCount, &testKey);
+            if (rv == CKR_OK) {
+                printf("   + Success (handle: %lu)\n", testKey);
+            } else {
+                printf("   - Failed: 0x%08lX\n", rv);
+            }
         }
     }
     printf("\n");
@@ -304,91 +362,47 @@ static int demonstrate_pkcs12_pbe_key_generation(const char* library)
     printf("3. Security Best Practices\n");
     printf("   - Use strong, unique passwords\n");
     printf("   - Generate cryptographically random salts\n");
-    printf("   - Use sufficient iteration counts (100,000+ recommended)\n");
+    printf("   - Use sufficient iteration counts (100,000+ "
+           "recommended)\n");
     printf("   - Clear sensitive data from memory after use\n");
-    printf("   - Store keys securely (mark as non-extractable for production)\n\n");
+    printf("   - Store keys securely (mark as non-extractable for "
+           "production)\n\n");
 
     /* Example 4: Production-ready key (non-extractable) */
     printf("4. Production Key Generation\n");
     printf("   Purpose: Generate a non-extractable key for production use\n\n");
 
-    CK_OBJECT_HANDLE prodKey;
-    CK_BBOOL sensitive = CK_TRUE;
-    CK_BBOOL nonExtractable = CK_FALSE; /* Set to CK_TRUE for production */
-    CK_BYTE prodLabel[] = "Production-PKCS12-Key";
-
-    CK_ATTRIBUTE prodTemplate[] = {
-        {CKA_CLASS, &keyClass, sizeof(keyClass)},
-        {CKA_KEY_TYPE, &keyType, sizeof(keyType)},
-        {CKA_VALUE_LEN, &keyLength, sizeof(keyLength)},
-        {CKA_LABEL, prodLabel, sizeof(prodLabel) - 1},
-        {CKA_ENCRYPT, &ckTrue, sizeof(ckTrue)},
-        {CKA_DECRYPT, &ckTrue, sizeof(ckTrue)},
-        {CKA_SENSITIVE, &sensitive, sizeof(sensitive)},
-        {CKA_EXTRACTABLE, &nonExtractable, sizeof(nonExtractable)},
-        {CKA_TOKEN, &ckFalse, sizeof(ckFalse)}
-    };
-    CK_ULONG prodTemplateCount = sizeof(prodTemplate) / sizeof(prodTemplate[0]);
-
     rv = funcList->C_GenerateKey(session, &mechanism, prodTemplate,
                                 prodTemplateCount, &prodKey);
     if (rv == CKR_OK) {
-        printf("   ✓ Production key generated (handle: %lu)\n", prodKey);
+        printf("   + Production key generated (handle: %lu)\n", prodKey);
         printf("   Key is marked as sensitive and non-extractable\n\n");
     } else {
-        printf("   ✗ Production key generation failed: 0x%08lX\n\n", rv);
+        printf("   - Production key generation failed: 0x%08lX\n\n", rv);
     }
 
     /* Example 5: Generate proper AES key and test encryption */
     printf("5. AES Key Generation and Usage Test\n");
     printf("   Purpose: Generate an AES key using PBE and test encryption\n\n");
 
-    /* Generate an AES key specifically for encryption testing */
-    CK_OBJECT_HANDLE aesKey;
-    CK_OBJECT_CLASS aesKeyClass = CKO_SECRET_KEY;
-    CK_KEY_TYPE aesKeyType = CKK_AES;
-    CK_ULONG aesKeyLength = 32; /* 256-bit AES key */
-    CK_BYTE aesKeyLabel[] = "PKCS12-PBE-AES-Key";
-
-    CK_ATTRIBUTE aesKeyTemplate[] = {
-        {CKA_CLASS, &aesKeyClass, sizeof(aesKeyClass)},
-        {CKA_KEY_TYPE, &aesKeyType, sizeof(aesKeyType)},
-        {CKA_VALUE_LEN, &aesKeyLength, sizeof(aesKeyLength)},
-        {CKA_LABEL, aesKeyLabel, sizeof(aesKeyLabel) - 1},
-        {CKA_ENCRYPT, &ckTrue, sizeof(ckTrue)},
-        {CKA_DECRYPT, &ckTrue, sizeof(ckTrue)},
-        {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
-        {CKA_TOKEN, &ckFalse, sizeof(ckFalse)}
-    };
-    CK_ULONG aesKeyTemplateCount = sizeof(aesKeyTemplate) / sizeof(aesKeyTemplate[0]);
-
     printf("   Generating AES-256 key using PBE...\n");
     rv = funcList->C_GenerateKey(session, &mechanism, aesKeyTemplate,
                                 aesKeyTemplateCount, &aesKey);
     if (rv != CKR_OK) {
-        printf("   ✗ AES key generation failed: 0x%08lX\n", rv);
+        printf("   - AES key generation failed: 0x%08lX\n", rv);
         printf("   Skipping encryption test\n\n");
     } else {
-        printf("   ✓ AES key generated successfully (handle: %lu)\n", aesKey);
+        printf("   + AES key generated successfully (handle: %lu)\n", 
+               aesKey);
 
         /* Test encryption/decryption with the AES key */
-        CK_BYTE plaintext[] = "Hello, PKCS#12 PBE!";
-        CK_BYTE ciphertext[256];
-        CK_ULONG ciphertextLen = sizeof(ciphertext);
-        CK_BYTE decrypted[256];
-        CK_ULONG decryptedLen = sizeof(decrypted);
-
-        /* Use AES-CBC-PAD mode which handles padding automatically */
-        CK_BYTE iv[16] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-                          0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F};
-        CK_MECHANISM encMech = { CKM_AES_CBC_PAD, iv, sizeof(iv) };
-
         printf("   Plaintext: %s\n", plaintext);
         print_hex("   IV", iv, sizeof(iv));
         printf("   Testing AES-CBC-PAD encryption...\n");
 
-        /* Use original plaintext without manual padding since CBC_PAD handles it */
-        CK_ULONG plaintextLen = strlen((char*)plaintext);
+        /* Use original plaintext without manual padding since CBC_PAD 
+         * handles it */
+        plaintextLen = strlen((char*)plaintext);
 
         rv = funcList->C_EncryptInit(session, &encMech, aesKey);
         if (rv == CKR_OK) {
@@ -397,7 +411,7 @@ static int demonstrate_pkcs12_pbe_key_generation(const char* library)
         }
 
         if (rv == CKR_OK) {
-            printf("   ✓ Encryption successful\n");
+            printf("   + Encryption successful\n");
             print_hex("     Ciphertext", ciphertext, ciphertextLen);
 
             printf("   Testing AES-CBC-PAD decryption...\n");
@@ -409,16 +423,17 @@ static int demonstrate_pkcs12_pbe_key_generation(const char* library)
 
             if (rv == CKR_OK && decryptedLen == plaintextLen &&
                 memcmp(plaintext, decrypted, plaintextLen) == 0) {
-                printf("   ✓ Decryption successful - plaintext recovered!\n");
+                printf("   + Decryption successful - plaintext recovered!\n");
                 printf("   Original: %.*s\n", (int)plaintextLen, decrypted);
             } else {
-                printf("   ✗ Decryption failed or data mismatch (rv=0x%08lX, len=%lu)\n", rv, decryptedLen);
+                printf("   - Decryption failed or data mismatch "
+                       "(rv=0x%08lX, len=%lu)\n", rv, decryptedLen);
                 if (rv == CKR_OK && decryptedLen > 0) {
                     printf("     Decrypted: %.*s\n", (int)decryptedLen, decrypted);
                 }
             }
         } else {
-            printf("   ✗ Encryption failed: 0x%08lX\n", rv);
+            printf("   - Encryption failed: 0x%08lX\n", rv);
             printf("     Error details: ");
             if (rv == CKR_KEY_INDIGESTIBLE) {
                 printf("CKR_KEY_INDIGESTIBLE - Key format incompatible\n");
@@ -434,43 +449,38 @@ static int demonstrate_pkcs12_pbe_key_generation(const char* library)
 
             printf("     Trying to extract and re-import key...\n");
 
-            /* Try to extract the PBE-generated key value and create a new AES key */
-            CK_BYTE extractedKeyValue[32];
-            CK_ULONG extractedKeyValueLen = sizeof(extractedKeyValue);
-            CK_ATTRIBUTE extractTemplate[] = {
-                {CKA_VALUE, extractedKeyValue, extractedKeyValueLen}
-            };
+            /* Try to extract the PBE-generated key value and create a new 
+             * AES key */
 
-            rv = funcList->C_GetAttributeValue(session, aesKey, extractTemplate, 1);
+            rv = funcList->C_GetAttributeValue(session, aesKey, 
+                                               extractTemplate, 1);
             if (rv == CKR_OK) {
-                printf("     Extracted key value, creating new AES key object...\n");
+                printf("     Extracted key value, creating new AES key "
+                       "object...\n");
 
                 /* Create a new AES key from the extracted value */
-                CK_OBJECT_HANDLE newAesKey;
-                CK_ATTRIBUTE newKeyTemplate[] = {
-                    {CKA_CLASS, &aesKeyClass, sizeof(aesKeyClass)},
-                    {CKA_KEY_TYPE, &aesKeyType, sizeof(aesKeyType)},
-                    {CKA_VALUE, extractedKeyValue, extractTemplate[0].ulValueLen},
-                    {CKA_ENCRYPT, &ckTrue, sizeof(ckTrue)},
-                    {CKA_DECRYPT, &ckTrue, sizeof(ckTrue)},
-                    {CKA_TOKEN, &ckFalse, sizeof(ckFalse)}
-                };
+                newKeyTemplate[2].ulValueLen = extractTemplate[0].ulValueLen;
 
                 rv = funcList->C_CreateObject(session, newKeyTemplate,
-                                             sizeof(newKeyTemplate)/sizeof(newKeyTemplate[0]),
+                                             sizeof(newKeyTemplate)/
+                                             sizeof(newKeyTemplate[0]),
                                              &newAesKey);
                 if (rv == CKR_OK) {
                     printf("     New AES key created, retrying encryption...\n");
 
-                    rv = funcList->C_EncryptInit(session, &encMech, newAesKey);
+                    rv = funcList->C_EncryptInit(session, &encMech, 
+                                                 newAesKey);
                     if (rv == CKR_OK) {
-                        rv = funcList->C_Encrypt(session, plaintext, plaintextLen,
-                                                ciphertext, &ciphertextLen);
+                        rv = funcList->C_Encrypt(session, plaintext, 
+                                                plaintextLen, ciphertext, 
+                                                &ciphertextLen);
                         if (rv == CKR_OK) {
-                            printf("     ✓ Encryption successful with re-imported key!\n");
+                            printf("     + Encryption successful with "
+                                   "re-imported key!\n");
                             print_hex("       Ciphertext", ciphertext, ciphertextLen);
                         } else {
-                            printf("     ✗ Encryption still failed: 0x%08lX\n", rv);
+                            printf("     - Encryption still failed: "
+                                   "0x%08lX\n", rv);
                         }
                     }
                 } else {
@@ -495,8 +505,8 @@ static int demonstrate_pkcs12_pbe_key_generation(const char* library)
 
     pkcs11_final(session);
 
-    printf("   ✓ Session closed and library finalized\n");
-    printf("   ✓ Sensitive data cleared from memory\n\n");
+    printf("   + Session closed and library finalized\n");
+    printf("   + Sensitive data cleared from memory\n\n");
 
     printf("=== Example completed successfully ===\n");
     return 0;
@@ -573,8 +583,10 @@ int nss_pkcs12_pbe_example(int argc, char* argv[])
     }
 
     printf("NSS PKCS#12 PBE SHA-256 HMAC Key Generation Example\n");
-    printf("This example demonstrates how to use the CKM_NSS_PKCS12_PBE_SHA256_HMAC_KEY_GEN\n");
-    printf("mechanism to generate cryptographic keys from passwords using PBKDF2.\n\n");
+    printf("This example demonstrates how to use the "
+           "CKM_NSS_PKCS12_PBE_SHA256_HMAC_KEY_GEN\n");
+    printf("mechanism to generate cryptographic keys from passwords using "
+           "PBKDF2.\n\n");
 
     if (demonstrate_pkcs12_pbe_key_generation(libName) != 0) {
         printf("Example failed!\n");
