@@ -415,22 +415,22 @@ static CK_RV test_nss_config_string_parsing(void* args)
     CK_RV ret;
     CK_C_INITIALIZE_ARGS initArgs;
     CK_CHAR_PTR nssConfigStr = (CK_CHAR_PTR)"configdir='' certPrefix='' keyPrefix='' secmod='' flags=readOnly,noCertDB,noModDB,forceOpen,optimizeSpace updatedir='' updateCertPrefix='' updateKeyPrefix='' updateid='' updateTokenDescription=''";
-    
+
     (void)args;
-    
+
     /* Test with the problematic NSS config string that has unquoted flags */
     XMEMSET(&initArgs, 0x00, sizeof(initArgs));
     initArgs.flags = CKF_OS_LOCKING_OK;
     initArgs.LibraryParameters = (CK_CHAR_PTR *)nssConfigStr;
-    
+
     /* This should succeed - the parser should handle unquoted flag values */
     ret = funcList->C_Initialize(&initArgs);
     CHECK_CKR(ret, "Initialize with NSS config string");
-    
+
     if (ret == CKR_OK) {
         funcList->C_Finalize(NULL);
     }
-    
+
     return ret;
 }
 
@@ -439,22 +439,22 @@ static CK_RV test_nss_config_string_mixed_values(void* args)
     CK_RV ret;
     CK_C_INITIALIZE_ARGS initArgs;
     CK_CHAR_PTR nssConfigStr = (CK_CHAR_PTR)"configdir='/tmp/test' certPrefix='' keyPrefix=cert flags=readOnly,noCertDB updatedir='' updateid=test123";
-    
+
     (void)args;
-    
+
     /* Test with mixed quoted and unquoted values */
     XMEMSET(&initArgs, 0x00, sizeof(initArgs));
     initArgs.flags = CKF_OS_LOCKING_OK;
     initArgs.LibraryParameters = (CK_CHAR_PTR *)nssConfigStr;
-    
+
     /* This should succeed - the parser should handle mixed quoted/unquoted values */
     ret = funcList->C_Initialize(&initArgs);
     CHECK_CKR(ret, "Initialize with mixed NSS config string");
-    
+
     if (ret == CKR_OK) {
         funcList->C_Finalize(NULL);
     }
-    
+
     return ret;
 }
 #endif
@@ -1429,6 +1429,475 @@ static CK_RV test_nss_trust_object_token_storage(void* args)
 
     /* Update the session handle for cleanup */
     *(CK_SESSION_HANDLE*)args = newSession;
+
+    return ret;
+}
+
+#ifndef NO_HMAC
+/* Test NSS PKCS#12 PBE SHA224 HMAC key generation */
+static CK_RV test_nss_pkcs12_pbe_sha224_hmac_key_gen(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+
+    /* Test parameters */
+    CK_BYTE password[] = "TestPassword224";
+    CK_BYTE salt[] = {
+        0x8A, 0x2F, 0x3E, 0x91, 0x45, 0x67, 0xBC, 0xDE,
+        0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0
+    };
+    CK_ULONG iterations = 10000;
+    CK_ULONG keyLength = 32; /* 256-bit key */
+
+    CK_PBE_PARAMS pbeParams = {
+        NULL,
+        password,
+        strlen((char*)password),
+        salt,
+        sizeof(salt),
+        iterations
+    };
+
+    CK_MECHANISM mechanism = {
+        CKM_NSS_PKCS12_PBE_SHA224_HMAC_KEY_GEN,
+        &pbeParams,
+        sizeof(pbeParams)
+    };
+
+    CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE keyType = CKK_GENERIC_SECRET;
+    CK_BYTE keyLabel[] = "Test-NSS-PKCS12-PBE-SHA224-Key";
+
+    CK_ATTRIBUTE keyTemplate[] = {
+        {CKA_CLASS, &keyClass, sizeof(keyClass)},
+        {CKA_KEY_TYPE, &keyType, sizeof(keyType)},
+        {CKA_VALUE_LEN, &keyLength, sizeof(keyLength)},
+        {CKA_LABEL, keyLabel, sizeof(keyLabel)-1}
+    };
+
+    ret = funcList->C_GenerateKey(session, &mechanism, keyTemplate,
+                                  sizeof(keyTemplate)/sizeof(CK_ATTRIBUTE), &key);
+    CHECK_CKR(ret, "NSS PKCS#12 PBE SHA224 HMAC Key Generation");
+
+    /* Test with invalid parameters */
+    if (ret == CKR_OK) {
+        CK_PBE_PARAMS invalidParams = pbeParams;
+        CK_MECHANISM invalidMech = mechanism;
+        invalidParams.ulIteration = 0;
+        invalidMech.pParameter = &invalidParams;
+
+        ret = funcList->C_GenerateKey(session, &invalidMech, keyTemplate,
+                                      sizeof(keyTemplate)/sizeof(CK_ATTRIBUTE), &key);
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
+                       "NSS PKCS#12 PBE SHA224 with zero iterations");
+        ret = CKR_OK; /* Reset for next test */
+    }
+
+    return ret;
+}
+
+/* Test NSS PKCS#12 PBE SHA256 HMAC key generation */
+static CK_RV test_nss_pkcs12_pbe_sha256_hmac_key_gen(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+
+    /* Test parameters */
+    CK_BYTE password[] = "TestPassword256";
+    CK_BYTE salt[] = {
+        0x8A, 0x2F, 0x3E, 0x91, 0x45, 0x67, 0xBC, 0xDE,
+        0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0
+    };
+    CK_ULONG iterations = 10000;
+    CK_ULONG keyLength = 32; /* 256-bit key */
+
+    CK_PBE_PARAMS pbeParams = {
+        NULL,
+        password,
+        strlen((char*)password),
+        salt,
+        sizeof(salt),
+        iterations
+    };
+
+    CK_MECHANISM mechanism = {
+        CKM_NSS_PKCS12_PBE_SHA256_HMAC_KEY_GEN,
+        &pbeParams,
+        sizeof(pbeParams)
+    };
+
+    CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE keyType = CKK_GENERIC_SECRET;
+    CK_BYTE keyLabel[] = "Test-NSS-PKCS12-PBE-SHA256-Key";
+
+    CK_ATTRIBUTE keyTemplate[] = {
+        {CKA_CLASS, &keyClass, sizeof(keyClass)},
+        {CKA_KEY_TYPE, &keyType, sizeof(keyType)},
+        {CKA_VALUE_LEN, &keyLength, sizeof(keyLength)},
+        {CKA_LABEL, keyLabel, sizeof(keyLabel)-1}
+    };
+
+    ret = funcList->C_GenerateKey(session, &mechanism, keyTemplate,
+                                  sizeof(keyTemplate)/sizeof(CK_ATTRIBUTE), &key);
+    CHECK_CKR(ret, "NSS PKCS#12 PBE SHA256 HMAC Key Generation");
+
+    /* Test with invalid salt */
+    if (ret == CKR_OK) {
+        CK_PBE_PARAMS invalidParams = pbeParams;
+        CK_MECHANISM invalidMech = mechanism;
+        invalidParams.pSalt = NULL;
+        invalidMech.pParameter = &invalidParams;
+
+        ret = funcList->C_GenerateKey(session, &invalidMech, keyTemplate,
+                                      sizeof(keyTemplate)/sizeof(CK_ATTRIBUTE), &key);
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
+                       "NSS PKCS#12 PBE SHA256 with NULL salt");
+        ret = CKR_OK; /* Reset for next test */
+    }
+
+    return ret;
+}
+
+/* Test NSS PKCS#12 PBE SHA384 HMAC key generation */
+static CK_RV test_nss_pkcs12_pbe_sha384_hmac_key_gen(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+
+    /* Test parameters */
+    CK_BYTE password[] = "TestPassword384";
+    CK_BYTE salt[] = {
+        0x8A, 0x2F, 0x3E, 0x91, 0x45, 0x67, 0xBC, 0xDE,
+        0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0
+    };
+    CK_ULONG iterations = 10000;
+    CK_ULONG keyLength = 48; /* 384-bit key */
+
+    CK_PBE_PARAMS pbeParams = {
+        NULL,
+        password,
+        strlen((char*)password),
+        salt,
+        sizeof(salt),
+        iterations
+    };
+
+    CK_MECHANISM mechanism = {
+        CKM_NSS_PKCS12_PBE_SHA384_HMAC_KEY_GEN,
+        &pbeParams,
+        sizeof(pbeParams)
+    };
+
+    CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE keyType = CKK_GENERIC_SECRET;
+    CK_BYTE keyLabel[] = "Test-NSS-PKCS12-PBE-SHA384-Key";
+
+    CK_ATTRIBUTE keyTemplate[] = {
+        {CKA_CLASS, &keyClass, sizeof(keyClass)},
+        {CKA_KEY_TYPE, &keyType, sizeof(keyType)},
+        {CKA_VALUE_LEN, &keyLength, sizeof(keyLength)},
+        {CKA_LABEL, keyLabel, sizeof(keyLabel)-1}
+    };
+
+    ret = funcList->C_GenerateKey(session, &mechanism, keyTemplate,
+                                  sizeof(keyTemplate)/sizeof(CK_ATTRIBUTE), &key);
+    CHECK_CKR(ret, "NSS PKCS#12 PBE SHA384 HMAC Key Generation");
+
+    return ret;
+}
+
+/* Test NSS PKCS#12 PBE SHA512 HMAC key generation */
+static CK_RV test_nss_pkcs12_pbe_sha512_hmac_key_gen(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+
+    /* Test parameters */
+    CK_BYTE password[] = "TestPassword512";
+    CK_BYTE salt[] = {
+        0x8A, 0x2F, 0x3E, 0x91, 0x45, 0x67, 0xBC, 0xDE,
+        0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0
+    };
+    CK_ULONG iterations = 10000;
+    CK_ULONG keyLength = 64; /* 512-bit key */
+
+    CK_PBE_PARAMS pbeParams = {
+        NULL,
+        password,
+        strlen((char*)password),
+        salt,
+        sizeof(salt),
+        iterations
+    };
+
+    CK_MECHANISM mechanism = {
+        CKM_NSS_PKCS12_PBE_SHA512_HMAC_KEY_GEN,
+        &pbeParams,
+        sizeof(pbeParams)
+    };
+
+    CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE keyType = CKK_GENERIC_SECRET;
+    CK_BYTE keyLabel[] = "Test-NSS-PKCS12-PBE-SHA512-Key";
+
+    CK_ATTRIBUTE keyTemplate[] = {
+        {CKA_CLASS, &keyClass, sizeof(keyClass)},
+        {CKA_KEY_TYPE, &keyType, sizeof(keyType)},
+        {CKA_VALUE_LEN, &keyLength, sizeof(keyLength)},
+        {CKA_LABEL, keyLabel, sizeof(keyLabel)-1}
+    };
+
+    ret = funcList->C_GenerateKey(session, &mechanism, keyTemplate,
+                                  sizeof(keyTemplate)/sizeof(CK_ATTRIBUTE), &key);
+    CHECK_CKR(ret, "NSS PKCS#12 PBE SHA512 HMAC Key Generation");
+
+    /* Test with wrong mechanism parameter size */
+    if (ret == CKR_OK) {
+        CK_MECHANISM invalidMech = mechanism;
+        invalidMech.ulParameterLen = sizeof(pbeParams) - 1; /* Wrong size */
+
+        ret = funcList->C_GenerateKey(session, &invalidMech, keyTemplate,
+                                      sizeof(keyTemplate)/sizeof(CK_ATTRIBUTE), &key);
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
+                       "NSS PKCS#12 PBE SHA512 with wrong parameter size");
+        ret = CKR_OK; /* Reset for next test */
+    }
+
+    return ret;
+}
+
+/* Test NSS PKCS#12 PBE key generation with different key sizes */
+static CK_RV test_nss_pkcs12_pbe_key_sizes(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+
+    /* Test parameters */
+    CK_BYTE password[] = "TestPasswordSizes";
+    CK_BYTE salt[] = {
+        0x8A, 0x2F, 0x3E, 0x91, 0x45, 0x67, 0xBC, 0xDE,
+        0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0
+    };
+    CK_ULONG iterations = 10000;
+
+    CK_PBE_PARAMS pbeParams = {
+        NULL,
+        password,
+        strlen((char*)password),
+        salt,
+        sizeof(salt),
+        iterations
+    };
+
+    CK_MECHANISM mechanism = {
+        CKM_NSS_PKCS12_PBE_SHA256_HMAC_KEY_GEN,
+        &pbeParams,
+        sizeof(pbeParams)
+    };
+
+    CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE keyType = CKK_GENERIC_SECRET;
+    CK_BYTE keyLabel[] = "Test-NSS-PKCS12-PBE-KeySize";
+
+    /* Test different key sizes */
+    CK_ULONG keySizes[] = {16, 24, 32, 48, 64}; /* 128, 192, 256, 384, 512 bits */
+    CK_ULONG numSizes = sizeof(keySizes) / sizeof(CK_ULONG);
+    CK_ULONG i;
+
+    for (i = 0; i < numSizes && ret == CKR_OK; i++) {
+        CK_ATTRIBUTE keyTemplate[] = {
+            {CKA_CLASS, &keyClass, sizeof(keyClass)},
+            {CKA_KEY_TYPE, &keyType, sizeof(keyType)},
+            {CKA_VALUE_LEN, &keySizes[i], sizeof(CK_ULONG)},
+            {CKA_LABEL, keyLabel, sizeof(keyLabel)-1}
+        };
+
+        ret = funcList->C_GenerateKey(session, &mechanism, keyTemplate,
+                                      sizeof(keyTemplate)/sizeof(CK_ATTRIBUTE), &key);
+        CHECK_CKR(ret, "NSS PKCS#12 PBE with different key sizes");
+    }
+
+    return ret;
+}
+#endif
+#endif
+
+#ifndef NO_HMAC
+/* Test PKCS#5 PBKDF2 key generation */
+static CK_RV test_pkcs5_pbkdf2_key_gen(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+
+    /* Test parameters */
+    CK_BYTE password[] = "TestPassword123";
+    CK_ULONG passwordLen = sizeof(password) - 1;
+    CK_BYTE salt[] = {
+        0x8A, 0x2F, 0x3E, 0x91, 0x45, 0x67, 0xBC, 0xDE,
+        0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0
+    };
+    CK_ULONG iterations = 10000;
+    CK_ULONG keyLength = 32; /* 256-bit key */
+
+    CK_PKCS5_PBKD2_PARAMS pbkdf2Params = {
+        CKZ_SALT_SPECIFIED,           /* saltSource */
+        salt,                         /* pSaltSourceData */
+        sizeof(salt),                 /* ulSaltSourceDataLen */
+        iterations,                   /* iterations */
+        CKP_PKCS5_PBKD2_HMAC_SHA256, /* prf */
+        NULL,                         /* pPrfData */
+        0,                           /* ulPrfDataLen */
+        password,                     /* pPassword */
+        &passwordLen                  /* ulPasswordLen */
+    };
+
+    CK_MECHANISM mechanism = {
+        CKM_PKCS5_PBKD2,
+        &pbkdf2Params,
+        sizeof(pbkdf2Params)
+    };
+
+    CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE keyType = CKK_GENERIC_SECRET;
+    CK_BYTE keyLabel[] = "Test-PKCS5-PBKDF2-Key";
+
+    CK_ATTRIBUTE keyTemplate[] = {
+        {CKA_CLASS, &keyClass, sizeof(keyClass)},
+        {CKA_KEY_TYPE, &keyType, sizeof(keyType)},
+        {CKA_VALUE_LEN, &keyLength, sizeof(keyLength)},
+        {CKA_LABEL, keyLabel, sizeof(keyLabel)-1}
+    };
+
+    ret = funcList->C_GenerateKey(session, &mechanism, keyTemplate,
+                                  sizeof(keyTemplate)/sizeof(CK_ATTRIBUTE), &key);
+    CHECK_CKR(ret, "PKCS#5 PBKDF2 Key Generation");
+
+    /* Test with invalid salt source */
+    if (ret == CKR_OK) {
+        CK_PKCS5_PBKD2_PARAMS invalidParams = pbkdf2Params;
+        CK_MECHANISM invalidMech = mechanism;
+        invalidParams.saltSource = 0; /* Invalid salt source */
+        invalidMech.pParameter = &invalidParams;
+
+        ret = funcList->C_GenerateKey(session, &invalidMech, keyTemplate,
+                                      sizeof(keyTemplate)/sizeof(CK_ATTRIBUTE), &key);
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
+                       "PKCS#5 PBKDF2 with invalid salt source");
+        ret = CKR_OK; /* Reset for next test */
+    }
+
+    /* Test with zero iterations */
+    if (ret == CKR_OK) {
+        CK_PKCS5_PBKD2_PARAMS invalidParams = pbkdf2Params;
+        CK_MECHANISM invalidMech = mechanism;
+        invalidParams.iterations = 0;
+        invalidMech.pParameter = &invalidParams;
+
+        ret = funcList->C_GenerateKey(session, &invalidMech, keyTemplate,
+                                      sizeof(keyTemplate)/sizeof(CK_ATTRIBUTE), &key);
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
+                       "PKCS#5 PBKDF2 with zero iterations");
+        ret = CKR_OK; /* Reset for next test */
+    }
+
+    /* Test with different key types from template */
+    if (ret == CKR_OK) {
+        CK_KEY_TYPE testAesKeyType = CKK_AES;
+        CK_ATTRIBUTE aesKeyTemplate[] = {
+            {CKA_CLASS, &keyClass, sizeof(keyClass)},
+            {CKA_KEY_TYPE, &testAesKeyType, sizeof(testAesKeyType)},
+            {CKA_VALUE_LEN, &keyLength, sizeof(keyLength)},
+            {CKA_LABEL, keyLabel, sizeof(keyLabel)-1}
+        };
+
+        ret = funcList->C_GenerateKey(session, &mechanism, aesKeyTemplate,
+                                      sizeof(aesKeyTemplate)/sizeof(CK_ATTRIBUTE), &key);
+        CHECK_CKR(ret, "PKCS#5 PBKDF2 Key Generation with CKK_AES");
+
+        /* Verify the generated key has the correct type */
+        if (ret == CKR_OK && key != CK_INVALID_HANDLE) {
+            CK_KEY_TYPE retrievedKeyType;
+            CK_ULONG retrievedLen = sizeof(retrievedKeyType);
+            ret = funcList->C_GetAttributeValue(session, key,
+                                               &(CK_ATTRIBUTE){CKA_KEY_TYPE, &retrievedKeyType, retrievedLen},
+                                               1);
+            CHECK_CKR(ret, "Get attribute value");
+            if (ret == CKR_OK && retrievedKeyType != CKK_AES) {
+                ret = CKR_GENERAL_ERROR;
+                CHECK_CKR(ret, "Key type AES");
+            }
+        }
+
+        if (key != CK_INVALID_HANDLE) {
+            funcList->C_DestroyObject(session, key);
+            key = CK_INVALID_HANDLE;
+        }
+    }
+
+    /* Test with HKDF key type from template */
+    if (ret == CKR_OK) {
+        CK_KEY_TYPE testHkdfKeyType = CKK_HKDF;
+        CK_ATTRIBUTE hkdfKeyTemplate[] = {
+            {CKA_CLASS, &keyClass, sizeof(keyClass)},
+            {CKA_KEY_TYPE, &testHkdfKeyType, sizeof(testHkdfKeyType)},
+            {CKA_VALUE_LEN, &keyLength, sizeof(keyLength)},
+            {CKA_LABEL, keyLabel, sizeof(keyLabel)-1}
+        };
+
+        ret = funcList->C_GenerateKey(session, &mechanism, hkdfKeyTemplate,
+                                      sizeof(hkdfKeyTemplate)/sizeof(CK_ATTRIBUTE), &key);
+        CHECK_CKR(ret, "PKCS#5 PBKDF2 Key Generation with CKK_HKDF");
+
+        if (key != CK_INVALID_HANDLE) {
+            funcList->C_DestroyObject(session, key);
+            key = CK_INVALID_HANDLE;
+        }
+    }
+
+    /* Test with NULL salt */
+    if (ret == CKR_OK) {
+        CK_PKCS5_PBKD2_PARAMS invalidParams = pbkdf2Params;
+        CK_MECHANISM invalidMech = mechanism;
+        invalidParams.pSaltSourceData = NULL;
+        invalidMech.pParameter = &invalidParams;
+
+        ret = funcList->C_GenerateKey(session, &invalidMech, keyTemplate,
+                                      sizeof(keyTemplate)/sizeof(CK_ATTRIBUTE), &key);
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
+                       "PKCS#5 PBKDF2 with NULL salt");
+        ret = CKR_OK; /* Reset for next test */
+    }
+
+#ifndef NO_SHA
+    /* Test different hash algorithms */
+    if (ret == CKR_OK) {
+        CK_PKCS5_PBKD2_PARAMS sha1Params = pbkdf2Params;
+        CK_MECHANISM sha1Mech = mechanism;
+        sha1Params.prf = CKP_PKCS5_PBKD2_HMAC_SHA1;
+        sha1Mech.pParameter = &sha1Params;
+
+        ret = funcList->C_GenerateKey(session, &sha1Mech, keyTemplate,
+                                      sizeof(keyTemplate)/sizeof(CK_ATTRIBUTE), &key);
+        CHECK_CKR(ret, "PKCS#5 PBKDF2 with SHA1");
+    }
+#endif
+
+    if (ret == CKR_OK) {
+        CK_PKCS5_PBKD2_PARAMS sha512Params = pbkdf2Params;
+        CK_MECHANISM sha512Mech = mechanism;
+        sha512Params.prf = CKP_PKCS5_PBKD2_HMAC_SHA512;
+        sha512Mech.pParameter = &sha512Params;
+
+        ret = funcList->C_GenerateKey(session, &sha512Mech, keyTemplate,
+                                      sizeof(keyTemplate)/sizeof(CK_ATTRIBUTE), &key);
+        CHECK_CKR(ret, "PKCS#5 PBKDF2 with SHA512");
+    }
 
     return ret;
 }
@@ -3661,7 +4130,7 @@ static CK_RV test_data_object_null_value(void* args)
     /* Test getting CKA_VALUE individually to confirm it's NULL/empty */
     if (ret == CKR_OK) {
         CK_ATTRIBUTE singleAttr = { CKA_VALUE, NULL, 0 };
-        
+
         ret = funcList->C_GetAttributeValue(session, dataObj, &singleAttr, 1);
         CHECK_CKR(ret, "Get single CKA_VALUE attribute for NULL value");
 
@@ -15012,13 +15481,13 @@ static CK_RV test_nss_email_attribute(void* args)
     CK_RV ret = CKR_OK;
     CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
     CK_CERTIFICATE_TYPE certType = CKC_X_509;
-    
+
     /* Test email address */
     static CK_UTF8CHAR test_email[] = "test@wolfssl.com";
     static CK_UTF8CHAR label[] = "NSS Email Test Certificate";
     static CK_BYTE subject[] = "CN=Test User,O=wolfSSL,C=US";
     static CK_BYTE id[] = {0x01, 0x02, 0x03, 0x04, 0x05};
-    
+
     /* Minimal X.509 certificate data for testing */
     static CK_BYTE certificate[] = {
         0x30, 0x82, 0x01, 0x22, 0x30, 0x0D, 0x06, 0x09, 0x2A, 0x86,
@@ -15026,7 +15495,7 @@ static CK_RV test_nss_email_attribute(void* args)
         0x82, 0x01, 0x0F, 0x00, 0x30, 0x82, 0x01, 0x0A, 0x02, 0x82,
         0x01, 0x01, 0x00, 0xC0, 0x95, 0x08, 0xE1, 0x57, 0x41, 0xF2
     };
-    
+
     /* Template for creating the certificate object with NSS email attribute */
     CK_ATTRIBUTE tmpl[] = {
         { CKA_CLASS, &certificateClass, sizeof(certificateClass) },
@@ -15039,23 +15508,23 @@ static CK_RV test_nss_email_attribute(void* args)
         { CKA_NSS_EMAIL, test_email, sizeof(test_email)-1 }
     };
     CK_ULONG tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
-    
+
     /* Buffer to retrieve the email attribute */
     CK_BYTE emailBuffer[64];
     CK_ATTRIBUTE getEmailAttr = {
         CKA_NSS_EMAIL, emailBuffer, sizeof(emailBuffer)
     };
-    
+
     /* Create the certificate object with NSS email attribute */
     ret = funcList->C_CreateObject(session, tmpl, tmplCnt, &obj);
     CHECK_CKR(ret, "Create Certificate Object with NSS Email");
-    
+
     /* Verify the NSS_EMAIL attribute can be retrieved */
     if (ret == CKR_OK) {
         ret = funcList->C_GetAttributeValue(session, obj, &getEmailAttr, 1);
         CHECK_CKR(ret, "Get NSS_EMAIL attribute");
     }
-    
+
     /* Verify the email value matches what was set */
     if (ret == CKR_OK) {
         if (getEmailAttr.ulValueLen != sizeof(test_email)-1 ||
@@ -15064,25 +15533,25 @@ static CK_RV test_nss_email_attribute(void* args)
             CHECK_CKR(ret, "NSS_EMAIL attribute value incorrect");
         }
     }
-    
+
     /* Test getting the attribute length first (NULL buffer) */
     if (ret == CKR_OK) {
         CK_ATTRIBUTE getLenAttr = { CKA_NSS_EMAIL, NULL, 0 };
         ret = funcList->C_GetAttributeValue(session, obj, &getLenAttr, 1);
         CHECK_CKR(ret, "Get NSS_EMAIL attribute length");
-        
+
         if (ret == CKR_OK && getLenAttr.ulValueLen != sizeof(test_email)-1) {
             ret = -1;
             CHECK_CKR(ret, "NSS_EMAIL attribute length incorrect");
         }
     }
-    
+
     /* Clean up - destroy the object */
     if (ret == CKR_OK) {
         ret = funcList->C_DestroyObject(session, obj);
         CHECK_CKR(ret, "Destroy NSS Email Certificate Object");
     }
-    
+
     return ret;
 }
 #endif
@@ -15528,6 +15997,16 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_nss_trust_object_token_storage),
     PKCS11TEST_FUNC_SESS_DECL(test_nss_derive_tls12_master_key),
     PKCS11TEST_FUNC_SESS_DECL(test_nss_email_attribute),
+#ifndef NO_HMAC
+    PKCS11TEST_FUNC_SESS_DECL(test_nss_pkcs12_pbe_sha224_hmac_key_gen),
+    PKCS11TEST_FUNC_SESS_DECL(test_nss_pkcs12_pbe_sha256_hmac_key_gen),
+    PKCS11TEST_FUNC_SESS_DECL(test_nss_pkcs12_pbe_sha384_hmac_key_gen),
+    PKCS11TEST_FUNC_SESS_DECL(test_nss_pkcs12_pbe_sha512_hmac_key_gen),
+    PKCS11TEST_FUNC_SESS_DECL(test_nss_pkcs12_pbe_key_sizes),
+#endif
+#endif
+#ifndef NO_HMAC
+    PKCS11TEST_FUNC_SESS_DECL(test_pkcs5_pbkdf2_key_gen),
 #endif
 #endif
 #ifndef NO_SHA

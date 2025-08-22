@@ -5752,10 +5752,14 @@ int WP11_Slot_HasSession(WP11_Slot* slot)
  *          -ve on failure.
  */
 static int HashPIN(char* pin, int pinLen, byte* seed, int seedLen, byte* hash,
-                   int hashLen)
+                   int hashLen, WP11_Slot* slot)
 {
-#ifdef HAVE_SCRYPT
+#ifdef WOLFPKCS11_PBKDF2
+        return wc_PBKDF2_ex(hash, (byte*)pin, pinLen, seed, seedLen,
+            PBKDF2_ITERATIONS, hashLen, WC_SHA256, NULL, slot->devId);
+#elif defined(HAVE_SCRYPT)
     /* Convert PIN into secret using scrypt algorithm. */
+    (void)slot;
     return wc_scrypt(hash, (byte*)pin, pinLen, seed, seedLen,
                                     WP11_HASH_PIN_COST, WP11_HASH_PIN_BLOCKSIZE,
                                     WP11_HASH_PIN_PARALLEL, hashLen);
@@ -5763,6 +5767,7 @@ static int HashPIN(char* pin, int pinLen, byte* seed, int seedLen, byte* hash,
     /* fallback to simple SHA2-256 hash of pin */
     (void)seed;
     (void)seedLen;
+    (void)slot;
     XMEMSET(hash, 0, hashLen);
     return wc_Sha256Hash((const byte*)pin, pinLen, hash);
 #else
@@ -5772,6 +5777,7 @@ static int HashPIN(char* pin, int pinLen, byte* seed, int seedLen, byte* hash,
     (void)seedLen;
     (void)hash;
     (void)hashLen;
+    (void)slot;
     return NOT_COMPILED_IN;
 #endif
 }
@@ -5837,7 +5843,7 @@ int WP11_Slot_CheckSOPin(WP11_Slot* slot, char* pin, int pinLen)
 
         /* Costly Operation done out of lock. */
         ret = HashPIN(pin, pinLen, token->soPinSeed, sizeof(token->soPinSeed),
-                                                            hash, sizeof(hash));
+                                                    hash, sizeof(hash), slot);
 
         WP11_Lock_LockRO(&slot->lock);
     }
@@ -5877,7 +5883,7 @@ int WP11_Slot_CheckUserPin(WP11_Slot* slot, char* pin, int pinLen)
 
         /* Costly Operation done out of lock. */
         ret = HashPIN(pin, pinLen, token->userPinSeed,
-                                sizeof(token->userPinSeed), hash, sizeof(hash));
+                        sizeof(token->userPinSeed), hash, sizeof(hash), slot);
 
         WP11_Lock_LockRO(&slot->lock);
     }
@@ -6041,7 +6047,7 @@ int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen)
     #ifndef WOLFPKCS11_NO_STORE
         if (ret == 0) {
             ret = HashPIN(pin, pinLen, token->seed, sizeof(token->seed),
-                token->key, sizeof(token->key));
+                token->key, sizeof(token->key), slot);
         }
     #endif
         WP11_Lock_LockRW(&slot->lock);
@@ -6113,7 +6119,7 @@ int WP11_Slot_SetSOPin(WP11_Slot* slot, char* pin, int pinLen)
         /* Costly Operation done out of lock. */
         ret = HashPIN(pin, pinLen, token->soPinSeed,
                                          sizeof(token->soPinSeed), token->soPin,
-                                         sizeof(token->soPin));
+                                         sizeof(token->soPin), slot);
         WP11_Lock_LockRW(&slot->lock);
     }
     if (ret == 0) {
@@ -6162,11 +6168,11 @@ int WP11_Slot_SetUserPin(WP11_Slot* slot, char* pin, int pinLen)
         token->userPinEmpty = 0;
         ret = HashPIN(pin, pinLen, token->userPinSeed,
                                      sizeof(token->userPinSeed), token->userPin,
-                                     sizeof(token->userPin));
+                                     sizeof(token->userPin), slot);
     #ifndef WOLFPKCS11_NO_STORE
         if (ret == 0) {
             ret = HashPIN(pin, pinLen, token->seed, sizeof(token->seed),
-                token->key, sizeof(token->key));
+                token->key, sizeof(token->key), slot);
         }
     #endif
         WP11_Lock_LockRW(&slot->lock);
@@ -9318,6 +9324,10 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
         case CKA_TRUST_CODE_SIGNING:
         case CKA_TRUST_STEP_UP_APPROVED:
             /* Handled in WP11_Object_SetTrust */
+#ifdef WOLFPKCS11_NSS
+        case CKA_NSS_DB:
+            /* Ignored legacy field */
+#endif
 #endif
         case CKA_CERTIFICATE_TYPE:
             /* Handled in WP11_Object_SetCert */
@@ -12722,7 +12732,35 @@ int WP11_Digest_Single(unsigned char* data, word32 dataLen,
     return ret;
 }
 
+int WP11_PBKDF2(byte* output, const byte* passwd, int pLen,
+    const byte* salt, int sLen, int iterations, int kLen, int hashType)
+{
+    return wc_PBKDF2(output, passwd, pLen, salt, sLen, iterations, kLen,
+        hashType);
+}
+
+int WP11_PKCS12_PBKDF(byte* output, const byte* passwd, int pLen,
+    const byte* salt, int sLen, int iterations, int kLen, int hashType)
+{
+    /* For PKCS#12 MAC key derivation, purpose should be 3 */
+    return wc_PKCS12_PBKDF(output, passwd, pLen, salt, sLen, iterations,
+        kLen, hashType, 3);
+}
+
 #ifndef NO_HMAC
+/**
+ * Return the length of a signature in bytes.
+ *
+ * @param  session  [in]  Session object.
+ * @return  Length of HMAC signature in bytes.
+ */
+int WP11_Hmac_SigLen(WP11_Session* session)
+{
+    WP11_Hmac* hmac = &session->params.hmac;
+
+    return hmac->hmacSz;
+}
+
 /**
  * Convert the HMAC mechanism to a wolfCrypt hash type.
  *
@@ -12773,20 +12811,6 @@ static int wp11_hmac_hash_type(CK_MECHANISM_TYPE hmacMech, int* hashType)
 
     return ret;
 }
-
-/**
- * Return the length of a signature in bytes.
- *
- * @param  session  [in]  Session object.
- * @return  Length of HMAC signature in bytes.
- */
-int WP11_Hmac_SigLen(WP11_Session* session)
-{
-    WP11_Hmac* hmac = &session->params.hmac;
-
-    return hmac->hmacSz;
-}
-
 
 /**
  * Initialize the HMAC operation.

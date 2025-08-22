@@ -86,6 +86,10 @@ jobs:
     uses: ./.github/workflows/build-workflow.yml
     with:
       config: --enable-nss
+  pbkdf2:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --enable-pbkdf2 --with-pbkdf2-iterations=1000
 
   debug:
     uses: ./.github/workflows/build-workflow.yml
