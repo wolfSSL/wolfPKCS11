@@ -108,6 +108,113 @@ Set to any value to stop storage of token data.
 
 ## Release Notes
 
+### wolfPKCS11 Release 2.0 (August 26, 2025)
+
+**Summary**
+
+This release contains many new features so that it can be the PKCS11 backend for NSS. It also includes many bug fixes.
+
+**Detail**
+
+* New examples added
+* Added certificate storage for wolfPKCS11
+* Added new AES algorithms:
+  - `AES-CCM`
+  - `AES-ECB`
+  - `AES-CTS`
+  - `AES-CTR`
+* Compiler fixes
+* Large improvements to TPM storage
+* Reduced memory usage for objects
+* Added support for MAXQ1065
+* Fixed RSA with no public exponent provided
+* Fixed `CKA_CERTIFICATE_TYPE` search for `CKC_X_509`
+* Fixed RSA with no modulus provided
+* Fixed bad memory access with `C_FindObjects` on a certificate object
+* Added new functionality:
+  - `C_Digest*`
+  - `C_SignEncryptUpdate`
+  - `C_DecryptVerifyUpdate`
+  - `C_GetOperationState` and `C_SetOperationState` (Digest only)
+  - `C_SignRecoverInit` and `C_VerifyRecover`
+  - `wolfPKCS11_Debugging_On` and `wolfPKCS11_Debugging_Off`
+* Added new mechanisms:
+  - `CKM_ECDSA_SHA*`
+  - `CKM_SHA*_RSA*`
+  - `CKM_AES_CMAC_GENERAL`
+  - `CKM_AES_CMAC`
+  - `CKM_AES_CBC_ENCRYPT_DATA`
+  - `CKM_HKDF_DATA`
+  - `CKM_HKDF_KEY_GEN`
+  - `CKM_TLS12_KEY_AND_MAC_DERIVE`
+  - `CKM_TLS12_MASTER_KEY_DERIVE`
+  - `CKM_TLS12_MASTER_KEY_DERIVE_DH`
+  - `CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE` (NSS builds only)
+  - `CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_DH` (NSS builds only)
+  - `CKM_NSS_TLS_PRF_GENERAL_SHA256` (NSS builds only)
+  - `CKM_TLS_MAC`
+  - `CKM_SHA1_RSA_PKCS`
+  - `CKM_SHA1_RSA_PKCS_PSS`
+  - `CKM_SHA3*`
+  - `CKM_MD5`
+  - `CKM_NSS_PKCS12_PBE_SHA*_HMAC_KEY_GEN` (NSS builds only)
+  - `CKM_PKCS5_PBKD2`
+* Added new types:
+  - `CKO_DATA`
+  - `CKO_NSS_TRUST` (NSS builds only)
+* Added new attributes:
+  - `CKA_CERTIFICATE_TYPE`
+  - `CKA_CERTIFICATE_CATEGORY`
+  - `CKA_ID`
+  - `CKA_ISSUER`
+  - `CKA_SERIAL_NUMBER`
+  - `CKA_PUBLIC_KEY_INFO`
+  - `CKA_URL`
+  - `CKA_HASH_OF_SUBJECT_PUBLIC_KEY`
+  - `CKA_HASH_OF_ISSUER_PUBLIC_KEY`
+  - `CKA_NAME_HASH_ALGORITHM`
+  - `CKA_CHECK_VALUE`
+  - `CKA_CERT_SHA1_HASH` (NSS builds only)
+  - `CKA_CERT_MD5_HASH` (NSS builds only)
+  - `CKA_TRUST_SERVER_AUTH` (NSS builds only)
+  - `CKA_TRUST_CLIENT_AUTH` (NSS builds only)
+  - `CKA_TRUST_EMAIL_PROTECTION` (NSS builds only)
+  - `CKA_TRUST_CODE_SIGNING` (NSS builds only)
+  - `CKA_TRUST_STEP_UP_APPROVED` (NSS builds only)
+  - `CKA_NSS_EMAIL` (NSS builds only)
+  - `CKA_NSS_DB` (NSS builds only, not stored)
+* Added SHA3 support for digest and HMAC
+* Added AES key gen and key wrap
+* Added `--enable-nss` for NSS specific PKCS11 quirks
+* Fixed ECC derive key curve error
+* Fixed object boolean attributes and permissions
+* Fixed `C_SetAttributeValue` sometimes erasing keys
+* Fixed wolfCrypt FIPSv5 and FIPSv6 support
+* Fixed token erasure on load error
+* Fixed various memory leaks
+* Complete re-write of file based token path handling
+* Added debugging output
+* Fixed visibility issues
+* Fixed x963 usage for ECC keys
+* Added support for older wolfSSL versions
+* Fixed token overwriting previous objects
+* Fixed token load error handling
+* Improved error handling for `C_Login`
+* Improved Debian packaging
+* Fixed build issues with wolfBoot
+* Fixed `malloc(0)` code path
+* Fixed `C_CopyObject` not doing a deep copy
+* Added `CKM_RSA_PKCS` to wrap / unwrap
+* Fixed ECC curve lookup for FIPSv5
+* Fixed default attributes for keys
+* `C_DestroyObject` now deletes files instead of leaving truncated files
+* Added support for STM32U5 DHUK wrapping
+* Added PBKDF2 support for pins
+  - Enabled by default for FIPS
+  - Enabled using `--enable-pbkdf2` or defining `WOLFPKCS11_PBKDF2`
+* Added `--pbkdf2-iterations` and `PBKDF2_ITERATIONS` to set the number of
+  PBKDF2 iterations for pin handling (default 600,000).
+
 ### wolfPKCS11 Release 1.3 (Mar 22, 2024)
 
 **Summary**
