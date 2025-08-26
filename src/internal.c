@@ -2648,8 +2648,10 @@ static void wp11_Object_Decode_Cert(WP11_Object* object)
  */
 static void wp11_Object_Decode_Trust(WP11_Object* object)
 {
-    XMEMCPY((unsigned char*)&object->data.trust, object->keyData,
-        object->keyDataLen);
+    if (object->keyData != NULL) {
+        XMEMCPY((unsigned char*)&object->data.trust, object->keyData,
+            object->keyDataLen);
+    }
     object->encoded = 0;
 }
 #endif
@@ -7880,10 +7882,10 @@ int WP11_Object_SetTrust(WP11_Object* object, unsigned char** data,
 {
     WP11_Trust* trust;
 
-    if (data[0] == NULL && len[0] != WC_SHA_DIGEST_SIZE)
+    if (data[0] == NULL || len[0] != WC_SHA_DIGEST_SIZE)
         return BAD_FUNC_ARG;
 
-    if (data[1] == NULL && len[1] != WC_MD5_DIGEST_SIZE)
+    if (data[1] == NULL || len[1] != WC_MD5_DIGEST_SIZE)
         return BAD_FUNC_ARG;
 
     if (object->onToken)
