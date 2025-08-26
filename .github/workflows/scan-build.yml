@@ -1,0 +1,278 @@
+# wolfPKCS11 Scan-Build Static Analysis Workflow
+#
+# This workflow performs comprehensive static analysis on the wolfPKCS11 codebase
+# using Clang Static Analyzer (scan-build) to identify potential bugs, security
+# vulnerabilities, and code quality issues across different build configurations.
+#
+# Features:
+# - Matrix build testing both standard and TPM-enabled configurations
+# - Comprehensive analysis using Clang Static Analyzer
+# - HTML report generation for detailed issue review
+# - Zero-tolerance policy: any bugs found will fail the build
+# - Artifact upload for detailed review of analysis results
+#
+# Configurations tested:
+# 1. Standard Build - Default wolfPKCS11 configuration
+# 2. NSS Build - wolfPKCS11 with NSS support
+# 3. TPM Build - wolfPKCS11 with TPM support via wolfTPM and IBM TPM simulator
+# 4. NSS+TPM Build - wolfPKCS11 with both NSS and TPM support
+#
+# The workflow generates detailed HTML reports and summaries available as artifacts
+# for each configuration, enabling developers to review and address identified issues.
+
+name: wolfPKCS11 Scan-Build Analysis
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  scan-build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - name: "Standard Build"
+            configure_flags: ""
+          - name: "NSS Build"
+            configure_flags: "--enable-nss"
+          - name: "TPM Build"
+            configure_flags: "--enable-tpm"
+          - name: "NSS+TPM Build"
+            configure_flags: "--enable-nss --enable-tpm"
+
+    steps:
+    # Checkout wolfPKCS11
+    - uses: actions/checkout@v4
+
+    # Install build dependencies
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          autoconf \
+          automake \
+          libtool \
+          clang \
+          clang-tools \
+          pkg-config \
+          git \
+          libnss3-dev \
+          libnspr4-dev
+
+    # Build and install wolfSSL
+    - name: Build and install wolfSSL
+      run: |
+        git clone https://github.com/wolfSSL/wolfssl.git
+        cd wolfssl
+        ./autogen.sh
+        ./configure --enable-cryptocb --enable-aescfb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt --enable-md5 \
+            C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT -DHAVE_AES_ECB -DHAVE_AES_KEYWRAP"
+        make -j$(nproc)
+        sudo make install
+        sudo ldconfig
+        cd ..
+
+    # Setup IBM Software TPM (only if TPM enabled)
+    - name: Setup IBM Software TPM
+      if: contains(matrix.config.configure_flags, '--enable-tpm')
+      run: |
+        git clone https://github.com/kgoldman/ibmswtpm2.git
+        cd ibmswtpm2/src
+        make
+        ./tpm_server &
+        cd ../..
+
+    # Build and install wolfTPM (only if TPM enabled)
+    - name: Build and install wolfTPM
+      if: contains(matrix.config.configure_flags, '--enable-tpm')
+      run: |
+        git clone https://github.com/wolfSSL/wolftpm.git
+        cd wolftpm
+        ./autogen.sh
+        ./configure --enable-swtpm
+        make -j$(nproc)
+        sudo make install
+        sudo ldconfig
+        cd ..
+
+    # Configure wolfPKCS11
+    - name: Configure wolfPKCS11 (${{ matrix.config.name }})
+      run: |
+        ./autogen.sh
+        if [ -n "${{ matrix.config.configure_flags }}" ]; then
+          CC=clang CXX=clang++ ./configure --enable-all --enable-debug ${{ matrix.config.configure_flags }}
+        else
+          CC=clang CXX=clang++ ./configure --enable-all --enable-debug
+        fi
+
+    # Run scan-build analysis
+    - name: Run scan-build analysis (${{ matrix.config.name }})
+      run: |
+        # Create output directory for scan-build reports
+        mkdir -p scan-build-reports
+
+        # Run scan-build with comprehensive checkers and fail on any bugs
+        echo "Running scan-build analysis..."
+        echo "Working directory: $(pwd)"
+        echo "Environment variables:"
+        env | grep -E "(CC|CXX|CFLAGS|LDFLAGS|LD_LIBRARY_PATH)" || echo "No relevant env vars set"
+
+        # Run scan-build and capture both stdout and stderr
+        scan-build -o scan-build-reports \
+          --status-bugs \
+          --use-cc=clang \
+          --use-c++=clang++ \
+          -enable-checker alpha.core.BoolAssignment \
+          -enable-checker alpha.core.CallAndMessageUnInitRefArg \
+          -enable-checker alpha.core.CastSize \
+          -enable-checker alpha.core.CastToStruct \
+          -enable-checker alpha.core.Conversion \
+          -enable-checker alpha.core.DynamicTypeChecker \
+          -enable-checker alpha.core.FixedAddr \
+          -enable-checker alpha.core.IdenticalExpr \
+          -enable-checker alpha.core.PointerArithm \
+          -enable-checker alpha.core.PointerSub \
+          -enable-checker alpha.core.SizeofPtr \
+          -enable-checker alpha.core.TestAfterDivZero \
+          -enable-checker alpha.security.ArrayBound \
+          -enable-checker alpha.security.ArrayBoundV2 \
+          -enable-checker alpha.security.MallocOverflow \
+          -enable-checker alpha.security.ReturnPtrRange \
+          -enable-checker alpha.unix.SimpleStream \
+          -enable-checker alpha.unix.cstring.BufferOverlap \
+          -enable-checker alpha.unix.cstring.NotNullTerminated \
+          -enable-checker alpha.unix.cstring.OutOfBounds \
+          -enable-checker security.FloatLoopCounter \
+          -enable-checker security.insecureAPI.UncheckedReturn \
+          make -j$(nproc) > scan-build-output.txt 2>&1
+
+        # Check if scan-build found any issues
+        SCAN_EXIT_CODE=$?
+
+        # Count warnings and errors from the output
+        WARNINGS=0
+        ERRORS=0
+        BUGS_FOUND=0
+
+        if [ -s scan-build-output.txt ]; then
+          WARNINGS=$(grep -c "warning:" scan-build-output.txt 2>/dev/null || echo "0")
+          ERRORS=$(grep -c "error:" scan-build-output.txt 2>/dev/null || echo "0")
+
+          # Check for "bugs found" message - scan-build uses this format
+          if grep -q "bugs found" scan-build-output.txt; then
+            BUGS_FOUND=$(grep -o "[0-9]\+ bugs found" scan-build-output.txt | head -1 | cut -d' ' -f1 2>/dev/null || echo "0")
+          fi
+
+          # Also check for "No bugs found" message
+          if grep -q "No bugs found" scan-build-output.txt; then
+            BUGS_FOUND=0
+          fi
+        fi
+
+        # Display summary
+        echo ""
+        echo "=== Scan-Build Analysis Summary ==="
+        echo "Configuration: ${{ matrix.config.name }}"
+        echo "Warnings: $WARNINGS"
+        echo "Errors: $ERRORS"
+        echo "Bugs found: $BUGS_FOUND"
+        echo "Scan-build exit code: $SCAN_EXIT_CODE"
+        echo "Timestamp: $(date)"
+
+        # Create summary file for artifacts
+        echo "Configuration: ${{ matrix.config.name }}" > scan-build-summary.txt
+        echo "Warnings: $WARNINGS" >> scan-build-summary.txt
+        echo "Errors: $ERRORS" >> scan-build-summary.txt
+        echo "Bugs found: $BUGS_FOUND" >> scan-build-summary.txt
+        echo "Scan-build exit code: $SCAN_EXIT_CODE" >> scan-build-summary.txt
+        echo "Timestamp: $(date)" >> scan-build-summary.txt
+
+        # Display scan-build output (first 50 lines to avoid log overflow)
+        if [ -s scan-build-output.txt ]; then
+          echo ""
+          echo "=== Scan-Build Output (First 50 lines) ==="
+          head -50 scan-build-output.txt
+          TOTAL_LINES=$(wc -l < scan-build-output.txt)
+          if [ "$TOTAL_LINES" -gt 50 ]; then
+            echo "... (truncated, full output available in artifacts - $TOTAL_LINES total lines)"
+          fi
+        fi
+
+        # List generated HTML reports
+        if [ -d "scan-build-reports" ]; then
+          REPORT_COUNT=$(find scan-build-reports -name "*.html" -type f 2>/dev/null | wc -l)
+          REPORT_DIRS=$(find scan-build-reports -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
+          echo ""
+          echo "Generated $REPORT_COUNT HTML report files in $REPORT_DIRS report directories"
+          if [ "$REPORT_COUNT" -gt 0 ]; then
+            echo "HTML reports available in artifacts for detailed analysis"
+            find scan-build-reports -name "*.html" -type f 2>/dev/null | head -10 | sed 's/^/  /'
+          fi
+          if [ "$REPORT_DIRS" -gt 0 ]; then
+            echo "Report directories:"
+            find scan-build-reports -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -5 | sed 's/^/  /'
+          fi
+        else
+          echo ""
+          echo "No scan-build-reports directory found"
+        fi
+
+        # Fail the build if scan-build found bugs or returned non-zero exit code
+        if [ "$SCAN_EXIT_CODE" -ne 0 ] || [ "$BUGS_FOUND" -gt 0 ]; then
+          echo ""
+          echo "❌ Scan-build analysis failed"
+          echo "Exit code: $SCAN_EXIT_CODE"
+          echo "Bugs found: $BUGS_FOUND"
+          echo "Warnings: $WARNINGS"
+          echo "Errors: $ERRORS"
+          echo ""
+          echo "This indicates potential bugs or static analysis issues were found."
+          echo "Please review the detailed reports in the artifacts and fix the issues."
+          echo ""
+          echo "Recent scan-build output:"
+          if [ -s scan-build-output.txt ]; then
+            tail -20 scan-build-output.txt | sed 's/^/  /'
+          fi
+          exit 1
+        else
+          echo ""
+          echo "✅ Scan-build analysis passed successfully"
+          echo "No static analysis issues detected in ${{ matrix.config.name }} configuration"
+        fi
+
+    # Upload scan-build reports and logs
+    - name: Upload scan-build artifacts
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: scan-build-reports-${{ matrix.config.name }}-${{ github.run_number }}
+        path: |
+          scan-build-reports/
+          scan-build-output.txt
+          scan-build-summary.txt
+          test-suite.log
+          config.log
+        retention-days: 14
+        if-no-files-found: warn
+
+    # Upload failure logs (additional step for easier debugging)
+    - name: Upload failure logs
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: scan-build-failure-logs-${{ matrix.config.name }}-${{ github.run_number }}
+        path: |
+          scan-build-output.txt
+          scan-build-summary.txt
+          config.log
+          test-suite.log
+          src/*.lo
+          src/*.o
+        retention-days: 7
+        if-no-files-found: ignore

@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <errno.h>
 
 #ifdef HAVE_CONFIG_H
     #include <wolfpkcs11/config.h>
@@ -70,15 +71,19 @@ static int check_debug_output(void)
         return 0;
     }
 
+    errno = 0;
     stdout = original_stdout;
     rewind(capture_file);
 
-    while (fgets(buffer, sizeof(buffer), capture_file)) {
-        if (strstr(buffer, "WOLFPKCS11 ENTER:") ||
-            strstr(buffer, "WOLFPKCS11 LEAVE:") ||
-            strstr(buffer, "WOLFPKCS11:")) {
-            found_debug = 1;
-            break;
+    if (!errno)
+    {
+        while (fgets(buffer, sizeof(buffer), capture_file) != NULL) {
+            if (strstr(buffer, "WOLFPKCS11 ENTER:") ||
+                strstr(buffer, "WOLFPKCS11 LEAVE:") ||
+                strstr(buffer, "WOLFPKCS11:")) {
+                found_debug = 1;
+                break;
+            }
         }
     }
 

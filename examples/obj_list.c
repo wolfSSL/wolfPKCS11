@@ -543,7 +543,7 @@ int obj_list(int argc, char* argv[])
     int ret;
     CK_RV rv;
     const char* libName = WOLFPKCS11_DLL_FILENAME;
-    CK_SESSION_HANDLE session;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
 
 #ifndef WOLFPKCS11_NO_ENV
     if (!XGETENV("WOLFPKCS11_TOKEN_PATH")) {
