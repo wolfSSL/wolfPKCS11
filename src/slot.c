@@ -1839,6 +1839,9 @@ CK_RV C_Login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
         case PIN_NOT_SET_E:
             rv = CKR_USER_PIN_NOT_INITIALIZED;
             break;
+        /* No better error matches for pin too short for PBKDF2 HMAC */
+        case BAD_LENGTH_E:
+        case HMAC_MIN_KEYLEN_E:
         case PIN_INVALID_E:
             rv = CKR_PIN_INCORRECT;
             break;
