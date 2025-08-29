@@ -5757,8 +5757,21 @@ static int HashPIN(char* pin, int pinLen, byte* seed, int seedLen, byte* hash,
                    int hashLen, WP11_Slot* slot)
 {
 #ifdef WOLFPKCS11_PBKDF2
-        return wc_PBKDF2_ex(hash, (byte*)pin, pinLen, seed, seedLen,
+#if defined(HAVE_FIPS) && defined(WOLFPKCS11_NSS)
+    if (pinLen == 0) {
+        /* For FIPS, use empty pin of HMAC_FIPS_MIN_KEY bytes when pinLen is 0.
+         * Otherwise we hit HMAC_MIN_KEYLEN_E.
+         * Certain NSS tools will try to login a blank token with an empty pin
+         * and this needs to succeed, or the tool will fail.
+         */
+        byte emptyPin[HMAC_FIPS_MIN_KEY];
+        XMEMSET(emptyPin, 0, sizeof(emptyPin));
+        return wc_PBKDF2_ex(hash, emptyPin, sizeof(emptyPin), seed, seedLen,
             PBKDF2_ITERATIONS, hashLen, WC_SHA256, NULL, slot->devId);
+    }
+#endif
+    return wc_PBKDF2_ex(hash, (byte*)pin, pinLen, seed, seedLen,
+        PBKDF2_ITERATIONS, hashLen, WC_SHA256, NULL, slot->devId);
 #elif defined(HAVE_SCRYPT)
     /* Convert PIN into secret using scrypt algorithm. */
     (void)slot;

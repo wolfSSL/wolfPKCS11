@@ -179,6 +179,11 @@ jobs:
         if [ -f "/tmp/nss-packages/libnss3_"*.deb ]; then
           echo "Using cached NSS packages:"
           ls -la /tmp/nss-packages/
+
+          # Install build dependencies when using cached packages
+          echo "Installing NSS build dependencies for cached packages..."
+          apt-get build-dep -y libnss3
+
           cd /tmp/nss-packages
         else
           echo "Using freshly built NSS packages:"
