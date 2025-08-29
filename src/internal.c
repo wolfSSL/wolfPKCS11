@@ -5757,10 +5757,12 @@ static int HashPIN(char* pin, int pinLen, byte* seed, int seedLen, byte* hash,
                    int hashLen, WP11_Slot* slot)
 {
 #ifdef WOLFPKCS11_PBKDF2
-#if defined(HAVE_FIPS)
+#if defined(HAVE_FIPS) && defined(WOLFPKCS11_NSS)
     if (pinLen == 0) {
         /* For FIPS, use empty pin of HMAC_FIPS_MIN_KEY bytes when pinLen is 0.
          * Otherwise we hit HMAC_MIN_KEYLEN_E.
+         * Certain NSS tools will try to login a blank token with an empty pin
+         * and this needs to succeed, or the tool will fail.
          */
         byte emptyPin[HMAC_FIPS_MIN_KEY];
         XMEMSET(emptyPin, 0, sizeof(emptyPin));
