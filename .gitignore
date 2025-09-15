@@ -72,3 +72,7 @@ tests/token_path_test
 tests/rsa_session_persistence_test
 
 IDE/VisualStudio/.vs
+
+doc/doxygen_warnings
+doc/html/
+doc/refman.pdf

@@ -1,0 +1,39 @@
+# Doxyfile for wolfPKCS11 HTML docs
+
+PROJECT_NAME           = "wolfPKCS11"
+PROJECT_NUMBER         = "2.0.0"
+
+OUTPUT_DIRECTORY       = .
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+GENERATE_LATEX         = NO
+
+OPTIMIZE_OUTPUT_FOR_C  = YES
+EXTRACT_ALL            = YES
+HIDE_UNDOC_MEMBERS     = NO
+HIDE_UNDOC_CLASSES     = YES
+SOURCE_BROWSER         = NO
+FULL_PATH_NAMES        = NO
+REFERENCED_BY_RELATION = NO
+REFERENCES_RELATION    = NO
+INLINE_SOURCES         = NO
+
+# Group-related settings
+SORT_GROUP_NAMES       = NO
+SORT_MEMBERS_CTORS_1ST = NO
+GROUP_GRAPHS           = YES
+UML_LOOK               = NO
+
+# Navigation improvements
+GENERATE_TREEVIEW      = YES
+TREEVIEW_WIDTH         = 250
+SEARCHENGINE           = YES
+
+INPUT                  = ../wolfpkcs11/version.h ../doc/dox_comments/header_files
+FILE_PATTERNS          = *.h
+RECURSIVE              = NO
+
+EXCLUDE                = ../src ../tests ../examples ../IDE ../Docker ../debian
+
+QUIET                  = NO
+WARN_LOGFILE           = doxygen_warnings

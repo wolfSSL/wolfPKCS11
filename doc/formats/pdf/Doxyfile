@@ -1,0 +1,25 @@
+# Doxyfile for wolfPKCS11 PDF/LaTeX docs
+
+PROJECT_NAME           = "wolfPKCS11"
+PROJECT_NUMBER         = "2.0.0"
+
+OUTPUT_DIRECTORY       = .
+GENERATE_HTML          = NO
+GENERATE_LATEX         = YES
+USE_PDFLATEX           = YES
+
+OPTIMIZE_OUTPUT_FOR_C  = YES
+EXTRACT_ALL            = YES
+HIDE_UNDOC_MEMBERS     = NO
+HIDE_UNDOC_CLASSES     = YES
+SOURCE_BROWSER         = NO
+FULL_PATH_NAMES        = NO
+
+INPUT                  = ../wolfpkcs11/version.h ../doc/dox_comments/header_files
+FILE_PATTERNS          = *.h
+RECURSIVE              = NO
+
+EXCLUDE                = ../src ../tests ../examples ../IDE ../Docker ../debian
+
+QUIET                  = NO
+WARN_LOGFILE           = doxygen_warnings
