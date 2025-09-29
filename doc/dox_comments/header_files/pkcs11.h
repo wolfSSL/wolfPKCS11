@@ -41,9 +41,16 @@
  * _Example_
  * \code
  * CK_RV rv;
+ * CK_FUNCTION_LIST_PTR p11;
+ * 
+ * rv = C_GetFunctionList(&p11);
+ * if (rv != CKR_OK) {
+ *     printf("C_GetFunctionList failed: 0x%08lX\n", rv);
+ *     return rv;
+ * }
  * 
  * // Initialize with default settings
- * rv = C_Initialize(NULL_PTR);
+ * rv = p11->C_Initialize(NULL_PTR);
  * if (rv != CKR_OK) {
  *     printf("C_Initialize failed: 0x%08lX\n", rv);
  *     return rv;
@@ -51,7 +58,7 @@
  * 
  * // ... perform PKCS#11 operations ...
  * 
- * C_Finalize(NULL_PTR);
+ * p11->C_Finalize(NULL_PTR);
  * \endcode
  * 
  * \sa C_Finalize
@@ -76,14 +83,17 @@ CK_RV C_Initialize(CK_VOID_PTR pInitArgs);
  * _Example_
  * \code
  * CK_RV rv;
+ * CK_FUNCTION_LIST_PTR p11;
  * 
- * rv = C_Initialize(NULL_PTR);
+ * rv = C_GetFunctionList(&p11);
  * if (rv == CKR_OK) {
- *     // ... perform operations ...
- *     
- *     rv = C_Finalize(NULL_PTR);
- *     if (rv != CKR_OK) {
- *         printf("C_Finalize failed: 0x%08lX\n", rv);
+ *     rv = p11->C_Initialize(NULL_PTR);
+ *     if (rv == CKR_OK) {
+ *         // ... perform operations ...
+ *         rv = p11->C_Finalize(NULL_PTR);
+ *         if (rv != CKR_OK) {
+ *             printf("C_Finalize failed: 0x%08lX\n", rv);
+ *         }
  *     }
  * }
  * \endcode
@@ -110,16 +120,20 @@ CK_RV C_Finalize(CK_VOID_PTR pReserved);
  * \code
  * CK_INFO info;
  * CK_RV rv;
+ * CK_FUNCTION_LIST_PTR p11;
  * 
- * rv = C_Initialize(NULL_PTR);
+ * rv = C_GetFunctionList(&p11);
  * if (rv == CKR_OK) {
- *     rv = C_GetInfo(&info);
+ *     rv = p11->C_Initialize(NULL_PTR);
  *     if (rv == CKR_OK) {
- *         printf("Library: %.32s\n", info.libraryDescription);
- *         printf("Version: %d.%d\n", info.libraryVersion.major,
- *                                    info.libraryVersion.minor);
+ *         rv = p11->C_GetInfo(&info);
+ *         if (rv == CKR_OK) {
+ *             printf("Library: %.32s\n", info.libraryDescription);
+ *             printf("Version: %d.%d\n", info.libraryVersion.major,
+ *                                        info.libraryVersion.minor);
+ *         }
+ *         p11->C_Finalize(NULL_PTR);
  *     }
- *     C_Finalize(NULL_PTR);
  * }
  * \endcode
  * 
@@ -213,10 +227,15 @@ CK_RV C_CancelFunction(CK_SESSION_HANDLE hSession);
  * 
  * _Example_
  * \code
+ * CK_FUNCTION_LIST_PTR p11;
+ * CK_RV rv = C_GetFunctionList(&p11);
+ * if (rv != CKR_OK) {
+ *     // handle error
+ * }
  * CK_ULONG count = 0;
- * C_GetSlotList(CK_TRUE, NULL_PTR, &count);
+ * rv = p11->C_GetSlotList(CK_TRUE, NULL_PTR, &count);
  * CK_SLOT_ID* slots = malloc(count * sizeof(CK_SLOT_ID));
- * C_GetSlotList(CK_TRUE, slots, &count);
+ * rv = p11->C_GetSlotList(CK_TRUE, slots, &count);
  * free(slots);
  * \endcode
  */
@@ -372,16 +391,22 @@ CK_RV C_WaitForSlotEvent(CK_FLAGS flags, CK_SLOT_ID_PTR pSlot, CK_VOID_PTR pRese
  * \code
  * CK_SESSION_HANDLE hSession;
  * CK_RV rv;
+ * CK_FUNCTION_LIST_PTR p11;
+ * 
+ * rv = C_GetFunctionList(&p11);
+ * if (rv != CKR_OK) {
+ *     // handle error
+ * }
  * 
  * // Open read-write session
- * rv = C_OpenSession(0, CKF_SERIAL_SESSION | CKF_RW_SESSION, 
- *                    NULL_PTR, NULL_PTR, &hSession);
+ * rv = p11->C_OpenSession(0, CKF_SERIAL_SESSION | CKF_RW_SESSION, 
+ *                         NULL_PTR, NULL_PTR, &hSession);
  * if (rv == CKR_OK) {
  *     printf("Session opened: %lu\n", hSession);
  *     
  *     // ... perform operations ...
  *     
- *     C_CloseSession(hSession);
+ *     rv = p11->C_CloseSession(hSession);
  * }
  * \endcode
  * 
@@ -407,14 +432,17 @@ CK_RV C_OpenSession(CK_SLOT_ID slotID, CK_FLAGS flags, CK_VOID_PTR pApplication,
  * \code
  * CK_SESSION_HANDLE hSession;
  * CK_RV rv;
+ * CK_FUNCTION_LIST_PTR p11;
  * 
- * rv = C_OpenSession(0, CKF_SERIAL_SESSION, NULL_PTR, NULL_PTR, &hSession);
+ * rv = C_GetFunctionList(&p11);
  * if (rv == CKR_OK) {
- *     // ... perform operations ...
- *     
- *     rv = C_CloseSession(hSession);
- *     if (rv != CKR_OK) {
- *         printf("Failed to close session: 0x%08lX\n", rv);
+ *     rv = p11->C_OpenSession(0, CKF_SERIAL_SESSION, NULL_PTR, NULL_PTR, &hSession);
+ *     if (rv == CKR_OK) {
+ *         // ... perform operations ...
+ *         rv = p11->C_CloseSession(hSession);
+ *         if (rv != CKR_OK) {
+ *             printf("Failed to close session: 0x%08lX\n", rv);
+ *         }
  *     }
  * }
  * \endcode
@@ -475,15 +503,18 @@ CK_RV C_CloseAllSessions(CK_SLOT_ID slotID);
  * CK_SESSION_HANDLE hSession;
  * CK_SESSION_INFO info;
  * CK_RV rv;
+ * CK_FUNCTION_LIST_PTR p11;
  * 
- * rv = C_OpenSession(0, CKF_SERIAL_SESSION, NULL_PTR, NULL_PTR, &hSession);
+ * rv = C_GetFunctionList(&p11);
  * if (rv == CKR_OK) {
- *     rv = C_GetSessionInfo(hSession, &info);
+ *     rv = p11->C_OpenSession(0, CKF_SERIAL_SESSION, NULL_PTR, NULL_PTR, &hSession);
  *     if (rv == CKR_OK) {
+ *         rv = p11->C_GetSessionInfo(hSession, &info);
+ *         if (rv == CKR_OK) {
  *         printf("Session state: %lu\n", info.state);
  *         printf("Session flags: 0x%08lX\n", info.flags);
  *     }
- *     C_CloseSession(hSession);
+ *     p11->C_CloseSession(hSession);
  * }
  * \endcode
  * 
@@ -519,19 +550,22 @@ CK_RV C_GetSessionInfo(CK_SESSION_HANDLE hSession, CK_SESSION_INFO_PTR pInfo);
  * CK_SESSION_HANDLE hSession;
  * CK_UTF8CHAR userPin[] = "1234";
  * CK_RV rv;
+ * CK_FUNCTION_LIST_PTR p11;
  * 
- * rv = C_OpenSession(0, CKF_SERIAL_SESSION | CKF_RW_SESSION, 
- *                    NULL_PTR, NULL_PTR, &hSession);
+ * rv = C_GetFunctionList(&p11);
  * if (rv == CKR_OK) {
- *     rv = C_Login(hSession, CKU_USER, userPin, sizeof(userPin) - 1);
+ *     rv = p11->C_OpenSession(0, CKF_SERIAL_SESSION | CKF_RW_SESSION, 
+ *                             NULL_PTR, NULL_PTR, &hSession);
  *     if (rv == CKR_OK) {
+ *         rv = p11->C_Login(hSession, CKU_USER, userPin, sizeof(userPin) - 1);
+ *         if (rv == CKR_OK) {
  *         printf("User logged in successfully\n");
  *         
  *         // ... perform authenticated operations ...
  *         
- *         C_Logout(hSession);
+ *         p11->C_Logout(hSession);
  *     }
- *     C_CloseSession(hSession);
+ *     p11->C_CloseSession(hSession);
  * }
  * \endcode
  * 
@@ -560,19 +594,22 @@ CK_RV C_Login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType, CK_UTF8CHAR_PTR
  * CK_SESSION_HANDLE hSession;
  * CK_UTF8CHAR userPin[] = "1234";
  * CK_RV rv;
+ * CK_FUNCTION_LIST_PTR p11;
  * 
- * rv = C_OpenSession(0, CKF_SERIAL_SESSION, NULL_PTR, NULL_PTR, &hSession);
+ * rv = C_GetFunctionList(&p11);
  * if (rv == CKR_OK) {
- *     rv = C_Login(hSession, CKU_USER, userPin, sizeof(userPin) - 1);
+ *     rv = p11->C_OpenSession(0, CKF_SERIAL_SESSION, NULL_PTR, NULL_PTR, &hSession);
  *     if (rv == CKR_OK) {
+ *         rv = p11->C_Login(hSession, CKU_USER, userPin, sizeof(userPin) - 1);
+ *         if (rv == CKR_OK) {
  *         // ... perform operations ...
  *         
- *         rv = C_Logout(hSession);
+ *         rv = p11->C_Logout(hSession);
  *         if (rv == CKR_OK) {
  *             printf("User logged out\n");
  *         }
  *     }
- *     C_CloseSession(hSession);
+ *     p11->C_CloseSession(hSession);
  * }
  * \endcode
  * 
@@ -985,7 +1022,7 @@ CK_RV C_SetAttributeValue(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject, 
  *     {CKA_KEY_TYPE, &keyType, sizeof(keyType)}
  * };
  * 
- * rv = C_FindObjectsInit(hSession, template, 2);
+ * rv = p11->C_FindObjectsInit(hSession, template, 2);
  * if (rv == CKR_OK) {
  *     // Search initialized, now call C_FindObjects
  * }
@@ -1111,7 +1148,7 @@ CK_RV C_FindObjectsFinal(CK_SESSION_HANDLE hSession);
  * };
  * CK_MECHANISM mech = {CKM_AES_KEY_GEN, NULL_PTR, 0};
  * CK_OBJECT_HANDLE hKey;
- * CK_RV rv = C_GenerateKey(hSession, &mech, tmpl, sizeof(tmpl)/sizeof(tmpl[0]), &hKey);
+ * CK_RV rv = p11->C_GenerateKey(hSession, &mech, tmpl, sizeof(tmpl)/sizeof(tmpl[0]), &hKey);
  * \endcode
  */
 CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount, CK_OBJECT_HANDLE_PTR phKey);
@@ -1151,7 +1188,7 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_
  *   {CKA_SIGN, &t, sizeof(t)}
  * };
  * CK_OBJECT_HANDLE hPub, hPriv;
- * CK_RV rv = C_GenerateKeyPair(hSession, &mech,
+ * CK_RV rv = p11->C_GenerateKeyPair(hSession, &mech,
  *     pubTmpl, sizeof(pubTmpl)/sizeof(pubTmpl[0]),
  *     privTmpl, sizeof(privTmpl)/sizeof(privTmpl[0]),
  *     &hPub, &hPriv);
@@ -1306,10 +1343,15 @@ CK_RV C_DigestInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism);
  * CK_MECHANISM mech = {CKM_SHA256, NULL_PTR, 0};
  * CK_BYTE data[] = "abc";
  * CK_ULONG dgstLen = 0;
- * C_DigestInit(hSession, &mech);
- * C_Digest(hSession, data, sizeof(data)-1, NULL_PTR, &dgstLen);
+ * CK_FUNCTION_LIST_PTR p11;
+ * CK_RV rv = C_GetFunctionList(&p11);
+ * if (rv != CKR_OK) {
+ *     // handle error
+ * }
+ * p11->C_DigestInit(hSession, &mech);
+ * p11->C_Digest(hSession, data, sizeof(data)-1, NULL_PTR, &dgstLen);
  * CK_BYTE* dgst = malloc(dgstLen);
- * C_Digest(hSession, data, sizeof(data)-1, dgst, &dgstLen);
+ * p11->C_Digest(hSession, data, sizeof(data)-1, dgst, &dgstLen);
  * free(dgst);
  * \endcode
  */
@@ -1397,10 +1439,14 @@ CK_RV C_DigestFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pDigest, CK_ULONG_PT
  * CK_OBJECT_HANDLE hKey;
  * CK_MECHANISM mechanism = {CKM_AES_CBC, NULL_PTR, 0};
  * CK_RV rv;
+ * CK_FUNCTION_LIST_PTR p11;
  * 
- * rv = C_EncryptInit(hSession, &mechanism, hKey);
+ * rv = C_GetFunctionList(&p11);
  * if (rv == CKR_OK) {
- *     // Encryption initialized, ready to encrypt data
+ *     rv = p11->C_EncryptInit(hSession, &mechanism, hKey);
+ *     if (rv == CKR_OK) {
+ *         // Encryption initialized, ready to encrypt data
+ *     }
  * }
  * \endcode
  * 
@@ -1442,19 +1488,22 @@ CK_RV C_EncryptInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_
  * CK_ULONG ciphertextLen = 0;
  * CK_MECHANISM mechanism = {CKM_AES_CBC, NULL_PTR, 0};
  * CK_RV rv;
+ * CK_FUNCTION_LIST_PTR p11;
  * 
- * rv = C_EncryptInit(hSession, &mechanism, hKey);
+ * rv = C_GetFunctionList(&p11);
  * if (rv == CKR_OK) {
- *     // Get required buffer size
- *     rv = C_Encrypt(hSession, plaintext, sizeof(plaintext) - 1, 
- *                    NULL_PTR, &ciphertextLen);
+ *     rv = p11->C_EncryptInit(hSession, &mechanism, hKey);
  *     if (rv == CKR_OK) {
- *         ciphertext = malloc(ciphertextLen);
- *         if (ciphertext) {
- *             rv = C_Encrypt(hSession, plaintext, sizeof(plaintext) - 1,
- *                            ciphertext, &ciphertextLen);
- *             if (rv == CKR_OK) {
- *                 printf("Encryption successful, %lu bytes\n", ciphertextLen);
+ *         // Get required buffer size
+ *         rv = p11->C_Encrypt(hSession, plaintext, sizeof(plaintext) - 1, 
+ *                             NULL_PTR, &ciphertextLen);
+ *         if (rv == CKR_OK) {
+ *             ciphertext = malloc(ciphertextLen);
+ *             if (ciphertext) {
+ *                 rv = p11->C_Encrypt(hSession, plaintext, sizeof(plaintext) - 1,
+ *                                      ciphertext, &ciphertextLen);
+ *                 if (rv == CKR_OK) {
+ *                     printf("Encryption successful, %lu bytes\n", ciphertextLen);
  *             }
  *             free(ciphertext);
  *         }
@@ -1580,7 +1629,7 @@ CK_RV C_EncryptFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastEncryptedPart,
  * CK_MECHANISM mechanism = {CKM_AES_CBC, NULL_PTR, 0};
  * CK_RV rv;
  * 
- * rv = C_DecryptInit(hSession, &mechanism, hKey);
+ * rv = p11->C_DecryptInit(hSession, &mechanism, hKey);
  * if (rv == CKR_OK) {
  *     // Decryption initialized, ready to decrypt data
  * }
@@ -1625,7 +1674,7 @@ CK_RV C_DecryptInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_
  * CK_MECHANISM mechanism = {CKM_AES_CBC, NULL_PTR, 0};
  * CK_RV rv;
  * 
- * rv = C_DecryptInit(hSession, &mechanism, hKey);
+ * rv = p11->C_DecryptInit(hSession, &mechanism, hKey);
  * if (rv == CKR_OK) {
  *     // Get required buffer size
  *     rv = C_Decrypt(hSession, ciphertext, sizeof(ciphertext),
@@ -1833,13 +1882,13 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJ
  * CK_BYTE msg[] = "hello";
  * CK_BYTE_PTR sig = NULL;
  * CK_ULONG sigLen = 0;
- * CK_RV rv = C_SignInit(hSession, &mech, hPrivKey);
+ * CK_RV rv = p11->C_SignInit(hSession, &mech, hPrivKey);
  * if (rv == CKR_OK) {
- *     rv = C_Sign(hSession, msg, sizeof(msg)-1, NULL_PTR, &sigLen);
+ *     rv = p11->C_Sign(hSession, msg, sizeof(msg)-1, NULL_PTR, &sigLen);
  *     if (rv == CKR_OK) {
  *         sig = malloc(sigLen);
  *         if (sig) {
- *             rv = C_Sign(hSession, msg, sizeof(msg)-1, sig, &sigLen);
+ *             rv = p11->C_Sign(hSession, msg, sizeof(msg)-1, sig, &sigLen);
  *             free(sig);
  *         }
  *     }
@@ -1970,9 +2019,9 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_O
  * CK_BYTE msg[] = "hello";
  * CK_BYTE sig[64]; CK_ULONG sigLen = sizeof(sig);
  * CK_MECHANISM mech = {CKM_ECDSA, NULL_PTR, 0};
- * CK_RV rv = C_VerifyInit(hSession, &mech, hPubKey);
+ * CK_RV rv = p11->C_VerifyInit(hSession, &mech, hPubKey);
  * if (rv == CKR_OK) {
- *     rv = C_Verify(hSession, msg, sizeof(msg)-1, sig, sigLen);
+ *     rv = p11->C_Verify(hSession, msg, sizeof(msg)-1, sig, sigLen);
  *     if (rv == CKR_OK) {
  *         printf("Signature valid\n");
  *     }
@@ -2125,7 +2174,7 @@ void wolfPKCS11_Debugging_On(void);
  * wolfPKCS11_Debugging_Off();
  * #endif
  * 
- * C_Finalize(NULL_PTR);
+ * p11->C_Finalize(NULL_PTR);
  * \endcode
  * 
  * \sa wolfPKCS11_Debugging_On
