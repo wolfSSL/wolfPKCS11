@@ -2053,8 +2053,256 @@ CK_RV C_VerifyRecoverInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanis
  */
 CK_RV C_VerifyRecover(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature, CK_ULONG ulSignatureLen, CK_BYTE_PTR pData, CK_ULONG_PTR pulDataLen);
 
-/* Extensions */
-/* wolfPKCS11 extensions merged from extensions.h (debug controls, vendor attributes) */
-/* Full content from extensions.h goes here; kept concise for brevity in this step. */
-/* NSS compatibility extensions merged from nss_extensions.h */
-/* Full content from nss_extensions.h goes here; kept concise for brevity in this step. */
+/**
+ * \page pkcs11_extensions_overview wolfPKCS11 Extensions
+ * wolfPKCS11-specific extensions and enhancements to the standard PKCS#11 API.
+ * 
+ * wolfPKCS11 provides several extensions beyond the standard PKCS#11 specification
+ * to enable better integration with wolfSSL, enhanced debugging capabilities, and
+ * additional configuration options.
+ * - \ref pkcs11_10_extensions
+ */
+
+/*!
+ * \ingroup pkcs11_10_extensions
+ * \brief Enable debug logging for wolfPKCS11.
+ * 
+ * Enables detailed debug output from wolfPKCS11 operations. This function
+ * activates internal logging that can help with troubleshooting and development.
+ * Debug output is sent to stderr by default.
+ * 
+ * \note This function is only available when wolfPKCS11 is compiled with
+ *       DEBUG_WOLFPKCS11 defined. When debug support is disabled, this
+ *       function becomes a no-op macro.
+ * 
+ * \note Debug logging may expose sensitive information including key material
+ *       and should only be enabled in development environments.
+ * 
+ * _Example_
+ * \code
+ * #ifdef DEBUG_WOLFPKCS11
+ * // Enable debug logging before initializing PKCS#11
+ * wolfPKCS11_Debugging_On();
+ * #endif
+ * 
+ * CK_RV rv = C_Initialize(NULL_PTR);
+ * if (rv != CKR_OK) {
+ *     printf("C_Initialize failed: 0x%08lX\n", rv);
+ * }
+ * 
+ * // ... perform operations with debug output ...
+ * 
+ * #ifdef DEBUG_WOLFPKCS11
+ * wolfPKCS11_Debugging_Off();
+ * #endif
+ * \endcode
+ * 
+ * \sa wolfPKCS11_Debugging_Off
+ */
+void wolfPKCS11_Debugging_On(void);
+
+/*!
+ * \ingroup pkcs11_10_extensions
+ * \brief Disable debug logging for wolfPKCS11.
+ * 
+ * Disables debug output from wolfPKCS11 operations. This function turns off
+ * internal logging that was previously enabled with wolfPKCS11_Debugging_On().
+ * 
+ * \note This function is only available when wolfPKCS11 is compiled with
+ *       DEBUG_WOLFPKCS11 defined. When debug support is disabled, this
+ *       function becomes a no-op macro.
+ * 
+ * _Example_
+ * \code
+ * #ifdef DEBUG_WOLFPKCS11
+ * wolfPKCS11_Debugging_On();
+ * #endif
+ * 
+ * // ... perform operations with debug output ...
+ * 
+ * #ifdef DEBUG_WOLFPKCS11
+ * // Disable debug logging when done
+ * wolfPKCS11_Debugging_Off();
+ * #endif
+ * 
+ * C_Finalize(NULL_PTR);
+ * \endcode
+ * 
+ * \sa wolfPKCS11_Debugging_On
+ */
+void wolfPKCS11_Debugging_Off(void);
+
+/*!
+ * \ingroup pkcs11_10_extensions
+ * \brief wolfSSL device ID attribute for crypto callbacks.
+ * 
+ * This vendor-defined attribute (CKA_WOLFSSL_DEVID) allows setting a specific
+ * wolfSSL crypto callback device ID to be used with cryptographic objects.
+ * This enables integration with hardware acceleration and custom crypto
+ * implementations through wolfSSL's crypto callback framework.
+ * 
+ * The attribute value should be a CK_ULONG containing the device ID.
+ * 
+ * _Example_
+ * \code
+ * CK_ATTRIBUTE template[] = {
+ *     {CKA_CLASS,          &keyClass,    sizeof(keyClass)},
+ *     {CKA_KEY_TYPE,       &keyType,     sizeof(keyType)},
+ *     {CKA_WOLFSSL_DEVID,  &deviceId,    sizeof(deviceId)},
+ *     // ... other attributes
+ * };
+ * 
+ * CK_RV rv = C_CreateObject(hSession, template, 
+ *                          sizeof(template)/sizeof(template[0]), 
+ *                          &hKey);
+ * \endcode
+ * 
+ * \sa CKA_WOLFSSL_DHUK_IV
+ */
+#define CKA_WOLFSSL_DEVID
+
+/*!
+ * \ingroup pkcs11_10_extensions
+ * \brief STM32U5 DHUK initialization vector attribute.
+ * 
+ * This vendor-defined attribute (CKA_WOLFSSL_DHUK_IV) is specific to STM32U5
+ * devices and allows setting the initialization vector for DHUK (Device
+ * Hardware Unique Key) operations.
+ * 
+ * \note This attribute is only available when compiled with WOLFSSL_STM32U5_DHUK
+ *       defined, which enables STM32U5-specific DHUK functionality.
+ * 
+ * _Example_
+ * \code
+ * #ifdef WOLFSSL_STM32U5_DHUK
+ * // IV bytes here
+ * CK_BYTE dhukIv[16] = { 0 };
+ * CK_ATTRIBUTE template[] = {
+ *     {CKA_CLASS,           &keyClass,  sizeof(keyClass)},
+ *     {CKA_WOLFSSL_DHUK_IV, dhukIv,     sizeof(dhukIv)},
+ *     /* other attributes */
+ * };
+ * #endif
+ * \endcode
+ * 
+ * \sa CKA_WOLFSSL_DEVID
+ */
+#define CKA_WOLFSSL_DHUK_IV
+
+/*!
+ * \ingroup pkcs11_10_extensions
+ * \brief wolfSSL vendor ID for vendor-defined extensions.
+ * 
+ * This constant (CK_VENDOR_WOLFSSL_DEVID = 0x574F4C46L) defines the vendor ID
+ * used by wolfSSL for all vendor-defined PKCS#11 extensions. The value spells
+ * "WOLF" in ASCII when viewed as bytes.
+ * 
+ * This vendor ID is used as the base for constructing vendor-defined attribute
+ * and mechanism type identifiers according to the PKCS#11 specification.
+ * 
+ * \sa CKA_WOLFSSL_DEVID
+ * \sa CKA_WOLFSSL_DHUK_IV
+ */
+#define CK_VENDOR_WOLFSSL_DEVID
+/**
+ * \page pkcs11_nss_extensions_overview wolfPKCS11 NSS Extensions
+ * wolfPKCS11 NSS-specific extensions and enhancements for Mozilla NSS compatibility.
+ * 
+ * wolfPKCS11 provides several extensions specifically designed for compatibility
+ * with Mozilla NSS (Network Security Services). These extensions enable wolfPKCS11
+ * to be used as a drop-in replacement for NSS's PKCS#11 module in various
+ * applications including Firefox, Thunderbird, and other NSS-based software.
+ * 
+ * All NSS extensions are enabled using the --enable-nss configure flag and are
+ * conditionally compiled based on the WOLFPKCS11_NSS preprocessor definition.
+ */
+
+/*!
+ * \defgroup pkcs11_nss_mechanisms NSS Cryptographic Mechanisms
+ * \ingroup pkcs11_nss_extensions_overview
+ * \brief NSS-specific cryptographic mechanisms supported by wolfPKCS11.
+ * @{
+ */
+
+/*! \brief NSS TLS PRF General SHA256 mechanism. */
+#define CKM_NSS_TLS_PRF_GENERAL_SHA256
+
+/*! \brief NSS TLS Extended Master Key Derive mechanism. */
+#define CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE
+
+/*! \brief NSS TLS Extended Master Key Derive DH mechanism. */
+#define CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_DH
+
+/*! \brief NSS PKCS#12 PBE SHA-224 HMAC Key Generation mechanism. */
+#define CKM_NSS_PKCS12_PBE_SHA224_HMAC_KEY_GEN
+
+/*! \brief NSS PKCS#12 PBE SHA-256 HMAC Key Generation mechanism. */
+#define CKM_NSS_PKCS12_PBE_SHA256_HMAC_KEY_GEN
+
+/*! \brief NSS PKCS#12 PBE SHA-384 HMAC Key Generation mechanism. */
+#define CKM_NSS_PKCS12_PBE_SHA384_HMAC_KEY_GEN
+
+/*! \brief NSS PKCS#12 PBE SHA-512 HMAC Key Generation mechanism. */
+#define CKM_NSS_PKCS12_PBE_SHA512_HMAC_KEY_GEN
+
+/*! \brief SSL 3.0 Master Key Derive mechanism (advertised only). */
+#define CKM_SSL3_MASTER_KEY_DERIVE
+
+/*! @} */
+
+/*!
+ * \defgroup pkcs11_nss_objects NSS Object Types
+ * \ingroup pkcs11_nss_extensions_overview
+ * \brief NSS-specific object types supported by wolfPKCS11.
+ * @{
+ */
+
+/*! \brief NSS Trust object type. */
+#define CKO_NSS_TRUST
+
+/*! @} */
+
+/*!
+ * \defgroup pkcs11_nss_keytypes NSS Key Types
+ * \ingroup pkcs11_nss_extensions_overview
+ * \brief NSS-specific key types supported by wolfPKCS11.
+ * @{
+ */
+
+/*! \brief NSS Trust key type. */
+#define CKK_NSS_TRUST
+
+/*! @} */
+
+/*!
+ * \defgroup pkcs11_nss_attributes NSS Attributes
+ * \ingroup pkcs11_nss_extensions_overview
+ * \brief NSS-specific attributes supported by wolfPKCS11.
+ * @{
+ */
+
+/*! \brief Certificate SHA-1 hash attribute. */
+#define CKA_CERT_SHA1_HASH
+
+/*! \brief Certificate MD5 hash attribute. */
+#define CKA_CERT_MD5_HASH
+
+/*! \brief Certificate email address attribute. */
+#define CKA_NSS_EMAIL
+
+/*! \brief NSS database attribute (legacy, ignored). */
+#define CKA_NSS_DB
+
+/*! \brief Trust server authentication attribute. */
+#define CKA_TRUST_SERVER_AUTH
+
+/*! \brief Trust client authentication attribute. */
+#define CKA_TRUST_CLIENT_AUTH
+
+/*! \brief Trust email protection attribute. */
+#define CKA_TRUST_EMAIL_PROTECTION
+
+/*! \brief Trust code signing attribute. */
+#define CKA_TRUST_CODE_SIGNING
+
+/*! @} */
