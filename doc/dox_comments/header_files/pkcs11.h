@@ -979,7 +979,7 @@ CK_RV C_GetAttributeValue(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject, 
  *     {CKA_LABEL, label, sizeof(label) - 1}
  * };
  * 
- * rv = C_SetAttributeValue(hSession, hKey, template, 1);
+ * rv = p11->C_SetAttributeValue(hSession, hKey, template, 1);
  * if (rv == CKR_OK) {
  *     printf("Key label updated\n");
  * }
@@ -1061,7 +1061,7 @@ CK_RV C_FindObjectsInit(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate, 
  * 
  * // ... initialize search with C_FindObjectsInit ...
  * 
- * rv = C_FindObjects(hSession, objects, 10, &objectCount);
+ * rv = p11->C_FindObjects(hSession, objects, 10, &objectCount);
  * if (rv == CKR_OK) {
  *     printf("Found %lu objects\n", objectCount);
  *     for (CK_ULONG i = 0; i < objectCount; i++) {
@@ -1099,7 +1099,7 @@ CK_RV C_FindObjects(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE_PTR phObject, C
  * 
  * // ... initialize and perform search ...
  * 
- * rv = C_FindObjectsFinal(hSession);
+ * rv = p11->C_FindObjectsFinal(hSession);
  * if (rv == CKR_OK) {
  *     printf("Search operation completed\n");
  * }
@@ -1548,7 +1548,7 @@ CK_RV C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ulDataLe
  * 
  * // ... initialize encryption ...
  * 
- * rv = C_EncryptUpdate(hSession, data, sizeof(data), 
+ * rv = p11->C_EncryptUpdate(hSession, data, sizeof(data), 
  *                      encrypted, &encryptedLen);
  * if (rv == CKR_OK) {
  *     printf("Encrypted %lu bytes\n", encryptedLen);
@@ -1588,7 +1588,7 @@ CK_RV C_EncryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ul
  * 
  * // ... perform EncryptUpdate operations ...
  * 
- * rv = C_EncryptFinal(hSession, finalData, &finalLen);
+ * rv = p11->C_EncryptFinal(hSession, finalData, &finalLen);
  * if (rv == CKR_OK) {
  *     printf("Final encrypted data: %lu bytes\n", finalLen);
  * }
