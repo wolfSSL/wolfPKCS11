@@ -472,7 +472,7 @@ CK_RV C_CloseSession(CK_SESSION_HANDLE hSession);
  * CK_RV rv;
  * 
  * // Close all sessions on slot 0
- * rv = C_CloseAllSessions(0);
+ * rv = p11->C_CloseAllSessions(0);
  * if (rv == CKR_OK) {
  *     printf("All sessions closed on slot 0\n");
  * }
@@ -647,11 +647,11 @@ CK_RV C_Logout(CK_SESSION_HANDLE hSession);
  * // ... initialize session and start operation ...
  * 
  * // Get required buffer size
- * rv = C_GetOperationState(hSession, NULL_PTR, &stateLen);
+ * rv = p11->C_GetOperationState(hSession, NULL_PTR, &stateLen);
  * if (rv == CKR_OK && stateLen > 0) {
  *     pState = malloc(stateLen);
  *     if (pState) {
- *         rv = C_GetOperationState(hSession, pState, &stateLen);
+ *         rv = p11->C_GetOperationState(hSession, pState, &stateLen);
  *         if (rv == CKR_OK) {
  *             // State saved successfully
  *         }
@@ -697,7 +697,7 @@ CK_RV C_GetOperationState(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pOperationStat
  * // ... save state with C_GetOperationState ...
  * 
  * // Restore state
- * rv = C_SetOperationState(hSession, pState, stateLen, hKey, hKey);
+ * rv = p11->C_SetOperationState(hSession, pState, stateLen, hKey, hKey);
  * if (rv == CKR_OK) {
  *     // Operation state restored, can continue operation
  * }
@@ -763,7 +763,7 @@ CK_RV C_SetOperationState(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pOperationStat
  *     {CKA_DECRYPT, &ckTrue, sizeof(ckTrue)}
  * };
  * 
- * rv = C_CreateObject(hSession, template, 5, &hKey);
+ * rv = p11->C_CreateObject(hSession, template, 5, &hKey);
  * if (rv == CKR_OK) {
  *     printf("AES key created: %lu\n", hKey);
  * }
@@ -812,7 +812,7 @@ CK_RV C_CreateObject(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate, CK_
  *     {CKA_EXTRACTABLE, &ckFalse, sizeof(ckFalse)}
  * };
  * 
- * rv = C_CopyObject(hSession, hOriginal, template, 1, &hCopy);
+ * rv = p11->C_CopyObject(hSession, hOriginal, template, 1, &hCopy);
  * if (rv == CKR_OK) {
  *     printf("Object copied: %lu -> %lu\n", hOriginal, hCopy);
  * }
@@ -849,7 +849,7 @@ CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject, CK_ATTR
  * 
  * // ... create or find object ...
  * 
- * rv = C_DestroyObject(hSession, hObject);
+ * rv = p11->C_DestroyObject(hSession, hObject);
  * if (rv == CKR_OK) {
  *     printf("Object %lu destroyed\n", hObject);
  * } else {
@@ -888,7 +888,7 @@ CK_RV C_DestroyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject);
  * CK_ULONG objectSize;
  * CK_RV rv;
  * 
- * rv = C_GetObjectSize(hSession, hObject, &objectSize);
+ * rv = p11->C_GetObjectSize(hSession, hObject, &objectSize);
  * if (rv == CKR_OK) {
  *     printf("Object %lu size: %lu bytes\n", hObject, objectSize);
  * }
@@ -934,7 +934,7 @@ CK_RV C_GetObjectSize(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject, CK_U
  *     {CKA_VALUE_LEN, &keyLen, sizeof(keyLen)}
  * };
  * 
- * rv = C_GetAttributeValue(hSession, hKey, template, 2);
+ * rv = p11->C_GetAttributeValue(hSession, hKey, template, 2);
  * if (rv == CKR_OK) {
  *     printf("Key class: %lu, length: %lu bits\n", keyClass, keyLen * 8);
  * }
