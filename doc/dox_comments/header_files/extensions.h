@@ -120,11 +120,12 @@ void wolfPKCS11_Debugging_Off(void);
  * _Example_
  * \code
  * #ifdef WOLFSSL_STM32U5_DHUK
- * CK_BYTE dhukIv[16] = { /* IV bytes */ };
+ * // IV bytes here
+ * CK_BYTE dhukIv[16] = { 0 };
  * CK_ATTRIBUTE template[] = {
  *     {CKA_CLASS,           &keyClass,  sizeof(keyClass)},
  *     {CKA_WOLFSSL_DHUK_IV, dhukIv,     sizeof(dhukIv)},
- *     // ... other attributes
+ *     /* other attributes */
  * };
  * #endif
  * \endcode
