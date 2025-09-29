@@ -1069,7 +1069,7 @@ CK_RV C_FindObjectsInit(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate, 
  *     }
  * }
  * 
- * C_FindObjectsFinal(hSession);
+ * p11->C_FindObjectsFinal(hSession);
  * \endcode
  * 
  * \sa C_FindObjectsInit
@@ -1677,7 +1677,7 @@ CK_RV C_DecryptInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_
  * rv = p11->C_DecryptInit(hSession, &mechanism, hKey);
  * if (rv == CKR_OK) {
  *     // Get required buffer size
- *     rv = C_Decrypt(hSession, ciphertext, sizeof(ciphertext),
+ *     rv = p11->C_Decrypt(hSession, ciphertext, sizeof(ciphertext),
  *                    NULL_PTR, &plaintextLen);
  *     if (rv == CKR_OK) {
  *         plaintext = malloc(plaintextLen);
