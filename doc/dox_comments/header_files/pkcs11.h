@@ -1730,7 +1730,7 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData, CK_ULONG
  * 
  * // ... initialize decryption ...
  * 
- * rv = C_DecryptUpdate(hSession, encryptedData, sizeof(encryptedData),
+ * rv = p11->C_DecryptUpdate(hSession, encryptedData, sizeof(encryptedData),
  *                      decrypted, &decryptedLen);
  * if (rv == CKR_OK) {
  *     printf("Decrypted %lu bytes\n", decryptedLen);
@@ -1771,7 +1771,7 @@ CK_RV C_DecryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedPart, CK
  * 
  * // ... perform DecryptUpdate operations ...
  * 
- * rv = C_DecryptFinal(hSession, finalData, &finalLen);
+ * rv = p11->C_DecryptFinal(hSession, finalData, &finalLen);
  * if (rv == CKR_OK) {
  *     printf("Final decrypted data: %lu bytes\n", finalLen);
  * }
