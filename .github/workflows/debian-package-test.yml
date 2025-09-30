@@ -44,7 +44,9 @@ jobs:
     - name: wolfssl install
       working-directory: ./wolfssl
       run: |
-        sudo dpkg -i libwolfssl_*.deb libwolfssl-dev_*.deb
+        # Install wolfSSL packages staged in parent directory by dpkg-buildpackage
+        sudo dpkg -i ../libwolfssl_*.deb ../libwolfssl-dev_*.deb
+        sudo apt-get -f install -y
 
     # Setup wolfPKCS11
     - name: wolfpkcs11 autogen
@@ -62,6 +64,7 @@ jobs:
     - name: Test debian package installation
       run: |
         sudo dpkg -i libwolfpkcs11_*.deb libwolfpkcs11-dev_*.deb
+        sudo apt-get -f install -y
         
     # Verify installation
     - name: Verify package installation
