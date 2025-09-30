@@ -1064,7 +1064,11 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
 #ifndef WOLFPKCS11_NO_ENV
     const char* str = NULL;
 #endif
-    char homePath[47]; /* Must fit within name buffer size limit */
+    /* Reserve enough space in the final filename for suffixes such as
+     * "/wp11_rsakey_priv_%016lx_%016lx" (47 chars worst-case).
+     */
+    enum { WP11_STORE_SUFFIX_RESERVE = 48 };
+    char homePath[256];
 
     /* Path order:
      * 1. Environment variable WOLFPKCS11_TOKEN_PATH
@@ -1125,7 +1129,13 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
 #endif
 
     /* 47 is maximum number of character to a filename and path separator. */
-    if (str == NULL || (XSTRLEN(str) > nameLen - sizeof(homePath))) {
+    if (str == NULL) {
+        return -1;
+    }
+    if (nameLen <= WP11_STORE_SUFFIX_RESERVE) {
+        return -1;
+    }
+    if (XSTRLEN(str) > (size_t)(nameLen - WP11_STORE_SUFFIX_RESERVE - 1)) {
         return -1;
     }
 
