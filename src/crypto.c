@@ -6411,7 +6411,6 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
                 case CKP_PKCS5_PBKD2_HMAC_SHA512:
                     hashType = WC_SHA512;
                     break;
-#endif
 #ifndef WOLFSSL_NOSHA512_224
                 case CKP_PKCS5_PBKD2_HMAC_SHA512_224:
                     hashType = WC_SHA512_224;
@@ -6421,6 +6420,7 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
                 case CKP_PKCS5_PBKD2_HMAC_SHA512_256:
                     hashType = WC_SHA512_256;
                     break;
+#endif
 #endif
                 default:
                     return CKR_MECHANISM_PARAM_INVALID;
