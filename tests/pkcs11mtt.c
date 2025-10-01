@@ -45,6 +45,7 @@
 
 #define TEST_MULTITHREADED
 #include "unit.h"
+#include "storage_helpers.h"
 #include "testdata.h"
 
 #define PKCS11MTT_CASE(func)                                      \
@@ -6784,6 +6785,12 @@ int pkcs11test_mtt(int argc, char* argv[])
     int onlySet = 0;
     int closeDl = 1;
     int i;
+
+    ret = unit_init_storage();
+    if (ret != 0) {
+        fprintf(stderr, "wolfBoot storage init failed: %d\n", ret);
+        return 1;
+    }
 
 #ifndef WOLFPKCS11_NO_ENV
     XSETENV("WOLFPKCS11_TOKEN_PATH", "./store/pkcs11mtt", 1);

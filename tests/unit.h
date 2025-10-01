@@ -430,4 +430,3 @@ static int string_matches(const char* arg, const char* str)
         verbose = 1;
 
 #endif
-

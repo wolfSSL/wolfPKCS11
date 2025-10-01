@@ -34,6 +34,8 @@
 #endif
 #include <wolfpkcs11/pkcs11.h>
 
+#include "storage_helpers.h"
+
 #ifndef HAVE_PKCS11_STATIC
 #include <dlfcn.h>
 #endif
@@ -390,11 +392,19 @@ int main(int argc, char* argv[])
     const char* libName = WOLFPKCS11_DLL_FILENAME;
     CK_RV ret;
     int result = 0;
+    int init_ret;
 
-    #if defined(WOLFPKCS11_TPM_STORE) || defined(WOLFPKCS11_NO_STORE)
-    printf("Skipped for TPM storage\n");
+    #if defined(WOLFPKCS11_TPM_STORE) || defined(WOLFPKCS11_NO_STORE) || \
+        defined(WOLFPKCS11_CUSTOM_STORE)
+    printf("Skipped due to file storage not in use\n");
     return 77;
     #endif
+
+    init_ret = unit_init_storage();
+    if (init_ret != 0) {
+        fprintf(stderr, "wolfBoot storage init failed: %d\n", init_ret);
+        return 1;
+    }
 
     /* Parse command line arguments */
     argc--;

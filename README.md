@@ -73,6 +73,11 @@ Enables debugging printf's for store.
 Removes default implementation of storage functions.
 See wolfpkcs11/store.h for prototypes of functions to implement.
 
+To exercise the wolfBoot storage backend during host-based testing, configure
+with `./configure --with-wolfboot=/path/to/wolfBoot`. This enables
+`WOLFPKCS11_CUSTOM_STORE` automatically and links the test harness against the
+wolfBoot implementation of the store API.
+
 #### Define WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL
 
 Sets the private key's label against the public key when generating key pairs.
@@ -287,4 +292,3 @@ Adds backend support for TPM 2.0 using wolfTPM. Adds AES CBC key wrap / unwrap s
 ### wolfPKCS11 Release 1.0 (October 20, 2021)
 
 * Initial PKCS11 support
-

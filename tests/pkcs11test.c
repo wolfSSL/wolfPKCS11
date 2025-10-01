@@ -39,6 +39,7 @@
 #endif
 
 #include "unit.h"
+#include "storage_helpers.h"
 #include "testdata.h"
 #include <wolfpkcs11/internal.h>
 
@@ -16171,6 +16172,12 @@ int pkcs11test_test(int argc, char* argv[])
     int onlySet = 0;
     int closeDl = 1;
     int i;
+
+    ret = unit_init_storage();
+    if (ret != 0) {
+        fprintf(stderr, "wolfBoot storage init failed: %d\n", ret);
+        return 1;
+    }
 
 #ifndef WOLFPKCS11_NO_ENV
     XSETENV("WOLFPKCS11_TOKEN_PATH", "./store/pkcs11test", 1);

@@ -76,6 +76,14 @@ jobs:
         sudo ldconfig
         cd ..
 
+    # Fetch wolfBoot sources for custom store builds
+    - name: Fetch wolfBoot sources
+      run: |
+        WOLFBOOT_DIR="${RUNNER_TEMP:-/tmp}/wolfBoot"
+        rm -rf "$WOLFBOOT_DIR"
+        git clone --depth 1 --branch master https://github.com/wolfSSL/wolfBoot.git "$WOLFBOOT_DIR"
+        echo "WOLFBOOT_DIR=$WOLFBOOT_DIR" >> "$GITHUB_ENV"
+
     # Setup IBM Software TPM (only if TPM enabled)
     - name: Setup IBM Software TPM
       if: contains(matrix.config.configure_flags, '--enable-tpm')
@@ -109,9 +117,9 @@ jobs:
       run: |
         ./autogen.sh
         if [ -n "${{ matrix.config.configure_flags }}" ]; then
-          CC=clang CXX=clang++ ./configure --enable-all --enable-debug ${{ matrix.config.configure_flags }}
+          CC=clang CXX=clang++ ./configure --enable-all --enable-debug --with-wolfboot="${WOLFBOOT_DIR}" ${{ matrix.config.configure_flags }}
         else
-          CC=clang CXX=clang++ ./configure --enable-all --enable-debug
+          CC=clang CXX=clang++ ./configure --enable-all --enable-debug --with-wolfboot="${WOLFBOOT_DIR}"
         fi
         bear -- make -j$(nproc)
 

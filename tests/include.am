@@ -4,50 +4,39 @@
 check_PROGRAMS += tests/pkcs11test
 noinst_PROGRAMS += tests/pkcs11test
 tests_pkcs11test_SOURCES = tests/pkcs11test.c
-tests_pkcs11test_LDADD =
+tests_pkcs11test_LDADD = src/libwolfpkcs11.la
 
 check_PROGRAMS += tests/pkcs11mtt
 noinst_PROGRAMS += tests/pkcs11mtt
 tests_pkcs11mtt_SOURCES = tests/pkcs11mtt.c
-tests_pkcs11mtt_LDADD =
+tests_pkcs11mtt_LDADD = src/libwolfpkcs11.la
 
 check_PROGRAMS += tests/pkcs11str
 noinst_PROGRAMS += tests/pkcs11str
 tests_pkcs11str_SOURCES = tests/pkcs11str.c
-tests_pkcs11str_LDADD =
+tests_pkcs11str_LDADD = src/libwolfpkcs11.la
 
 check_PROGRAMS += tests/token_path_test
 noinst_PROGRAMS += tests/token_path_test
 tests_token_path_test_SOURCES = tests/token_path_test.c
-tests_token_path_test_LDADD =
+tests_token_path_test_LDADD = src/libwolfpkcs11.la
 
 check_PROGRAMS += tests/rsa_session_persistence_test
 noinst_PROGRAMS += tests/rsa_session_persistence_test
 tests_rsa_session_persistence_test_SOURCES = tests/rsa_session_persistence_test.c
-tests_rsa_session_persistence_test_LDADD =
+tests_rsa_session_persistence_test_LDADD = src/libwolfpkcs11.la
 
 check_PROGRAMS += tests/debug_test
 noinst_PROGRAMS += tests/debug_test
 tests_debug_test_SOURCES = tests/debug_test.c
-tests_debug_test_LDADD =
+tests_debug_test_LDADD = src/libwolfpkcs11.la
 
 check_PROGRAMS += tests/object_id_uniqueness_test
 noinst_PROGRAMS += tests/object_id_uniqueness_test
 tests_object_id_uniqueness_test_SOURCES = tests/object_id_uniqueness_test.c
-tests_object_id_uniqueness_test_LDADD =
-
-if BUILD_STATIC
-tests_pkcs11test_LDADD += src/libwolfpkcs11.la
-tests_pkcs11mtt_LDADD  += src/libwolfpkcs11.la
-tests_pkcs11str_LDADD  += src/libwolfpkcs11.la
-tests_token_path_test_LDADD += src/libwolfpkcs11.la
-tests_rsa_session_persistence_test_LDADD += src/libwolfpkcs11.la
-tests_debug_test_LDADD += src/libwolfpkcs11.la
-tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
-else
-tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
-endif
+tests_object_id_uniqueness_test_LDADD = src/libwolfpkcs11.la
 
 EXTRA_DIST += tests/unit.h \
               tests/testdata.h \
+              tests/storage_helpers.h \
               tests/README.md

@@ -124,7 +124,8 @@ CK_RV C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList)
     return ret;
 }
 
-#if (defined(WOLFPKCS11_NSS) && !defined(WOLFPKCS11_NO_STORE))
+#if (defined(WOLFPKCS11_NSS) && !defined(WOLFPKCS11_NO_STORE) && \
+     !defined(WOLFPKCS11_CUSTOM_STORE))
 /*
  * Parse a string of NSS configuration parameters. For now only the
  * configdir parameter is supported.
@@ -211,7 +212,8 @@ CK_RV C_Initialize(CK_VOID_PTR pInitArgs)
     if (args != NULL) {
         WOLFPKCS11_MSG("Warning: C_Initialize called with arguments, but most "
                        "are ignored.");
-#if (defined(WOLFPKCS11_NSS) && !defined(WOLFPKCS11_NO_STORE))
+#if (defined(WOLFPKCS11_NSS) && !defined(WOLFPKCS11_NO_STORE) && \
+     !defined(WOLFPKCS11_CUSTOM_STORE))
         if (args->LibraryParameters != NULL) {
             char* configdir = NULL;
             size_t configdirLen = 0;

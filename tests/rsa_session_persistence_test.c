@@ -39,6 +39,8 @@
 #endif
 #include <wolfpkcs11/pkcs11.h>
 
+#include "storage_helpers.h"
+
 #ifndef HAVE_PKCS11_STATIC
 #include <dlfcn.h>
 #endif
@@ -640,6 +642,13 @@ int main(int argc, char* argv[])
 {
 #if !defined(NO_RSA) && !defined(WOLFPKCS11_NO_STORE)
     CK_RV ret;
+    int init_ret;
+
+    init_ret = unit_init_storage();
+    if (init_ret != 0) {
+        fprintf(stderr, "wolfBoot storage init failed: %d\n", init_ret);
+        return 1;
+    }
 
 #ifndef WOLFPKCS11_NO_ENV
     if (!XGETENV("WOLFPKCS11_TOKEN_PATH")) {

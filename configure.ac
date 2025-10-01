@@ -31,6 +31,8 @@ AC_PROG_INSTALL
 AC_ARG_PROGRAM
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_HEADERS([wolfpkcs11/config.h])
+m4_ifndef([AS_MESSAGE_LOG_FD],[m4_define([AS_MESSAGE_LOG_FD],[0])])
+m4_pattern_allow([AS_MESSAGE_LOG_FD])
 
 # shared library versioning
 # The three numbers in the libpkcs11.so.*.*.* file name. Unfortunately
@@ -77,6 +79,36 @@ AC_CHECK_SIZEOF([long], 4)
 # Check headers/libs
 AC_CHECK_FUNCS([gethostbyname getaddrinfo gettimeofday inet_ntoa memset socket getpid])
 AC_CHECK_LIB([network],[socket])
+
+WOLFBOOT_CPPFLAGS=""
+WOLFBOOT_STORE_ENABLED=no
+
+AC_ARG_WITH([wolfboot],
+    [AS_HELP_STRING([--with-wolfboot=PATH],
+        [Enable the wolfBoot-backed test storage adapter using the wolfBoot sources located at PATH])],
+    [with_wolfboot="$withval"],
+    [with_wolfboot=""])
+
+AS_IF([test "x$with_wolfboot" = "xyes"],
+      [AC_MSG_ERROR([--with-wolfboot requires a path to the wolfBoot source tree])])
+
+AS_IF([test "x$with_wolfboot" != "x" && test "x$with_wolfboot" != "xno"],
+      [if test ! -d "$with_wolfboot"; then
+           echo "configure: error: wolfBoot source directory $with_wolfboot not found" >&2
+           exit 1
+       fi
+       if test ! -f "$with_wolfboot/src/pkcs11_store.c"; then
+           echo "configure: error: wolfBoot PKCS#11 store source not found in $with_wolfboot/src" >&2
+           exit 1
+       fi
+       AC_DEFINE([HAVE_WOLFBOOT_STORE], [1],
+           [Define to 1 if wolfBoot custom storage support is enabled])
+       AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFPKCS11_CUSTOM_STORE -DWOLFPKCS11_WOLFBOOT_STORE"
+       WOLFBOOT_CPPFLAGS="-I$with_wolfboot/include -I$with_wolfboot/src -I$with_wolfboot/tools/unit-tests"
+       WOLFBOOT_STORE_ENABLED=yes])
+
+AM_CONDITIONAL([HAVE_WOLFBOOT_STORE], [test "x$WOLFBOOT_STORE_ENABLED" = "xyes"])
+AC_SUBST([WOLFBOOT_CPPFLAGS])
 
 # DEBUG
 DEBUG_CFLAGS="-g -O0 -DDEBUG_WOLFPKCS11"

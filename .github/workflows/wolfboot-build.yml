@@ -1,0 +1,71 @@
+name: Build wolfBoot integration
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build wolfPKCS11 with wolfBoot store
+    runs-on: ubuntu-24.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      LD_LIBRARY_PATH: /usr/local/lib
+      PKG_CONFIG_PATH: /usr/local/lib/pkgconfig
+      WOLFSSL_REF: v5.8.0-stable
+      WOLFBOOT_REF: master
+      WOLFBOOT_DIR: /tmp/wolfBoot
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            autoconf \
+            automake \
+            build-essential \
+            ca-certificates \
+            git \
+            libssl-dev \
+            libtool \
+            make \
+            pkg-config \
+            python3 \
+            gdb
+
+      - name: Build and install wolfSSL
+        run: |
+          git clone --depth 1 --branch "${WOLFSSL_REF}" https://github.com/wolfSSL/wolfssl.git /tmp/wolfssl
+          cd /tmp/wolfssl
+          ./autogen.sh
+          ./configure --enable-debug --enable-aescfb --enable-cryptocb --enable-rsapss --enable-keygen \
+            --enable-pwdbased --enable-scrypt "C_EXTRA_FLAGS=-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT -DHAVE_AES_ECB -DHAVE_AES_KEYWRAP"
+          make -j"$(nproc)"
+          sudo make install
+          sudo ldconfig
+
+      - name: Fetch wolfBoot sources
+        run: |
+          git clone --depth 1 --branch "${WOLFBOOT_REF}" https://github.com/wolfSSL/wolfBoot.git "${WOLFBOOT_DIR}"
+
+      - name: Build wolfPKCS11
+        run: |
+          ./autogen.sh
+          ./configure --enable-debug --with-wolfboot="${WOLFBOOT_DIR}" CPPFLAGS="-I/usr/local/include" LDFLAGS="-L/usr/local/lib"
+          make -j"$(nproc)"
+
+      - name: Run tests
+        run: make test
+
+      - name: Archive test-suite.log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wolfboot-test-suite-log
+          path: test-suite.log
+          if-no-files-found: ignore

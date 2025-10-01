@@ -48,6 +48,7 @@ examples/mech_info
 examples/obj_list
 examples/slot_info
 examples/token_info
+examples/nss_pkcs12_pbe_example
 store/wp11*
 store/object
 store/pkcs11mtt

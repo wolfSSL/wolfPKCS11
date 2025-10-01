@@ -34,6 +34,8 @@
 #endif
 #include <wolfpkcs11/pkcs11.h>
 
+#include "storage_helpers.h"
+
 #ifndef HAVE_PKCS11_STATIC
 #include <dlfcn.h>
 #endif
@@ -1071,6 +1073,12 @@ int pkcs11test_str(int argc, char* argv[])
     int setPin = 1;
     int closeDl = 1;
 
+    ret = unit_init_storage();
+    if (ret != 0) {
+        fprintf(stderr, "wolfBoot storage init failed: %d\n", ret);
+        return 1;
+    }
+
 #ifndef WOLFPKCS11_NO_ENV
     if (!XGETENV("WOLFPKCS11_TOKEN_PATH")) {
         XSETENV("WOLFPKCS11_TOKEN_PATH", "./store/str", 1);
@@ -1145,4 +1153,3 @@ int pkcs11test_str(int argc, char* argv[])
         ret = 1;
     return ret;
 }
-

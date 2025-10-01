@@ -40,6 +40,8 @@
 #endif
 #include <wolfpkcs11/pkcs11.h>
 
+#include "storage_helpers.h"
+
 #ifdef DEBUG_WOLFPKCS11
 #ifndef HAVE_PKCS11_STATIC
 #include <dlfcn.h>
@@ -163,6 +165,13 @@ int main(void)
     CK_RV rv;
     int debug_found;
     const char* library = "./src/.libs/libwolfpkcs11.so";
+    int init_ret;
+
+    init_ret = unit_init_storage();
+    if (init_ret != 0) {
+        fprintf(stderr, "wolfBoot storage init failed: %d\n", init_ret);
+        return 1;
+    }
 
 #ifndef WOLFPKCS11_NO_ENV
     if (!XGETENV("WOLFPKCS11_TOKEN_PATH")) {
