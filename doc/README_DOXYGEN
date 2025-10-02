@@ -1,0 +1,39 @@
+wolfPKCS11 with Doxygen
+
+---- Dependencies ----
+
+- cmake
+- make
+- git
+- doxygen
+- latex (optional, for PDF generation; pdflatex provided by texlive)
+
+On Debian/Ubuntu you can install LaTeX with:
+  sudo apt install texlive texlive-latex-extra
+
+---- Generating the Documentation ----
+
+From the top-level wolfPKCS11 directory, run:
+
+    make dox       # builds both HTML and PDF (PDF requires LaTeX)
+    make dox-html  # builds only HTML
+    make dox-pdf   # builds only PDF
+
+The first run with -install will build doxygen from source if it is not found,
+so the target may take longer the first time.
+
+After generation:
+- Open doc/html/index.html in a browser to view HTML documentation.
+- The PDF (if built) will be available at doc/refman.pdf.
+
+---- Notes on Configuration ----
+
+Doxygen configuration files live under:
+- doc/formats/html/Doxyfile  (HTML settings)
+- doc/formats/pdf/Doxyfile   (PDF/LaTeX settings)
+
+This documentation targets the public PKCS#11 API:
+- wolfpkcs11/pkcs11.h
+- wolfpkcs11/version.h
+
+Internal sources and tests are excluded from the documentation.
