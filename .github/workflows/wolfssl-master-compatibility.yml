@@ -32,6 +32,7 @@ jobs:
 
 # build + run tests
     - name: Build and run interoperability test
+      working-directory: ./
       run: make -C tests/wolfssl-interoperability
 
 
