@@ -99,6 +99,9 @@ jobs:
   wolfssl_v5_6_6:
     uses: ./.github/workflows/wolfssl-v5.6.6-build-workflow.yml
 
+  wolfssl_interop:
+    uses: ./.github/workflows/wolfssl-master-compatibility.yml
+
   #TODO: --disable-aes            Enable AES (default: enabled)
   #TODO: --disable-aescbc         Enable AES-CBC (default: enabled)
   #TODO: --disable-sha256         Enable SHA-256 (default: enabled)
