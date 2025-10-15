@@ -1,7 +1,6 @@
 name: wolfPKCS11 interoperability tests against wolfSSL upstream
 
 on:
-
     workflow_call:
       inputs:
         config:
