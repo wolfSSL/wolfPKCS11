@@ -35,6 +35,7 @@ WOLFCRYPT_SRCS := \
     $(WOLFSSL_DIR)/wolfcrypt/src/logging.c \
     $(WOLFSSL_DIR)/wolfcrypt/src/memory.c \
     $(WOLFSSL_DIR)/wolfcrypt/src/random.c \
+    $(WOLFSSL_DIR)/wolfcrypt/src/kdf.c \
     $(WOLFSSL_DIR)/wolfcrypt/src/rsa.c \
     $(WOLFSSL_DIR)/wolfcrypt/src/sha.c \
     $(WOLFSSL_DIR)/wolfcrypt/src/sha256.c \
