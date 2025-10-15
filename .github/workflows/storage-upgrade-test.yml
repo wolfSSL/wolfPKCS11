@@ -58,7 +58,7 @@ jobs:
       working-directory: ./wolfssl
       run: |
         ./autogen.sh
-        ./configure --enable-cryptocb --enable-aescfb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt \
+        ./configure --enable-aescfb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt \
             C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
         make
 

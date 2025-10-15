@@ -66,7 +66,7 @@ RUN python3 bootstrap.py --no-interactive --application-choice browser
 RUN git clone --depth 1 --branch $WOLFSSL_TAG https://github.com/wolfssl/wolfssl.git
 WORKDIR /wolfssl
 RUN autoreconf -if
-RUN ./configure --enable-all --enable-aescfb --enable-cryptocb --enable-rsapss --enable-keygen \
+RUN ./configure --enable-all --enable-aescfb --enable-rsapss --enable-keygen \
     --enable-pwdbased --enable-scrypt 'CFLAGS=-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT'
 RUN make && make install
 WORKDIR /

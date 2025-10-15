@@ -131,7 +131,7 @@ jobs:
         ref: ${{ env.WOLFSSL_VERSION }}
         path: wolfssl
         configure: >-
-          --enable-all --enable-aescfb --enable-cryptocb --enable-rsapss
+          --enable-all --enable-aescfb --enable-rsapss
           --enable-keygen --enable-pwdbased --enable-scrypt --with-eccminsz=192
           --with-max-rsa-bits=8192 --enable-rsapss
           CFLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT -DRSA_MIN_SIZE=1024 -DWOLFSSL_PSS_LONG_SALT"
