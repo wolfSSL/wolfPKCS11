@@ -62,7 +62,7 @@ extern "C" {
 
 #if !defined(WOLFSSL_PUBLIC_MP)
 #error Please build wolfSSL using recommended options: \
-./configure --enable-aescfb --enable-cryptocb --enable-rsapss --enable-keygen \
+./configure --enable-aescfb --enable-rsapss --enable-keygen \
 --enable-pwdbased --enable-scrypt \
 C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #endif

@@ -33,7 +33,7 @@ jobs:
     - name: wolfssl configure
       working-directory: ./wolfssl
       run: |
-        ./configure --enable-cryptocb --enable-aescfb --enable-aesctr  --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt --enable-md5 --enable-cmac \
+        ./configure --enable-aescfb --enable-aesctr  --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt --enable-md5 --enable-cmac \
             C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT -DHAVE_AES_ECB -DHAVE_AES_KEYWRAP"
     - name: wolfssl make and install
       working-directory: ./wolfssl
