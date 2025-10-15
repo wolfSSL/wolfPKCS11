@@ -83,4 +83,9 @@
 #define USE_CERT_BUFFERS_4096
 #define USE_CERT_BUFFERS_3072
 
+/* Remove unused features */
+#define NO_DSA
+#define NO_RC4
+#define NO_MD4
+
 #endif /* INTEROP_USER_SETTINGS_H */

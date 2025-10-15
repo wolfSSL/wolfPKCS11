@@ -46,7 +46,39 @@
 
 #include <wolfpkcs11/pkcs11.h>
 
-#include "test_vectors.h"
+#include "tests/testdata.h"
+
+#ifndef HAVE_ECC
+#define HAVE_ECC
+#define INTEROP_DEFINED_ECC 1
+#endif
+#include <wolfssl/certs_test.h>
+#ifdef INTEROP_DEFINED_ECC
+#undef HAVE_ECC
+#undef INTEROP_DEFINED_ECC
+#endif
+
+#define rsa_2048_priv_der        client_key_der_2048
+#define rsa_2048_priv_der_len    sizeof_client_key_der_2048
+#define rsa_2048_pub_der         client_keypub_der_2048
+#define rsa_2048_pub_der_len     sizeof_client_keypub_der_2048
+
+#ifdef USE_CERT_BUFFERS_3072
+#define rsa_3072_priv_der        client_key_der_3072
+#define rsa_3072_priv_der_len    sizeof_client_key_der_3072
+#define rsa_3072_pub_der         client_keypub_der_3072
+#define rsa_3072_pub_der_len     sizeof_client_keypub_der_3072
+#endif
+
+#ifdef USE_CERT_BUFFERS_4096
+#define rsa_4096_priv_der        client_key_der_4096
+#define rsa_4096_priv_der_len    sizeof_client_key_der_4096
+#define rsa_4096_pub_der         client_keypub_der_4096
+#define rsa_4096_pub_der_len     sizeof_client_keypub_der_4096
+#endif
+
+#define ecc384_priv_der          ca_ecc_key_der_384
+#define ecc384_priv_der_len      sizeof_ca_ecc_key_der_384
 
 #ifndef ARRAY_SIZE
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
