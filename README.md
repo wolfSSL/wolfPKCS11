@@ -98,8 +98,12 @@ NOTE: In the code, we have embedded a test key. This must be changed for
 
 ### WOLFPKCS11_TOKEN_PATH
 
-Path into which files are stored that contain token data.
-When not set, defaults to: /tmp
+Path into which files are stored that contain token data. If unset, wolfPKCS11
+tries, in order, the directory specified by `WOLFPKCS11_TOKEN_PATH`, any store
+directory configured by NSS, the user's home directory (`~/.wolfPKCS11` on
+POSIX or `%APPDIR%\wolfPKCS11` on Windows), and finally the optional
+`WOLFPKCS11_DEFAULT_TOKEN_PATH` build-time setting. There is no fallback to
+`/tmp`; deployments must provide a secure storage location explicitly.
 
 ### WOLFPKCS11_NO_STORE
 
@@ -287,4 +291,3 @@ Adds backend support for TPM 2.0 using wolfTPM. Adds AES CBC key wrap / unwrap s
 ### wolfPKCS11 Release 1.0 (October 20, 2021)
 
 * Initial PKCS11 support
-

@@ -160,7 +160,7 @@ static void pkcs11_final(void)
 #endif
 }
 
-static CK_RV create_test_token(const char* test_name)
+static CK_RV create_test_token(const char* test_name, int expect_success)
 {
     CK_RV ret;
     CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
@@ -174,6 +174,22 @@ static CK_RV create_test_token(const char* test_name)
     memcpy(label, tokenName, strlen(tokenName));
 
     ret = funcList->C_InitToken(slot, soPin, soPinLen, label);
+    if (ret != CKR_OK) {
+        if (expect_success) {
+            CHECK_CKR(ret, "C_InitToken", CKR_OK);
+        } else {
+            printf("PASS: C_InitToken failed with %ld as expected\n", (long)ret);
+            test_passed++;
+        }
+        goto end;
+    }
+
+    if (!expect_success) {
+        printf("FAIL: C_InitToken succeeded but expected failure\n");
+        test_failed++;
+        goto end;
+    }
+
     CHECK_CKR(ret, "C_InitToken", CKR_OK);
 
     /* Open session */
@@ -197,10 +213,10 @@ static CK_RV create_test_token(const char* test_name)
     }
 
     /* Close session */
+end:
     if (session != CK_INVALID_HANDLE) {
         funcList->C_CloseSession(session);
     }
-
     return ret;
 }
 
@@ -240,7 +256,7 @@ static int test_default_home_path(void)
     /* Clean up any existing test files */
     cleanup_test_files(expected_dir);
 
-    ret = create_test_token("Testing default home directory path");
+    ret = create_test_token("Testing default home directory path", 1);
     if (ret != CKR_OK) {
         return -1;
     }
@@ -282,7 +298,7 @@ static int test_env_var_path(void)
     /* Clean up any existing test files */
     cleanup_test_files(test_dir);
 
-    ret = create_test_token("Testing WOLFPKCS11_TOKEN_PATH environment variable");
+    ret = create_test_token("Testing WOLFPKCS11_TOKEN_PATH environment variable", 1);
     if (ret != CKR_OK) {
         return -1;
     }
@@ -305,55 +321,34 @@ static int test_env_var_path(void)
     return 0;
 }
 
-static int test_temp_fallback_path(void)
+static int test_missing_storage_path(void)
 {
     CK_RV ret;
-    char expected_dir[256];
-    char test_file[512];
+#if defined(WOLFPKCS11_DEFAULT_TOKEN_PATH)
+    printf("SKIP: WOLFPKCS11_DEFAULT_TOKEN_PATH is defined; missing path scenario not applicable\n");
+    return 0;
+#endif
 
-    /* Clear environment variable and simulate no home directory */
+#ifdef WOLFPKCS11_NO_ENV
+    printf("SKIP: Environment variables disabled; cannot clear token path\n");
+    return 0;
+#endif
+
 #ifndef WOLFPKCS11_NO_ENV
     unsetenv("WOLFPKCS11_TOKEN_PATH");
     unsetenv("HOME");
-    unsetenv("%APPDATA%");
-#endif
-
-#ifdef WOLFPKCS11_DEFAULT_TOKEN_PATH
-    strcpy(expected_dir, WC_STRINGIFY(WOLFPKCS11_DEFAULT_TOKEN_PATH));
-#else
-#ifdef _WIN32
-    const char* temp = getenv("TEMP");
-    if (!temp) {
-        strcpy(expected_dir, "C:\\Windows\\Temp");
-    } else {
-        strcpy(expected_dir, temp);
-    }
-#else
-    strcpy(expected_dir, "/tmp");
+#if defined(_WIN32)
+    unsetenv("APPDIR");
+    unsetenv("APPDATA");
 #endif
 #endif
 
-    /* Clean up any existing test files */
-    cleanup_test_files(expected_dir);
-
-    ret = create_test_token("Testing directory fallback");
-    if (ret != CKR_OK) {
-        return -1;
-    }
-
-    /* Check if token files were created in expected location */
-    snprintf(test_file, sizeof(test_file), "%s" PATH_SEP "wp11_token_0000000000000001", expected_dir);
-    if (!file_exists(test_file)) {
-        printf("FAIL: Token file not found at expected location: %s\n", test_file);
+    ret = create_test_token("Testing missing storage path handling", 0);
+    if (ret == CKR_OK) {
+        printf("FAIL: Token creation succeeded unexpectedly without a storage path\n");
         test_failed++;
         return -1;
     }
-
-    printf("PASS: Token file found at: %s\n", test_file);
-    test_passed++;
-
-    /* Clean up */
-    cleanup_test_files(expected_dir);
 
     return 0;
 }
@@ -453,7 +448,7 @@ int main(int argc, char* argv[])
         result = 1;
     }
 
-    if (test_temp_fallback_path() != 0) {
+    if (test_missing_storage_path() != 0) {
         result = 1;
     }
 
