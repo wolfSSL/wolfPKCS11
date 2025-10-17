@@ -1,21 +1,16 @@
 name: wolfPKCS11 interoperability tests against wolfSSL upstream
 
 on:
-    workflow_call:
-      inputs:
-        config:
-          required: false
-          type: string
-        check:
-          required: false
-          type: string
-          default: 'make check'
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+  schedule:
+    - cron: "0 1 * * *"
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
-
     steps:
 #pull wolfPKCS11
     - uses: actions/checkout@v4
