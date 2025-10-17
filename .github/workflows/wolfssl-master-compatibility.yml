@@ -1,0 +1,32 @@
+name: wolfPKCS11 interoperability tests against wolfSSL upstream
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+  schedule:
+    - cron: "0 1 * * *"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+#pull wolfPKCS11
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+
+#setup wolfssl at master branch
+    - uses: actions/checkout@v4
+      with:
+        repository: wolfssl/wolfssl
+        ref: master
+        path: wolfssl
+
+# build + run tests
+    - name: Build and run interoperability test
+      working-directory: ./
+      run: make -C tests/wolfssl-interoperability
+
+
