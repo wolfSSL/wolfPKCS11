@@ -60,6 +60,14 @@ extern "C" {
     #define WOLFPKCS11_NO_STORE
 #endif
 
+#ifndef WP11_STORE_MAX_PATH
+    #ifdef WOLFPKCS11_NSS
+        #define WP11_STORE_MAX_PATH 600
+    #else
+        #define WP11_STORE_MAX_PATH 120
+    #endif
+#endif
+
 #if !defined(WOLFSSL_PUBLIC_MP)
 #error Please build wolfSSL using recommended options: \
 ./configure --enable-aescfb --enable-rsapss --enable-keygen \

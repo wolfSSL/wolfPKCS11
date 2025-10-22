@@ -51,9 +51,23 @@
     #define MKDIR(path) _mkdir(path)
 #else
     #include <sys/stat.h>
-    #include <errno.h>
     #define MKDIR(path) mkdir(path, 0700)
 #endif
+#endif
+
+#if !defined(WOLFPKCS11_NO_STORE) && !defined(WOLFPKCS11_CUSTOM_STORE)
+    #include <errno.h>
+    #include <time.h>
+    #if defined(_WIN32) || defined(_MSC_VER)
+        #include <windows.h>
+        #include <fcntl.h>
+        #include <sys/stat.h>
+        #include <process.h>
+    #else
+        #include <sys/types.h>
+        #include <fcntl.h>
+        #include <unistd.h>
+    #endif
 #endif
 
 #include <wolfpkcs11/internal.h>
@@ -1057,6 +1071,183 @@ int WP11_SetStoreDir(const char *dir, size_t dirSz)
 }
 #endif
 
+typedef struct WP11_FileStoreCtx {
+    XFILE file;
+    int   is_write;
+    int   has_temp;
+    char  final_name[WP11_STORE_MAX_PATH];
+    char  temp_name[WP11_STORE_MAX_PATH];
+} WP11_FileStoreCtx;
+
+static void wolfPKCS11_StoreAbortTemp(WP11_FileStoreCtx* ctx)
+{
+    if (ctx != NULL && ctx->has_temp) {
+        remove(ctx->temp_name);
+        ctx->has_temp = 0;
+    }
+}
+
+static int wolfPKCS11_StoreCommitTemp(WP11_FileStoreCtx* ctx)
+{
+    int ret = 0;
+
+    if (ctx == NULL || ctx->has_temp == 0) {
+        return 0;
+    }
+
+#if defined(_WIN32) || defined(_MSC_VER)
+    if (!MoveFileExA(ctx->temp_name, ctx->final_name,
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        ret = READ_ONLY_E;
+    }
+#else
+    if (rename(ctx->temp_name, ctx->final_name) != 0) {
+        ret = READ_ONLY_E;
+    }
+#endif
+
+    if (ret == 0) {
+        ctx->has_temp = 0;
+    }
+
+    return ret;
+}
+
+static int wolfPKCS11_StoreValidateDir(const char* dirPath)
+{
+#if defined(_WIN32) || defined(_MSC_VER)
+    DWORD attrs;
+
+    attrs = GetFileAttributesA(dirPath);
+    if (attrs == INVALID_FILE_ATTRIBUTES) {
+        return READ_ONLY_E;
+    }
+    if ((attrs & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
+        (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+        return READ_ONLY_E;
+    }
+    return 0;
+#else
+    struct stat st;
+
+    if (lstat(dirPath, &st) != 0) {
+        return READ_ONLY_E;
+    }
+    if (!S_ISDIR(st.st_mode)) {
+        return READ_ONLY_E;
+    }
+#ifdef S_ISLNK
+    if (S_ISLNK(st.st_mode)) {
+        return READ_ONLY_E;
+    }
+#endif
+    return 0;
+#endif
+}
+
+static int wolfPKCS11_StoreEnsureDir(const char* dirPath)
+{
+    int ret;
+
+    if (dirPath == NULL || dirPath[0] == '\0') {
+        return READ_ONLY_E;
+    }
+
+    ret = wolfPKCS11_StoreValidateDir(dirPath);
+    if (ret == 0) {
+        return 0;
+    }
+
+    if (MKDIR(dirPath) == 0) {
+        return wolfPKCS11_StoreValidateDir(dirPath);
+    }
+
+    if (errno == EEXIST) {
+        return wolfPKCS11_StoreValidateDir(dirPath);
+    }
+
+    return READ_ONLY_E;
+}
+
+static int wolfPKCS11_StoreCreateTempFile(WP11_FileStoreCtx* ctx,
+    const char* dirPath)
+{
+    if (ctx == NULL) {
+        return READ_ONLY_E;
+    }
+
+#if defined(_WIN32) || defined(_MSC_VER)
+    char templateBuf[WP11_STORE_MAX_PATH];
+    int ret;
+    int fd;
+
+    ret = XSNPRINTF(templateBuf, sizeof(templateBuf),
+        "%s/wp11_tmp_%08lx_%08lx_XXXXXX", dirPath,
+        (unsigned long)_getpid(), (unsigned long)GetTickCount());
+    if (ret <= 0 || ret >= (int)sizeof(templateBuf)) {
+        return READ_ONLY_E;
+    }
+
+    if (_mktemp_s(templateBuf, sizeof(templateBuf)) != 0) {
+        return READ_ONLY_E;
+    }
+
+    fd = _open(templateBuf, _O_CREAT | _O_EXCL | _O_BINARY | _O_WRONLY,
+               _S_IREAD | _S_IWRITE);
+    if (fd == -1) {
+        return READ_ONLY_E;
+    }
+
+    ctx->file = _fdopen(fd, "wb");
+    if (ctx->file == NULL) {
+        _close(fd);
+        _unlink(templateBuf);
+        return READ_ONLY_E;
+    }
+
+    XSTRNCPY(ctx->temp_name, templateBuf, sizeof(ctx->temp_name));
+    ctx->temp_name[sizeof(ctx->temp_name) - 1] = '\0';
+    ctx->has_temp = 1;
+
+    return 0;
+#else
+    char templateBuf[WP11_STORE_MAX_PATH];
+    int fd;
+    int ret;
+
+    ret = XSNPRINTF(templateBuf, sizeof(templateBuf),
+        "%s/wp11_tmp_%08lx_%08lx_XXXXXX", dirPath,
+        (unsigned long)getpid(), (unsigned long)time(NULL));
+    if (ret <= 0 || ret >= (int)sizeof(templateBuf)) {
+        return READ_ONLY_E;
+    }
+
+    fd = mkstemp(templateBuf);
+    if (fd < 0) {
+        return READ_ONLY_E;
+    }
+
+    if (fchmod(fd, S_IRUSR | S_IWUSR) != 0) {
+        close(fd);
+        unlink(templateBuf);
+        return READ_ONLY_E;
+    }
+
+    ctx->file = fdopen(fd, "wb");
+    if (ctx->file == NULL) {
+        close(fd);
+        unlink(templateBuf);
+        return READ_ONLY_E;
+    }
+
+    XSTRNCPY(ctx->temp_name, templateBuf, sizeof(ctx->temp_name));
+    ctx->temp_name[sizeof(ctx->temp_name) - 1] = '\0';
+    ctx->has_temp = 1;
+
+    return 0;
+#endif
+}
+
 static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* name,
     int nameLen)
 {
@@ -1074,9 +1265,8 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
      * 1. Environment variable WOLFPKCS11_TOKEN_PATH
      * 2. NSS store directory, if set using C_Initialize
      * 3. Home directory with .wolfPKCS11 (or APPDIR with wolfPKCS11 for
-     * Windows)
+     *    Windows)
      * 4. WOLFPKCS11_DEFAULT_TOKEN_PATH, if set
-     * 5. /tmp in Linux, %TEMP% or C:\Windows\Temp in Windows
      */
 #ifndef WOLFPKCS11_NO_ENV
     str = XGETENV("WOLFPKCS11_TOKEN_PATH");
@@ -1114,17 +1304,6 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
 #ifdef WOLFPKCS11_DEFAULT_TOKEN_PATH
     if (str == NULL) {
         str = WC_STRINGIFY(WOLFPKCS11_DEFAULT_TOKEN_PATH);
-    }
-#else
-    if (str == NULL) {
-    #if defined(_WIN32) || defined(_MSC_VER)
-        str = XGETENV("%TEMP%");
-        if (str == NULL) {
-            str = "C:\\Windows\\Temp";
-        }
-    #else
-        str = "/tmp";
-    #endif
     }
 #endif
 
@@ -1209,7 +1388,7 @@ int wolfPKCS11_Store_Remove(int type, CK_ULONG id1, CK_ULONG id2)
     word32 nvIndex;
     WOLFTPM2_HANDLE parent;
 #else
-    char name[120] = "\0";
+    char name[WP11_STORE_MAX_PATH] = "\0";
 #endif
 
 #ifdef WOLFPKCS11_DEBUG_STORE
@@ -1275,12 +1454,8 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
     int maxSz;
     WOLFTPM2_HANDLE parent;
 #else
-#ifdef WOLFPKCS11_NSS
-    char name[600] = "\0";
-#else
-    char name[120] = "\0";
-#endif
-    XFILE file = XBADFILE;
+    WP11_FileStoreCtx* ctx = NULL;
+    char name[WP11_STORE_MAX_PATH] = "\0";
 #endif
 
 #ifdef WOLFPKCS11_DEBUG_STORE
@@ -1355,64 +1530,97 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
     /* build filename */
     ret = wolfPKCS11_Store_Name(type, id1, id2, name, sizeof(name));
 
-    /* Check that the string fits in name */
-    if (ret > 0 && ret < (int) sizeof(name))
+    if (ret > 0 && ret < (int)sizeof(name)) {
         ret = 0;
-    else
+    }
+    else {
         ret = -1;
+    }
 
-    /* Open file for read or write. */
     if (ret == 0) {
-        if (read) {
-            file = XFOPEN(name, "r");
-            if (file == NULL) {
+        ctx = (WP11_FileStoreCtx*)XMALLOC(sizeof(*ctx), NULL,
+            DYNAMIC_TYPE_TMP_BUFFER);
+        if (ctx == NULL) {
+            ret = MEMORY_E;
+        }
+    }
+
+    if (ret == 0) {
+        char dirPath[WP11_STORE_MAX_PATH];
+        const char* lastSlash = NULL;
+        size_t nameLen = XSTRLEN(name);
+        size_t i;
+
+        XMEMSET(ctx, 0, sizeof(*ctx));
+        ctx->file = XBADFILE;
+        ctx->is_write = (read == 0);
+
+        {
+            size_t finalLen = XSTRLEN(name);
+            if (finalLen >= sizeof(ctx->final_name)) {
+                ret = READ_ONLY_E;
+            }
+            else {
+                XMEMCPY(ctx->final_name, name, finalLen + 1);
+            }
+        }
+
+        if (ret == 0 && read) {
+            ctx->file = XFOPEN(name, "rb");
+            if (ctx->file == NULL) {
                 ret = NOT_AVAILABLE_E;
             }
         }
-        else {
-            file = XFOPEN(name, "w");
-            if (file == NULL) {
-                /* Try to create directory if it doesn't exist */
-                char* lastSlash = NULL;
-                char dirPath[120];
-                int i;
-
-                /* Find the last directory separator */
-                for (i = 0; name[i] != '\0'; i++) {
-                    if (name[i] == '/' || name[i] == '\\') {
-                        lastSlash = (char*)&name[i];
-                    }
+        else if (ret == 0) {
+            for (i = 0; i < nameLen; i++) {
+                if (name[i] == '/' || name[i] == '\\') {
+                    lastSlash = &name[i];
                 }
+            }
 
-                if (lastSlash != NULL) {
-                    /* Extract directory path */
-                    int dirLen = (int)(lastSlash - name);
-                    if (dirLen > 0 && dirLen < (int)sizeof(dirPath)) {
-                        XMEMCPY(dirPath, name, dirLen);
-                        dirPath[dirLen] = '\0';
+            if (lastSlash == NULL) {
+                ret = READ_ONLY_E;
+            }
+            else {
+                int dirLen = (int)(lastSlash - name);
 
-                        /* Try to create the directory */
-                        if (MKDIR(dirPath) == 0 || errno == EEXIST) {
-                            /* Directory created or already exists, try opening file again */
-                            file = XFOPEN(name, "w");
-                        }
-                    }
-                }
-
-                if (file == NULL) {
+                if (dirLen <= 0 || dirLen >= (int)sizeof(dirPath)) {
                     ret = READ_ONLY_E;
+                }
+                else {
+                    XMEMCPY(dirPath, name, dirLen);
+                    dirPath[dirLen] = '\0';
+
+                    ret = wolfPKCS11_StoreEnsureDir(dirPath);
+                    if (ret == 0) {
+                        ret = wolfPKCS11_StoreCreateTempFile(ctx, dirPath);
+                    }
                 }
             }
         }
     }
 
-    if (ret == 0) {
-        /* Return the file pointer. */
-        *store = file;
+    if (ret == 0 && (ctx->file == NULL || ctx->file == XBADFILE)) {
+        ret = READ_ONLY_E;
     }
-    (void)variableSz; /* not used */
+
+    if (ret == 0) {
+        *store = ctx;
+    }
+    else if (ctx != NULL) {
+        if (ctx->file != NULL && ctx->file != XBADFILE) {
+            XFCLOSE(ctx->file);
+        }
+        if (ctx->has_temp) {
+            wolfPKCS11_StoreAbortTemp(ctx);
+        }
+        XFREE(ctx, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        ctx = NULL;
+    }
+
+    (void)variableSz; /* not used in file-backed storage */
     #ifdef WOLFPKCS11_DEBUG_STORE
-    printf("Store Open %p: ret %d, name %s\n", *store, ret, name);
+    printf("Store Open %p: ret %d, name %s\n", (ret == 0) ? *store : NULL, ret, name);
     #endif
 #endif
     return ret;
@@ -1447,7 +1655,7 @@ void wolfPKCS11_Store_Close(void* store)
 #ifdef WOLFPKCS11_TPM_STORE
     WP11_TpmStore* tpmStore = (WP11_TpmStore*)store;
 #else
-    XFILE file = (XFILE)store;
+    WP11_FileStoreCtx* ctx = (WP11_FileStoreCtx*)store;
 #endif
 
 #ifdef WOLFPKCS11_DEBUG_STORE
@@ -1458,9 +1666,30 @@ void wolfPKCS11_Store_Close(void* store)
     /* nothing to do for TPM */
     (void)tpmStore;
 #else
-    /* Close a valid file pointer. */
-    if (file != XBADFILE) {
-        XFCLOSE(file);
+    if (ctx != NULL) {
+        int commitRet = 0;
+
+        if (ctx->file != XBADFILE && ctx->file != NULL) {
+            XFCLOSE(ctx->file);
+            ctx->file = XBADFILE;
+        }
+
+        if (ctx->is_write && ctx->has_temp) {
+            commitRet = wolfPKCS11_StoreCommitTemp(ctx);
+            if (commitRet != 0) {
+                wolfPKCS11_StoreAbortTemp(ctx);
+#ifdef WOLFPKCS11_DEBUG_STORE
+                printf("Store commit failed for %s (ret %d)\n",
+                    ctx->final_name, commitRet);
+#endif
+            }
+        }
+        else if (ctx->has_temp) {
+            wolfPKCS11_StoreAbortTemp(ctx);
+        }
+
+        XMEMSET(ctx, 0, sizeof(*ctx));
+        XFREE(ctx, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     }
 #endif
 }
@@ -1481,7 +1710,7 @@ int wolfPKCS11_Store_Read(void* store, unsigned char* buffer, int len)
     WP11_TpmStore* tpmStore = (WP11_TpmStore*)store;
     word32 readSize;
 #else
-    XFILE file = (XFILE)store;
+    WP11_FileStoreCtx* ctx = (WP11_FileStoreCtx*)store;
 #endif
 
 #ifdef WOLFPKCS11_DEBUG_STORE
@@ -1509,9 +1738,8 @@ int wolfPKCS11_Store_Read(void* store, unsigned char* buffer, int len)
         }
     }
 #else
-    /* Read from a valid file pointer. */
-    if (file != XBADFILE) {
-        ret = (int)XFREAD(buffer, 1, len, file);
+    if (ctx != NULL && ctx->file != XBADFILE && ctx->file != NULL) {
+        ret = (int)XFREAD(buffer, 1, len, ctx->file);
     }
 #endif
     return ret;
@@ -1532,7 +1760,7 @@ int wolfPKCS11_Store_Write(void* store, unsigned char* buffer, int len)
 #ifdef WOLFPKCS11_TPM_STORE
     WP11_TpmStore* tpmStore = (WP11_TpmStore*)store;
 #else
-    XFILE file = (XFILE)store;
+    WP11_FileStoreCtx* ctx = (WP11_FileStoreCtx*)store;
 #endif
 
 #ifdef WOLFPKCS11_DEBUG_STORE
@@ -1547,12 +1775,11 @@ int wolfPKCS11_Store_Write(void* store, unsigned char* buffer, int len)
         ret = len;
     }
 #else
-    /* Write to a valid file pointer. */
-    if (store != XBADFILE) {
-        ret = (int)XFWRITE(buffer, 1, len, file);
+    if (ctx != NULL && ctx->file != XBADFILE && ctx->file != NULL) {
+        ret = (int)XFWRITE(buffer, 1, len, ctx->file);
         if (ret == len) {
            /* Ensure data makes it to storage. */
-           (void)XFFLUSH(file);
+           (void)XFFLUSH(ctx->file);
         }
     }
 #endif
