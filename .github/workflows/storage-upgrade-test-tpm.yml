@@ -39,7 +39,7 @@ jobs:
       uses: actions/cache@v4
       with:
         path: wolfssl
-        key: wolfssl-${{ env.WOLFSSL_VERSION }}
+        key: wolfssl-${{ env.WOLFSSL_VERSION }}-tpm-upgrade
 
     # Setup wolfssl (required dependency)
     - name: Checkout wolfssl
@@ -87,20 +87,15 @@ jobs:
         sudo ldconfig
         cd ..
 
-    # Phase 1: Build and test base branch/tag with TPM
-    - name: Modify pkcs11test.c for TPM storage generation
-      working-directory: ./${{ matrix.base-ref.branch-dir }}
+    - name: Configure PR branch and build storage upgrade helper
+      working-directory: ./pr-branch
       run: |
-        echo "=== Modifying pkcs11test.c for TPM storage generation ==="
-        # Check if WOLFPKCS11_NO_STORE is used and change it to use token path
-        if grep -q 'XSETENV("WOLFPKCS11_NO_STORE"' tests/pkcs11test.c; then
-          echo "Found WOLFPKCS11_NO_STORE, changing to WOLFPKCS11_TOKEN_PATH"
-          sed -i 's/XSETENV("WOLFPKCS11_NO_STORE", "1", 1);/XSETENV("WOLFPKCS11_TOKEN_PATH", ".\/store\/pkcs11test", 1);/' tests/pkcs11test.c
-        else
-          echo "WOLFPKCS11_NO_STORE not found, assuming WOLFPKCS11_TOKEN_PATH is already set"
-        fi
-        echo "=== pkcs11test.c modification completed ==="
+        echo "=== Configuring PR branch with TPM support for helper build ==="
+        ./autogen.sh
+        ./configure --enable-singlethreaded --enable-wolftpm --disable-dh C_EXTRA_FLAGS="-DWOLFPKCS11_TPM_STORE"
+        make tests/storage_upgrade_tpm_test
 
+    # Phase 1: Build and test base branch/tag with TPM
     - name: Build wolfPKCS11 ${{ matrix.base-ref.name }} with TPM
       working-directory: ./${{ matrix.base-ref.branch-dir }}
       run: |
@@ -109,21 +104,19 @@ jobs:
         ./configure --enable-singlethreaded --enable-wolftpm --disable-dh C_EXTRA_FLAGS="-DWOLFPKCS11_TPM_STORE"
         make
 
-    - name: Run TPM tests on ${{ matrix.base-ref.name }} to generate storage files
+    - name: Run storage upgrade preparation on ${{ matrix.base-ref.name }}
       working-directory: ./${{ matrix.base-ref.branch-dir }}
       run: |
-        echo "=== Running TPM tests on ${{ matrix.base-ref.name }} branch ==="
-        # Run specific TPM tests that generate storage files
-        ./tests/pkcs11test
-        echo "=== ${{ matrix.base-ref.name }} branch TPM test completed ==="
+        set -e
+        echo "=== Preparing TPM storage with ${{ matrix.base-ref.name }} branch ==="
+        ../pr-branch/tests/storage_upgrade_tpm_test --prepare
+        echo "=== Storage prepared using ${{ matrix.base-ref.name }} branch ==="
 
     # Phase 2: Build PR branch with TPM and copy storage files from base
     - name: Build wolfPKCS11 PR branch with TPM
       working-directory: ./pr-branch
       run: |
         echo "=== Building wolfPKCS11 PR branch with TPM support ==="
-        ./autogen.sh
-        ./configure --enable-singlethreaded --enable-wolftpm --disable-dh C_EXTRA_FLAGS="-DWOLFPKCS11_TPM_STORE"
         make
 
     - name: Test TPM storage format compatibility (${{ matrix.base-ref.name }} → PR)
@@ -132,9 +125,7 @@ jobs:
         echo "=== Testing TPM storage format compatibility with PR branch ==="
         echo "This tests that the PR can read TPM storage files created by ${{ matrix.base-ref.name }} branch"
 
-        # Run the TPM-specific tests with the copied storage files
-        echo "=== Running TPM compatibility tests ==="
-        ./tests/pkcs11test
+        ./tests/storage_upgrade_tpm_test --verify
         echo "=== TPM storage format upgrade test (${{ matrix.base-ref.name }} → PR) completed successfully ==="
 
     # Capture logs on failure with TPM-specific information
