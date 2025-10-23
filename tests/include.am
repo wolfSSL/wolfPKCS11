@@ -36,6 +36,11 @@ noinst_PROGRAMS += tests/object_id_uniqueness_test
 tests_object_id_uniqueness_test_SOURCES = tests/object_id_uniqueness_test.c
 tests_object_id_uniqueness_test_LDADD =
 
+check_PROGRAMS += tests/tpm_object_upgrade_test
+noinst_PROGRAMS += tests/tpm_object_upgrade_test
+tests_tpm_object_upgrade_test_SOURCES = tests/tpm_object_upgrade_test.c
+tests_tpm_object_upgrade_test_LDADD =
+
 if BUILD_STATIC
 tests_pkcs11test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11mtt_LDADD  += src/libwolfpkcs11.la
@@ -44,6 +49,7 @@ tests_token_path_test_LDADD += src/libwolfpkcs11.la
 tests_rsa_session_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_debug_test_LDADD += src/libwolfpkcs11.la
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
+tests_tpm_object_upgrade_test_LDADD += src/libwolfpkcs11.la
 else
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
 endif

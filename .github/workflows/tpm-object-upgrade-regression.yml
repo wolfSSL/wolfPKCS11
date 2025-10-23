@@ -1,0 +1,150 @@
+name: wolfPKCS11 TPM Object Upgrade Regression
+
+on:
+  pull_request:
+    branches: ['*']
+
+env:
+  WOLFSSL_VERSION: v5.8.0-stable
+  BASE_REF: v1.3.0-stable
+  TOKEN_PATH: ${{ github.workspace }}/tpm-upgrade-store
+  METADATA_FILE: ${{ github.workspace }}/tpm-upgrade-store/tpm-upgrade-metadata.txt
+
+jobs:
+  tpm-object-upgrade:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout PR branch
+      uses: actions/checkout@v4
+      with:
+        path: pr-branch
+
+    - name: Checkout base reference
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ env.BASE_REF }}
+        path: base-branch
+
+    - name: Cache wolfSSL
+      id: cache-wolfssl
+      uses: actions/cache@v4
+      with:
+        path: wolfssl
+        key: wolfssl-tpm-upgrade-${{ env.WOLFSSL_VERSION }}
+
+    - name: Checkout wolfSSL
+      if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+      uses: actions/checkout@v4
+      with:
+        repository: wolfSSL/wolfssl
+        path: wolfssl
+        ref: ${{ env.WOLFSSL_VERSION }}
+
+    - name: Build wolfSSL
+      if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+      working-directory: ./wolfssl
+      run: |
+        ./autogen.sh
+        ./configure --enable-md5 --enable-cryptocb --enable-aescfb --enable-rsapss \
+            --enable-keygen --enable-pwdbased --enable-scrypt --enable-debug \
+            C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
+        make
+
+    - name: Install wolfSSL
+      working-directory: ./wolfssl
+      run: |
+        sudo make install
+        sudo ldconfig
+
+    - name: Build IBM software TPM
+      run: |
+        git clone https://github.com/kgoldman/ibmswtpm2.git
+        make -C ibmswtpm2/src -j"$(nproc)"
+
+    - name: Build and install wolfTPM
+      run: |
+        git clone https://github.com/wolfSSL/wolftpm.git
+        cd wolftpm
+        ./autogen.sh
+        ./configure --enable-swtpm --enable-debug
+        make
+        sudo make install
+        sudo ldconfig
+
+    - name: Build wolfPKCS11 base (v1.3.0) with TPM store
+      working-directory: ./base-branch
+      run: |
+        ./autogen.sh
+        ./configure --enable-debug --enable-singlethreaded --enable-wolftpm \
+            --disable-dh C_EXTRA_FLAGS="-DWOLFPKCS11_TPM_STORE"
+        make
+
+    - name: Build wolfPKCS11 PR branch test binary
+      working-directory: ./pr-branch
+      run: |
+        ./autogen.sh
+        ./configure --enable-debug --enable-singlethreaded --enable-wolftpm \
+            --disable-dh C_EXTRA_FLAGS="-DWOLFPKCS11_TPM_STORE"
+        make
+
+    - name: Launch TPM simulator
+      run: |
+        cd ibmswtpm2/src
+        ./tpm_server >"${GITHUB_WORKSPACE}/tpm-server.log" 2>&1 &
+        echo $! > "${GITHUB_WORKSPACE}/tpm-server.pid"
+        sleep 2
+
+    - name: Prepare TPM objects using v1.3.0 library
+      working-directory: ./pr-branch
+      env:
+        LD_LIBRARY_PATH: ${{ github.workspace }}/base-branch/src/.libs:/usr/local/lib
+        WOLFPKCS11_TOKEN_PATH: ${{ env.TOKEN_PATH }}
+        METADATA_FILE: ${{ env.METADATA_FILE }}
+      run: |
+        rm -rf "${WOLFPKCS11_TOKEN_PATH}"
+        mkdir -p "${WOLFPKCS11_TOKEN_PATH}"
+        rm -f "${METADATA_FILE}"
+        ./tests/tpm_object_upgrade_test \
+          --module ../base-branch/src/.libs/libwolfpkcs11.so \
+          --metadata-file "${METADATA_FILE}" \
+          --prepare --verbose
+
+    - name: Verify TPM objects using PR library
+      working-directory: ./pr-branch
+      env:
+        LD_LIBRARY_PATH: ${{ github.workspace }}/pr-branch/src/.libs:/usr/local/lib
+        WOLFPKCS11_TOKEN_PATH: ${{ env.TOKEN_PATH }}
+        METADATA_FILE: ${{ env.METADATA_FILE }}
+      run: |
+        MODULE_PATH=$(find ./src/.libs -maxdepth 1 -name 'libwolfpkcs11.so*' | head -n1)
+        if [ -z "${MODULE_PATH}" ]; then
+          echo "Failed to locate libwolfpkcs11 shared object in ./src/.libs" >&2
+          ls -al ./src/.libs >&2 || true
+          exit 1
+        fi
+        ./tests/tpm_object_upgrade_test \
+          --module "${MODULE_PATH}" \
+          --metadata-file "${METADATA_FILE}" \
+          --verify --verbose
+
+    - name: Upload logs on failure
+      if: failure() || cancelled()
+      uses: actions/upload-artifact@v4
+      with:
+        name: tpm-object-upgrade-artifacts
+        path: |
+          pr-branch/test-suite.log
+          pr-branch/config.log
+          base-branch/test-suite.log
+          base-branch/config.log
+          tpm-server.log
+        retention-days: 5
+
+    - name: Cleanup TPM simulator
+      if: always()
+      run: |
+        if [ -f "${GITHUB_WORKSPACE}/tpm-server.pid" ]; then
+          kill "$(cat "${GITHUB_WORKSPACE}/tpm-server.pid")" || true
+        fi
+        pkill -f tpm_server || true
