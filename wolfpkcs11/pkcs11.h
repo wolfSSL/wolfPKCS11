@@ -1175,6 +1175,10 @@ struct CK_FUNCTION_LIST {
 
 };
 
+#define CKR_WOLFPKCS11_TOKEN_REPAIR_NEEDED       (CKR_VENDOR_DEFINED + 0x100)
+
+WP11_API CK_RV wolfPKCS11_TokenRepair(CK_SLOT_ID slotID, CK_FLAGS flags);
+
 /* Debug control functions */
 #ifdef DEBUG_WOLFPKCS11
 WP11_API void wolfPKCS11_Debugging_On(void);

@@ -84,10 +84,17 @@ typedef struct tpm_upgrade_counts {
     int cert_count;
 } tpm_upgrade_counts;
 
+typedef CK_RV (*wolfPKCS11_TokenRepair_func)(CK_SLOT_ID, CK_FLAGS);
+typedef void (*wolfPKCS11_Debugging_On_func)(void);
+typedef void (*wolfPKCS11_Debugging_Off_func)(void);
+
 #ifndef HAVE_PKCS11_STATIC
 static void* dlib;
 #endif
 static CK_FUNCTION_LIST* func_list;
+static wolfPKCS11_TokenRepair_func token_repair = NULL;
+static wolfPKCS11_Debugging_On_func debug_on = NULL;
+static wolfPKCS11_Debugging_Off_func debug_off = NULL;
 static CK_SLOT_ID slot_id = 0;
 static byte so_pin[] = "password123456";
 static byte user_pin[] = "wolfpkcs11-test";
@@ -216,9 +223,27 @@ static CK_RV pkcs11_load_module(const char* module_path)
     }
 
     ret = func(&func_list);
+    if (ret == CKR_OK) {
+        token_repair = (wolfPKCS11_TokenRepair_func)dlsym(dlib,
+            "wolfPKCS11_TokenRepair");
+        debug_on = (wolfPKCS11_Debugging_On_func)dlsym(dlib,
+            "wolfPKCS11_Debugging_On");
+        debug_off = (wolfPKCS11_Debugging_Off_func)dlsym(dlib,
+            "wolfPKCS11_Debugging_Off");
+    }
 #else
     (void)module_path;
     ret = C_GetFunctionList(&func_list);
+    if (ret == CKR_OK) {
+        token_repair = wolfPKCS11_TokenRepair;
+    #ifdef DEBUG_WOLFPKCS11
+        debug_on = wolfPKCS11_Debugging_On;
+        debug_off = wolfPKCS11_Debugging_Off;
+    #else
+        debug_on = NULL;
+        debug_off = NULL;
+    #endif
+    }
 #endif
     CHECK_CKR(ret, "C_GetFunctionList");
     return ret;
@@ -226,9 +251,11 @@ static CK_RV pkcs11_load_module(const char* module_path)
 
 static void pkcs11_unload_module(void)
 {
-    if (func_list != NULL)
+    if (func_list != NULL) {
         func_list->C_Finalize(NULL);
-
+        if (debug_off != NULL)
+            debug_off();
+    }
 #ifndef HAVE_PKCS11_STATIC
     if (dlib != NULL) {
         dlclose(dlib);
@@ -236,6 +263,9 @@ static void pkcs11_unload_module(void)
     }
 #endif
     func_list = NULL;
+    token_repair = NULL;
+    debug_on = NULL;
+    debug_off = NULL;
 }
 
 static CK_RV pkcs11_initialize(void)
@@ -249,6 +279,22 @@ static CK_RV pkcs11_initialize(void)
     args.flags = CKF_OS_LOCKING_OK;
 
     ret = func_list->C_Initialize(&args);
+    if (ret == CKR_OK && debug_on != NULL)
+        debug_on();
+    if (ret == CKR_WOLFPKCS11_TOKEN_REPAIR_NEEDED) {
+        verbose_printf("C_Initialize reported CKR_WOLFPKCS11_TOKEN_REPAIR_NEEDED\n");
+        if (token_repair == NULL) {
+            fprintf(stderr, "wolfPKCS11_TokenRepair not available in module\n");
+            return ret;
+        }
+        ret = token_repair(1, 0);
+        CHECK_CKR(ret, "wolfPKCS11_TokenRepair");
+        if (ret != CKR_OK)
+            return ret;
+        ret = func_list->C_Initialize(&args);
+        if (ret == CKR_OK && debug_on != NULL)
+            debug_on();
+    }
     CHECK_CKR(ret, "C_Initialize");
 
     if (ret != CKR_OK)
