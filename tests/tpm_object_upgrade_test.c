@@ -19,6 +19,10 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
+#ifndef _GNU_SOURCE
+    #define _GNU_SOURCE
+#endif
+
 #ifdef HAVE_CONFIG_H
     #include <wolfpkcs11/config.h>
 #endif
@@ -34,9 +38,13 @@
 #endif
 #include <wolfpkcs11/pkcs11.h>
 
+#include <limits.h>
+#ifndef PATH_MAX
+    #define PATH_MAX 4096
+#endif
+
 #ifndef HAVE_PKCS11_STATIC
 #include <dlfcn.h>
-#include <limits.h>
 #include <glob.h>
 #endif
 
@@ -84,10 +92,17 @@ typedef struct tpm_upgrade_counts {
     int cert_count;
 } tpm_upgrade_counts;
 
+typedef CK_RV (*wolfPKCS11_TokenRepair_func)(CK_SLOT_ID, CK_FLAGS);
+typedef void (*wolfPKCS11_Debugging_On_func)(void);
+typedef void (*wolfPKCS11_Debugging_Off_func)(void);
+
 #ifndef HAVE_PKCS11_STATIC
 static void* dlib;
 #endif
 static CK_FUNCTION_LIST* func_list;
+static wolfPKCS11_TokenRepair_func token_repair = NULL;
+static wolfPKCS11_Debugging_On_func debug_on = NULL;
+static wolfPKCS11_Debugging_Off_func debug_off = NULL;
 static CK_SLOT_ID slot_id = 0;
 static byte so_pin[] = "password123456";
 static byte user_pin[] = "wolfpkcs11-test";
@@ -96,12 +111,51 @@ static const CK_ULONG user_pin_len = (CK_ULONG)(sizeof(user_pin) - 1);
 static const CK_UTF8CHAR token_label[] = "wolfPKCS11 TPM upgrade";
 
 static CK_OBJECT_CLASS priv_key_class = CKO_PRIVATE_KEY;
-/* Legacy 1.3.0 only supports key objects, so use public keys as cert proxies. */
-static CK_OBJECT_CLASS cert_class = CKO_PUBLIC_KEY;
+static CK_OBJECT_CLASS cert_class = CKO_CERTIFICATE;
+static CK_CERTIFICATE_TYPE x509_cert_type = CKC_X_509;
 static CK_KEY_TYPE rsa_key_type = CKK_RSA;
 static CK_BBOOL ck_true = CK_TRUE;
 
 static int verbose_log = 0;
+static int debug_enabled = 0;
+static char loaded_module_path[PATH_MAX];
+static const char* loaded_module_path_ptr = NULL;
+
+/* Simple X.509 certificate blob reused for all certificate objects. */
+static const unsigned char rsa_cert_der[] = {
+    0x30, 0x82, 0x01, 0x0A, 0x30, 0x81, 0xB7, 0xA0, 0x03, 0x02, 0x01, 0x02,
+    0x02, 0x01, 0x01, 0x30, 0x0A, 0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D,
+    0x04, 0x03, 0x02, 0x30, 0x12, 0x31, 0x10, 0x30, 0x0E, 0x06, 0x03, 0x55,
+    0x04, 0x03, 0x0C, 0x07, 0x54, 0x65, 0x73, 0x74, 0x20, 0x43, 0x41, 0x30,
+    0x1E, 0x17, 0x0D, 0x32, 0x33, 0x30, 0x31, 0x30, 0x31, 0x30, 0x30, 0x30,
+    0x30, 0x30, 0x30, 0x5A, 0x17, 0x0D, 0x32, 0x34, 0x30, 0x31, 0x30, 0x31,
+    0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x5A, 0x30, 0x15, 0x31, 0x13, 0x30,
+    0x11, 0x06, 0x03, 0x55, 0x04, 0x03, 0x0C, 0x0A, 0x54, 0x65, 0x73, 0x74,
+    0x20, 0x43, 0x65, 0x72, 0x74, 0x20, 0x31, 0x30, 0x59, 0x30, 0x13, 0x06,
+    0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01, 0x06, 0x08, 0x2A, 0x86,
+    0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00, 0x04, 0x01, 0x02,
+    0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
+    0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A,
+    0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26,
+    0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x30, 0x31, 0x32,
+    0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E,
+    0x3F, 0x40, 0x30, 0x0A, 0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04,
+    0x03, 0x02, 0x03, 0x48, 0x00, 0x30, 0x45, 0x02, 0x20, 0x01, 0x02, 0x03,
+    0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B,
+    0x1C, 0x1D, 0x1E, 0x1F, 0x20, 0x02, 0x21, 0x00, 0x21, 0x22, 0x23, 0x24,
+    0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x30,
+    0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C,
+    0x3D, 0x3E, 0x3F
+};
+
+static void enable_debug_logging(void)
+{
+    if (debug_on != NULL && !debug_enabled) {
+        debug_on();
+        debug_enabled = 1;
+    }
+}
 
 static void usage(const char* prog)
 {
@@ -173,13 +227,79 @@ static int parse_args(int argc, char** argv, tpm_upgrade_options* opts)
             printf(__VA_ARGS__);                                           \
     } while (0)
 
+static void* pkcs11_open_module_handle(const char* module_path)
+{
+    void* handle = NULL;
+
+#if defined(LM_ID_NEWLM)
+    /* Prefer a fresh namespace so we never reuse a previously-loaded copy. */
+    dlerror();
+    handle = dlmopen(LM_ID_NEWLM, module_path, RTLD_NOW | RTLD_LOCAL);
+    if (handle == NULL) {
+        const char* err = dlerror();
+        if (verbose_log && err != NULL) {
+            fprintf(stderr,
+                "dlmopen failed for %s: %s (falling back to dlopen)\n",
+                module_path, err);
+        }
+    }
+#endif
+
+    if (handle == NULL) {
+        dlerror();
+        handle = dlopen(module_path, RTLD_NOW | RTLD_LOCAL);
+    }
+
+    return handle;
+}
+
+static void log_module_version(const char* module_path)
+{
+    CK_INFO info;
+    CK_RV rv;
+    const char* path = module_path != NULL ? module_path : "(unknown)";
+
+    if (func_list == NULL || func_list->C_GetInfo == NULL)
+        return;
+
+    XMEMSET(&info, 0, sizeof(info));
+    rv = func_list->C_GetInfo(&info);
+    if (rv == CKR_OK) {
+        printf("Loaded %s (libraryVersion %u.%u)\n", path,
+            (unsigned int)info.libraryVersion.major,
+            (unsigned int)info.libraryVersion.minor);
+    }
+    else {
+        fprintf(stderr, "C_GetInfo failed for %s: 0x%lx\n", path,
+            (unsigned long)rv);
+    }
+}
+
+static void remember_module_path(const char* module_path)
+{
+    if (module_path != NULL) {
+        size_t len = strlen(module_path);
+        if (len >= sizeof(loaded_module_path))
+            len = sizeof(loaded_module_path) - 1;
+        memcpy(loaded_module_path, module_path, len);
+        loaded_module_path[len] = '\0';
+        loaded_module_path_ptr = loaded_module_path;
+    }
+    else {
+        loaded_module_path_ptr = NULL;
+    }
+}
+
 static CK_RV pkcs11_load_module(const char* module_path)
 {
     CK_RV ret = CKR_OK;
 #ifndef HAVE_PKCS11_STATIC
     CK_C_GetFunctionList func = NULL;
+    const char* resolved_path = module_path;
+    char resolved_path_buf[PATH_MAX];
+    resolved_path_buf[0] = '\0';
 
-    dlib = dlopen(module_path, RTLD_NOW | RTLD_LOCAL);
+    dlib = pkcs11_open_module_handle(module_path);
     if (dlib == NULL) {
         glob_t matches;
         char pattern[PATH_MAX];
@@ -192,12 +312,16 @@ static CK_RV pkcs11_load_module(const char* module_path)
                     const char* candidate = matches.gl_pathv[i];
                     if (strcmp(candidate, module_path) == 0)
                         continue;
-                    dlib = dlopen(candidate, RTLD_NOW | RTLD_LOCAL);
-                    if (dlib != NULL)
+                    dlib = pkcs11_open_module_handle(candidate);
+                    if (dlib != NULL) {
+                        snprintf(resolved_path_buf, sizeof(resolved_path_buf),
+                            "%s", candidate);
+                        resolved_path = resolved_path_buf;
                         break;
+                    }
                 }
-                globfree(&matches);
             }
+            globfree(&matches);
         }
     }
 
@@ -216,19 +340,54 @@ static CK_RV pkcs11_load_module(const char* module_path)
     }
 
     ret = func(&func_list);
+    if (ret == CKR_OK && func_list != NULL) {
+        Dl_info info;
+        if (dladdr((void*)func, &info) != 0 && info.dli_fname != NULL) {
+            remember_module_path(info.dli_fname);
+        }
+        else {
+            if (resolved_path == module_path && module_path != NULL &&
+                resolved_path_buf[0] == '\0') {
+                snprintf(resolved_path_buf, sizeof(resolved_path_buf), "%s",
+                    module_path);
+                resolved_path = resolved_path_buf;
+            }
+            remember_module_path(resolved_path);
+        }
+        token_repair = (wolfPKCS11_TokenRepair_func)dlsym(dlib,
+            "wolfPKCS11_TokenRepair");
+        debug_on = (wolfPKCS11_Debugging_On_func)dlsym(dlib,
+            "wolfPKCS11_Debugging_On");
+        debug_off = (wolfPKCS11_Debugging_Off_func)dlsym(dlib,
+            "wolfPKCS11_Debugging_Off");
+    }
 #else
     (void)module_path;
     ret = C_GetFunctionList(&func_list);
+    if (ret == CKR_OK && func_list != NULL) {
+        remember_module_path("libwolfpkcs11 (static link)");
+        token_repair = wolfPKCS11_TokenRepair;
+    #ifdef DEBUG_WOLFPKCS11
+        debug_on = wolfPKCS11_Debugging_On;
+        debug_off = wolfPKCS11_Debugging_Off;
+    #else
+        debug_on = NULL;
+        debug_off = NULL;
+    #endif
+    }
 #endif
     CHECK_CKR(ret, "C_GetFunctionList");
     return ret;
 }
 
-static void pkcs11_unload_module(void)
+static void pkcs11_unload_module(int finalize)
 {
-    if (func_list != NULL)
+    if (finalize && func_list != NULL) {
         func_list->C_Finalize(NULL);
-
+    }
+    if (debug_off != NULL && debug_enabled)
+        debug_off();
+    debug_enabled = 0;
 #ifndef HAVE_PKCS11_STATIC
     if (dlib != NULL) {
         dlclose(dlib);
@@ -236,6 +395,9 @@ static void pkcs11_unload_module(void)
     }
 #endif
     func_list = NULL;
+    token_repair = NULL;
+    debug_on = NULL;
+    debug_off = NULL;
 }
 
 static CK_RV pkcs11_initialize(void)
@@ -249,7 +411,27 @@ static CK_RV pkcs11_initialize(void)
     args.flags = CKF_OS_LOCKING_OK;
 
     ret = func_list->C_Initialize(&args);
+    if (ret == CKR_OK)
+        enable_debug_logging();
+    if (ret == CKR_WOLFPKCS11_TOKEN_REPAIR_NEEDED) {
+        verbose_printf("C_Initialize reported CKR_WOLFPKCS11_TOKEN_REPAIR_NEEDED\n");
+        if (token_repair == NULL) {
+            fprintf(stderr, "wolfPKCS11_TokenRepair not available in module\n");
+            return ret;
+        }
+        enable_debug_logging();
+        ret = token_repair(1, 0);
+        CHECK_CKR(ret, "wolfPKCS11_TokenRepair");
+        if (ret != CKR_OK)
+            return ret;
+        ret = func_list->C_Initialize(&args);
+        if (ret == CKR_OK)
+            enable_debug_logging();
+    }
     CHECK_CKR(ret, "C_Initialize");
+
+    if (ret == CKR_OK)
+        log_module_version(loaded_module_path_ptr);
 
     if (ret != CKR_OK)
         return ret;
@@ -337,10 +519,21 @@ static CK_RV open_user_session(CK_SESSION_HANDLE* session, int rw)
     if (ret != CKR_OK)
         return ret;
 
+    if (token_repair == NULL)
+        verbose_printf("Token repair callback not available\n");
+
     ret = func_list->C_Login(*session, CKU_USER, user_pin, user_pin_len);
     if (ret == CKR_USER_ALREADY_LOGGED_IN) {
         verbose_printf("User already logged in\n");
         ret = CKR_OK;
+    }
+    else if ((ret == CKR_PIN_INCORRECT ||
+              ret == CKR_USER_PIN_NOT_INITIALIZED) &&
+             token_repair != NULL) {
+        verbose_printf("User login failed, attempting token repair...\n");
+        CHECK_CKR(token_repair(slot_id, 0), "wolfPKCS11_TokenRepair");
+        ret = func_list->C_Login(*session, CKU_USER, user_pin, user_pin_len);
+        CHECK_CKR(ret, "C_Login");
     }
     else {
         CHECK_CKR(ret, "C_Login");
@@ -401,21 +594,12 @@ static CK_RV create_certificate(CK_SESSION_HANDLE session, int index)
 {
     CK_RV ret;
     CK_OBJECT_HANDLE handle = CK_INVALID_HANDLE;
-    char label[40];
     CK_ATTRIBUTE template[] = {
         { CKA_CLASS,            &cert_class,            sizeof(cert_class)            },
-        { CKA_KEY_TYPE,         &rsa_key_type,          sizeof(rsa_key_type)          },
+        { CKA_CERTIFICATE_TYPE, &x509_cert_type,        sizeof(x509_cert_type)        },
         { CKA_TOKEN,            &ck_true,               sizeof(ck_true)               },
-        { CKA_ENCRYPT,          &ck_true,               sizeof(ck_true)               },
-        { CKA_VERIFY,           &ck_true,               sizeof(ck_true)               },
-        { CKA_MODIFIABLE,       &ck_true,               sizeof(ck_true)               },
-        { CKA_LABEL,            label,                  0                             },
-        { CKA_MODULUS,          rsa_2048_modulus,       sizeof(rsa_2048_modulus)      },
-        { CKA_PUBLIC_EXPONENT,  rsa_2048_pub_exp,       sizeof(rsa_2048_pub_exp)      }
+        { CKA_VALUE,            (void*)rsa_cert_der,    sizeof(rsa_cert_der)          }
     };
-
-    (void)snprintf(label, sizeof(label), "tpm-upgrade-cert-%02d", index);
-    template[6].ulValueLen = (CK_ULONG)strlen(label);
 
     ret = func_list->C_CreateObject(session, template,
         (CK_ULONG)(sizeof(template)/sizeof(CK_ATTRIBUTE)), &handle);
@@ -424,7 +608,7 @@ static CK_RV create_certificate(CK_SESSION_HANDLE session, int index)
         verbose_printf("TPM memory exhausted while creating cert %d\n", index);
     }
     else if (ret != CKR_OK) {
-        CHECK_CKR(ret, "Create public key");
+        CHECK_CKR(ret, "Create certificate");
     }
     return ret;
 }
@@ -496,29 +680,31 @@ static CK_RV prepare_objects(const tpm_upgrade_options* opts)
 
     for (i = 0; i < MAX_TRACKED_OBJECTS; i++) {
         ret = create_rsa_private_key(session, i);
-        if (ret == CKR_DEVICE_MEMORY || ret == CKR_HOST_MEMORY ||
-            ret == CKR_FUNCTION_FAILED) {
-            break;
+        if (ret == CKR_OK) {
+            counts.key_count++;
         }
-        else if (ret != CKR_OK) {
+        else if (ret == CKR_DEVICE_MEMORY || ret == CKR_HOST_MEMORY ||
+                 ret == CKR_FUNCTION_FAILED) {
+            continue;
+        }
+        else {
             close_user_session(session);
             return ret;
         }
-        counts.key_count++;
 
         ret = create_certificate(session, i);
-        if (ret == CKR_DEVICE_MEMORY || ret == CKR_HOST_MEMORY ||
-            ret == CKR_FUNCTION_FAILED) {
-            break;
+        if (ret == CKR_OK) {
+            counts.cert_count++;
         }
-        else if (ret != CKR_OK) {
+        else if (ret == CKR_DEVICE_MEMORY || ret == CKR_HOST_MEMORY ||
+                 ret == CKR_FUNCTION_FAILED) {
+            continue;
+        }
+        else {
             close_user_session(session);
             return ret;
         }
-        counts.cert_count++;
     }
-
-    close_user_session(session);
 
     verbose_printf("Prepared %d private keys and %d public keys\n",
         counts.key_count, counts.cert_count);
@@ -679,7 +865,7 @@ int main(int argc, char** argv)
 
     ret = pkcs11_initialize();
     if (ret != CKR_OK) {
-        pkcs11_unload_module();
+        pkcs11_unload_module(0);
         return EXIT_FAILURE;
     }
 
@@ -698,7 +884,7 @@ int main(int argc, char** argv)
             (unsigned long)ret);
     }
 
-    pkcs11_unload_module();
+    pkcs11_unload_module(opts.prepare ? 0 : 1);
 
     return exit_code;
 }

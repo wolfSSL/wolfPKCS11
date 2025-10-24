@@ -6,7 +6,7 @@ on:
 
 env:
   WOLFSSL_VERSION: v5.8.0-stable
-  BASE_REF: v1.3.0-stable
+  BASE_REF: 1a7f7d71b98dbffbfd4ad77f0c77c8c573a2c5d2
   TOKEN_PATH: ${{ github.workspace }}/tpm-upgrade-store
   METADATA_FILE: ${{ github.workspace }}/tpm-upgrade-store/tpm-upgrade-metadata.txt
 
@@ -72,7 +72,7 @@ jobs:
         sudo make install
         sudo ldconfig
 
-    - name: Build wolfPKCS11 base (v1.3.0) with TPM store
+    - name: Build wolfPKCS11 base (prepare reference) with TPM store
       working-directory: ./base-branch
       run: |
         ./autogen.sh
@@ -95,7 +95,7 @@ jobs:
         echo $! > "${GITHUB_WORKSPACE}/tpm-server.pid"
         sleep 2
 
-    - name: Prepare TPM objects using v1.3.0 library
+    - name: Prepare TPM objects using base reference library
       working-directory: ./pr-branch
       env:
         LD_LIBRARY_PATH: ${{ github.workspace }}/base-branch/src/.libs:/usr/local/lib
@@ -109,6 +109,30 @@ jobs:
           --module ../base-branch/src/.libs/libwolfpkcs11.so \
           --metadata-file "${METADATA_FILE}" \
           --prepare --verbose
+
+    - name: Kill soft TPM after prepare
+      run: |
+        if [ -f "${GITHUB_WORKSPACE}/tpm-server.pid" ]; then
+          TPM_PID="$(cat "${GITHUB_WORKSPACE}/tpm-server.pid")"
+          kill "${TPM_PID}" || true
+          wait "${TPM_PID}" 2>/dev/null || true
+          rm -f "${GITHUB_WORKSPACE}/tpm-server.pid"
+        fi
+        pkill -f tpm_server || true
+        sleep 1
+
+    - name: Upload NVChip artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: tpm-nvchip
+        path: ibmswtpm2/src/NVChip
+
+    - name: Restart soft TPM
+      run: |
+        cd ibmswtpm2/src
+        ./tpm_server >>"${GITHUB_WORKSPACE}/tpm-server.log" 2>&1 &
+        echo $! > "${GITHUB_WORKSPACE}/tpm-server.pid"
+        sleep 2
 
     - name: Verify TPM objects using PR library
       working-directory: ./pr-branch
