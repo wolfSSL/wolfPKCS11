@@ -169,12 +169,26 @@
 /* Determine object id from object handle. */
 #define OBJ_HANDLE_OBJ_ID(h)           ((h) & 0xfffffff)
 
+#define WP11_TOKEN_LOAD_FLAG_ALLOW_REPAIR  0x01
+
+#define WP11_TOKEN_STORE_NEEDS_REPAIR_E   (-3200)
+
+typedef struct WP11_TokenLoadReport {
+    int removedIdx[WP11_TOKEN_OBJECT_CNT_MAX];
+    CK_KEY_TYPE removedType[WP11_TOKEN_OBJECT_CNT_MAX];
+    CK_OBJECT_CLASS removedClass[WP11_TOKEN_OBJECT_CNT_MAX];
+    word32 removedFlags[WP11_TOKEN_OBJECT_CNT_MAX];
+    int removedCount;
+    int labelFixCount;
+    int rebuiltCount;
+} WP11_TokenLoadReport;
+
 #ifdef SINGLE_THREADED
 /* Disable locking. */
 typedef int WP11_Lock;
 
 #define WP11_Lock_Init(l)              ({ 0; })
-#define WP11_Lock_Free(l)
+#define WP11_Lock_Free(l)             (void)(l)
 #define WP11_Lock_LockRW(l)            ({ 0; })
 #define WP11_Lock_UnlockRW(l)          ({ 0; })
 #define WP11_Lock_LockRO(l)            ({ 0; })
@@ -514,6 +528,7 @@ typedef struct WP11_Token {
     int objCnt;                        /* Count of objects on token           */
     int tokenFlags;                    /* Flags for token                     */
     int nextObjId;
+    WP11_TokenLoadReport* loadReport;  /* Active load report (internal use)   */
     byte userPinEmpty:2;               /* Indicates user PIN is empty
                                         * 0 = not set
                                         * 1 = empty
@@ -583,7 +598,8 @@ const WP11_Ecc_Curve DefinedCurves[] = {
 /* Number of slots. */
 #define slotCnt 1
 /* List of slot objects. */
-static WP11_Slot slotList[1];
+static WP11_Slot slotList[slotCnt];
+static byte slotInitDone[slotCnt];
 /* Global random used in random API, cryptographic operations and generating
  * seed when creating new hash of PIN.
  */
@@ -592,6 +608,8 @@ static WC_RNG globalRandom;
 static int libraryInitCount = 0;
 /* Lock for globals including global random. */
 static WP11_Lock globalLock;
+/* Tracks whether global resources are initialized. */
+static int libraryGlobalsReady = 0;
 
 
 #ifndef SINGLE_THREADED
@@ -2234,23 +2252,47 @@ static int wp11_storage_read_alloc_array(void* storage,
                                          unsigned char** buffer, int* len)
 {
     int ret;
+    int length = 0;
+    unsigned char* data = NULL;
+
+    if (buffer != NULL)
+        *buffer = NULL;
+    if (len != NULL)
+        *len = 0;
 
     /* Read length of array. */
-    ret = wp11_storage_read_int(storage, len);
-    if (ret == 0 && *len > 0) {
-        /* Allocate buffer to hold data. */
-        *buffer = (unsigned char*)XMALLOC(*len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        if (*buffer == NULL)
-            ret = MEMORY_E;
-
-        if (ret == 0) {
-            /* Read array data into allocated buffer. */
-            ret = wp11_storage_read(storage, *buffer, *len);
-            if (ret != 0) {
-                XFREE(*buffer, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-                *buffer = NULL;
-            }
+    ret = wp11_storage_read_int(storage, &length);
+    if (ret == 0) {
+        if (length < 0) {
+            ret = BUFFER_E;
         }
+        else if (length > 0) {
+            /* Allocate buffer to hold data. */
+            data = (unsigned char*)XMALLOC(length, NULL,
+                                           DYNAMIC_TYPE_TMP_BUFFER);
+            if (data == NULL)
+                ret = MEMORY_E;
+        }
+    }
+    if (ret == 0 && length > 0) {
+        /* Read array data into allocated buffer. */
+        ret = wp11_storage_read(storage, data, length);
+        if (ret != 0) {
+            XFREE(data, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            data = NULL;
+        }
+    }
+
+    if (ret == 0) {
+        if (buffer != NULL)
+            *buffer = data;
+        else if (data != NULL)
+            XFREE(data, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (len != NULL)
+            *len = length;
+    }
+    else if (data != NULL) {
+        XFREE(data, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     }
 
     return ret;
@@ -4508,6 +4550,140 @@ static int wp11_Object_Load_SymmKey(WP11_Object* object, int tokenId, int objId)
     return ret;
 }
 
+#ifndef WOLFPKCS11_NO_STORE
+static int wp11_Object_Load_Object(WP11_Object* object, int tokenId, int objId);
+static int wp11_Token_RebuildObject(WP11_Slot* slot, WP11_Token* token,
+    int tokenId, int objId, CK_OBJECT_CLASS objClass, CK_KEY_TYPE keyType,
+    word32 opFlag)
+{
+    WP11_Object* object = NULL;
+    int ret = 0;
+
+    if (token->objCnt >= WP11_TOKEN_OBJECT_CNT_MAX)
+        return MEMORY_E;
+
+    ret = wp11_Object_New(slot, keyType, &object);
+    if (ret != 0)
+        return ret;
+
+    object->lock = &token->lock;
+
+    ret = wp11_Object_Load_Object(object, tokenId, objId);
+    if (ret != 0)
+        goto rebuild_fail;
+
+    object->onToken = 1;
+    object->local = 1;
+    object->session = NULL;
+    object->encoded = 0;
+
+    if (objClass != (CK_OBJECT_CLASS)-1)
+        object->objClass = objClass;
+    if (keyType != (CK_KEY_TYPE)-1)
+        object->type = keyType;
+    if (opFlag != 0)
+        object->opFlag |= opFlag;
+
+    ret = wp11_Object_AllocateTypeData(object);
+    if (ret != 0)
+        goto rebuild_fail;
+
+    switch (object->objClass) {
+        case CKO_PRIVATE_KEY:
+            object->opFlag |= WP11_FLAG_PRIVATE | WP11_FLAG_SENSITIVE;
+            object->opFlag |= WP11_FLAG_SIGN | WP11_FLAG_DECRYPT;
+            switch (object->type) {
+#ifndef NO_RSA
+                case CKK_RSA:
+                    ret = wp11_Object_Load_RsaKey(object, tokenId, objId);
+                    break;
+#endif
+#ifdef HAVE_ECC
+                case CKK_EC:
+                    ret = wp11_Object_Load_EccKey(object, tokenId, objId);
+                    break;
+#endif
+#ifndef NO_DH
+                case CKK_DH:
+                    ret = wp11_Object_Load_DhKey(object, tokenId, objId);
+                    break;
+#endif
+#ifndef NO_AES
+                case CKK_AES:
+#endif
+                case CKK_GENERIC_SECRET:
+                    ret = wp11_Object_Load_SymmKey(object, tokenId, objId);
+                    break;
+                default:
+                    ret = NOT_AVAILABLE_E;
+            }
+            break;
+        case CKO_PUBLIC_KEY:
+            object->opFlag |= WP11_FLAG_VERIFY | WP11_FLAG_ENCRYPT;
+            switch (object->type) {
+#ifndef NO_RSA
+                case CKK_RSA:
+                    ret = wp11_Object_Load_RsaKey(object, tokenId, objId);
+                    break;
+#endif
+#ifdef HAVE_ECC
+                case CKK_EC:
+                    ret = wp11_Object_Load_EccKey(object, tokenId, objId);
+                    break;
+#endif
+#ifndef NO_DH
+                case CKK_DH:
+                    ret = wp11_Object_Load_DhKey(object, tokenId, objId);
+                    break;
+#endif
+                default:
+                    ret = NOT_AVAILABLE_E;
+            }
+            break;
+        case CKO_CERTIFICATE:
+            ret = wp11_Object_Load_Cert(object, tokenId, objId);
+            break;
+        case CKO_DATA:
+            ret = wp11_Object_Load_Data(object, tokenId, objId);
+            break;
+        default:
+            ret = NOT_AVAILABLE_E;
+            break;
+    }
+
+    if (ret == 0) {
+#ifdef DEBUG_WOLFPKCS11
+        WOLFPKCS11_MSG("Rebuilt object idx=%d class=%lu type=%lu keyLen=%d flags=0x%lx",
+            objId,
+            (unsigned long)object->objClass,
+            (unsigned long)object->type,
+            object->keyDataLen,
+            (unsigned long)object->opFlag);
+#endif
+#ifdef WOLFPKCS11_TPM
+        if ((object->opFlag & WP11_FLAG_TPM) == 0 &&
+            (keyType == CKK_RSA || keyType == CKK_EC || keyType == CKK_DH)) {
+            object->opFlag |= WP11_FLAG_TPM;
+        }
+#endif
+        object->next = token->object;
+        token->object = object;
+        token->objCnt++;
+        {
+            int objIdValue = OBJ_HANDLE_OBJ_ID(object->handle);
+            if (objIdValue >= token->nextObjId)
+                token->nextObjId = objIdValue + 1;
+        }
+        return 0;
+    }
+
+rebuild_fail:
+    if (object != NULL)
+        WP11_Object_Free(object);
+    return ret;
+}
+#endif /* !WOLFPKCS11_NO_STORE */
+
 /**
  * Store a symmetric key to storage.
  *
@@ -4549,6 +4725,7 @@ static int wp11_Object_Load_Object(WP11_Object* object, int tokenId, int objId)
     int ret;
     void* storage = NULL;
     word32 dummy = 0;
+    int labelMissing = 0;
 
     /* Open access to key object. */
     ret = wp11_storage_open_readonly(WOLFPKCS11_STORE_OBJECT, tokenId, objId,
@@ -4610,9 +4787,21 @@ static int wp11_Object_Load_Object(WP11_Object* object, int tokenId, int objId)
                                                 &object->keyIdLen);
         }
         if (ret == 0) {
+            int labelRet;
             /* Read label for the object. (variable labelLen) */
-            ret = wp11_storage_read_alloc_array(storage, &object->label,
+            labelRet = wp11_storage_read_alloc_array(storage, &object->label,
                                                 &object->labelLen);
+            if (labelRet == 0)
+                ret = 0;
+            else if (labelRet == BUFFER_E || labelRet == NOT_AVAILABLE_E ||
+                     labelRet != MEMORY_E) {
+                object->label = NULL;
+                object->labelLen = 0;
+                labelMissing = 1;
+                ret = 0;
+            }
+            else
+                ret = labelRet;
         }
         if (ret == 0) {
             /* Read issuer of the object. (variable issuerLen) */
@@ -4637,8 +4826,14 @@ static int wp11_Object_Load_Object(WP11_Object* object, int tokenId, int objId)
                     /* Read email of the object. (variable emailLen) */
                     ret = wp11_storage_read_alloc_array(storage,
                         &object->email, &object->emailLen);
-                    if (ret == BUFFER_E)
+                    if (ret == 0)
                         ret = 0;
+                    else if (ret == BUFFER_E || ret == NOT_AVAILABLE_E ||
+                             ret != MEMORY_E) {
+                        object->email = NULL;
+                        object->emailLen = 0;
+                        ret = 0;
+                    }
                 }
 #endif
             }
@@ -4648,9 +4843,30 @@ static int wp11_Object_Load_Object(WP11_Object* object, int tokenId, int objId)
                  */
                 ret = 0;
             }
+            else if (ret != MEMORY_E) {
+                /* Treat other failures as missing optional data. */
+                ret = 0;
+                object->issuer = NULL;
+                object->issuerLen = 0;
+                object->serial = NULL;
+                object->serialLen = 0;
+                object->subject = NULL;
+                object->subjectLen = 0;
+#ifdef WOLFPKCS11_NSS
+                object->email = NULL;
+                object->emailLen = 0;
+#endif
+                object->category = 0;
+            }
         }
 
         wp11_storage_close(storage);
+    }
+    if (ret == 0 && labelMissing && object->slot != NULL &&
+        object->slot->token.loadReport != NULL) {
+        WP11_TokenLoadReport* report = object->slot->token.loadReport;
+        if (report->labelFixCount < WP11_TOKEN_OBJECT_CNT_MAX)
+            report->labelFixCount++;
     }
     return ret;
 }
@@ -5156,7 +5372,8 @@ static void wp11_Token_Final(WP11_Token* token)
  * @return  BUFFER_E when loading fails.
  * @return  NOT_AVAILABLE_E when unable to locate data.
  */
-static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
+static int wp11_Token_LoadEx(WP11_Slot* slot, int tokenId, WP11_Token* token,
+    unsigned int flags, WP11_TokenLoadReport* report)
 {
     int ret;
     int i;
@@ -5165,6 +5382,9 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
     WP11_Object** current;
     int objCnt = 0;
     word32 len;
+
+    if (report != NULL)
+        XMEMSET(report, 0, sizeof(*report));
 
     /* Open access to token object. */
     ret = wp11_storage_open_readonly(WOLFPKCS11_STORE_TOKEN, tokenId, 0,
@@ -5277,10 +5497,159 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
         wp11_storage_close(storage);
 
         object = token->object;
-        for (i = token->objCnt - 1; (ret == 0) && (i >= 0); i--) {
-            /* Load the objects. */
-            ret = wp11_Object_Load(object, tokenId, i);
-            object = object->next;
+        token->loadReport = report;
+        {
+            WP11_Object* prev = NULL;
+            int objIdx = token->objCnt - 1;
+
+            while ((ret == 0) && (object != NULL) && (objIdx >= 0)) {
+                int loadRet = wp11_Object_Load(object, tokenId, objIdx);
+
+                if (loadRet == 0) {
+#ifdef WOLFPKCS11_TPM
+                    int skipObject = 0;
+                    if ((flags & WP11_TOKEN_LOAD_FLAG_ALLOW_REPAIR) != 0 &&
+                        (report != NULL) &&
+                        (object->opFlag & WP11_FLAG_TPM) != 0) {
+                        int tpmRet = 0;
+                        WOLFTPM2_KEYBLOB tmpBlob;
+                        WP11_Object tmpObj;
+
+                        XMEMSET(&tmpBlob, 0, sizeof(tmpBlob));
+                        tmpObj = *object;
+                        if (object->tpmKey != NULL) {
+                            XMEMCPY(&tmpBlob, object->tpmKey, sizeof(tmpBlob));
+                        }
+                        tmpObj.tpmKey = &tmpBlob;
+
+                        if (object->type == CKK_RSA) {
+                        #ifndef NO_RSA
+                            RsaKey tmpRsa;
+
+                            XMEMSET(&tmpRsa, 0, sizeof(tmpRsa));
+                            tpmRet = wc_InitRsaKey_ex(&tmpRsa, NULL, object->devId);
+                            if (tpmRet == 0) {
+                                tmpObj.data.rsaKey = &tmpRsa;
+                                tpmRet = WP11_Object_DecodeTpmKey(&tmpObj);
+                            }
+                            wc_FreeRsaKey(&tmpRsa);
+                        #else
+                            tpmRet = NOT_COMPILED_IN;
+                        #endif
+                        }
+                        else if (object->type == CKK_EC) {
+                        #ifdef HAVE_ECC
+                            ecc_key tmpEcc;
+
+                            XMEMSET(&tmpEcc, 0, sizeof(tmpEcc));
+                            tpmRet = wc_ecc_init_ex(&tmpEcc, NULL, object->devId);
+                            if (tpmRet == 0) {
+                                tmpObj.data.ecKey = &tmpEcc;
+                                tpmRet = WP11_Object_DecodeTpmKey(&tmpObj);
+                            }
+                            wc_ecc_free(&tmpEcc);
+                        #else
+                            tpmRet = NOT_COMPILED_IN;
+                        #endif
+                        }
+
+                        if (tpmRet != 0) {
+                            skipObject = 1;
+                            if (report->removedCount < WP11_TOKEN_OBJECT_CNT_MAX) {
+                                report->removedIdx[report->removedCount] = objIdx;
+                                report->removedType[report->removedCount] = object->type;
+                                report->removedClass[report->removedCount] = object->objClass;
+                                report->removedFlags[report->removedCount] = object->opFlag;
+                                report->removedCount++;
+                            }
+                            {
+                                WP11_Object* toFree = object;
+                                object = object->next;
+                                if (prev == NULL)
+                                    token->object = object;
+                                else
+                                    prev->next = object;
+                                WP11_Object_Free(toFree);
+                                token->objCnt--;
+                            }
+                        }
+                    }
+                    if (!skipObject) {
+                        prev = object;
+                        object = object->next;
+                    }
+#else
+                    prev = object;
+                    object = object->next;
+#endif
+                }
+                else if ((flags & WP11_TOKEN_LOAD_FLAG_ALLOW_REPAIR) != 0 &&
+                         (loadRet == NOT_AVAILABLE_E ||
+                          loadRet == BUFFER_E)) {
+                    if (report != NULL &&
+                        report->removedCount < WP11_TOKEN_OBJECT_CNT_MAX) {
+                        report->removedIdx[report->removedCount] = objIdx;
+                        report->removedType[report->removedCount] = object->type;
+                        report->removedClass[report->removedCount] = object->objClass;
+                        report->removedFlags[report->removedCount] = object->opFlag;
+                        report->removedCount++;
+                    }
+                    {
+                        WP11_Object* toFree = object;
+                        object = object->next;
+                        if (prev == NULL)
+                            token->object = object;
+                        else
+                            prev->next = object;
+                        WP11_Object_Free(toFree);
+                        token->objCnt--;
+                    }
+                }
+                else {
+                    ret = loadRet;
+                }
+                objIdx--;
+            }
+        }
+        if (ret == 0 && report != NULL &&
+            (flags & WP11_TOKEN_LOAD_FLAG_ALLOW_REPAIR) != 0) {
+            int rebuildIdx;
+
+            for (rebuildIdx = 0; rebuildIdx < report->removedCount; rebuildIdx++) {
+                CK_OBJECT_CLASS rebuildClass = report->removedClass[rebuildIdx];
+                CK_KEY_TYPE rebuildType = report->removedType[rebuildIdx];
+
+                if (rebuildClass == 0 && rebuildType == 0)
+                    continue;
+
+                if (rebuildClass == 0) {
+                    switch (rebuildType) {
+                        case CKK_RSA:
+                        case CKK_EC:
+                        case CKK_DH:
+                        case CKK_GENERIC_SECRET:
+                        case CKK_AES:
+                            rebuildClass = CKO_PRIVATE_KEY;
+                            break;
+                        default:
+                            rebuildClass = CKO_DATA;
+                            break;
+                    }
+                }
+
+                if (wp11_Token_RebuildObject(slot, token, tokenId,
+                        report->removedIdx[rebuildIdx],
+                        rebuildClass,
+                        rebuildType,
+                        report->removedFlags[rebuildIdx]) == 0) {
+                    report->rebuiltCount++;
+                }
+            }
+        }
+        token->loadReport = NULL;
+        if (ret == NOT_AVAILABLE_E || ret == BUFFER_E) {
+            if ((flags & WP11_TOKEN_LOAD_FLAG_ALLOW_REPAIR) == 0)
+                ret = WP11_TOKEN_STORE_NEEDS_REPAIR_E;
         }
 
         if (ret == 0) {
@@ -5299,7 +5668,7 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
 #endif
         }
 
-        if (ret != 0) {
+        if (ret != 0 && ret != WP11_TOKEN_STORE_NEEDS_REPAIR_E) {
             ret = CKR_DEVICE_ERROR;
         }
     }
@@ -5309,6 +5678,11 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
     }
 
     return ret;
+}
+
+static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
+{
+    return wp11_Token_LoadEx(slot, tokenId, token, 0, NULL);
 }
 
 /**
@@ -5558,9 +5932,13 @@ static void wp11_TpmFinal(WP11_Slot* slot)
  */
 static void wp11_Slot_Final(WP11_Slot* slot)
 {
+    int slotIdx = -1;
+
     if (slot == NULL) {
         return;
     }
+    if (slot->id > 0 && slot->id <= slotCnt)
+        slotIdx = (int)(slot->id - 1);
     while (slot->session != NULL) {
         wp11_Slot_FreeSession(slot, slot->session);
     }
@@ -5569,6 +5947,8 @@ static void wp11_Slot_Final(WP11_Slot* slot)
     wp11_TpmFinal(slot);
 #endif
     WP11_Lock_Free(&slot->lock);
+    if (slotIdx >= 0)
+        slotInitDone[slotIdx] = 0;
 }
 
 /**
@@ -5614,6 +5994,10 @@ static int wp11_Slot_Init(WP11_Slot* slot, int id)
         }
     }
 
+    if (ret == 0 && id > 0 && id <= slotCnt) {
+        slotInitDone[id - 1] = 1;
+    }
+
     return ret;
 }
 
@@ -5649,6 +6033,56 @@ static int wp11_Slot_Store(WP11_Slot* slot, int id)
 }
 #endif
 
+static int wp11_Library_EnsureGlobals(void)
+{
+    int ret = 0;
+    int lockInitialized = 0;
+    int cryptInitialized = 0;
+    int rngInitialized = 0;
+
+    if (libraryGlobalsReady)
+        return 0;
+
+    ret = WP11_Lock_Init(&globalLock);
+    if (ret == 0) {
+        lockInitialized = 1;
+
+        ret = wolfCrypt_Init();
+    }
+    if (ret == 0) {
+        cryptInitialized = 1;
+#ifdef WC_RNG_SEED_CB
+        ret = wc_SetSeed_Cb(wc_GenerateSeed);
+#endif
+    }
+#ifdef HAVE_FIPS
+    if (ret == 0) {
+        ret = wc_RunAllCast_fips();
+    }
+#endif
+    if (ret == 0) {
+#ifdef WOLFSSL_MAXQ10XX_CRYPTO
+        ret = wc_InitRng_ex(&globalRandom, NULL, MAXQ_DEVICE_ID);
+#else
+        ret = wc_InitRng(&globalRandom);
+#endif
+    }
+    if (ret == 0) {
+        rngInitialized = 1;
+        libraryGlobalsReady = 1;
+    }
+    else {
+        if (rngInitialized)
+            wc_FreeRng(&globalRandom);
+        if (cryptInitialized)
+            wolfCrypt_Cleanup();
+        if (lockInitialized)
+            WP11_Lock_Free(&globalLock);
+    }
+
+    return ret;
+}
+
 /**
  * Initialize the globals for the library.
  * Multiple initializations allowed.
@@ -5663,35 +6097,18 @@ int WP11_Library_Init(void)
     int i;
 
     if (libraryInitCount == 0) {
-        ret = WP11_Lock_Init(&globalLock);
-        if (ret == 0) {
-
-            ret = wolfCrypt_Init();
-#ifdef WC_RNG_SEED_CB
-            if (ret == 0) {
-                ret = wc_SetSeed_Cb(wc_GenerateSeed);
-            }
-#endif
-#ifdef HAVE_FIPS
-            if (ret == 0) {
-                ret = wc_RunAllCast_fips();
-            }
-#endif
-            if (ret == 0) {
-#ifdef WOLFSSL_MAXQ10XX_CRYPTO
-                ret = wc_InitRng_ex(&globalRandom, NULL, MAXQ_DEVICE_ID);
-#else
-                ret = wc_InitRng(&globalRandom);
-#endif
-            }
-
-        }
+        ret = wp11_Library_EnsureGlobals();
         for (i = 0; (ret == 0) && (i < slotCnt); i++) {
+            if (slotInitDone[i]) {
+                wp11_Slot_Final(&slotList[i]);
+            }
             ret = wp11_Slot_Init(&slotList[i], i + 1);
         }
 #ifndef WOLFPKCS11_NO_STORE
         for (i = 0; (ret == 0) && (i < slotCnt); i++) {
             ret = wp11_Slot_Load(&slotList[i], i + 1);
+            if (ret == WP11_TOKEN_STORE_NEEDS_REPAIR_E)
+                break;
         }
 #endif
     }
@@ -5740,6 +6157,7 @@ void WP11_Library_Final(void)
         wc_FreeRng(&globalRandom);
         WP11_Lock_Free(&globalLock);
         wolfCrypt_Cleanup();
+        libraryGlobalsReady = 0;
     }
 }
 
@@ -5763,6 +6181,33 @@ int WP11_Library_IsInitialized(void)
     }
     return ret;
 }
+
+#ifdef WOLFPKCS11_NO_STORE
+#define wp11_ErrorToCkr(err) CKR_FUNCTION_FAILED
+#else
+static CK_RV wp11_ErrorToCkr(int err)
+{
+    if (err == 0)
+        return CKR_OK;
+    if (err == WP11_TOKEN_STORE_NEEDS_REPAIR_E)
+        return CKR_WOLFPKCS11_TOKEN_REPAIR_NEEDED;
+    switch (err) {
+        case MEMORY_E:
+            return CKR_HOST_MEMORY;
+        case BAD_FUNC_ARG:
+            return CKR_ARGUMENTS_BAD;
+        case NOT_AVAILABLE_E:
+        case BUFFER_E:
+            return CKR_DEVICE_ERROR;
+        default:
+            break;
+    }
+    if (err > 0)
+        return (CK_RV)err;
+
+    return CKR_FUNCTION_FAILED;
+}
+#endif
 
 /**
  * Check if slot id is valid.
@@ -5830,6 +6275,107 @@ int WP11_Slot_Get(CK_SLOT_ID slotId, WP11_Slot** slot)
 
     return ret;
 }
+
+#ifndef WOLFPKCS11_NO_STORE
+WP11_API CK_RV wolfPKCS11_TokenRepair(CK_SLOT_ID slotId, CK_FLAGS flags)
+{
+    CK_RV rv = CKR_OK;
+    int ret;
+    int slotIdx;
+    WP11_Slot* slot;
+    WP11_TokenLoadReport report;
+    static const int cleanupTypes[] = {
+        WOLFPKCS11_STORE_OBJECT,
+        WOLFPKCS11_STORE_SYMMKEY,
+        WOLFPKCS11_STORE_RSAKEY_PRIV,
+        WOLFPKCS11_STORE_RSAKEY_PUB,
+        WOLFPKCS11_STORE_ECCKEY_PRIV,
+        WOLFPKCS11_STORE_ECCKEY_PUB,
+        WOLFPKCS11_STORE_DHKEY_PRIV,
+        WOLFPKCS11_STORE_DHKEY_PUB,
+        WOLFPKCS11_STORE_CERT,
+        WOLFPKCS11_STORE_TRUST,
+        WOLFPKCS11_STORE_DATA
+    };
+    char emptyLabel[LABEL_SZ] = { 0 };
+
+    if (flags != 0)
+        return CKR_ARGUMENTS_BAD;
+    if (!WP11_SlotIdValid(slotId))
+        return CKR_SLOT_ID_INVALID;
+
+    ret = wp11_Library_EnsureGlobals();
+    if (ret != 0)
+        return wp11_ErrorToCkr(ret);
+
+    slotIdx = (int)(slotId - 1);
+    slot = &slotList[slotIdx];
+
+    if (slotInitDone[slotIdx]) {
+        wp11_Slot_Final(slot);
+    }
+
+    ret = wp11_Slot_Init(slot, (int)slotId);
+    if (ret != 0) {
+        rv = wp11_ErrorToCkr(ret);
+        goto cleanup_slot;
+    }
+
+    XMEMSET(&report, 0, sizeof(report));
+
+    ret = wp11_Token_LoadEx(slot, (int)slotId, &slot->token,
+        WP11_TOKEN_LOAD_FLAG_ALLOW_REPAIR, &report);
+    if (ret != 0) {
+        rv = wp11_ErrorToCkr(ret);
+        goto cleanup_token;
+    }
+
+    if (report.removedCount == 0 && report.labelFixCount == 0) {
+        rv = CKR_OK;
+        goto cleanup_token;
+    }
+
+    ret = wp11_Token_Store(&slot->token, (int)slotId);
+    if (ret != 0) {
+        rv = wp11_ErrorToCkr(ret);
+        goto cleanup_token;
+    }
+
+    if (report.removedCount > 0) {
+        int i, t;
+
+        for (i = 0; i < report.removedCount; i++) {
+            int idx = report.removedIdx[i];
+
+            if (idx < slot->token.objCnt)
+                continue;
+
+            for (t = 0; t < (int)(sizeof(cleanupTypes) / sizeof(cleanupTypes[0])); t++) {
+                (void)wp11_storage_remove(cleanupTypes[t],
+                    (CK_ULONG)slotId, (CK_ULONG)idx);
+            }
+        }
+    }
+
+cleanup_token:
+    if (slotInitDone[slotIdx]) {
+        wp11_Token_Final(&slot->token);
+        ret = wp11_Token_Init(&slot->token, emptyLabel);
+        if (ret != 0 && rv == CKR_OK)
+            rv = wp11_ErrorToCkr(ret);
+    }
+
+cleanup_slot:
+    return rv;
+}
+#else
+WP11_API CK_RV wolfPKCS11_TokenRepair(CK_SLOT_ID slotId, CK_FLAGS flags)
+{
+    (void)slotId;
+    (void)flags;
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+#endif
 
 /**
  * Open a new session on the token in the slot.
@@ -6296,10 +6842,12 @@ int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen)
 
     if (ret == 0) {
         ret = WP11_Slot_CheckUserPin(slot, pin, pinLen);
+        WOLFPKCS11_MSG("User PIN check result: %d", ret);
     #ifndef WOLFPKCS11_NO_STORE
         if (ret == 0) {
             ret = HashPIN(pin, pinLen, token->seed, sizeof(token->seed),
                 token->key, sizeof(token->key), slot);
+            WOLFPKCS11_MSG("User PIN hash result: %d", ret);
         }
     #endif
         WP11_Lock_LockRW(&slot->lock);
@@ -6326,7 +6874,19 @@ int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen)
         #ifndef WOLFPKCS11_NO_STORE
             object = token->object;
             while (ret == 0 && object != NULL) {
+                WOLFPKCS11_MSG("Decoding handle=%lu class=%lu type=%lu keyLen=%d flags=0x%lx",
+                    (unsigned long)object->handle,
+                    (unsigned long)object->objClass,
+                    (unsigned long)object->type,
+                    object->keyDataLen,
+                    (unsigned long)object->opFlag);
                 ret = wp11_Object_Decode(object);
+                if (ret != 0) {
+                    WOLFPKCS11_MSG("Decode failed handle=%lu class=%lu type=%lu ret=%d",
+                        (unsigned long)object->handle,
+                        (unsigned long)object->objClass,
+                        (unsigned long)object->type, ret);
+                }
                 object = object->next;
             }
         #endif

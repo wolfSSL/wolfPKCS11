@@ -236,8 +236,16 @@ CK_RV C_Initialize(CK_VOID_PTR pInitArgs)
 #endif
     }
 
-    if (ret == CKR_OK)
-        ret = WP11_Library_Init() == 0 ? CKR_OK : CKR_FUNCTION_FAILED;
+    if (ret == CKR_OK) {
+        int initRet = WP11_Library_Init();
+
+        if (initRet == 0)
+            ret = CKR_OK;
+        else if (initRet == WP11_TOKEN_STORE_NEEDS_REPAIR_E)
+            ret = CKR_WOLFPKCS11_TOKEN_REPAIR_NEEDED;
+        else
+            ret = CKR_FUNCTION_FAILED;
+    }
 
 
     (void)pInitArgs;
