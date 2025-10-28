@@ -34,6 +34,9 @@ override_dh_auto_install:
 	dh_auto_install --destdir=debian/tmp
 	# Remove .la files as per Debian policy
 	find debian/tmp -name '*.la' -delete
+	# Drop upstream doc copy so dh_installdocs can relocate it correctly
+	rm -f debian/tmp/usr/share/doc/wolfpkcs11/README_DOXYGEN
+	-rmdir --ignore-fail-on-non-empty debian/tmp/usr/share/doc/wolfpkcs11
 
 override_dh_install:
 	dh_install
