@@ -5146,6 +5146,9 @@ static void wp11_Token_Final(WP11_Token* token)
 }
 
 #ifndef WOLFPKCS11_NO_STORE
+/* Forward declaration for migration logic */
+static int wp11_Token_Store(WP11_Token* token, int tokenId);
+
 /**
  * Load a token from storage.
  *
@@ -5284,8 +5287,44 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
         }
 
         if (ret == 0) {
-            /* Set to state of initialized. */
-            token->state = WP11_TOKEN_STATE_INITIALIZED;
+            int needMigration = 0;
+            
+            /* Migration logic for old versions that didn't persist state field.
+             * Detect if token is initialized but state field is not set. */
+            if (token->state != WP11_TOKEN_STATE_INITIALIZED) {
+                int hasUserPin = (token->userPinLen > 0) || 
+                                 (token->tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET);
+                int hasSoPin = (token->soPinLen > 0) ||
+                               (token->tokenFlags & WP11_TOKEN_FLAG_SO_PIN_SET);
+                int hasObjects = (token->objCnt > 0) || (token->object != NULL);
+                
+                if (hasUserPin || hasSoPin || hasObjects) {
+                    /* Token is initialized but state not set - migrate */
+                    token->state = WP11_TOKEN_STATE_INITIALIZED;
+                    needMigration = 1;
+#ifdef DEBUG_WOLFPKCS11
+                    printf("Token migration: set INITIALIZED state (userPin=%d, "
+                           "soPin=%d, objCnt=%d)\n", hasUserPin, hasSoPin, 
+                           token->objCnt);
+#endif
+                }
+            }
+            
+            /* If state still not set but we successfully loaded, set it */
+            if (token->state != WP11_TOKEN_STATE_INITIALIZED) {
+                token->state = WP11_TOKEN_STATE_INITIALIZED;
+            }
+            
+            /* Persist migrated token back to storage for one-time fix */
+            if (needMigration) {
+                int saveRet = wp11_Token_Store(token, tokenId);
+                if (saveRet != 0) {
+#ifdef DEBUG_WOLFPKCS11
+                    printf("Token migration: failed to persist state (ret=%d), "
+                           "continuing with in-memory fix\n", saveRet);
+#endif
+                }
+            }
         }
 
         /* If there is no pin, there is no login, so decode now */
