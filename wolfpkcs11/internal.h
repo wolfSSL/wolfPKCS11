@@ -145,6 +145,8 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #endif
 #endif
 
+#define WP11_TOKEN_STORE_NEEDS_REPAIR_E   (-3200)
+
 /* Session was opened read-only or read/write. */
 #define WP11_TOKEN_STATE_UNKNOWN       0
 #define WP11_TOKEN_STATE_INITIALIZED   1
