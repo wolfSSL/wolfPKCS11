@@ -79,7 +79,7 @@ jobs:
       working-directory: ./wolfpkcs11-old
       run: |
         ./autogen.sh
-        ./configure --enable-singlethreaded --enable-wolftpm --disable-dh CFLAGS="-DWOLFPKCS11_TPM_STORE"
+        ./configure --enable-singlethreaded --enable-wolftpm --disable-dh --enable-debug CFLAGS="-DWOLFPKCS11_TPM_STORE -DDEBUG_WOLFPKCS11"
         make
     
     # Initialize token
@@ -92,6 +92,7 @@ jobs:
     - name: Create corruption test program
       run: |
         cat > corruption_test.c << 'EOF'
+        #define _GNU_SOURCE
         #include <stdio.h>
         #include <stdlib.h>
         #include <string.h>
@@ -115,11 +116,22 @@ jobs:
         int load_library(const char* path) {
             CK_RV rv;
             CK_C_GetFunctionList pC_GetFunctionList;
+            typedef void (*dbg_on_fn)(void);
+            dbg_on_fn dbg_on;
             
             libHandle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
             if (!libHandle) {
                 printf("ERROR: Failed to load library: %s\n", dlerror());
                 return -1;
+            }
+            
+            /* Enable debug output */
+            dbg_on = (dbg_on_fn)dlsym(libHandle, "wolfPKCS11_Debugging_On");
+            if (dbg_on) {
+                printf("Enabling wolfPKCS11 debug output...\n");
+                dbg_on();
+            } else {
+                fprintf(stderr, "Warning: wolfPKCS11_Debugging_On symbol not found\n");
             }
             
             pC_GetFunctionList = (CK_C_GetFunctionList)dlsym(libHandle, "C_GetFunctionList");
@@ -291,13 +303,14 @@ jobs:
       working-directory: ./wolfpkcs11-pr
       run: |
         ./autogen.sh
-        ./configure --enable-singlethreaded --enable-wolftpm --disable-dh CFLAGS="-DWOLFPKCS11_TPM_STORE"
+        ./configure --enable-singlethreaded --enable-wolftpm --disable-dh --enable-debug CFLAGS="-DWOLFPKCS11_TPM_STORE -DDEBUG_WOLFPKCS11"
         make
     
     # Create test program to access corrupted state
     - name: Create access test program
       run: |
         cat > access_test.c << 'EOF'
+        #define _GNU_SOURCE
         #include <stdio.h>
         #include <stdlib.h>
         #include <string.h>
@@ -320,11 +333,22 @@ jobs:
         int load_library(const char* path) {
             CK_RV rv;
             CK_C_GetFunctionList pC_GetFunctionList;
+            typedef void (*dbg_on_fn)(void);
+            dbg_on_fn dbg_on;
             
             libHandle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
             if (!libHandle) {
                 printf("ERROR: Failed to load library: %s\n", dlerror());
                 return -1;
+            }
+            
+            /* Enable debug output */
+            dbg_on = (dbg_on_fn)dlsym(libHandle, "wolfPKCS11_Debugging_On");
+            if (dbg_on) {
+                printf("Enabling wolfPKCS11 debug output...\n");
+                dbg_on();
+            } else {
+                fprintf(stderr, "Warning: wolfPKCS11_Debugging_On symbol not found\n");
             }
             
             pC_GetFunctionList = (CK_C_GetFunctionList)dlsym(libHandle, "C_GetFunctionList");
