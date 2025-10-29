@@ -5289,8 +5289,9 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
         if (ret == 0) {
             int needMigration = 0;
             
-            /* Migration logic for old versions that didn't persist state field.
-             * Detect if token is initialized but state field is not set. */
+            /* Migration logic for old versions that didn't persist state field
+             * or tokenFlags properly. Detect if token is initialized but state
+             * field is not set, or if PIN flags are missing. */
             if (token->state != WP11_TOKEN_STATE_INITIALIZED) {
                 int hasUserPin = (token->userPinLen > 0) || 
                                  (token->tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET);
@@ -5308,6 +5309,25 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
                            token->objCnt);
 #endif
                 }
+            }
+            
+            /* Migrate missing PIN flags - old versions may have PINs set but
+             * flags not properly set, causing C_Login to fail */
+            if ((token->userPinLen > 0) && 
+                !(token->tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET)) {
+                token->tokenFlags |= WP11_TOKEN_FLAG_USER_PIN_SET;
+                needMigration = 1;
+#ifdef DEBUG_WOLFPKCS11
+                printf("Token migration: set USER_PIN_SET flag\n");
+#endif
+            }
+            if ((token->soPinLen > 0) && 
+                !(token->tokenFlags & WP11_TOKEN_FLAG_SO_PIN_SET)) {
+                token->tokenFlags |= WP11_TOKEN_FLAG_SO_PIN_SET;
+                needMigration = 1;
+#ifdef DEBUG_WOLFPKCS11
+                printf("Token migration: set SO_PIN_SET flag\n");
+#endif
             }
             
             /* If state still not set but we successfully loaded, set it */
