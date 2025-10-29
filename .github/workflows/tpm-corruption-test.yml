@@ -1,0 +1,415 @@
+name: TPM Corruption Test
+
+on:
+  pull_request:
+    branches: [ '*' ]
+  workflow_dispatch:
+
+jobs:
+  tpm-corruption-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    # Checkout the PR code
+    - name: Checkout PR code
+      uses: actions/checkout@v3
+      with:
+        path: wolfpkcs11-pr
+    
+    # Checkout the old commit that has the bug
+    - name: Checkout old commit with bug
+      uses: actions/checkout@v3
+      with:
+        repository: wolfssl/wolfpkcs11
+        ref: 1a7f7d71b98dbffbfd4ad77f0c77c8c573a2c5d2
+        path: wolfpkcs11-old
+    
+    # Setup wolfSSL
+    - name: Checkout wolfSSL
+      uses: actions/checkout@v3
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+    
+    - name: Build wolfSSL
+      working-directory: ./wolfssl
+      run: |
+        ./autogen.sh
+        ./configure --enable-cryptocb --enable-aescfb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt \
+            C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
+        make
+        sudo make install
+        sudo ldconfig
+    
+    # Setup ibmswtpm2
+    - name: Checkout ibmswtpm2
+      uses: actions/checkout@v3
+      with:
+        repository: kgoldman/ibmswtpm2
+        path: ibmswtpm2
+    
+    - name: Build ibmswtpm2
+      working-directory: ./ibmswtpm2/src
+      run: make
+    
+    - name: Start TPM server
+      working-directory: ./ibmswtpm2/src
+      run: |
+        ./tpm_server &
+        sleep 2
+    
+    # Setup wolfTPM
+    - name: Checkout wolfTPM
+      uses: actions/checkout@v3
+      with:
+        repository: wolfssl/wolftpm
+        path: wolftpm
+    
+    - name: Build wolfTPM
+      working-directory: ./wolftpm
+      run: |
+        ./autogen.sh
+        ./configure --enable-swtpm
+        make
+        sudo make install
+        sudo ldconfig
+    
+    # Build old wolfPKCS11 with bug
+    - name: Build old wolfPKCS11
+      working-directory: ./wolfpkcs11-old
+      run: |
+        ./autogen.sh
+        ./configure --enable-singlethreaded --enable-wolftpm --disable-dh CFLAGS="-DWOLFPKCS11_TPM_STORE"
+        make
+    
+    # Initialize token
+    - name: Initialize token
+      working-directory: ./wolfpkcs11-old
+      run: |
+        ./examples/init_token -userPin "wolfpkcs11-test"
+    
+    # Create corruption test program
+    - name: Create corruption test program
+      run: |
+        cat > corruption_test.c << 'EOF'
+        #include <stdio.h>
+        #include <stdlib.h>
+        #include <string.h>
+        #include <dlfcn.h>
+        
+        #define CK_PTR *
+        #define CK_DEFINE_FUNCTION(returnType, name) returnType name
+        #define CK_DECLARE_FUNCTION(returnType, name) returnType name
+        #define CK_DECLARE_FUNCTION_POINTER(returnType, name) returnType (* name)
+        #define CK_CALLBACK_FUNCTION(returnType, name) returnType (* name)
+        #ifndef NULL_PTR
+        #define NULL_PTR 0
+        #endif
+        
+        #include "wolfpkcs11-old/wolfpkcs11/pkcs11.h"
+        
+        static CK_FUNCTION_LIST* funcList = NULL;
+        static void* libHandle = NULL;
+        
+        int load_library(const char* path) {
+            CK_RV rv;
+            CK_C_GetFunctionList pC_GetFunctionList;
+            
+            libHandle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+            if (!libHandle) {
+                printf("ERROR: Failed to load library: %s\n", dlerror());
+                return -1;
+            }
+            
+            pC_GetFunctionList = (CK_C_GetFunctionList)dlsym(libHandle, "C_GetFunctionList");
+            if (!pC_GetFunctionList) {
+                printf("ERROR: Failed to get C_GetFunctionList: %s\n", dlerror());
+                dlclose(libHandle);
+                return -1;
+            }
+            
+            rv = pC_GetFunctionList(&funcList);
+            if (rv != CKR_OK) {
+                printf("ERROR: C_GetFunctionList failed with 0x%08lx\n", (unsigned long)rv);
+                dlclose(libHandle);
+                return -1;
+            }
+            
+            return 0;
+        }
+        
+        void unload_library(void) {
+            if (libHandle) {
+                dlclose(libHandle);
+                libHandle = NULL;
+                funcList = NULL;
+            }
+        }
+        
+        int create_aes_key(CK_SESSION_HANDLE session, int index) {
+            CK_RV rv;
+            CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
+            CK_KEY_TYPE keyType = CKK_AES;
+            CK_BBOOL ckTrue = CK_TRUE;
+            CK_BYTE keyValue[32];
+            char label[64];
+            CK_OBJECT_HANDLE object;
+            
+            memset(keyValue, index & 0xFF, sizeof(keyValue));
+            snprintf(label, sizeof(label), "test_aes_key_%d", index);
+            
+            CK_ATTRIBUTE keyTemplate[] = {
+                { CKA_CLASS, &keyClass, sizeof(keyClass) },
+                { CKA_KEY_TYPE, &keyType, sizeof(keyType) },
+                { CKA_TOKEN, &ckTrue, sizeof(ckTrue) },
+                { CKA_LABEL, label, strlen(label) },
+                { CKA_ENCRYPT, &ckTrue, sizeof(ckTrue) },
+                { CKA_DECRYPT, &ckTrue, sizeof(ckTrue) },
+                { CKA_VALUE, keyValue, sizeof(keyValue) }
+            };
+            
+            rv = funcList->C_CreateObject(session, keyTemplate, 
+                                           sizeof(keyTemplate) / sizeof(CK_ATTRIBUTE),
+                                           &object);
+            return (rv == CKR_OK) ? 0 : -1;
+        }
+        
+        int main(int argc, char* argv[]) {
+            CK_RV rv;
+            CK_SESSION_HANDLE session;
+            CK_BYTE userPin[] = "wolfpkcs11-test";
+            int i, created = 0;
+            const char* lib_path = argv[1];
+            
+            printf("Loading library: %s\n", lib_path);
+            if (load_library(lib_path) != 0) return 1;
+            
+            rv = funcList->C_Initialize(NULL);
+            if (rv != CKR_OK) {
+                printf("ERROR: C_Initialize failed with 0x%08lx\n", (unsigned long)rv);
+                return 1;
+            }
+            
+            rv = funcList->C_OpenSession(1, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                          NULL, NULL, &session);
+            if (rv != CKR_OK) {
+                printf("ERROR: C_OpenSession failed with 0x%08lx\n", (unsigned long)rv);
+                return 1;
+            }
+            
+            rv = funcList->C_Login(session, CKU_USER, userPin, sizeof(userPin) - 1);
+            if (rv != CKR_OK) {
+                printf("ERROR: C_Login failed with 0x%08lx\n", (unsigned long)rv);
+                return 1;
+            }
+            
+            printf("Filling TPM with AES keys...\n");
+            for (i = 0; i < 1000; i++) {
+                if (create_aes_key(session, i) == 0) {
+                    created++;
+                    if (created % 10 == 0) {
+                        printf("Created %d AES keys...\n", created);
+                    }
+                } else {
+                    printf("Failed to create AES key %d (created %d total)\n", i, created);
+                    break;
+                }
+            }
+            
+            printf("Successfully created %d AES keys\n", created);
+            
+            funcList->C_Finalize(NULL);
+            unload_library();
+            
+            return 0;
+        }
+        EOF
+    
+    - name: Compile corruption test
+      run: |
+        gcc -o corruption_test corruption_test.c -I./wolfpkcs11-old -ldl -lpthread
+    
+    # Run corruption test with old version
+    - name: Run corruption test (create corrupted state)
+      working-directory: ./wolfpkcs11-old
+      run: |
+        ../corruption_test ./src/.libs/libwolfpkcs11.so
+    
+    # Stop TPM server to flush NVChip
+    - name: Stop TPM server
+      run: |
+        pkill -f tpm_server
+        sleep 2
+    
+    # Capture corrupted NVChip
+    - name: Capture corrupted NVChip
+      run: |
+        cp ./ibmswtpm2/src/NVChip ./corrupted_NVChip
+        ls -lh ./corrupted_NVChip
+    
+    - name: Upload corrupted NVChip artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: corrupted-nvchip
+        path: ./corrupted_NVChip
+        retention-days: 30
+    
+    # Restart TPM server with corrupted state
+    - name: Restart TPM server
+      working-directory: ./ibmswtpm2/src
+      run: |
+        ./tpm_server &
+        sleep 2
+    
+    # Build PR version of wolfPKCS11
+    - name: Build PR wolfPKCS11
+      working-directory: ./wolfpkcs11-pr
+      run: |
+        ./autogen.sh
+        ./configure --enable-singlethreaded --enable-wolftpm --disable-dh CFLAGS="-DWOLFPKCS11_TPM_STORE"
+        make
+    
+    # Create test program to access corrupted state
+    - name: Create access test program
+      run: |
+        cat > access_test.c << 'EOF'
+        #include <stdio.h>
+        #include <stdlib.h>
+        #include <string.h>
+        #include <dlfcn.h>
+        
+        #define CK_PTR *
+        #define CK_DEFINE_FUNCTION(returnType, name) returnType name
+        #define CK_DECLARE_FUNCTION(returnType, name) returnType name
+        #define CK_DECLARE_FUNCTION_POINTER(returnType, name) returnType (* name)
+        #define CK_CALLBACK_FUNCTION(returnType, name) returnType (* name)
+        #ifndef NULL_PTR
+        #define NULL_PTR 0
+        #endif
+        
+        #include "wolfpkcs11-pr/wolfpkcs11/pkcs11.h"
+        
+        static CK_FUNCTION_LIST* funcList = NULL;
+        static void* libHandle = NULL;
+        
+        int load_library(const char* path) {
+            CK_RV rv;
+            CK_C_GetFunctionList pC_GetFunctionList;
+            
+            libHandle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+            if (!libHandle) {
+                printf("ERROR: Failed to load library: %s\n", dlerror());
+                return -1;
+            }
+            
+            pC_GetFunctionList = (CK_C_GetFunctionList)dlsym(libHandle, "C_GetFunctionList");
+            if (!pC_GetFunctionList) {
+                printf("ERROR: Failed to get C_GetFunctionList: %s\n", dlerror());
+                dlclose(libHandle);
+                return -1;
+            }
+            
+            rv = pC_GetFunctionList(&funcList);
+            if (rv != CKR_OK) {
+                printf("ERROR: C_GetFunctionList failed with 0x%08lx\n", (unsigned long)rv);
+                dlclose(libHandle);
+                return -1;
+            }
+            
+            return 0;
+        }
+        
+        int main(int argc, char* argv[]) {
+            CK_RV rv;
+            CK_SESSION_HANDLE session;
+            CK_BYTE userPin[] = "wolfpkcs11-test";
+            CK_OBJECT_HANDLE objects[1000];
+            CK_ULONG count = 0;
+            CK_BBOOL ckTrue = CK_TRUE;
+            const char* lib_path = argv[1];
+            
+            printf("Testing access to corrupted TPM state with PR version...\n");
+            printf("Loading library: %s\n", lib_path);
+            if (load_library(lib_path) != 0) return 1;
+            
+            printf("Attempting C_Initialize...\n");
+            rv = funcList->C_Initialize(NULL);
+            if (rv != CKR_OK) {
+                printf("CORRUPTION DETECTED: C_Initialize failed with 0x%08lx\n", (unsigned long)rv);
+                return 1;
+            }
+            printf("C_Initialize succeeded\n");
+            
+            printf("Attempting C_OpenSession...\n");
+            rv = funcList->C_OpenSession(1, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                          NULL, NULL, &session);
+            if (rv != CKR_OK) {
+                printf("CORRUPTION DETECTED: C_OpenSession failed with 0x%08lx\n", (unsigned long)rv);
+                return 1;
+            }
+            printf("C_OpenSession succeeded\n");
+            
+            printf("Attempting C_Login...\n");
+            rv = funcList->C_Login(session, CKU_USER, userPin, sizeof(userPin) - 1);
+            if (rv != CKR_OK) {
+                printf("CORRUPTION DETECTED: C_Login failed with 0x%08lx\n", (unsigned long)rv);
+                printf("This is the expected corruption behavior - login fails after TPM corruption\n");
+                return 1;
+            }
+            printf("C_Login succeeded\n");
+            
+            printf("Attempting C_FindObjectsInit...\n");
+            CK_ATTRIBUTE findTemplate[] = {
+                { CKA_TOKEN, &ckTrue, sizeof(ckTrue) }
+            };
+            
+            rv = funcList->C_FindObjectsInit(session, findTemplate, 1);
+            if (rv != CKR_OK) {
+                printf("CORRUPTION DETECTED: C_FindObjectsInit failed with 0x%08lx\n", (unsigned long)rv);
+                return 1;
+            }
+            
+            printf("Attempting C_FindObjects...\n");
+            rv = funcList->C_FindObjects(session, objects, 1000, &count);
+            if (rv != CKR_OK) {
+                printf("CORRUPTION DETECTED: C_FindObjects failed with 0x%08lx\n", (unsigned long)rv);
+                funcList->C_FindObjectsFinal(session);
+                return 1;
+            }
+            
+            printf("Found %lu objects on token\n", (unsigned long)count);
+            
+            funcList->C_FindObjectsFinal(session);
+            funcList->C_Finalize(NULL);
+            
+            if (count == 0) {
+                printf("CORRUPTION DETECTED: Expected to find objects but found none\n");
+                return 1;
+            }
+            
+            printf("Successfully accessed %lu objects\n", (unsigned long)count);
+            return 0;
+        }
+        EOF
+    
+    - name: Compile access test
+      run: |
+        gcc -o access_test access_test.c -I./wolfpkcs11-pr -ldl -lpthread
+    
+    # Test accessing corrupted state with PR version
+    - name: Test accessing corrupted state
+      working-directory: ./wolfpkcs11-pr
+      run: |
+        ../access_test ./src/.libs/libwolfpkcs11.so || echo "Expected failure: PR version cannot access corrupted state"
+    
+    - name: Test summary
+      run: |
+        echo "=== TPM Corruption Test Summary ==="
+        echo "1. Built old commit (1a7f7d71b98dbffbfd4ad77f0c77c8c573a2c5d2)"
+        echo "2. Created corrupted TPM state by filling with objects"
+        echo "3. Captured corrupted NVChip as artifact"
+        echo "4. Built PR version of wolfPKCS11"
+        echo "5. Tested accessing corrupted state with PR version"
+        echo ""
+        echo "This workflow provides a reproducible test case for developing"
+        echo "the TPM corruption repair function."
