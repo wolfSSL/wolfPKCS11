@@ -96,6 +96,7 @@ jobs:
         #include <stdlib.h>
         #include <string.h>
         #include <dlfcn.h>
+        #include <unistd.h>
         
         #define CK_PTR *
         #define CK_DEFINE_FUNCTION(returnType, name) returnType name
@@ -178,6 +179,9 @@ jobs:
             CK_RV rv;
             CK_SESSION_HANDLE session;
             CK_BYTE userPin[] = "wolfpkcs11-test";
+            CK_SLOT_ID slotList[16];
+            CK_ULONG slotCount = sizeof(slotList) / sizeof(slotList[0]);
+            CK_SLOT_ID slot;
             int i, created = 0;
             const char* lib_path = argv[1];
             
@@ -190,7 +194,20 @@ jobs:
                 return 1;
             }
             
-            rv = funcList->C_OpenSession(1, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+            /* Get available slots */
+            rv = funcList->C_GetSlotList(CK_TRUE, slotList, &slotCount);
+            if (rv != CKR_OK) {
+                printf("ERROR: C_GetSlotList failed with 0x%08lx\n", (unsigned long)rv);
+                return 1;
+            }
+            if (slotCount == 0) {
+                printf("ERROR: No slots available\n");
+                return 1;
+            }
+            slot = slotList[0];
+            printf("Using slot %lu\n", (unsigned long)slot);
+            
+            rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
                                           NULL, NULL, &session);
             if (rv != CKR_OK) {
                 printf("ERROR: C_OpenSession failed with 0x%08lx\n", (unsigned long)rv);
@@ -218,10 +235,10 @@ jobs:
             
             printf("Successfully created %d AES keys\n", created);
             
-            funcList->C_Finalize(NULL);
-            unload_library();
-            
-            return 0;
+            /* Do NOT call C_Finalize or unload_library - this could cause
+             * metadata to fix itself upon closing. Use _exit to avoid any
+             * cleanup handlers that might "heal" the corrupted state. */
+            _exit(0);
         }
         EOF
     
@@ -334,6 +351,9 @@ jobs:
             CK_OBJECT_HANDLE objects[1000];
             CK_ULONG count = 0;
             CK_BBOOL ckTrue = CK_TRUE;
+            CK_SLOT_ID slotList[16];
+            CK_ULONG slotCount = sizeof(slotList) / sizeof(slotList[0]);
+            CK_SLOT_ID slot;
             const char* lib_path = argv[1];
             
             printf("Testing access to corrupted TPM state with PR version...\n");
@@ -348,8 +368,22 @@ jobs:
             }
             printf("C_Initialize succeeded\n");
             
+            /* Get available slots */
+            printf("Getting slot list...\n");
+            rv = funcList->C_GetSlotList(CK_TRUE, slotList, &slotCount);
+            if (rv != CKR_OK) {
+                printf("ERROR: C_GetSlotList failed with 0x%08lx\n", (unsigned long)rv);
+                return 1;
+            }
+            if (slotCount == 0) {
+                printf("ERROR: No slots available\n");
+                return 1;
+            }
+            slot = slotList[0];
+            printf("Using slot %lu\n", (unsigned long)slot);
+            
             printf("Attempting C_OpenSession...\n");
-            rv = funcList->C_OpenSession(1, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+            rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
                                           NULL, NULL, &session);
             if (rv != CKR_OK) {
                 printf("CORRUPTION DETECTED: C_OpenSession failed with 0x%08lx\n", (unsigned long)rv);
@@ -360,11 +394,16 @@ jobs:
             printf("Attempting C_Login...\n");
             rv = funcList->C_Login(session, CKU_USER, userPin, sizeof(userPin) - 1);
             if (rv != CKR_OK) {
-                printf("CORRUPTION DETECTED: C_Login failed with 0x%08lx\n", (unsigned long)rv);
-                printf("This is the expected corruption behavior - login fails after TPM corruption\n");
+                printf("ERROR: C_Login failed with 0x%08lx\n", (unsigned long)rv);
+                if (rv == 0x00000102) {  /* CKR_USER_PIN_NOT_INITIALIZED / PIN_NOT_SET_E */
+                    printf("MIGRATION BUG: Token state not properly migrated from old version\n");
+                    printf("The PR version needs to detect old-format tokens and set WP11_TOKEN_STATE_INITIALIZED\n");
+                } else {
+                    printf("CORRUPTION DETECTED: Unexpected login failure\n");
+                }
                 return 1;
             }
-            printf("C_Login succeeded\n");
+            printf("C_Login succeeded (migration handled correctly)\n");
             
             printf("Attempting C_FindObjectsInit...\n");
             CK_ATTRIBUTE findTemplate[] = {
