@@ -791,29 +791,54 @@ int WP11_Slot_Has_Empty_Pin(WP11_Slot* slot)
     if (slot == NULL)
         return 0;
 
+#ifdef DEBUG_WOLFPKCS11
+    printf("WP11_Slot_Has_Empty_Pin: tokenFlags=0x%x, USER_PIN_SET=%d, userPinEmpty=%d\n",
+           slot->token.tokenFlags,
+           !!(slot->token.tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET),
+           slot->token.userPinEmpty);
+#endif
+
     if (slot->token.tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET) {
         switch (slot->token.userPinEmpty) {
             case 1:
                 /* Empty user PIN */
+#ifdef DEBUG_WOLFPKCS11
+                printf("WP11_Slot_Has_Empty_Pin: returning 1 (cached empty)\n");
+#endif
                 return 1;
             case 2:
                 /* Non-empty user PIN */
+#ifdef DEBUG_WOLFPKCS11
+                printf("WP11_Slot_Has_Empty_Pin: returning 0 (cached non-empty)\n");
+#endif
                 return 0;
             default:
                 /* Cache result as WP11_Slot_CheckUserPin is very expensive */
+#ifdef DEBUG_WOLFPKCS11
+                printf("WP11_Slot_Has_Empty_Pin: checking with empty PIN...\n");
+#endif
                 if (WP11_Slot_CheckUserPin(slot, (char*)"", 0) == 0) {
                     /* Empty user PIN */
                     slot->token.userPinEmpty = 1;
+#ifdef DEBUG_WOLFPKCS11
+                    printf("WP11_Slot_Has_Empty_Pin: returning 1 (checked empty)\n");
+#endif
                     return 1;
                 }
                 else {
                     /* Non-empty user PIN */
                     slot->token.userPinEmpty = 2;
+#ifdef DEBUG_WOLFPKCS11
+                    printf("WP11_Slot_Has_Empty_Pin: returning 0 (checked non-empty)\n");
+#endif
                     return 0;
                 }
         }
     }
 
+#ifdef DEBUG_WOLFPKCS11
+    printf("WP11_Slot_Has_Empty_Pin: returning 0 (USER_PIN_SET not set)\n");
+#endif
     return 0;
 }
 
@@ -5146,6 +5171,9 @@ static void wp11_Token_Final(WP11_Token* token)
 }
 
 #ifndef WOLFPKCS11_NO_STORE
+/* Forward declaration for migration logic */
+static int wp11_Token_Store(WP11_Token* token, int tokenId);
+
 /**
  * Load a token from storage.
  *
@@ -5166,9 +5194,18 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
     int objCnt = 0;
     word32 len;
 
+#ifdef DEBUG_WOLFPKCS11
+    printf("wp11_Token_Load: ENTRY tokenId=%d\n", tokenId);
+#endif
+
     /* Open access to token object. */
     ret = wp11_storage_open_readonly(WOLFPKCS11_STORE_TOKEN, tokenId, 0,
         &storage);
+        
+#ifdef DEBUG_WOLFPKCS11
+    printf("wp11_Token_Load: after storage open, ret=%d\n", ret);
+#endif
+
     if (ret == 0) {
         /* Read label for token. (32) */
         ret = wp11_storage_read_string(storage, token->label,
@@ -5276,17 +5313,103 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
 
         wp11_storage_close(storage);
 
+        /* Migration logic for old versions that didn't persist state field
+         * or tokenFlags properly. Run this BEFORE object loading so it works
+         * even if object loading fails due to corruption. */
+        if (ret == 0) {
+            int needMigration = 0;
+            
+#ifdef DEBUG_WOLFPKCS11
+            printf("wp11_Token_Load: PRE-MIGRATION tokenId=%d, state=%d, "
+                   "tokenFlags=0x%x, userPinLen=%d, soPinLen=%d, objCnt=%d, "
+                   "nextObjId=%d\n",
+                   tokenId, token->state, token->tokenFlags, token->userPinLen,
+                   token->soPinLen, token->objCnt, token->nextObjId);
+#endif
+            
+            /* Detect if token is initialized but state field is not set, or if
+             * PIN flags are missing. */
+            if (token->state != WP11_TOKEN_STATE_INITIALIZED) {
+                int hasUserPin = (token->userPinLen > 0) || 
+                                 (token->tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET);
+                int hasSoPin = (token->soPinLen > 0) ||
+                               (token->tokenFlags & WP11_TOKEN_FLAG_SO_PIN_SET);
+                int hasObjects = (token->objCnt > 0) || (token->object != NULL);
+                
+#ifdef DEBUG_WOLFPKCS11
+                printf("Token migration: state != INITIALIZED, checking heuristics: "
+                       "hasUserPin=%d, hasSoPin=%d, hasObjects=%d\n",
+                       hasUserPin, hasSoPin, hasObjects);
+#endif
+                
+                if (hasUserPin || hasSoPin || hasObjects) {
+                    /* Token is initialized but state not set - migrate */
+                    token->state = WP11_TOKEN_STATE_INITIALIZED;
+                    needMigration = 1;
+#ifdef DEBUG_WOLFPKCS11
+                    printf("Token migration: set INITIALIZED state (userPin=%d, "
+                           "soPin=%d, objCnt=%d)\n", hasUserPin, hasSoPin, 
+                           token->objCnt);
+#endif
+                }
+            }
+            
+            /* Migrate missing PIN flags - old versions may have PINs set but
+             * flags not properly set, causing C_Login to fail */
+            if ((token->userPinLen > 0) && 
+                !(token->tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET)) {
+                token->tokenFlags |= WP11_TOKEN_FLAG_USER_PIN_SET;
+                needMigration = 1;
+#ifdef DEBUG_WOLFPKCS11
+                printf("Token migration: set USER_PIN_SET flag\n");
+#endif
+            }
+            if ((token->soPinLen > 0) && 
+                !(token->tokenFlags & WP11_TOKEN_FLAG_SO_PIN_SET)) {
+                token->tokenFlags |= WP11_TOKEN_FLAG_SO_PIN_SET;
+                needMigration = 1;
+#ifdef DEBUG_WOLFPKCS11
+                printf("Token migration: set SO_PIN_SET flag\n");
+#endif
+            }
+            
+            /* If state still not set but we successfully loaded metadata, set it */
+            if (token->state != WP11_TOKEN_STATE_INITIALIZED) {
+                token->state = WP11_TOKEN_STATE_INITIALIZED;
+            }
+            
+#ifdef DEBUG_WOLFPKCS11
+            printf("wp11_Token_Load: POST-MIGRATION state=%d, tokenFlags=0x%x, "
+                   "needMigration=%d\n",
+                   token->state, token->tokenFlags, needMigration);
+#endif
+            
+            /* Persist migrated token back to storage for one-time fix */
+            if (needMigration) {
+                int saveRet = wp11_Token_Store(token, tokenId);
+#ifdef DEBUG_WOLFPKCS11
+                printf("Token migration: wp11_Token_Store returned %d\n", saveRet);
+#endif
+                if (saveRet != 0) {
+#ifdef DEBUG_WOLFPKCS11
+                    printf("Token migration: failed to persist state (ret=%d), "
+                           "continuing with in-memory fix\n", saveRet);
+#endif
+                }
+            }
+        }
+
+        /* Load the objects - this may fail due to corruption, but migration
+         * has already run above so state/flags are set correctly */
         object = token->object;
         for (i = token->objCnt - 1; (ret == 0) && (i >= 0); i--) {
-            /* Load the objects. */
             ret = wp11_Object_Load(object, tokenId, i);
             object = object->next;
         }
 
-        if (ret == 0) {
-            /* Set to state of initialized. */
-            token->state = WP11_TOKEN_STATE_INITIALIZED;
-        }
+#ifdef DEBUG_WOLFPKCS11
+        printf("wp11_Token_Load: after object loading, ret=%d\n", ret);
+#endif
 
         /* If there is no pin, there is no login, so decode now */
         if (WP11_Slot_Has_Empty_Pin(slot) && (ret == 0)) {
@@ -5305,6 +5428,9 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
     }
     else if (ret == NOT_AVAILABLE_E) {
         /* No data to read. */
+#ifdef DEBUG_WOLFPKCS11
+        printf("wp11_Token_Load: NOT_AVAILABLE_E path - no token data found\n");
+#endif
         ret = 0;
     }
 
@@ -6125,10 +6251,27 @@ int WP11_Slot_CheckUserPin(WP11_Slot* slot, char* pin, int pinLen)
 
     WP11_Lock_LockRO(&slot->lock);
     token = &slot->token;
-    if (token->state != WP11_TOKEN_STATE_INITIALIZED)
+#ifdef DEBUG_WOLFPKCS11
+    printf("WP11_Slot_CheckUserPin: state=%d, tokenFlags=0x%x, USER_PIN_SET=%d, "
+           "userPinLen=%d, soPinLen=%d, objCnt=%d\n",
+           token->state, token->tokenFlags,
+           !!(token->tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET),
+           token->userPinLen, token->soPinLen, token->objCnt);
+#endif
+    if (token->state != WP11_TOKEN_STATE_INITIALIZED) {
         ret = PIN_NOT_SET_E;
-    if (!(token->tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET))
+#ifdef DEBUG_WOLFPKCS11
+        printf("WP11_Slot_CheckUserPin: FAILED - state != INITIALIZED (state=%d)\n",
+               token->state);
+#endif
+    }
+    if (!(token->tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET)) {
         ret = PIN_NOT_SET_E;
+#ifdef DEBUG_WOLFPKCS11
+        printf("WP11_Slot_CheckUserPin: FAILED - USER_PIN_SET flag not set "
+               "(tokenFlags=0x%x)\n", token->tokenFlags);
+#endif
+    }
 
     if (ret == 0) {
         WP11_Lock_UnlockRO(&slot->lock);
@@ -6144,6 +6287,9 @@ int WP11_Slot_CheckUserPin(WP11_Slot* slot, char* pin, int pinLen)
         ret = PIN_INVALID_E;
     WP11_Lock_UnlockRO(&slot->lock);
 
+#ifdef DEBUG_WOLFPKCS11
+    printf("WP11_Slot_CheckUserPin: returning ret=%d\n", ret);
+#endif
     return ret;
 }
 
