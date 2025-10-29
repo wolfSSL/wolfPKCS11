@@ -5194,9 +5194,18 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
     int objCnt = 0;
     word32 len;
 
+#ifdef DEBUG_WOLFPKCS11
+    printf("wp11_Token_Load: ENTRY tokenId=%d\n", tokenId);
+#endif
+
     /* Open access to token object. */
     ret = wp11_storage_open_readonly(WOLFPKCS11_STORE_TOKEN, tokenId, 0,
         &storage);
+        
+#ifdef DEBUG_WOLFPKCS11
+    printf("wp11_Token_Load: after storage open, ret=%d\n", ret);
+#endif
+
     if (ret == 0) {
         /* Read label for token. (32) */
         ret = wp11_storage_read_string(storage, token->label,
@@ -5304,13 +5313,9 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
 
         wp11_storage_close(storage);
 
-        object = token->object;
-        for (i = token->objCnt - 1; (ret == 0) && (i >= 0); i--) {
-            /* Load the objects. */
-            ret = wp11_Object_Load(object, tokenId, i);
-            object = object->next;
-        }
-
+        /* Migration logic for old versions that didn't persist state field
+         * or tokenFlags properly. Run this BEFORE object loading so it works
+         * even if object loading fails due to corruption. */
         if (ret == 0) {
             int needMigration = 0;
             
@@ -5322,9 +5327,8 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
                    token->soPinLen, token->objCnt, token->nextObjId);
 #endif
             
-            /* Migration logic for old versions that didn't persist state field
-             * or tokenFlags properly. Detect if token is initialized but state
-             * field is not set, or if PIN flags are missing. */
+            /* Detect if token is initialized but state field is not set, or if
+             * PIN flags are missing. */
             if (token->state != WP11_TOKEN_STATE_INITIALIZED) {
                 int hasUserPin = (token->userPinLen > 0) || 
                                  (token->tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET);
@@ -5369,7 +5373,7 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
 #endif
             }
             
-            /* If state still not set but we successfully loaded, set it */
+            /* If state still not set but we successfully loaded metadata, set it */
             if (token->state != WP11_TOKEN_STATE_INITIALIZED) {
                 token->state = WP11_TOKEN_STATE_INITIALIZED;
             }
@@ -5395,6 +5399,18 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
             }
         }
 
+        /* Load the objects - this may fail due to corruption, but migration
+         * has already run above so state/flags are set correctly */
+        object = token->object;
+        for (i = token->objCnt - 1; (ret == 0) && (i >= 0); i--) {
+            ret = wp11_Object_Load(object, tokenId, i);
+            object = object->next;
+        }
+
+#ifdef DEBUG_WOLFPKCS11
+        printf("wp11_Token_Load: after object loading, ret=%d\n", ret);
+#endif
+
         /* If there is no pin, there is no login, so decode now */
         if (WP11_Slot_Has_Empty_Pin(slot) && (ret == 0)) {
 #ifndef WOLFPKCS11_NO_STORE
@@ -5412,6 +5428,9 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
     }
     else if (ret == NOT_AVAILABLE_E) {
         /* No data to read. */
+#ifdef DEBUG_WOLFPKCS11
+        printf("wp11_Token_Load: NOT_AVAILABLE_E path - no token data found\n");
+#endif
         ret = 0;
     }
 
