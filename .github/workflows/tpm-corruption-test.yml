@@ -12,13 +12,13 @@ jobs:
     steps:
     # Checkout the PR code
     - name: Checkout PR code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         path: wolfpkcs11-pr
     
     # Checkout the old commit that has the bug
     - name: Checkout old commit with bug
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         repository: wolfssl/wolfpkcs11
         ref: 1a7f7d71b98dbffbfd4ad77f0c77c8c573a2c5d2
@@ -26,7 +26,7 @@ jobs:
     
     # Setup wolfSSL
     - name: Checkout wolfSSL
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         repository: wolfssl/wolfssl
         path: wolfssl
@@ -43,7 +43,7 @@ jobs:
     
     # Setup ibmswtpm2
     - name: Checkout ibmswtpm2
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         repository: kgoldman/ibmswtpm2
         path: ibmswtpm2
@@ -60,7 +60,7 @@ jobs:
     
     # Setup wolfTPM
     - name: Checkout wolfTPM
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         repository: wolfssl/wolftpm
         path: wolftpm
@@ -241,18 +241,26 @@ jobs:
         pkill -f tpm_server
         sleep 2
     
-    # Capture corrupted NVChip
-    - name: Capture corrupted NVChip
+    # Verify NVChip exists and capture it
+    - name: Verify and capture corrupted NVChip
       run: |
+        echo "Checking for NVChip in ibmswtpm2/src directory..."
+        ls -lh ./ibmswtpm2/src/
+        if [ ! -f ./ibmswtpm2/src/NVChip ]; then
+          echo "ERROR: NVChip file not found!"
+          exit 1
+        fi
         cp ./ibmswtpm2/src/NVChip ./corrupted_NVChip
+        echo "Corrupted NVChip captured:"
         ls -lh ./corrupted_NVChip
     
     - name: Upload corrupted NVChip artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: corrupted-nvchip
         path: ./corrupted_NVChip
         retention-days: 30
+        if-no-files-found: error
     
     # Restart TPM server with corrupted state
     - name: Restart TPM server
