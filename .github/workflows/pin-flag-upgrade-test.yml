@@ -24,11 +24,12 @@ jobs:
         ref: v1.3.0-stable
         path: wolfpkcs11-1.3.0
     
-    # Setup wolfSSL for v1.3.0
+    # Setup wolfSSL (pinned to v5.8.2-stable for compatibility)
     - name: Checkout wolfSSL
       uses: actions/checkout@v4
       with:
         repository: wolfssl/wolfssl
+        ref: v5.8.2-stable
         path: wolfssl
     
     - name: Build wolfSSL
@@ -49,13 +50,147 @@ jobs:
         ./configure --enable-debug CFLAGS="-DDEBUG_WOLFPKCS11"
         make
     
+    # Create inline token initialization program
+    - name: Create token initialization program
+      run: |
+        cat > init_token.c << 'EOF'
+        #define _GNU_SOURCE
+        #include <stdio.h>
+        #include <stdlib.h>
+        #include <string.h>
+        #include <dlfcn.h>
+        
+        #define CK_PTR *
+        #define CK_DEFINE_FUNCTION(returnType, name) returnType name
+        #define CK_DECLARE_FUNCTION(returnType, name) returnType name
+        #define CK_DECLARE_FUNCTION_POINTER(returnType, name) returnType (* name)
+        #define CK_CALLBACK_FUNCTION(returnType, name) returnType (* name)
+        #ifndef NULL_PTR
+        #define NULL_PTR 0
+        #endif
+        
+        #include "wolfpkcs11-1.3.0/wolfpkcs11/pkcs11.h"
+        
+        static CK_FUNCTION_LIST* funcList = NULL;
+        static void* libHandle = NULL;
+        
+        int load_library(const char* path) {
+            CK_RV rv;
+            CK_C_GetFunctionList pC_GetFunctionList;
+            
+            libHandle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+            if (!libHandle) {
+                printf("ERROR: Failed to load library: %s\n", dlerror());
+                return -1;
+            }
+            
+            pC_GetFunctionList = (CK_C_GetFunctionList)dlsym(libHandle, "C_GetFunctionList");
+            if (!pC_GetFunctionList) {
+                printf("ERROR: Failed to get C_GetFunctionList: %s\n", dlerror());
+                dlclose(libHandle);
+                return -1;
+            }
+            
+            rv = pC_GetFunctionList(&funcList);
+            if (rv != CKR_OK) {
+                printf("ERROR: C_GetFunctionList failed with 0x%08lx\n", (unsigned long)rv);
+                dlclose(libHandle);
+                return -1;
+            }
+            
+            return 0;
+        }
+        
+        int main(int argc, char* argv[]) {
+            CK_RV rv;
+            CK_SESSION_HANDLE session;
+            CK_BYTE soPin[] = "test-so-pin-12345";
+            CK_BYTE userPin[] = "test-pin-12345";
+            CK_BYTE label[32];
+            CK_SLOT_ID slotList[16];
+            CK_ULONG slotCount = sizeof(slotList) / sizeof(slotList[0]);
+            CK_SLOT_ID slot;
+            const char* lib_path = argv[1];
+            
+            /* Pad label to 32 bytes with spaces */
+            memset(label, ' ', sizeof(label));
+            memcpy(label, "wolfPKCS11 Test", 15);
+            
+            printf("=== Initializing token in v1.3.0 ===\n");
+            printf("Loading library: %s\n", lib_path);
+            if (load_library(lib_path) != 0) return 1;
+            
+            rv = funcList->C_Initialize(NULL);
+            if (rv != CKR_OK) {
+                printf("ERROR: C_Initialize failed with 0x%08lx\n", (unsigned long)rv);
+                return 1;
+            }
+            
+            /* Get slot list (use CK_FALSE to get slots even if no token present) */
+            rv = funcList->C_GetSlotList(CK_FALSE, slotList, &slotCount);
+            if (rv != CKR_OK || slotCount == 0) {
+                printf("ERROR: C_GetSlotList failed or no slots\n");
+                return 1;
+            }
+            slot = slotList[0];
+            printf("Using slot %lu\n", (unsigned long)slot);
+            
+            /* Initialize token and set SO PIN */
+            printf("Calling C_InitToken...\n");
+            rv = funcList->C_InitToken(slot, soPin, sizeof(soPin) - 1, label);
+            if (rv != CKR_OK) {
+                printf("ERROR: C_InitToken failed with 0x%08lx\n", (unsigned long)rv);
+                return 1;
+            }
+            printf("✓ Token initialized with SO PIN\n");
+            
+            /* Open RW session */
+            rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                          NULL, NULL, &session);
+            if (rv != CKR_OK) {
+                printf("ERROR: C_OpenSession failed with 0x%08lx\n", (unsigned long)rv);
+                return 1;
+            }
+            
+            /* Login as SO */
+            printf("Logging in as SO...\n");
+            rv = funcList->C_Login(session, CKU_SO, soPin, sizeof(soPin) - 1);
+            if (rv != CKR_OK) {
+                printf("ERROR: C_Login(SO) failed with 0x%08lx\n", (unsigned long)rv);
+                return 1;
+            }
+            printf("✓ Logged in as SO\n");
+            
+            /* Set initial user PIN */
+            printf("Setting user PIN...\n");
+            rv = funcList->C_InitPIN(session, userPin, sizeof(userPin) - 1);
+            if (rv != CKR_OK) {
+                printf("ERROR: C_InitPIN failed with 0x%08lx\n", (unsigned long)rv);
+                return 1;
+            }
+            printf("✓ User PIN set\n");
+            
+            /* Cleanup */
+            funcList->C_Logout(session);
+            funcList->C_CloseSession(session);
+            funcList->C_Finalize(NULL);
+            
+            printf("=== Token initialization complete ===\n");
+            return 0;
+        }
+        EOF
+    
+    - name: Compile token initialization program
+      run: |
+        gcc -o init_token init_token.c -I./wolfpkcs11-1.3.0 -ldl -lpthread
+    
     # Initialize token with PIN in v1.3.0
     - name: Initialize token with PIN (v1.3.0)
-      working-directory: ./wolfpkcs11-1.3.0
+      env:
+        WOLFPKCS11_TOKEN_PATH: ${{ github.workspace }}/.wolfPKCS11_upgrade_test
       run: |
-        export WOLFPKCS11_TOKEN_PATH="${HOME}/.wolfPKCS11_upgrade_test"
         mkdir -p "${WOLFPKCS11_TOKEN_PATH}"
-        ./examples/init_token -userPin "test-pin-12345"
+        ./init_token ./wolfpkcs11-1.3.0/src/.libs/libwolfpkcs11.so
         echo "Token initialized with PIN in v1.3.0"
         echo "Token path: ${WOLFPKCS11_TOKEN_PATH}"
         ls -la "${WOLFPKCS11_TOKEN_PATH}"
@@ -182,8 +317,9 @@ jobs:
         gcc -o verify_pin_1.3.0 verify_pin_1.3.0.c -I./wolfpkcs11-1.3.0 -ldl -lpthread
     
     - name: Run v1.3.0 PIN verification test
+      env:
+        WOLFPKCS11_TOKEN_PATH: ${{ github.workspace }}/.wolfPKCS11_upgrade_test
       run: |
-        export WOLFPKCS11_TOKEN_PATH="${HOME}/.wolfPKCS11_upgrade_test"
         ./verify_pin_1.3.0 ./wolfpkcs11-1.3.0/src/.libs/libwolfpkcs11.so
     
     # Build PR version of wolfPKCS11
@@ -311,10 +447,15 @@ jobs:
                     printf("BUG DETECTED: WP11_TOKEN_FLAG_USER_PIN_SET not set after upgrade\n");
                     printf("The token was created in v1.3.0 with a PIN, but v2.0.0+ doesn't detect it\n");
                     printf("This is the bug we're testing for!\n");
+                    funcList->C_CloseSession(session);
+                    funcList->C_Finalize(NULL);
+                    return 100;  /* Special exit code for expected bug */
                 } else {
                     printf("Unexpected login failure\n");
+                    funcList->C_CloseSession(session);
+                    funcList->C_Finalize(NULL);
+                    return 1;
                 }
-                return 1;
             }
             
             printf("✓ Successfully logged in with PIN in v2.0.0+\n");
@@ -335,11 +476,14 @@ jobs:
     
     # Test accessing token with PR version
     - name: Test PIN flag after upgrade to v2.0.0+
+      env:
+        WOLFPKCS11_TOKEN_PATH: ${{ github.workspace }}/.wolfPKCS11_upgrade_test
       run: |
-        export WOLFPKCS11_TOKEN_PATH="${HOME}/.wolfPKCS11_upgrade_test"
         echo "Testing with token path: ${WOLFPKCS11_TOKEN_PATH}"
         ls -la "${WOLFPKCS11_TOKEN_PATH}"
-        ./verify_pin_2.0.0 ./wolfpkcs11-pr/src/.libs/libwolfpkcs11.so || {
+        ./verify_pin_2.0.0 ./wolfpkcs11-pr/src/.libs/libwolfpkcs11.so
+        EXIT_CODE=$?
+        if [ $EXIT_CODE -eq 100 ]; then
           echo ""
           echo "=========================================="
           echo "BUG CONFIRMED: PIN flag not set after upgrade"
@@ -350,7 +494,16 @@ jobs:
           echo ""
           echo "This test successfully reproduces the issue."
           exit 1
-        }
+        elif [ $EXIT_CODE -ne 0 ]; then
+          echo ""
+          echo "=========================================="
+          echo "WORKFLOW ERROR: Unexpected failure"
+          echo "=========================================="
+          echo "The test failed with exit code $EXIT_CODE, which indicates"
+          echo "a workflow or setup error, not the expected bug."
+          echo "Please check the logs above for details."
+          exit 1
+        fi
     
     - name: Test summary
       if: always()
