@@ -1,0 +1,367 @@
+name: PIN Flag Upgrade Test (1.3.0 to 2.0.0)
+
+on:
+  pull_request:
+    branches: [ '*' ]
+  workflow_dispatch:
+
+jobs:
+  pin-flag-upgrade-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    # Checkout the PR code
+    - name: Checkout PR code
+      uses: actions/checkout@v4
+      with:
+        path: wolfpkcs11-pr
+    
+    # Checkout version 1.3.0
+    - name: Checkout wolfPKCS11 v1.3.0
+      uses: actions/checkout@v4
+      with:
+        repository: wolfssl/wolfpkcs11
+        ref: v1.3.0-stable
+        path: wolfpkcs11-1.3.0
+    
+    # Setup wolfSSL for v1.3.0
+    - name: Checkout wolfSSL
+      uses: actions/checkout@v4
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+    
+    - name: Build wolfSSL
+      working-directory: ./wolfssl
+      run: |
+        ./autogen.sh
+        ./configure --enable-cryptocb --enable-aescfb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt \
+            C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
+        make
+        sudo make install
+        sudo ldconfig
+    
+    # Build wolfPKCS11 v1.3.0
+    - name: Build wolfPKCS11 v1.3.0
+      working-directory: ./wolfpkcs11-1.3.0
+      run: |
+        ./autogen.sh
+        ./configure --enable-debug CFLAGS="-DDEBUG_WOLFPKCS11"
+        make
+    
+    # Initialize token with PIN in v1.3.0
+    - name: Initialize token with PIN (v1.3.0)
+      working-directory: ./wolfpkcs11-1.3.0
+      run: |
+        export WOLFPKCS11_TOKEN_PATH="${HOME}/.wolfPKCS11_upgrade_test"
+        mkdir -p "${WOLFPKCS11_TOKEN_PATH}"
+        ./examples/init_token -userPin "test-pin-12345"
+        echo "Token initialized with PIN in v1.3.0"
+        echo "Token path: ${WOLFPKCS11_TOKEN_PATH}"
+        ls -la "${WOLFPKCS11_TOKEN_PATH}"
+    
+    # Create test program to verify PIN is set in v1.3.0
+    - name: Create v1.3.0 PIN verification test
+      run: |
+        cat > verify_pin_1.3.0.c << 'EOF'
+        #define _GNU_SOURCE
+        #include <stdio.h>
+        #include <stdlib.h>
+        #include <string.h>
+        #include <dlfcn.h>
+        
+        #define CK_PTR *
+        #define CK_DEFINE_FUNCTION(returnType, name) returnType name
+        #define CK_DECLARE_FUNCTION(returnType, name) returnType name
+        #define CK_DECLARE_FUNCTION_POINTER(returnType, name) returnType (* name)
+        #define CK_CALLBACK_FUNCTION(returnType, name) returnType (* name)
+        #ifndef NULL_PTR
+        #define NULL_PTR 0
+        #endif
+        
+        #include "wolfpkcs11-1.3.0/wolfpkcs11/pkcs11.h"
+        
+        static CK_FUNCTION_LIST* funcList = NULL;
+        static void* libHandle = NULL;
+        
+        int load_library(const char* path) {
+            CK_RV rv;
+            CK_C_GetFunctionList pC_GetFunctionList;
+            
+            libHandle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+            if (!libHandle) {
+                printf("ERROR: Failed to load library: %s\n", dlerror());
+                return -1;
+            }
+            
+            pC_GetFunctionList = (CK_C_GetFunctionList)dlsym(libHandle, "C_GetFunctionList");
+            if (!pC_GetFunctionList) {
+                printf("ERROR: Failed to get C_GetFunctionList: %s\n", dlerror());
+                dlclose(libHandle);
+                return -1;
+            }
+            
+            rv = pC_GetFunctionList(&funcList);
+            if (rv != CKR_OK) {
+                printf("ERROR: C_GetFunctionList failed with 0x%08lx\n", (unsigned long)rv);
+                dlclose(libHandle);
+                return -1;
+            }
+            
+            return 0;
+        }
+        
+        int main(int argc, char* argv[]) {
+            CK_RV rv;
+            CK_SESSION_HANDLE session;
+            CK_BYTE userPin[] = "test-pin-12345";
+            CK_SLOT_ID slotList[16];
+            CK_ULONG slotCount = sizeof(slotList) / sizeof(slotList[0]);
+            CK_SLOT_ID slot;
+            CK_TOKEN_INFO tokenInfo;
+            const char* lib_path = argv[1];
+            
+            printf("=== Testing v1.3.0: Verify PIN is set ===\n");
+            printf("Loading library: %s\n", lib_path);
+            if (load_library(lib_path) != 0) return 1;
+            
+            rv = funcList->C_Initialize(NULL);
+            if (rv != CKR_OK) {
+                printf("ERROR: C_Initialize failed with 0x%08lx\n", (unsigned long)rv);
+                return 1;
+            }
+            
+            rv = funcList->C_GetSlotList(CK_TRUE, slotList, &slotCount);
+            if (rv != CKR_OK || slotCount == 0) {
+                printf("ERROR: C_GetSlotList failed or no slots\n");
+                return 1;
+            }
+            slot = slotList[0];
+            
+            rv = funcList->C_GetTokenInfo(slot, &tokenInfo);
+            if (rv != CKR_OK) {
+                printf("ERROR: C_GetTokenInfo failed with 0x%08lx\n", (unsigned long)rv);
+                return 1;
+            }
+            
+            printf("Token flags: 0x%08lx\n", (unsigned long)tokenInfo.flags);
+            if (tokenInfo.flags & CKF_USER_PIN_INITIALIZED) {
+                printf("✓ CKF_USER_PIN_INITIALIZED is set in v1.3.0\n");
+            } else {
+                printf("✗ CKF_USER_PIN_INITIALIZED is NOT set in v1.3.0\n");
+                return 1;
+            }
+            
+            rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                          NULL, NULL, &session);
+            if (rv != CKR_OK) {
+                printf("ERROR: C_OpenSession failed with 0x%08lx\n", (unsigned long)rv);
+                return 1;
+            }
+            
+            rv = funcList->C_Login(session, CKU_USER, userPin, sizeof(userPin) - 1);
+            if (rv != CKR_OK) {
+                printf("ERROR: C_Login failed with 0x%08lx\n", (unsigned long)rv);
+                printf("This means the PIN was not properly set in v1.3.0\n");
+                return 1;
+            }
+            
+            printf("✓ Successfully logged in with PIN in v1.3.0\n");
+            
+            funcList->C_Logout(session);
+            funcList->C_CloseSession(session);
+            funcList->C_Finalize(NULL);
+            
+            printf("=== v1.3.0 PIN verification: PASSED ===\n");
+            return 0;
+        }
+        EOF
+    
+    - name: Compile v1.3.0 PIN verification test
+      run: |
+        gcc -o verify_pin_1.3.0 verify_pin_1.3.0.c -I./wolfpkcs11-1.3.0 -ldl -lpthread
+    
+    - name: Run v1.3.0 PIN verification test
+      run: |
+        export WOLFPKCS11_TOKEN_PATH="${HOME}/.wolfPKCS11_upgrade_test"
+        ./verify_pin_1.3.0 ./wolfpkcs11-1.3.0/src/.libs/libwolfpkcs11.so
+    
+    # Build PR version of wolfPKCS11
+    - name: Build PR wolfPKCS11 (v2.0.0+)
+      working-directory: ./wolfpkcs11-pr
+      run: |
+        ./autogen.sh
+        ./configure --enable-debug CFLAGS="-DDEBUG_WOLFPKCS11"
+        make
+    
+    # Create test program to verify PIN flag after upgrade
+    - name: Create v2.0.0 PIN flag verification test
+      run: |
+        cat > verify_pin_2.0.0.c << 'EOF'
+        #define _GNU_SOURCE
+        #include <stdio.h>
+        #include <stdlib.h>
+        #include <string.h>
+        #include <dlfcn.h>
+        
+        #define CK_PTR *
+        #define CK_DEFINE_FUNCTION(returnType, name) returnType name
+        #define CK_DECLARE_FUNCTION(returnType, name) returnType name
+        #define CK_DECLARE_FUNCTION_POINTER(returnType, name) returnType (* name)
+        #define CK_CALLBACK_FUNCTION(returnType, name) returnType (* name)
+        #ifndef NULL_PTR
+        #define NULL_PTR 0
+        #endif
+        
+        #include "wolfpkcs11-pr/wolfpkcs11/pkcs11.h"
+        
+        static CK_FUNCTION_LIST* funcList = NULL;
+        static void* libHandle = NULL;
+        
+        int load_library(const char* path) {
+            CK_RV rv;
+            CK_C_GetFunctionList pC_GetFunctionList;
+            typedef void (*dbg_on_fn)(void);
+            dbg_on_fn dbg_on;
+            
+            libHandle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+            if (!libHandle) {
+                printf("ERROR: Failed to load library: %s\n", dlerror());
+                return -1;
+            }
+            
+            /* Enable debug output */
+            dbg_on = (dbg_on_fn)dlsym(libHandle, "wolfPKCS11_Debugging_On");
+            if (dbg_on) {
+                printf("Enabling wolfPKCS11 debug output...\n");
+                dbg_on();
+            }
+            
+            pC_GetFunctionList = (CK_C_GetFunctionList)dlsym(libHandle, "C_GetFunctionList");
+            if (!pC_GetFunctionList) {
+                printf("ERROR: Failed to get C_GetFunctionList: %s\n", dlerror());
+                dlclose(libHandle);
+                return -1;
+            }
+            
+            rv = pC_GetFunctionList(&funcList);
+            if (rv != CKR_OK) {
+                printf("ERROR: C_GetFunctionList failed with 0x%08lx\n", (unsigned long)rv);
+                dlclose(libHandle);
+                return -1;
+            }
+            
+            return 0;
+        }
+        
+        int main(int argc, char* argv[]) {
+            CK_RV rv;
+            CK_SESSION_HANDLE session;
+            CK_BYTE userPin[] = "test-pin-12345";
+            CK_SLOT_ID slotList[16];
+            CK_ULONG slotCount = sizeof(slotList) / sizeof(slotList[0]);
+            CK_SLOT_ID slot;
+            CK_TOKEN_INFO tokenInfo;
+            const char* lib_path = argv[1];
+            
+            printf("\n=== Testing v2.0.0+: Verify PIN flag after upgrade ===\n");
+            printf("Loading library: %s\n", lib_path);
+            if (load_library(lib_path) != 0) return 1;
+            
+            rv = funcList->C_Initialize(NULL);
+            if (rv != CKR_OK) {
+                printf("ERROR: C_Initialize failed with 0x%08lx\n", (unsigned long)rv);
+                return 1;
+            }
+            
+            rv = funcList->C_GetSlotList(CK_TRUE, slotList, &slotCount);
+            if (rv != CKR_OK || slotCount == 0) {
+                printf("ERROR: C_GetSlotList failed or no slots\n");
+                return 1;
+            }
+            slot = slotList[0];
+            
+            rv = funcList->C_GetTokenInfo(slot, &tokenInfo);
+            if (rv != CKR_OK) {
+                printf("ERROR: C_GetTokenInfo failed with 0x%08lx\n", (unsigned long)rv);
+                return 1;
+            }
+            
+            printf("Token flags: 0x%08lx\n", (unsigned long)tokenInfo.flags);
+            if (tokenInfo.flags & CKF_USER_PIN_INITIALIZED) {
+                printf("✓ CKF_USER_PIN_INITIALIZED is set in v2.0.0+\n");
+            } else {
+                printf("✗ CKF_USER_PIN_INITIALIZED is NOT set in v2.0.0+\n");
+                printf("BUG: Token upgraded from v1.3.0 should have PIN flag set\n");
+                return 1;
+            }
+            
+            rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                          NULL, NULL, &session);
+            if (rv != CKR_OK) {
+                printf("ERROR: C_OpenSession failed with 0x%08lx\n", (unsigned long)rv);
+                return 1;
+            }
+            
+            printf("Attempting to login with PIN...\n");
+            rv = funcList->C_Login(session, CKU_USER, userPin, sizeof(userPin) - 1);
+            if (rv != CKR_OK) {
+                printf("ERROR: C_Login failed with 0x%08lx\n", (unsigned long)rv);
+                if (rv == 0x00000102) {  /* CKR_USER_PIN_NOT_INITIALIZED */
+                    printf("BUG DETECTED: WP11_TOKEN_FLAG_USER_PIN_SET not set after upgrade\n");
+                    printf("The token was created in v1.3.0 with a PIN, but v2.0.0+ doesn't detect it\n");
+                    printf("This is the bug we're testing for!\n");
+                } else {
+                    printf("Unexpected login failure\n");
+                }
+                return 1;
+            }
+            
+            printf("✓ Successfully logged in with PIN in v2.0.0+\n");
+            
+            funcList->C_Logout(session);
+            funcList->C_CloseSession(session);
+            funcList->C_Finalize(NULL);
+            
+            printf("=== v2.0.0+ PIN flag verification: PASSED ===\n");
+            printf("The upgrade from v1.3.0 to v2.0.0+ properly handles the PIN flag\n");
+            return 0;
+        }
+        EOF
+    
+    - name: Compile v2.0.0 PIN flag verification test
+      run: |
+        gcc -o verify_pin_2.0.0 verify_pin_2.0.0.c -I./wolfpkcs11-pr -ldl -lpthread
+    
+    # Test accessing token with PR version
+    - name: Test PIN flag after upgrade to v2.0.0+
+      run: |
+        export WOLFPKCS11_TOKEN_PATH="${HOME}/.wolfPKCS11_upgrade_test"
+        echo "Testing with token path: ${WOLFPKCS11_TOKEN_PATH}"
+        ls -la "${WOLFPKCS11_TOKEN_PATH}"
+        ./verify_pin_2.0.0 ./wolfpkcs11-pr/src/.libs/libwolfpkcs11.so || {
+          echo ""
+          echo "=========================================="
+          echo "BUG CONFIRMED: PIN flag not set after upgrade"
+          echo "=========================================="
+          echo "When upgrading from v1.3.0 to v2.0.0, if a PIN was set,"
+          echo "the new WP11_TOKEN_FLAG_USER_PIN_SET flag is not set."
+          echo "This causes login to fail with CKR_USER_PIN_NOT_INITIALIZED."
+          echo ""
+          echo "This test successfully reproduces the issue."
+          exit 1
+        }
+    
+    - name: Test summary
+      if: always()
+      run: |
+        echo ""
+        echo "=========================================="
+        echo "PIN Flag Upgrade Test Summary"
+        echo "=========================================="
+        echo "This test verifies that when upgrading from wolfPKCS11 v1.3.0"
+        echo "to v2.0.0+, the WP11_TOKEN_FLAG_USER_PIN_SET flag is properly"
+        echo "detected and set for tokens that have a PIN configured."
+        echo ""
+        echo "If this test fails, it means the upgrade path needs to be fixed"
+        echo "to detect existing PINs and set the appropriate flags."
