@@ -61,6 +61,7 @@ test/*
 .project
 .settings
 add_cert_file
+.cache
 
 tests/wp11_rsakey_*
 tests/wp11_dhkey_*
