@@ -2015,3 +2015,35 @@ CK_RV C_WaitForSlotEvent(CK_FLAGS flags, CK_SLOT_ID_PTR pSlot,
     WOLFPKCS11_LEAVE("C_WaitForSlotEvent", rv);
     return rv;
 }
+
+#if defined (WOLFPKCS11_PKCS11_V3_0)
+
+CK_RV C_LoginUser(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
+                  CK_UTF8CHAR_PTR pPin, CK_ULONG ulPinLen,
+                  CK_UTF8CHAR_PTR pUsername, CK_ULONG ulUsernameLen)
+{
+    CK_RV rv;
+
+    WOLFPKCS11_ENTER("C_LoginUser");
+
+    /* Ignore username for the moment and just login with the PIN. */
+    (void)pUsername;
+    (void)ulUsernameLen;
+    rv = C_Login(hSession, userType, pPin, ulPinLen);
+
+    WOLFPKCS11_LEAVE("C_LoginUser", rv);
+    return rv;
+}
+
+CK_RV C_SessionCancel(CK_SESSION_HANDLE hSession, CK_FLAGS flags)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+    (void)flags;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+#endif /* defined WOLFPKCS11_PKCS11_V3_0 */
