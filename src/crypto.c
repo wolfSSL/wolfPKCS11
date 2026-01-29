@@ -8306,3 +8306,99 @@ CK_RV C_MessageVerifyFinal(CK_SESSION_HANDLE hSession)
 }
 
 #endif /* defined WOLFPKCS11_PKCS11_V3_0 */
+
+#if defined (WOLFPKCS11_PKCS11_V3_2)
+
+CK_RV C_EncapsulateKey(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
+                       CK_OBJECT_HANDLE hPublicKey, CK_ATTRIBUTE_PTR pTemplate,
+                       CK_ULONG ulAttributeCount, CK_OBJECT_HANDLE_PTR phKey,
+                       CK_BYTE_PTR pCiphertext, CK_ULONG_PTR pulCiphertextLen)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+    (void)pMechanism;
+    (void)hPublicKey;
+    (void)pTemplate;
+    (void)ulAttributeCount;
+    (void)phKey;
+    (void)pCiphertext;
+    (void)pulCiphertextLen;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV C_DecapsulateKey(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
+                       CK_OBJECT_HANDLE hPrivateKey, CK_BYTE_PTR pCiphertext,
+                       CK_ULONG ulCiphertextLen, CK_ATTRIBUTE_PTR pTemplate,
+                       CK_ULONG ulAttributeCount, CK_OBJECT_HANDLE_PTR phKey)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+    (void)pMechanism;
+    (void)hPrivateKey;
+    (void)pCiphertext;
+    (void)ulCiphertextLen;
+    (void)pTemplate;
+    (void)ulAttributeCount;
+    (void)phKey;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV C_VerifySignatureInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
+                            CK_OBJECT_HANDLE hKey, CK_BYTE_PTR pSignature,
+                            CK_ULONG ulSignatureLen)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+    (void)pMechanism;
+    (void)hKey;
+    (void)pSignature;
+    (void)ulSignatureLen;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV C_VerifySignature(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
+                        CK_ULONG ulDataLen)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+    (void)pData;
+    (void)ulDataLen;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV C_VerifySignatureUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
+                              CK_ULONG ulPartLen)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+    (void)pPart;
+    (void)ulPartLen;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV C_VerifySignatureFinal(CK_SESSION_HANDLE hSession)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+#endif /* defined WOLFPKCS11_PKCS11_V3_2 */
