@@ -28,7 +28,7 @@
 
 /* Function list table. */
 static CK_FUNCTION_LIST wolfpkcs11FunctionList = {
-    { CRYPTOKI_VERSION_MAJOR, CRYPTOKI_VERSION_MINOR },
+    { 2, 40 },
 
     C_Initialize,
     C_Finalize,
@@ -99,6 +99,109 @@ static CK_FUNCTION_LIST wolfpkcs11FunctionList = {
     C_CancelFunction,
     C_WaitForSlotEvent
 };
+
+#if defined (WOLFPKCS11_PKCS11_V3_0)
+
+CK_RV C_GetInfoV3(CK_INFO_PTR pInfo);
+
+static CK_FUNCTION_LIST_3_0 wolfpkcs11FunctionList_3_0 = {
+    { CRYPTOKI_VERSION_MAJOR, CRYPTOKI_VERSION_MINOR },
+
+    C_Initialize,
+    C_Finalize,
+    C_GetInfoV3,
+    C_GetFunctionList,
+    C_GetSlotList,
+    C_GetSlotInfo,
+    C_GetTokenInfo,
+    C_GetMechanismList,
+    C_GetMechanismInfo,
+    C_InitToken,
+    C_InitPIN,
+    C_SetPIN,
+    C_OpenSession,
+    C_CloseSession,
+    C_CloseAllSessions,
+    C_GetSessionInfo,
+    C_GetOperationState,
+    C_SetOperationState,
+    C_Login,
+    C_Logout,
+    C_CreateObject,
+    C_CopyObject,
+    C_DestroyObject,
+    C_GetObjectSize,
+    C_GetAttributeValue,
+    C_SetAttributeValue,
+    C_FindObjectsInit,
+    C_FindObjects,
+    C_FindObjectsFinal,
+    C_EncryptInit,
+    C_Encrypt,
+    C_EncryptUpdate,
+    C_EncryptFinal,
+    C_DecryptInit,
+    C_Decrypt,
+    C_DecryptUpdate,
+    C_DecryptFinal,
+    C_DigestInit,
+    C_Digest,
+    C_DigestUpdate,
+    C_DigestKey,
+    C_DigestFinal,
+    C_SignInit,
+    C_Sign,
+    C_SignUpdate,
+    C_SignFinal,
+    C_SignRecoverInit,
+    C_SignRecover,
+    C_VerifyInit,
+    C_Verify,
+    C_VerifyUpdate,
+    C_VerifyFinal,
+    C_VerifyRecoverInit,
+    C_VerifyRecover,
+    C_DigestEncryptUpdate,
+    C_DecryptDigestUpdate,
+    C_SignEncryptUpdate,
+    C_DecryptVerifyUpdate,
+    C_GenerateKey,
+    C_GenerateKeyPair,
+    C_WrapKey,
+    C_UnwrapKey,
+    C_DeriveKey,
+    C_SeedRandom,
+    C_GenerateRandom,
+    C_GetFunctionStatus,
+    C_CancelFunction,
+    C_WaitForSlotEvent,
+    C_GetInterfaceList,
+	C_GetInterface,
+	C_LoginUser,
+	C_SessionCancel,
+	C_MessageEncryptInit,
+	C_EncryptMessage,
+	C_EncryptMessageBegin,
+	C_EncryptMessageNext,
+	C_MessageEncryptFinal,
+	C_MessageDecryptInit,
+	C_DecryptMessage,
+	C_DecryptMessageBegin,
+	C_DecryptMessageNext,
+	C_MessageDecryptFinal,
+	C_MessageSignInit,
+	C_SignMessage,
+	C_SignMessageBegin,
+	C_SignMessageNext,
+	C_MessageSignFinal,
+	C_MessageVerifyInit,
+	C_VerifyMessage,
+	C_VerifyMessageBegin,
+	C_VerifyMessageNext,
+	C_MessageVerifyFinal
+};
+
+#endif /* defined WOLFPKCS11_PKCS11_V3_0 */
 
 /**
  * Return the function list for accessing Crypto-Ki API.
@@ -175,8 +278,7 @@ static CK_RV ParseNssConfigString(char *nssArgs,
                 nssArgs++;
             valueLen = nssArgs - valueStart;
         }
-        
-        
+
         if (valueLen == 0)
             continue;
         if (*nssArgs != ' ' && *nssArgs != '\0')
@@ -193,7 +295,79 @@ static CK_RV ParseNssConfigString(char *nssArgs,
 
     return CKR_OK;
 }
-#endif
+#endif /* defined WOLFPKCS11_NSS && !defined WOLFPKCS11_NO_STORE */
+
+#if defined (WOLFPKCS11_PKCS11_V3_0)
+
+#define NUM_INTERFACES 2
+#define DEFAULT_INTERFACE 0
+
+CK_INTERFACE interfaces[NUM_INTERFACES] = {
+	{(CK_UTF8CHAR_PTR)"PKCS 11", (void *)&wolfpkcs11FunctionList_3_0, 0},
+	{(CK_UTF8CHAR_PTR)"PKCS 11", (void *)&wolfpkcs11FunctionList, 0}
+};
+
+CK_RV C_GetInterfaceList(CK_INTERFACE_PTR pInterfacesList, CK_ULONG_PTR pulCount)
+{
+    if (pulCount == NULL)
+        return CKR_ARGUMENTS_BAD;
+
+    if (pInterfacesList == NULL_PTR) {
+        *pulCount = NUM_INTERFACES;
+        return CKR_OK;
+    }
+
+    if (*pulCount < NUM_INTERFACES) {
+        *pulCount = NUM_INTERFACES;
+        return CKR_BUFFER_TOO_SMALL;
+    }
+
+    memcpy(pInterfacesList, interfaces, NUM_INTERFACES * sizeof(CK_INTERFACE));
+    *pulCount = NUM_INTERFACES;
+
+    return CKR_OK;
+}
+
+CK_RV C_GetInterface(CK_UTF8CHAR_PTR pInterfaceName, CK_VERSION_PTR pVersion,
+                        CK_INTERFACE_PTR_PTR ppInterface, CK_FLAGS flags)
+{
+    int i;
+
+	if (ppInterface == NULL) {
+		return CKR_ARGUMENTS_BAD;
+	}
+
+	if (pInterfaceName == NULL_PTR) {
+		/* return default interface */
+		*ppInterface = &interfaces[DEFAULT_INTERFACE];
+		return CKR_OK;
+	}
+
+	for (i = 0; i < NUM_INTERFACES; i++) {
+		CK_VERSION_PTR interface_version = (CK_VERSION_PTR)interfaces[i].pFunctionList;
+
+		if (strcmp((char*)pInterfaceName, (char*)interfaces[i].pInterfaceName) != 0)
+			continue;
+
+		/* If version is not null, it must match */
+		if (pVersion != NULL_PTR && (pVersion->major != interface_version->major ||
+		    pVersion->minor != interface_version->minor)) {
+			continue;
+		}
+
+		/* If any flags specified, it must be supported by the interface */
+		if ((flags & interfaces[i].flags) != flags)
+			continue;
+
+		*ppInterface = &interfaces[i];
+
+        return CKR_OK;
+	}
+
+	return CKR_ARGUMENTS_BAD;
+}
+
+#endif /* defined WOLFPKCS11_PKCS11_V3_0 */
 
 /**
  * Initialize the Crypto-Ki library.
@@ -266,12 +440,22 @@ CK_RV C_Finalize(CK_VOID_PTR pReserved)
 
 /* Information about the Crypto-Ki library. */
 static CK_INFO wolfpkcs11Info = {
+    { 2, 40 },
+    "wolfpkcs11",
+    0,
+    "Implementation using wolfCrypt",
+    { WOLFPKCS11_MAJOR_VERSION, WOLFPKCS11_MINOR_VERSION }
+};
+
+#if defined (WOLFPKCS11_PKCS11_V3_0)
+static CK_INFO wolfpkcs11Info_3_0 = {
     { CRYPTOKI_VERSION_MAJOR, CRYPTOKI_VERSION_MINOR },
     "wolfpkcs11",
     0,
     "Implementation using wolfCrypt",
     { WOLFPKCS11_MAJOR_VERSION, WOLFPKCS11_MINOR_VERSION }
 };
+#endif /* defined WOLFPKCS11_PKCS11_V3_0 */
 
 /**
  * Get information on the library.
@@ -302,3 +486,17 @@ CK_RV C_GetInfo(CK_INFO_PTR pInfo)
     WOLFPKCS11_LEAVE("C_GetInfo", ret);
     return ret;
 }
+
+#if defined (WOLFPKCS11_PKCS11_V3_0)
+CK_RV C_GetInfoV3(CK_INFO_PTR pInfo)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    if (pInfo == NULL)
+        return CKR_ARGUMENTS_BAD;
+
+    XMEMCPY(pInfo, &wolfpkcs11Info_3_0, sizeof(wolfpkcs11Info_3_0));
+
+    return CKR_OK;
+}
+#endif /* defined WOLFPKCS11_PKCS11_V3_0 */

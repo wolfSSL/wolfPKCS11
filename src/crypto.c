@@ -7958,3 +7958,351 @@ CK_RV C_GenerateRandom(CK_SESSION_HANDLE hSession,
     WOLFPKCS11_LEAVE("C_GenerateRandom", rv);
     return rv;
 }
+
+#if defined (WOLFPKCS11_PKCS11_V3_0)
+
+CK_RV C_MessageEncryptInit(CK_SESSION_HANDLE hSession,
+                           CK_MECHANISM_PTR pMechanism,
+                           CK_OBJECT_HANDLE hKey)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+    (void)pMechanism;
+    (void)hKey;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV C_EncryptMessage(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter,
+                       CK_ULONG ulParameterLen, CK_BYTE_PTR pAssociatedData,
+                       CK_ULONG ulAssociatedDataLen, CK_BYTE_PTR pPlaintext,
+                       CK_ULONG ulPlaintextLen, CK_BYTE_PTR pCiphertext,
+                       CK_ULONG_PTR pulCiphertextLen)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+    (void)pParameter;
+    (void)ulParameterLen;
+    (void)pAssociatedData;
+    (void)ulAssociatedDataLen;
+    (void)pPlaintext;
+    (void)ulPlaintextLen;
+    (void)pCiphertext;
+    (void)pulCiphertextLen;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV C_EncryptMessageBegin(CK_SESSION_HANDLE hSession,
+                            CK_VOID_PTR pParameter,
+                            CK_ULONG ulParameterLen,
+                            CK_BYTE_PTR pAssociatedData,
+                            CK_ULONG ulAssociatedDataLen)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+    (void)pParameter;
+    (void)ulParameterLen;
+    (void)pAssociatedData;
+    (void)ulAssociatedDataLen;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV C_EncryptMessageNext(CK_SESSION_HANDLE hSession,
+                           CK_VOID_PTR pParameter,
+                           CK_ULONG ulParameterLen,
+                           CK_BYTE_PTR pPlaintextPart,
+                           CK_ULONG ulPlaintextPartLen,
+                           CK_BYTE_PTR pCiphertextPart,
+                           CK_ULONG_PTR pulCiphertextPartLen,
+                           CK_FLAGS flags)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+    (void)pParameter;
+    (void)ulParameterLen;
+    (void)pPlaintextPart;
+    (void)ulPlaintextPartLen;
+    (void)pCiphertextPart;
+    (void)pulCiphertextPartLen;
+    (void)flags;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV C_MessageEncryptFinal(CK_SESSION_HANDLE hSession)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV C_MessageDecryptInit(CK_SESSION_HANDLE hSession,
+                           CK_MECHANISM_PTR pMechanism,
+                           CK_OBJECT_HANDLE hKey)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+    (void)pMechanism;
+    (void)hKey;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV C_DecryptMessage(CK_SESSION_HANDLE hSession,
+                       CK_VOID_PTR pParameter,
+                       CK_ULONG ulParameterLen,
+                       CK_BYTE_PTR pAssociatedData,
+                       CK_ULONG ulAssociatedDataLen,
+                       CK_BYTE_PTR pCiphertext,
+                       CK_ULONG ulCiphertextLen,
+                       CK_BYTE_PTR pPlaintext,
+                       CK_ULONG_PTR pulPlaintextLen)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+    (void)pParameter;
+    (void)ulParameterLen;
+    (void)pAssociatedData;
+    (void)ulAssociatedDataLen;
+    (void)pCiphertext;
+    (void)ulCiphertextLen;
+    (void)pPlaintext;
+    (void)pulPlaintextLen;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV C_DecryptMessageBegin(CK_SESSION_HANDLE hSession,
+                            CK_VOID_PTR pParameter,
+                            CK_ULONG ulParameterLen,
+                            CK_BYTE_PTR pAssociatedData,
+                            CK_ULONG ulAssociatedDataLen)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+    (void)pParameter;
+    (void)ulParameterLen;
+    (void)pAssociatedData;
+    (void)ulAssociatedDataLen;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV C_DecryptMessageNext(CK_SESSION_HANDLE hSession,
+                           CK_VOID_PTR pParameter,
+                           CK_ULONG ulParameterLen,
+                           CK_BYTE_PTR pCiphertextPart,
+                           CK_ULONG ulCiphertextPartLen,
+                           CK_BYTE_PTR pPlaintextPart,
+                           CK_ULONG_PTR pulPlaintextPartLen,
+                           CK_FLAGS flags)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+    (void)pParameter;
+    (void)ulParameterLen;
+    (void)pCiphertextPart;
+    (void)ulCiphertextPartLen;
+    (void)pPlaintextPart;
+    (void)pulPlaintextPartLen;
+    (void)flags;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV C_MessageDecryptFinal(CK_SESSION_HANDLE hSession)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV C_MessageSignInit(CK_SESSION_HANDLE hSession,
+                        CK_MECHANISM_PTR pMechanism,
+                        CK_OBJECT_HANDLE hKey)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+    (void)pMechanism;
+    (void)hKey;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV C_SignMessage(CK_SESSION_HANDLE hSession,
+                    CK_VOID_PTR pParameter,
+                    CK_ULONG ulParameterLen,
+                    CK_BYTE_PTR pData,
+                    CK_ULONG ulDataLen,
+                    CK_BYTE_PTR pSignature,
+                    CK_ULONG_PTR pulSignatureLen)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+    (void)pParameter;
+    (void)ulParameterLen;
+    (void)pData;
+    (void)ulDataLen;
+    (void)pSignature;
+    (void)pulSignatureLen;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV C_SignMessageBegin(CK_SESSION_HANDLE hSession,
+                         CK_VOID_PTR pParameter,
+                         CK_ULONG ulParameterLen)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+    (void)pParameter;
+    (void)ulParameterLen;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV C_SignMessageNext(CK_SESSION_HANDLE hSession,
+                        CK_VOID_PTR pParameter,
+                        CK_ULONG ulParameterLen,
+                        CK_BYTE_PTR pData,
+                        CK_ULONG ulDataLen,
+                        CK_BYTE_PTR pSignature,
+                        CK_ULONG_PTR pulSignatureLen)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+    (void)pParameter;
+    (void)ulParameterLen;
+    (void)pData;
+    (void)ulDataLen;
+    (void)pSignature;
+    (void)pulSignatureLen;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV C_MessageSignFinal(CK_SESSION_HANDLE hSession)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV C_MessageVerifyInit(CK_SESSION_HANDLE hSession,
+                          CK_MECHANISM_PTR pMechanism,
+                          CK_OBJECT_HANDLE hKey)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+    (void)pMechanism;
+    (void)hKey;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV C_VerifyMessage(CK_SESSION_HANDLE hSession,
+                      CK_VOID_PTR pParameter,
+                      CK_ULONG ulParameterLen,
+                      CK_BYTE_PTR pData,
+                      CK_ULONG ulDataLen,
+                      CK_BYTE_PTR pSignature,
+                      CK_ULONG ulSignatureLen)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+    (void)pParameter;
+    (void)ulParameterLen;
+    (void)pData;
+    (void)ulDataLen;
+    (void)pSignature;
+    (void)ulSignatureLen;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV C_VerifyMessageBegin(CK_SESSION_HANDLE hSession,
+                           CK_VOID_PTR pParameter,
+                           CK_ULONG ulParameterLen)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+    (void)pParameter;
+    (void)ulParameterLen;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV C_VerifyMessageNext(CK_SESSION_HANDLE hSession,
+                          CK_VOID_PTR pParameter,
+                          CK_ULONG ulParameterLen,
+                          CK_BYTE_PTR pData,
+                          CK_ULONG ulDataLen,
+                          CK_BYTE_PTR pSignature,
+                          CK_ULONG ulSignatureLen)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+    (void)pParameter;
+    (void)ulParameterLen;
+    (void)pData;
+    (void)ulDataLen;
+    (void)pSignature;
+    (void)ulSignatureLen;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV C_MessageVerifyFinal(CK_SESSION_HANDLE hSession)
+{
+    if (!WP11_Library_IsInitialized())
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+    (void)hSession;
+
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+#endif /* defined WOLFPKCS11_PKCS11_V3_0 */
