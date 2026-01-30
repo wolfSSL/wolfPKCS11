@@ -5,7 +5,7 @@ on:
     branches: [ '*' ]
 
 env:
-  WOLFSSL_VERSION: v5.8.0-stable
+  WOLFSSL_VERSION: v5.8.4-stable
 
 jobs:
   storage-upgrade-test:
@@ -20,7 +20,7 @@ jobs:
           # - name: v1.3.0
           #   ref: v1.3.0-stable
           #   branch-dir: v1.3.0-stable-branch
-    
+
     steps:
     # Checkout the PR branch
     - name: Checkout PR branch
@@ -52,7 +52,7 @@ jobs:
         repository: wolfssl/wolfssl
         path: wolfssl
         ref: ${{ env.WOLFSSL_VERSION }}
-    
+
     - name: Build wolfssl
       if: steps.cache-wolfssl.outputs.cache-hit != 'true'
       working-directory: ./wolfssl
@@ -109,15 +109,15 @@ jobs:
     - name: Copy storage files from ${{ matrix.base-ref.name }} to PR
       run: |
         echo "=== Copying storage files from ${{ matrix.base-ref.name }} to PR branch ==="
-        
+
         # Create directories if they don't exist
         mkdir -p pr-branch/store
-        
+
         # Copy store files
         if [ -d "${{ matrix.base-ref.branch-dir }}/store" ]; then
           cp -rv ${{ matrix.base-ref.branch-dir }}/store/* pr-branch/store/ 2>/dev/null || echo "No files in ${{ matrix.base-ref.branch-dir }}/store/"
         fi
-        
+
         echo "=== Storage file copy completed ==="
 
     - name: Test storage format compatibility (${{ matrix.base-ref.name }} → PR)
@@ -125,14 +125,14 @@ jobs:
       run: |
         echo "=== Testing storage format compatibility with PR branch ==="
         echo "This tests that the PR can read storage files created by ${{ matrix.base-ref.name }} branch"
-        
+
         # List the copied files for verification
         echo "Files in store directory:"
         ls -la store/* 2>/dev/null || echo "No wp* files in store/"
-        
+
         # Run the tests with the copied storage files
         ./tests/pkcs11test
-        
+
         echo "=== Storage format upgrade test (${{ matrix.base-ref.name }} → PR) completed successfully ==="
 
     # Upload artifacts for debugging if needed
