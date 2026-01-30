@@ -38,6 +38,7 @@ tests/object_id_uniqueness_test
 tests/rsa_session_persistence_test
 tests/debug_test
 tests/token_path_test
+tests/pkcs11v3test
 examples/add_aes_key
 examples/add_hmac_key
 examples/add_rsa_key
