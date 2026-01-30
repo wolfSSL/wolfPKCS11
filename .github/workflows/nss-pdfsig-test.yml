@@ -9,7 +9,7 @@ on:
 env:
   NSPR_VERSION: NSPR_4_36_BRANCH
   NSS_VERSION: NSS_3_112_RTM
-  WOLFSSL_VERSION: v5.8.0-stable
+  WOLFSSL_VERSION: v5.8.4-stable
 
 jobs:
   test-nss-pdf-signing:

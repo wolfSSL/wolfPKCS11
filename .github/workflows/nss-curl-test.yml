@@ -9,7 +9,7 @@ on:
 env:
   NSPR_VERSION: NSPR_4_36_BRANCH
   NSS_VERSION: NSS_3_112_RTM
-  WOLFSSL_VERSION: v5.8.0-stable
+  WOLFSSL_VERSION: v5.8.4-stable
   CURL_VERSION: 8.0.0
   NSS_DEBUG_PKCS11_MODULE: "wolfPKCS11"
   NSPR_LOG_MODULES: all:5
@@ -51,7 +51,7 @@ jobs:
             ca-certificates \
             libnss3-tools
           sudo rm -rf /var/lib/apt/lists/*
-      
+
       - name: Cache NSPR
         id: cache-nspr
         uses: actions/cache@v4
@@ -87,7 +87,7 @@ jobs:
         run: |
           mkdir -p /tmp/src
           cd /tmp/src
-          
+
           # Clone official Mozilla NSS with specific tag
           hg clone https://hg.mozilla.org/projects/nss -r ${{ env.NSS_VERSION }}
 
@@ -211,7 +211,7 @@ jobs:
         run: |
           sudo mkdir -p /etc/pki/nssdb
           cd /etc/pki
-          
+
           # Initialize NSS database
           sudo certutil -N -d sql:/etc/pki/nssdb --empty-password
 
