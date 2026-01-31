@@ -5146,6 +5146,10 @@ static void wp11_Token_Final(WP11_Token* token)
 }
 
 #ifndef WOLFPKCS11_NO_STORE
+/* Forward declaration for HashPIN - needed for empty PIN decode path */
+static int HashPIN(char* pin, int pinLen, byte* seed, int seedLen, byte* hash,
+                   int hashLen, WP11_Slot* slot);
+
 /**
  * Load a token from storage.
  *
@@ -5291,6 +5295,9 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
         /* If there is no pin, there is no login, so decode now */
         if (WP11_Slot_Has_Empty_Pin(slot) && (ret == 0)) {
 #ifndef WOLFPKCS11_NO_STORE
+            /* Derive token->key from empty PIN + seed before decoding */
+            ret = HashPIN((char*)"", 0, token->seed, sizeof(token->seed),
+                          token->key, sizeof(token->key), slot);
             object = token->object;
             while (ret == 0 && object != NULL) {
                 ret = wp11_Object_Decode(object);
