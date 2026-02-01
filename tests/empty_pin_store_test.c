@@ -51,19 +51,7 @@
 #include <dlfcn.h>
 #endif
 
-#ifdef _WIN32
-    #define PATH_SEP "\\"
-#else
-    #define PATH_SEP "/"
-#endif
-
-#ifndef WOLFPKCS11_DLL_FILENAME
-#ifdef __APPLE__
-    #define WOLFPKCS11_DLL_FILENAME "./src/.libs/libwolfpkcs11.dylib"
-#else
-    #define WOLFPKCS11_DLL_FILENAME "./src/.libs/libwolfpkcs11.so"
-#endif
-#endif
+#include "testdata.h"
 
 #define EMPTY_PIN_TEST_DIR "./store/empty_pin_test"
 #define WOLFPKCS11_TOKEN_FILENAME "wp11_token_0000000000000001"
@@ -72,6 +60,7 @@
 
 static int test_passed = 0;
 static int test_failed = 0;
+static int test_skipped = 0;
 
 #define CHECK_CKR(rv, op, expected) do {                    \
     if (rv != expected) {                                   \
@@ -374,6 +363,7 @@ static int empty_pin_store_test(void)
             printf("Skipping empty PIN test: token requires minimum PIN length "
                 "%lu (empty PIN not allowed)\n",
                 (unsigned long)tokenInfo.ulMinPinLen);
+            test_skipped = 1;
             pkcs11_final();
             return 0;
         }
@@ -423,8 +413,13 @@ static void print_results(void)
     printf("\n=== Test Results ===\n");
     printf("Tests passed: %d\n", test_passed);
     printf("Tests failed: %d\n", test_failed);
+    if (test_skipped != 0) {
+        printf("Tests skipped: %d\n", test_skipped);
+    }
 
-    if (test_failed == 0) {
+    if (test_skipped != 0) {
+        printf("TEST SKIPPED\n");
+    } else if (test_failed == 0) {
         printf("ALL TESTS PASSED!\n");
     } else {
         printf("SOME TESTS FAILED!\n");
@@ -450,6 +445,9 @@ int main(int argc, char* argv[])
 
     print_results();
 
+    if (test_skipped != 0) {
+        return 77;  /* automake: test skipped */
+    }
     return (test_failed == 0) ? 0 : 1;
 #else
     (void)argc;

@@ -43,31 +43,19 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#include "testdata.h"
+
 #ifdef _WIN32
     #include <direct.h>
     #include <windows.h>
     #define MKDIR(path) _mkdir(path)
-    #define PATH_SEP "\\"
     #define ACCESS _access
     #define F_OK 0
 #else
     #include <unistd.h>
     #include <sys/types.h>
     #define MKDIR(path) mkdir(path, 0755)
-    #define PATH_SEP "/"
     #define ACCESS access
-#endif
-
-/* DLL Location and slot */
-#ifndef WOLFPKCS11_DLL_FILENAME
-    #ifdef __MACH__
-    #define WOLFPKCS11_DLL_FILENAME "./src/.libs/libwolfpkcs11.dylib"
-    #else
-    #define WOLFPKCS11_DLL_FILENAME "./src/.libs/libwolfpkcs11.so"
-    #endif
-#endif
-#ifndef WOLFPKCS11_DLL_SLOT
-    #define WOLFPKCS11_DLL_SLOT 1
 #endif
 
 #ifndef HAVE_PKCS11_STATIC

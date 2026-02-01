@@ -31,6 +31,12 @@
     #define WOLFPKCS11_DLL_SLOT 1
 #endif
 
+#ifdef _WIN32
+    #define PATH_SEP "\\"
+#else
+    #define PATH_SEP "/"
+#endif
+
 /* Suppress unused variable warnings across different compilers */
 #if defined(_MSC_VER)
     #pragma warning(push)
