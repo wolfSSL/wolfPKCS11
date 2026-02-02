@@ -67,7 +67,7 @@
 #ifndef HAVE_PKCS11_STATIC
 static void* dlib;
 #endif
-static CK_FUNCTION_LIST* funcList;
+static CK_FUNCTION_LIST* funcList = NULL;
 static CK_SLOT_ID slot = WOLFPKCS11_DLL_SLOT;
 
 static byte* userPin = (byte*)"wolfpkcs11-test";
@@ -133,13 +133,16 @@ static CK_RV pkcs11_init(const char* library, CK_SESSION_HANDLE* session)
 
 static void pkcs11_final(CK_SESSION_HANDLE session)
 {
-    if (userPinLen != 0)
-        funcList->C_Logout(session);
-    funcList->C_CloseSession(session);
-
-    funcList->C_Finalize(NULL);
+    if (funcList != NULL) {
+        if (userPinLen != 0)
+            funcList->C_Logout(session);
+        funcList->C_CloseSession(session);
+        funcList->C_Finalize(NULL);
+    }
 #ifndef HAVE_PKCS11_STATIC
-    dlclose(dlib);
+    if (dlib != NULL) {
+        dlclose(dlib);
+    }
 #endif
 }
 
