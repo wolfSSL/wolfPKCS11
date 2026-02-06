@@ -24,6 +24,8 @@
 
 #ifdef WOLFPKCS11_USER_SETTINGS
     #include "user_settings.h"
+#else
+    #include <wolfpkcs11/options.h>
 #endif
 
 #include <wolfpkcs11/visibility.h>
@@ -73,8 +75,18 @@ extern "C" {
 
 #define CK_NULL_PTR     NULL_PTR
 
-#define CRYPTOKI_VERSION_MAJOR		          3
-#define CRYPTOKI_VERSION_MINOR		          2
+#ifndef CRYPTOKI_VERSION_MAJOR
+    #if defined(WOLFPKCS11_PKCS11_V3_2)
+        #define CRYPTOKI_VERSION_MAJOR 3
+        #define CRYPTOKI_VERSION_MINOR 2
+    #elif defined(WOLFPKCS11_PKCS11_V3_0)
+        #define CRYPTOKI_VERSION_MAJOR 3
+        #define CRYPTOKI_VERSION_MINOR 0
+    #else
+        #define CRYPTOKI_VERSION_MAJOR 2
+        #define CRYPTOKI_VERSION_MINOR 40
+    #endif
+#endif
 
 
 #define CK_INVALID_HANDLE                     0UL
