@@ -26,9 +26,10 @@
 #include <wolfpkcs11/pkcs11.h>
 #include <wolfpkcs11/internal.h>
 
-/* Function list table. */
+/* Function list table for PKCS#11 v2.40 */
 static CK_FUNCTION_LIST wolfpkcs11FunctionList = {
-    { 2, 40 },
+    /* Version: Major, Minor */
+    {           2,     40 },
 
     C_Initialize,
     C_Finalize,
@@ -104,8 +105,10 @@ static CK_FUNCTION_LIST wolfpkcs11FunctionList = {
 
 CK_RV C_GetInfoV3_0(CK_INFO_PTR pInfo);
 
+/* Function list table for PKCS#11 v3.0 */
 static CK_FUNCTION_LIST_3_0 wolfpkcs11FunctionList_3_0 = {
-    { 3, 0 },
+    /* Version: Major, Minor */
+    {           3,     0 },
 
     C_Initialize,
     C_Finalize,
@@ -207,8 +210,10 @@ static CK_FUNCTION_LIST_3_0 wolfpkcs11FunctionList_3_0 = {
 
 CK_RV C_GetInfoV3_2(CK_INFO_PTR pInfo);
 
+/* Function list table for PKCS#11 v3.2 */
 static CK_FUNCTION_LIST_3_2 wolfpkcs11FunctionList_3_2 = {
-    { CRYPTOKI_VERSION_MAJOR, CRYPTOKI_VERSION_MINOR },
+    /* Version: Major, Minor */
+    {           3,     2 },
 
     C_Initialize,
     C_Finalize,
