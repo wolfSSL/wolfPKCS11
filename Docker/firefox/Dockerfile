@@ -1,6 +1,6 @@
 FROM ubuntu:24.04
 
-ARG WOLFSSL_TAG=v5.8.0-stable
+ARG WOLFSSL_TAG=v5.8.4-stable
 ARG FIREFOX_TAG=78c455227887c316bdde0be2738e31fcecb4547d
 # geckodriver should be updated when updating the Firefox version
 ARG GECKODRIVER_TAG=v0.36.0

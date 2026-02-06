@@ -481,6 +481,30 @@ then
     AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_DEFAULT_TOKEN_PATH=\"$WOLFPKCS11_DEFAULT_TOKEN_PATH\""
 fi
 
+AC_ARG_ENABLE([pkcs11v30],
+    [AS_HELP_STRING([--enable-pkcs11v30],[Enable PKCS#11 Version 3.0 support (default: enabled)])],
+    [ ENABLED_PKCS11V3_0=$enableval ],
+    [ ENABLED_PKCS11V3_0=yes ]
+    )
+if test "$ENABLED_PKCS11V3_0" = "yes"
+then
+    AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_PKCS11_V3_0"
+fi
+
+AC_ARG_ENABLE([pkcs11v32],
+    [AS_HELP_STRING([--enable-pkcs11v32],[Enable PKCS#11 Version 3.2 support (default: disabled)])],
+    [ ENABLED_PKCS11V3_2=$enableval ],
+    [ ENABLED_PKCS11V3_2=no ]
+    )
+if test "$ENABLED_PKCS11V3_2" = "yes"
+then
+    if test "$ENABLED_PKCS11V3_0" = "no"
+    then
+        ENABLED_PKCS11V3_0=yes
+    fi
+    AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_PKCS11_V3_2"
+fi
+
 
 AM_CONDITIONAL([BUILD_STATIC],[test "x$enable_shared" = "xno"])
 
@@ -657,3 +681,5 @@ echo "   * ECC:                        $ENABLED_ECC"
 echo "   * HKDF:                       $ENABLED_HKDF"
 echo "   * NSS modifications:          $ENABLED_NSS"
 echo "   * Default token path:         $WOLFPKCS11_DEFAULT_TOKEN_PATH"
+echo "   * PKCS#11 Version 3.0:        $ENABLED_PKCS11V3_0"
+echo "   * PKCS#11 Version 3.2:        $ENABLED_PKCS11V3_2"

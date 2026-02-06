@@ -7,7 +7,7 @@ on:
     branches: [ '*' ]
 
 env:
-  WOLFSSL_VERSION: v5.8.0-stable
+  WOLFSSL_VERSION: v5.8.4-stable
 
 jobs:
   alpine-architecture-tests:

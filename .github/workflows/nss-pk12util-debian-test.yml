@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 env:
-  WOLFSSL_VERSION: v5.8.0-stable
+  WOLFSSL_VERSION: v5.8.2-stable # make deb seems to be broken with v5.8.4-stable
   NSS_DEBUG_PKCS11_MODULE: wolfPKCS11
   NSPR_LOG_MODULES: all:5
   NSPR_LOG_FILE: /logs/nss.log

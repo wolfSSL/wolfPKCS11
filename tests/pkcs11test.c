@@ -5353,7 +5353,7 @@ static CK_RV test_recover(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyRecover(session, sig, sigSz, data, &dataSz);
-#ifndef NO_RSA
+#if !defined(NO_RSA) && defined(WC_RSA_DIRECT)
         CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
                                               "Verify Recover not initialized");
 #else
@@ -5365,7 +5365,7 @@ static CK_RV test_recover(void* args)
     return ret;
 }
 
-#ifndef NO_RSA
+#if !defined(NO_RSA) && defined(WC_RSA_DIRECT)
 static CK_RV rsa_verify_recover(CK_SESSION_HANDLE session,
                                 CK_MECHANISM_TYPE mech_type)
 {
@@ -15793,7 +15793,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_digest_fail),
     PKCS11TEST_FUNC_SESS_DECL(test_sign_verify),
     PKCS11TEST_FUNC_SESS_DECL(test_recover),
-#ifndef NO_RSA
+#if !defined(NO_RSA) && defined(WC_RSA_DIRECT)
     PKCS11TEST_FUNC_SESS_DECL(test_verify_recover_pkcs),
     PKCS11TEST_FUNC_SESS_DECL(test_verify_recover_x509),
 #endif
