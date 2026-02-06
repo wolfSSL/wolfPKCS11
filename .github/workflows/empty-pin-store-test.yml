@@ -1,0 +1,95 @@
+name: Empty PIN Token Store Test
+
+# This test verifies that encrypted objects can be stored and loaded correctly
+# when using an empty user PIN. It tests whether HashPIN needs to be called
+# before decoding objects in the empty PIN case.
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+
+env:
+  WOLFSSL_VERSION: master
+
+jobs:
+  empty-pin-store-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout wolfPKCS11
+      uses: actions/checkout@v4
+      with:
+        submodules: true
+
+    - name: Cache wolfSSL
+      id: cache-wolfssl
+      uses: actions/cache@v4
+      with:
+        path: wolfssl
+        key: wolfssl-${{ env.WOLFSSL_VERSION }}-empty-pin-test
+
+    - name: Checkout wolfSSL
+      if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+      uses: actions/checkout@v4
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+        ref: ${{ env.WOLFSSL_VERSION }}
+
+    - name: Build wolfSSL
+      if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+      working-directory: ./wolfssl
+      run: |
+        ./autogen.sh
+        ./configure --enable-cryptocb --enable-aescfb --enable-rsapss \
+            --enable-keygen --enable-pwdbased --enable-scrypt \
+            C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
+        make
+
+    - name: Install wolfSSL
+      working-directory: ./wolfssl
+      run: |
+        sudo make install
+        sudo ldconfig
+
+    - name: Build wolfPKCS11
+      run: |
+        ./autogen.sh
+        # Enable empty PIN by setting WP11_MIN_PIN_LEN=0
+        ./configure --enable-debug C_EXTRA_FLAGS="-DWP11_MIN_PIN_LEN=0"
+        make
+
+    - name: Create test store directory
+      run: mkdir -p store/empty_pin_test
+
+    - name: Run empty PIN store test
+      run: |
+        echo "=== Running Empty PIN Token Store Test ==="
+        echo "This test verifies that encrypted objects can be stored and"
+        echo "loaded correctly when using an empty user PIN."
+        echo ""
+        ./tests/empty_pin_store_test
+        echo ""
+        echo "=== Test completed ==="
+
+    - name: Show store directory contents on failure
+      if: failure()
+      run: |
+        echo "=== Store directory contents ==="
+        ls -la store/empty_pin_test/ 2>/dev/null || echo "Directory not found or empty"
+        echo ""
+        echo "=== Hexdump of token file (if exists) ==="
+        hexdump -C store/empty_pin_test/wp11_token_0000000000000001 2>/dev/null | head -100 || echo "Token file not found"
+
+    - name: Upload failure logs
+      if: failure() || cancelled()
+      uses: actions/upload-artifact@v4
+      with:
+        name: empty-pin-store-test-logs
+        path: |
+          test-suite.log
+          config.log
+          store/
+        retention-days: 5

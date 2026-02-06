@@ -39,7 +39,7 @@ jobs:
       uses: actions/cache@v4
       with:
         path: wolfssl
-        key: wolfssl-${{ env.WOLFSSL_VERSION }}
+        key: wolfssl-${{ env.WOLFSSL_VERSION }}-tpm-cryptocb
 
     # Setup wolfssl (required dependency)
     - name: Checkout wolfssl
