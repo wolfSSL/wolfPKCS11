@@ -5167,6 +5167,8 @@ static int wp11_token_write_seed_dhuk(void* storage, WP11_Token* token)
     Aes aes;
     byte iv[WP11_SEED_DHUK_IV_SZ];
     byte wrappedSeed[PIN_SEED_SZ];
+    /* Single buffer: big-endian word32 length + IV + encrypted seed */
+    byte buf[sizeof(word32) + WP11_SEED_DHUK_IV_SZ + PIN_SEED_SZ];
 
     WP11_Lock_LockRW(&token->rngLock);
     ret = wc_RNG_GenerateBlock(&token->rng, iv, sizeof(iv));
@@ -5189,12 +5191,17 @@ static int wp11_token_write_seed_dhuk(void* storage, WP11_Token* token)
     if (ret != 0)
         return ret;
 
-    ret = wp11_storage_write_word32(storage, WP11_SEED_WRAPPED_SZ);
-    if (ret == 0)
-        ret = wp11_storage_write_fixed_array(storage, iv, WP11_SEED_DHUK_IV_SZ);
-    if (ret == 0)
-        ret = wp11_storage_write(storage, wrappedSeed, (int)WP11_SEED_WRAPPED_SZ);
-    return ret;
+    /* Assemble length (big-endian) + IV + encrypted seed into one buffer */
+    buf[0] = (byte)(WP11_SEED_WRAPPED_SZ >> 24);
+    buf[1] = (byte)(WP11_SEED_WRAPPED_SZ >> 16);
+    buf[2] = (byte)(WP11_SEED_WRAPPED_SZ >> 8);
+    buf[3] = (byte)(WP11_SEED_WRAPPED_SZ >> 0);
+    XMEMCPY(buf + sizeof(word32), iv, WP11_SEED_DHUK_IV_SZ);
+    XMEMCPY(buf + sizeof(word32) + WP11_SEED_DHUK_IV_SZ, wrappedSeed,
+             PIN_SEED_SZ);
+
+    /* Single write to avoid multiple flash size-update round-trips */
+    return wp11_storage_write(storage, buf, (int)sizeof(buf));
 }
 
 static int wp11_token_read_seed_dhuk(void* storage, WP11_Token* token)
@@ -5204,18 +5211,31 @@ static int wp11_token_read_seed_dhuk(void* storage, WP11_Token* token)
     byte iv[WP11_SEED_DHUK_IV_SZ];
     word32 wrappedLen;
     byte wrappedSeed[PIN_SEED_SZ];
+    /* Single buffer: big-endian word32 length + IV + encrypted seed */
+    byte buf[sizeof(word32) + WP11_SEED_DHUK_IV_SZ + PIN_SEED_SZ];
 
-    ret = wp11_storage_read_word32(storage, &wrappedLen);
+    /* Single read to mirror the single write */
+    ret = wp11_storage_read(storage, buf, (int)sizeof(buf));
     if (ret != 0)
         return ret;
-    if (wrappedLen != WP11_SEED_WRAPPED_SZ)
-        return BUFFER_E;
-    ret = wp11_storage_read_fixed_array(storage, iv, WP11_SEED_DHUK_IV_SZ);
-    if (ret != 0)
-        return ret;
-    ret = wp11_storage_read(storage, wrappedSeed, PIN_SEED_SZ);
-    if (ret != 0)
-        return ret;
+
+    /* Parse length (big-endian word32) from the first 4 bytes */
+    wrappedLen = ((word32)buf[0] << 24) |
+                 ((word32)buf[1] << 16) |
+                 ((word32)buf[2] <<  8) |
+                 ((word32)buf[3] <<  0);
+    if (wrappedLen != WP11_SEED_WRAPPED_SZ) {
+        return BUFFER_E; /* This size check will likely catch if an older style
+                          * token was read without DHUK wrapping. Treating it
+                          * as a failure rather than continuing on to avoid
+                          * using an unwrapped key when it is assumed that the
+                          * seed was wrapped. */
+    }
+
+    /* Extract IV and encrypted seed from the buffer */
+    XMEMCPY(iv, buf + sizeof(word32), WP11_SEED_DHUK_IV_SZ);
+    XMEMCPY(wrappedSeed, buf + sizeof(word32) + WP11_SEED_DHUK_IV_SZ,
+             PIN_SEED_SZ);
 
     ret = wc_AesInit(&aes, NULL, WOLFSSL_STM32U5_DHUK_DEVID);
     if (ret != 0)
