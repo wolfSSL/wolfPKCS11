@@ -62,7 +62,7 @@ extern int uart_printf(const char* format, ...);
     #define WOLFPKCS11_DLL_SLOT 1
 #endif
 
-static CK_FUNCTION_LIST* funcList;
+static CK_FUNCTION_LIST* funcList = NULL;
 static CK_SLOT_ID slot = WOLFPKCS11_DLL_SLOT;
 
 static byte* userDefaultPin = (byte*)"wolfpkcs11-test";
@@ -98,11 +98,12 @@ static CK_RV pkcs11_init(CK_SESSION_HANDLE* session, char* userPin,
 
 static void pkcs11_final(CK_SESSION_HANDLE session)
 {
-    if (userPinLen != 0)
-        funcList->C_Logout(session);
-    funcList->C_CloseSession(session);
-
-    funcList->C_Finalize(NULL);
+    if (funcList != NULL) {
+        if (userPinLen != 0)
+            funcList->C_Logout(session);
+        funcList->C_CloseSession(session);
+        funcList->C_Finalize(NULL);
+    }
 }
 
 

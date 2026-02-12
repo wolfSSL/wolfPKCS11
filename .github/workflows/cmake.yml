@@ -1,0 +1,70 @@
+name: wolfPKCS11 CMake Build Tests
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  build:
+    if: github.repository_owner == 'wolfssl'
+    runs-on: ubuntu-latest
+
+    steps:
+# install cmake
+    - name: Install cmake
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake
+
+# pull wolfPKCS11
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+
+# setup wolfSSL
+    - uses: actions/checkout@master
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+    - name: Build wolfssl
+      working-directory: ./wolfssl
+      run: |
+        mkdir build
+        cd build
+        cmake -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON -DWOLFSSL_INSTALL=yes -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/install" \
+            -DWOLFSSL_AES:BOOL=yes -DWOLFSSL_AESCBC:BOOL=yes -DWOLFSSL_AESCCM:BOOL=yes -DWOLFSSL_AESCFB:BOOL=yes \
+            -DWOLFSSL_AESECB:BOOL=yes -DWOLFSSL_AESCTR:BOOL=yes -DWOLFSSL_AESGCM:STRING=yes -DWOLFSSL_AESKEYWRAP:BOOL=yes \
+            -DWOLFSSL_AESOFB:BOOL=yes -DWOLFSSL_AESCTS:BOOL=yes -DWOLFSSL_AESSIV:BOOL=yes -DWOLFSSL_ALIGN_DATA:BOOL=yes \
+            -DWOLFSSL_ASM:BOOL=yes -DWOLFSSL_DH:STRING=yes -DWOLFSSL_DH_DEFAULT_PARAMS:BOOL=yes -DWOLFSSL_ECC:STRING=yes \
+            -DWOLFSSL_EXPERIMENTAL:BOOL=yes -DWOLFSSL_HARDEN:BOOL=yes -DWOLFSSL_HASH_DRBG:BOOL=yes \
+            -DWOLFSSL_HKDF:BOOL=yes -DWOLFSSL_INLINE:BOOL=yes -DWOLFSSL_INSTALL:BOOL=yes -DWOLFSSL_KEYGEN:BOOL=yes \
+            -DWOLFSSL_MD5:BOOL=yes -DWOLFSSL_RNG:BOOL=yes -DWOLFSSL_RSA:BOOL=yes -DWOLFSSL_RSA_PSS:BOOL=yes \
+            -DWOLFSSL_SHA:BOOL=yes -DWOLFSSL_SHA224:BOOL=yes -DWOLFSSL_SHA3:STRING=yes -DWOLFSSL_SHA384:BOOL=yes \
+            -DWOLFSSL_SHA512:BOOL=yes -DWOLFSSL_SHAKE128:STRING=yes -DWOLFSSL_SHAKE256:STRING=yes \
+            -DWOLFSSL_SP_MATH_ALL:BOOL=yes -DWOLFSSL_X86_64_BUILD_ASM:BOOL=yes -DWOLFSSL_MLKEM=1 \
+            -DWOLFSSL_LMS=1 -DWOLFSSL_LMSSHA256192=1 -DWOLFSSL_DILITHIUM:BOOL=yes -DWOLFSSL_PUBLIC_MP:BOOL=yes \
+            -DWOLFSSL_WC_RSA_DIRECT:BOOL=yes -DCMAKE_BUILD_TYPE=Release \
+            ..
+        cmake --build .
+        cmake --install .
+        cd ..
+        rm -rf build
+
+# setup wolfPKCS11
+    - name: Build wolfPKCS11
+      run: |
+        mkdir build
+        cd build
+        cmake -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/install" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DWOLFPKCS11_INSTALL:BOOL=yes -DWOLFPKCS11_DEBUG:BOOL=yes \
+            -DWOLFPKCS11_AESKEYWRAP:BOOL=yes -DWOLFPKCS11_AESCTR:BOOL=yes -DWOLFPKCS11_AESCCM:BOOL=yes \
+            -DWOLFPKCS11_AESECB:BOOL=yes -DWOLFPKCS11_AESCTS:BOOL=yes -DWOLFPKCS11_AESCMAC:BOOL=yes \
+            -DWOLFPKCS11_PBKDF2:BOOL=yes -DCMAKE_MODULE_PATH="$GITHUB_WORKSPACE/install/${CMAKE_INSTALL_LIBDIR}" \
+            ..
+        cmake --build .
+        ctest -j $(nproc)
+        cmake --install .
+        cd ..
+        rm -rf build

@@ -66,7 +66,7 @@
 #ifndef HAVE_PKCS11_STATIC
 static void* dlib;
 #endif
-static CK_FUNCTION_LIST* funcList;
+static CK_FUNCTION_LIST* funcList = NULL;
 static CK_SLOT_ID slot = WOLFPKCS11_DLL_SLOT;
 
 
@@ -121,9 +121,13 @@ static CK_RV pkcs11_init(const char* library)
  */
 static void pkcs11_final(void)
 {
-    funcList->C_Finalize(NULL);
+    if (funcList != NULL) {
+        funcList->C_Finalize(NULL);
+    }
 #ifndef HAVE_PKCS11_STATIC
-    dlclose(dlib);
+    if (dlib != NULL) {
+        dlclose(dlib);
+    }
 #endif
 }
 

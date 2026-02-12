@@ -1,0 +1,15 @@
+@PACKAGE_INIT@
+
+if("@HAVE_PTHREAD@" STREQUAL "1")
+  set(_wolfpkcs11_needs_threads TRUE)
+endif()
+
+include(CMakeFindDependencyMacro)
+find_dependency(wolfssl)
+if (_wolfpkcs11_needs_threads)
+  find_dependency(Threads)
+endif()
+
+include ( "${CMAKE_CURRENT_LIST_DIR}/wolfpkcs11Targets.cmake" )
+
+unset(_wolfpkcs11_needs_threads)
