@@ -90,7 +90,18 @@ jobs:
     uses: ./.github/workflows/build-workflow.yml
     with:
       config: --enable-pbkdf2 --with-pbkdf2-iterations=1000
-
+  pkcs11v3only:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --enable-pkcs11v30 --disable-pkcs11v32
+  pkcs11v32:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --enable-pkcs11v32
+  pkcs11v32-static:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --enable-pkcs11v32 --disable-shared
   debug:
     uses: ./.github/workflows/build-workflow.yml
     with:

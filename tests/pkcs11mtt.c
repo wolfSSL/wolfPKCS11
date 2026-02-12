@@ -1523,7 +1523,7 @@ static CK_RV test_recover(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyRecover(session, sig, sigSz, data, &dataSz);
-#ifndef NO_RSA
+#if !defined(NO_RSA) && defined(WC_RSA_DIRECT)
         CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
                                               "Verify Recover not initialized");
 #else

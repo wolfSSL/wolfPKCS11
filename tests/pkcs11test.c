@@ -1888,6 +1888,20 @@ static CK_RV test_pkcs5_pbkdf2_key_gen(void* args)
     }
 #endif
 
+#ifdef WOLFSSL_SHA384
+    if (ret == CKR_OK) {
+        CK_PKCS5_PBKD2_PARAMS sha384Params = pbkdf2Params;
+        CK_MECHANISM sha384Mech = mechanism;
+        sha384Params.prf = CKP_PKCS5_PBKD2_HMAC_SHA384;
+        sha384Mech.pParameter = &sha384Params;
+
+        ret = funcList->C_GenerateKey(session, &sha384Mech, keyTemplate,
+                                      sizeof(keyTemplate)/sizeof(CK_ATTRIBUTE), &key);
+        CHECK_CKR(ret, "PKCS#5 PBKDF2 with SHA384");
+    }
+#endif
+
+#ifdef WOLFSSL_SHA512
     if (ret == CKR_OK) {
         CK_PKCS5_PBKD2_PARAMS sha512Params = pbkdf2Params;
         CK_MECHANISM sha512Mech = mechanism;
@@ -1898,6 +1912,7 @@ static CK_RV test_pkcs5_pbkdf2_key_gen(void* args)
                                       sizeof(keyTemplate)/sizeof(CK_ATTRIBUTE), &key);
         CHECK_CKR(ret, "PKCS#5 PBKDF2 with SHA512");
     }
+#endif
 
     return ret;
 }
@@ -2460,7 +2475,7 @@ static CK_RV test_copy_object_deep_copy(void* args)
     return ret;
 }
 
-#if (!defined(NO_RSA) && !defined(WOLFPKCS11_TPM))
+#if (!defined(NO_RSA) && !defined(WOLFPKCS11_TPM) && defined(WOLFSSL_KEY_GEN))
 static CK_RV test_copy_object_rsa_key(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -5353,7 +5368,7 @@ static CK_RV test_recover(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyRecover(session, sig, sigSz, data, &dataSz);
-#ifndef NO_RSA
+#if !defined(NO_RSA) && defined(WC_RSA_DIRECT)
         CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
                                               "Verify Recover not initialized");
 #else
@@ -5365,7 +5380,7 @@ static CK_RV test_recover(void* args)
     return ret;
 }
 
-#ifndef NO_RSA
+#if !defined(NO_RSA) && defined(WC_RSA_DIRECT)
 static CK_RV rsa_verify_recover(CK_SESSION_HANDLE session,
                                 CK_MECHANISM_TYPE mech_type)
 {
@@ -15762,7 +15777,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_op_state_fail),
     PKCS11TEST_FUNC_SESS_DECL(test_object),
     PKCS11TEST_FUNC_SESS_DECL(test_copy_object_deep_copy),
-#if (!defined(NO_RSA) && !defined(WOLFPKCS11_TPM))
+#if (!defined(NO_RSA) && !defined(WOLFPKCS11_TPM) && defined(WOLFSSL_KEY_GEN))
     PKCS11TEST_FUNC_SESS_DECL(test_copy_object_rsa_key),
 #endif
 #ifdef HAVE_ECC
@@ -15793,7 +15808,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_digest_fail),
     PKCS11TEST_FUNC_SESS_DECL(test_sign_verify),
     PKCS11TEST_FUNC_SESS_DECL(test_recover),
-#ifndef NO_RSA
+#if !defined(NO_RSA) && defined(WC_RSA_DIRECT)
     PKCS11TEST_FUNC_SESS_DECL(test_verify_recover_pkcs),
     PKCS11TEST_FUNC_SESS_DECL(test_verify_recover_x509),
 #endif

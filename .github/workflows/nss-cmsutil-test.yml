@@ -10,7 +10,7 @@ on:
 env:
   NSPR_VERSION: NSPR_4_36_BRANCH
   NSS_VERSION: NSS_3_112_RTM
-  WOLFSSL_VERSION: v5.8.0-stable
+  WOLFSSL_VERSION: v5.8.4-stable
   NSS_DEBUG_PKCS11_MODULE: wolfPKCS11
   NSPR_LOG_MODULES: all:5
   NSPR_LOG_FILE: /logs/nss.log
@@ -238,10 +238,10 @@ jobs:
 
         # Step 2: Generate user certificate and key pair directly in NSS
         echo "   Generating user certificate and key pair in NSS database..."
-        
+
         # Create random seed for key generation
         dd if=/dev/urandom of=noise.bin bs=20 count=1 2>/dev/null
-        
+
         # Generate certificate request with key pair (creates DER format)
         printf '\n\n' | certutil -R -s "CN=Test User,O=NSS Test,C=US" \
         -o user-req.der -d /nss-test/nssdb -z noise.bin

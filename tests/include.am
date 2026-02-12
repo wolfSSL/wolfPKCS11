@@ -41,6 +41,11 @@ noinst_PROGRAMS += tests/empty_pin_store_test
 tests_empty_pin_store_test_SOURCES = tests/empty_pin_store_test.c
 tests_empty_pin_store_test_LDADD =
 
+check_PROGRAMS += tests/pkcs11v3test
+noinst_PROGRAMS += tests/pkcs11v3test
+tests_pkcs11v3test_SOURCES = tests/pkcs11v3test.c
+tests_pkcs11v3test_LDADD =
+
 if BUILD_STATIC
 tests_pkcs11test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11mtt_LDADD  += src/libwolfpkcs11.la
@@ -50,6 +55,7 @@ tests_rsa_session_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_debug_test_LDADD += src/libwolfpkcs11.la
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
 tests_empty_pin_store_test_LDADD += src/libwolfpkcs11.la
+tests_pkcs11v3test_LDADD += src/libwolfpkcs11.la
 else
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
 tests_empty_pin_store_test_LDADD += src/libwolfpkcs11.la

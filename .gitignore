@@ -38,6 +38,7 @@ tests/object_id_uniqueness_test
 tests/rsa_session_persistence_test
 tests/debug_test
 tests/token_path_test
+tests/pkcs11v3test
 examples/add_aes_key
 examples/add_hmac_key
 examples/add_rsa_key
@@ -49,9 +50,12 @@ examples/obj_list
 examples/slot_info
 examples/token_info
 store/wp11*
+store/debug
+store/empty_pin_test
 store/object
 store/pkcs11mtt
 store/pkcs11test
+store/pkcs11v3test
 store/rsa
 store/str
 test/*
@@ -61,6 +65,8 @@ test/*
 .project
 .settings
 add_cert_file
+.cache
+compile_commands.json
 
 tests/wp11_rsakey_*
 tests/wp11_dhkey_*
@@ -70,6 +76,7 @@ tests/wp11_token_*
 tests/wp11_obj_*
 tests/token_path_test
 tests/rsa_session_persistence_test
+tests/empty_pin_store_test
 
 IDE/VisualStudio/.vs
 
