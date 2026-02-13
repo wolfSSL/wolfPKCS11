@@ -983,7 +983,8 @@ static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
                 FIELD_SIZE(WP11_Token, userLastFailedLogin) +
                 FIELD_SIZE(WP11_Token, userFailLoginTimeout) +
 #ifdef WOLFSSL_STM32U5_DHUK
-                (sizeof(word32) + 16 + PIN_SEED_SZ) + /* length + IV + encrypted seed */
+                (sizeof(word32) + 16 + PIN_SEED_SZ) + /* length + IV +
+                                                       * encrypted seed */
 #else
                 FIELD_SIZE(WP11_Token, seed) +
 #endif
