@@ -982,7 +982,12 @@ static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
                 FIELD_SIZE(WP11_Token, userFailedLogin) +
                 FIELD_SIZE(WP11_Token, userLastFailedLogin) +
                 FIELD_SIZE(WP11_Token, userFailLoginTimeout) +
+#ifdef WOLFSSL_STM32U5_DHUK
+                (sizeof(word32) + 16 + PIN_SEED_SZ) + /* length + IV +
+                                                       * encrypted seed */
+#else
                 FIELD_SIZE(WP11_Token, seed) +
+#endif
                 FIELD_SIZE(WP11_Token, objCnt) +
                 FIELD_SIZE(WP11_Token, tokenFlags) +
                 FIELD_SIZE(WP11_Token, nextObjId) +
@@ -5150,6 +5155,137 @@ static void wp11_Token_Final(WP11_Token* token)
 static int HashPIN(char* pin, int pinLen, byte* seed, int seedLen, byte* hash,
                    int hashLen, WP11_Slot* slot);
 
+#ifdef WOLFSSL_STM32U5_DHUK
+/* DHUK seed storage: IV (16) + AES-CBC ciphertext of seed (16).
+ * Uses AES-CBC with DHUK so the decrypted seed is placed in token->seed
+ * for use by AES-GCM and other operations. */
+#define WP11_SEED_DHUK_IV_SZ  16
+#define WP11_SEED_WRAPPED_SZ  (WP11_SEED_DHUK_IV_SZ + PIN_SEED_SZ)
+
+#if defined(HAVE_AES_CBC)
+/* Dummy key for wc_AesSetKey when using DHUK; hardware uses DHUK. */
+static const byte wp11_dhuk_dummy_key[32] = {0};
+
+static int wp11_token_write_seed_dhuk(void* storage, WP11_Token* token)
+{
+    int ret;
+    Aes aes;
+    byte iv[WP11_SEED_DHUK_IV_SZ];
+    byte wrappedSeed[PIN_SEED_SZ];
+    /* Single buffer: big-endian word32 length + IV + encrypted seed */
+    byte buf[sizeof(word32) + WP11_SEED_DHUK_IV_SZ + PIN_SEED_SZ];
+
+    WP11_Lock_LockRW(&token->rngLock);
+    ret = wc_RNG_GenerateBlock(&token->rng, iv, sizeof(iv));
+    WP11_Lock_UnlockRW(&token->rngLock);
+    if (ret != 0)
+        return ret;
+
+    ret = wc_AesInit(&aes, NULL, WOLFSSL_STM32U5_DHUK_DEVID);
+    if (ret != 0)
+        return ret;
+    ret = wc_AesSetKey(&aes, wp11_dhuk_dummy_key, sizeof(wp11_dhuk_dummy_key),
+                       iv, AES_ENCRYPTION);
+    if (ret != 0) {
+        wc_AesFree(&aes);
+        return ret;
+    }
+    ret = wc_AesCbcEncrypt(&aes, wrappedSeed, (const byte*)token->seed,
+                            (word32)PIN_SEED_SZ);
+    wc_AesFree(&aes);
+    if (ret != 0)
+        return ret;
+
+    /* Assemble length (big-endian) + IV + encrypted seed into one buffer */
+    buf[0] = (byte)(WP11_SEED_WRAPPED_SZ >> 24);
+    buf[1] = (byte)(WP11_SEED_WRAPPED_SZ >> 16);
+    buf[2] = (byte)(WP11_SEED_WRAPPED_SZ >> 8);
+    buf[3] = (byte)(WP11_SEED_WRAPPED_SZ >> 0);
+    XMEMCPY(buf + sizeof(word32), iv, WP11_SEED_DHUK_IV_SZ);
+    XMEMCPY(buf + sizeof(word32) + WP11_SEED_DHUK_IV_SZ, wrappedSeed,
+             PIN_SEED_SZ);
+
+    /* Single write to avoid multiple flash size-update round-trips */
+    return wp11_storage_write(storage, buf, (int)sizeof(buf));
+}
+
+static int wp11_token_read_seed_dhuk(void* storage, WP11_Token* token)
+{
+    int ret;
+    Aes aes;
+    byte iv[WP11_SEED_DHUK_IV_SZ];
+    word32 wrappedLen;
+    byte wrappedSeed[PIN_SEED_SZ];
+    /* Single buffer: big-endian word32 length + IV + encrypted seed */
+    byte buf[sizeof(word32) + WP11_SEED_DHUK_IV_SZ + PIN_SEED_SZ];
+
+    /* Single read to mirror the single write */
+    ret = wp11_storage_read(storage, buf, (int)sizeof(buf));
+    if (ret != 0)
+        return ret;
+
+    /* Parse length (big-endian word32) from the first 4 bytes */
+    wrappedLen = ((word32)buf[0] << 24) |
+                 ((word32)buf[1] << 16) |
+                 ((word32)buf[2] <<  8) |
+                 ((word32)buf[3] <<  0);
+    if (wrappedLen != WP11_SEED_WRAPPED_SZ) {
+        return BUFFER_E; /* This size check will likely catch if an older style
+                          * token was read without DHUK wrapping. Treating it
+                          * as a failure rather than continuing on to avoid
+                          * using an unwrapped key when it is assumed that the
+                          * seed was wrapped. */
+    }
+
+    /* Extract IV and encrypted seed from the buffer */
+    XMEMCPY(iv, buf + sizeof(word32), WP11_SEED_DHUK_IV_SZ);
+    XMEMCPY(wrappedSeed, buf + sizeof(word32) + WP11_SEED_DHUK_IV_SZ,
+             PIN_SEED_SZ);
+
+    ret = wc_AesInit(&aes, NULL, WOLFSSL_STM32U5_DHUK_DEVID);
+    if (ret != 0)
+        return ret;
+    ret = wc_AesSetKey(&aes, wp11_dhuk_dummy_key, sizeof(wp11_dhuk_dummy_key),
+                       iv, AES_DECRYPTION);
+    if (ret != 0) {
+        wc_AesFree(&aes);
+        return ret;
+    }
+    ret = wc_AesCbcDecrypt(&aes, token->seed, wrappedSeed, PIN_SEED_SZ);
+    wc_AesFree(&aes);
+    return ret;
+}
+#else /* !HAVE_AES_CBC */
+#error WOLFSSL_STM32U5_DHUK token seed storage requires HAVE_AES_CBC
+#endif /* HAVE_AES_CBC */
+#endif /* WOLFSSL_STM32U5_DHUK */
+
+/**
+ * Read token seed from storage.
+ */
+static int wp11_token_read_seed(void* storage, WP11_Token* token)
+{
+#ifdef WOLFSSL_STM32U5_DHUK
+    return wp11_token_read_seed_dhuk(storage, token);
+#else
+    return wp11_storage_read_fixed_array(storage, token->seed,
+                                         sizeof(token->seed));
+#endif
+}
+
+/**
+ * Write token seed to storage.
+ */
+static int wp11_token_write_seed(void* storage, WP11_Token* token)
+{
+#ifdef WOLFSSL_STM32U5_DHUK
+    return wp11_token_write_seed_dhuk(storage, token);
+#else
+    return wp11_storage_write_fixed_array(storage, token->seed,
+                                          sizeof(token->seed));
+#endif
+}
+
 /**
  * Load a token from storage.
  *
@@ -5225,9 +5361,8 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
             ret = wp11_storage_read_time(storage, &token->userFailLoginTimeout);
         }
         if (ret == 0) {
-            /* Read seed used to calculate key. (16) */
-            ret = wp11_storage_read_fixed_array(storage, token->seed,
-                                                sizeof(token->seed));
+            /* Read seed used to calculate key. */
+            ret = wp11_token_read_seed(storage, token);
         }
         if (ret == 0) {
             /* Read count of object on token. (4) */
@@ -5426,9 +5561,8 @@ static int wp11_Token_Store(WP11_Token* token, int tokenId)
             ret = wp11_storage_write_time(storage, token->userFailLoginTimeout);
         }
         if (ret == 0) {
-            /* Write seed used to calculate key. (16) */
-            ret = wp11_storage_write_fixed_array(storage, token->seed,
-                                                 sizeof(token->seed));
+            /* Write seed used to calculate key. */
+            ret = wp11_token_write_seed(storage, token);
         }
 
         if (ret == 0) {
@@ -6304,6 +6438,7 @@ int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen)
     if (ret == 0) {
         ret = WP11_Slot_CheckUserPin(slot, pin, pinLen);
     #ifndef WOLFPKCS11_NO_STORE
+        /* Re-create token->key from PIN + token->seed (HashPIN) on load. */
         if (ret == 0) {
             ret = HashPIN(pin, pinLen, token->seed, sizeof(token->seed),
                 token->key, sizeof(token->key), slot);
