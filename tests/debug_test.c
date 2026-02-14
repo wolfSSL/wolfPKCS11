@@ -40,6 +40,18 @@
 #endif
 #include <wolfpkcs11/pkcs11.h>
 
+/* DLL Location and slot */
+#ifndef WOLFPKCS11_DLL_FILENAME
+    #ifdef __MACH__
+    #define WOLFPKCS11_DLL_FILENAME "./src/.libs/libwolfpkcs11.dylib"
+    #else
+    #define WOLFPKCS11_DLL_FILENAME "./src/.libs/libwolfpkcs11.so"
+    #endif
+#endif
+#ifndef WOLFPKCS11_DLL_SLOT
+    #define WOLFPKCS11_DLL_SLOT 1
+#endif
+
 #ifdef DEBUG_WOLFPKCS11
 #ifndef HAVE_PKCS11_STATIC
 #include <dlfcn.h>
@@ -162,7 +174,7 @@ int main(void)
 #else
     CK_RV rv;
     int debug_found;
-    const char* library = "./src/.libs/libwolfpkcs11.so";
+    const char* library = WOLFPKCS11_DLL_FILENAME;
 
 #ifndef WOLFPKCS11_NO_ENV
     if (!XGETENV("WOLFPKCS11_TOKEN_PATH")) {

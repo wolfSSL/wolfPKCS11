@@ -2,6 +2,7 @@
 language.settings.xml
 wolfpkcs11/config.h.in
 autom4te.cache
+build
 build-aux
 aclocal.m4
 libtool.m4
@@ -31,6 +32,9 @@ wolfpkcs11-config
 *.trs
 coverage
 coverage.info
+cmake/wolfpkcs11Config.cmake
+cmake/wolfpkcs11Targets.cmake
+cmake/wolfpkcs11ConfigVersion.cmake
 tests/pkcs11test
 tests/pkcs11mtt
 tests/pkcs11str
@@ -58,6 +62,7 @@ store/pkcs11test
 store/pkcs11v3test
 store/rsa
 store/str
+store/debug
 test/*
 *.gcda
 *.gcno

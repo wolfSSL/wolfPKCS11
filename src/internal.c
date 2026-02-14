@@ -1421,7 +1421,7 @@ int wolfPKCS11_Store_Remove(int type, CK_ULONG id1, CK_ULONG id2)
 #else
     /* remove file */
     ret = wolfPKCS11_Store_Name(type, id1, id2, name, sizeof(name));
-    if (ret == 0) {
+    if (ret > 0 && ret < (int)sizeof(name)) {
         ret = remove(name);
         if (ret < 0) {
             printf("remove(%s) failed: %d\n", name, ret);
@@ -2694,6 +2694,11 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                     }
 
                     XFREE(derBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+
+                    /* Free destination key on failure */
+                    if (ret != 0) {
+                        wc_FreeRsaKey(dest->data.rsaKey);
+                    }
                     break;
                 }
 #endif

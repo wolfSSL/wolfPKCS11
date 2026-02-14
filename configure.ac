@@ -129,6 +129,10 @@ AS_IF([ test "x$ENABLED_SINGLETHREADED" = "xno" ],[
 
 AS_IF([ test "x$ENABLED_SINGLETHREADED" = "xyes" ],[ AM_CFLAGS="-DSINGLE_THREADED $AM_CFLAGS" ])
 
+HAVE_PTHREAD=0
+AS_IF([test "x$ax_pthread_ok" = "xyes"],[HAVE_PTHREAD=1])
+AC_SUBST([HAVE_PTHREAD])
+
 
 AC_ARG_ENABLE([rsa],
     [AS_HELP_STRING([--enable-rsa],[Enable RSA (default: enabled)])],
@@ -471,6 +475,13 @@ fi
 
 AM_CONDITIONAL([ENABLED_NSS],[test "x$enable_nss" = "xyes"])
 
+AC_ARG_ENABLE([cmake-install],
+    [AS_HELP_STRING([--enable-cmake-install],[Enable installation of CMake config/targets files (default: enabled)])],
+    [ ENABLED_CMAKE_INSTALL=$enableval ],
+    [ ENABLED_CMAKE_INSTALL=yes ])
+
+AM_CONDITIONAL([ENABLED_CMAKE_INSTALL],[test "x$ENABLED_CMAKE_INSTALL" = "xyes"])
+
 AC_ARG_WITH([default-token-path],
     [AS_HELP_STRING([--with-default-token-path=PATH],[Set default token storage path (default: none)])],
     [ WOLFPKCS11_DEFAULT_TOKEN_PATH=$withval ],
@@ -522,10 +533,23 @@ AC_SUBST([AM_CPPFLAGS])
 AC_SUBST([AM_CFLAGS])
 AC_SUBST([AM_LDFLAGS])
 
+PACKAGE_INIT='get_filename_component(PACKAGE_PREFIX_DIR "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)'
+AC_SUBST([PACKAGE_INIT])
+
+WOLFPKCS11_LIBDIR_ABS=`eval echo "$libdir"`
+WOLFPKCS11_INCLUDEDIR_ABS=`eval echo "$includedir"`
+AC_SUBST([WOLFPKCS11_LIBDIR_ABS])
+AC_SUBST([WOLFPKCS11_INCLUDEDIR_ABS])
+
 # FINAL
 AC_CONFIG_FILES([Makefile])
 AC_CONFIG_FILES([wolfpkcs11/version.h])
 AC_CONFIG_FILES([wolfpkcs11/options.h])
+AS_IF([test "x$ENABLED_CMAKE_INSTALL" = "xyes"],[
+  AC_CONFIG_FILES([cmake/wolfpkcs11Config.cmake:cmake/wolfpkcs11Config.cmake.in])
+  AC_CONFIG_FILES([cmake/wolfpkcs11Targets.cmake:cmake/wolfpkcs11Targets.cmake.in])
+  AC_CONFIG_FILES([cmake/wolfpkcs11ConfigVersion.cmake:cmake/wolfpkcs11ConfigVersion.cmake.in])
+])
 
 AX_CREATE_GENERIC_CONFIG
 AX_AM_JOBSERVER([yes])
