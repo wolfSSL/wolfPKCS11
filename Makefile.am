@@ -44,6 +44,9 @@ include doc/include.am
 EXTRA_DIST+= README.md
 EXTRA_DIST+= LICENSE
 EXTRA_DIST+= autogen.sh
+EXTRA_DIST+= cmake/wolfpkcs11Config.cmake.in
+EXTRA_DIST+= cmake/wolfpkcs11Targets.cmake.in
+EXTRA_DIST+= cmake/wolfpkcs11ConfigVersion.cmake.in
 
 TEST_EXTENSIONS=.test
 TESTS += $(check_PROGRAMS)
@@ -54,6 +57,18 @@ TESTS += $(check_SCRIPTS)
 test: check
 
 DISTCLEANFILES+= wolfpkcs11-config
+CLEANFILES += \
+	cmake/wolfpkcs11Config.cmake \
+	cmake/wolfpkcs11Targets.cmake \
+	cmake/wolfpkcs11ConfigVersion.cmake
+
+if ENABLED_CMAKE_INSTALL
+cmakepkgconfigdir = $(libdir)/cmake/wolfpkcs11
+cmakepkgconfig_DATA = \
+	cmake/wolfpkcs11Config.cmake \
+	cmake/wolfpkcs11Targets.cmake \
+	cmake/wolfpkcs11ConfigVersion.cmake
+endif
 
 
 maintainer-clean-local:
@@ -104,4 +119,3 @@ merge-clean:
 	@find ./ | $(GREP) \.OTHER | xargs rm -f
 	@find ./ | $(GREP) \.BASE | xargs rm -f
 	@find ./ | $(GREP) \~$$ | xargs rm -f
-

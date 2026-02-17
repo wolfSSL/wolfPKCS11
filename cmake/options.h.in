@@ -1,0 +1,114 @@
+/* options.h.in
+ *
+ * Copyright (C) 2006-2024 wolfSSL Inc.
+ *
+ * This file is part of wolfPKCS11.
+ *
+ * wolfPKCS11 is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * wolfPKCS11 is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
+ */
+
+
+/* default blank options for autoconf */
+
+#ifndef WOLFPKCS11_OPTIONS_H
+#define WOLFPKCS11_OPTIONS_H
+
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#ifndef WOLFSSL_OPTIONS_IGNORE_SYS
+#undef _GNU_SOURCE
+#cmakedefine _GNU_SOURCE
+#undef _POSIX_THREADS
+#cmakedefine _POSIX_THREADS
+#endif
+#undef DEBUG_WOLFPKCS11
+#cmakedefine DEBUG_WOLFPKCS11
+#undef SINGLE_THREADED
+#cmakedefine SINGLE_THREADED
+#undef NO_RSA
+#cmakedefine NO_RSA
+#undef WC_NO_RSA_OAEP
+#cmakedefine WC_NO_RSA_OAEP
+#undef WC_RSA_PSS
+#cmakedefine WC_RSA_PSS
+#undef WOLFSSL_KEY_GEN
+#cmakedefine WOLFSSL_KEY_GEN
+#undef HAVE_ECC
+#cmakedefine HAVE_ECC
+#undef NO_DH
+#cmakedefine NO_DH
+#undef NO_AES
+#cmakedefine NO_AES
+#undef HAVE_AES_KEY_WRAP
+#cmakedefine HAVE_AES_KEY_WRAP
+#undef NO_AES_CBC
+#cmakedefine NO_AES_CBC
+#undef HAVE_AESGCM
+#cmakedefine HAVE_AESGCM
+#undef HAVE_AESCTR
+#cmakedefine HAVE_AESCTR
+#undef HAVE_AESCCM
+#cmakedefine HAVE_AESCCM
+#undef HAVE_AESECB
+#cmakedefine HAVE_AESECB
+#undef HAVE_AESCTS
+#cmakedefine HAVE_AESCTS
+#undef HAVE_AESCMAC
+#cmakedefine HAVE_AESCMAC
+#undef NO_HMAC
+#cmakedefine NO_HMAC
+#undef WOLFPKCS11_HKDF
+#cmakedefine WOLFPKCS11_HKDF
+#undef WOLFPKCS11_PBKDF2
+#cmakedefine WOLFPKCS11_PBKDF2
+#undef PBKDF2_ITERATIONS
+#cmakedefine PBKDF2_ITERATIONS @PBKDF2_ITERATIONS@
+#undef NO_MD5
+#cmakedefine NO_MD5
+#undef NO_SHA
+#cmakedefine NO_SHA
+#undef WOLFSSL_SHA224
+#cmakedefine WOLFSSL_SHA224
+#undef NO_SHA256
+#cmakedefine NO_SHA256
+#undef WOLFSSL_SHA384
+#cmakedefine WOLFSSL_SHA384
+#undef WOLFSSL_SHA512
+#cmakedefine WOLFSSL_SHA512
+#undef WOLFSSL_SHA3
+#cmakedefine WOLFSSL_SHA3
+#undef WOLFPKCS11_TPM
+#cmakedefine WOLFPKCS11_TPM
+#undef WOLFPKCS11_NSS
+#cmakedefine WOLFPKCS11_NSS
+#undef WOLFPKCS11_DEFAULT_TOKEN_PATH
+#cmakedefine WOLFPKCS11_DEFAULT_TOKEN_PATH @WOLFPKCS11_DEFAULT_TOKEN_PATH@
+#undef HAVE_PKCS11_STATIC
+#cmakedefine HAVE_PKCS11_STATIC
+#undef WOLFPKCS11_PKCS11_V3_0
+#cmakedefine WOLFPKCS11_PKCS11_V3_0
+#undef WOLFPKCS11_PKCS11_V3_2
+#cmakedefine WOLFPKCS11_PKCS11_V3_2
+
+#ifdef __cplusplus
+}
+#endif
+
+
+#endif /* WOLFPKCS11_OPTIONS_H */
+

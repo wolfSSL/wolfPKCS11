@@ -94,6 +94,118 @@ NOTE: In the code, we have embedded a test key. This must be changed for
       production environments!! Please contact Analog Devices to learn how to
       obtain and use a production key.
 
+## Building with CMake
+
+wolfPKCS11 uses out-of-source builds. It also requires CMake 3.16 or later (3.22+ recommended).
+
+### Building wolfSSL with CMake
+
+wolfPKCS11 depends on wolfSSL. Build and install wolfSSL with CMake first:
+
+```sh
+git clone https://github.com/wolfSSL/wolfssl.git
+cd wolfssl
+mkdir build && cd build
+cmake -DCMAKE_INSTALL_PREFIX=/usr/local \
+    -DWOLFSSL_AES=yes -DWOLFSSL_AESCBC=yes -DWOLFSSL_AESCCM=yes \
+    -DWOLFSSL_AESCFB=yes -DWOLFSSL_AESECB=yes -DWOLFSSL_AESCTR=yes \
+    -DWOLFSSL_AESGCM=yes -DWOLFSSL_AESKEYWRAP=yes -DWOLFSSL_AESOFB=yes \
+    -DWOLFSSL_AESCTS=yes -DWOLFSSL_DH=yes -DWOLFSSL_DH_DEFAULT_PARAMS=yes \
+    -DWOLFSSL_ECC=yes -DWOLFSSL_HKDF=yes -DWOLFSSL_KEYGEN=yes \
+    -DWOLFSSL_MD5=yes -DWOLFSSL_RSA=yes -DWOLFSSL_RSA_PSS=yes \
+    -DWOLFSSL_SHA=yes -DWOLFSSL_SHA224=yes -DWOLFSSL_SHA3=yes \
+    -DWOLFSSL_SHA384=yes -DWOLFSSL_SHA512=yes \
+    -DWOLFSSL_SP_MATH_ALL=yes -DWOLFSSL_PUBLIC_MP=yes \
+    -DWOLFSSL_WC_RSA_DIRECT=yes -DCMAKE_BUILD_TYPE=Release \
+    ..
+cmake --build .
+sudo cmake --install .
+```
+
+To install to a non-system directory instead, set
+`-DCMAKE_INSTALL_PREFIX=<path>` and pass the same path as
+`-DCMAKE_PREFIX_PATH=<path>` when building wolfPKCS11 below.
+
+### Building wolfPKCS11 with CMake
+
+```sh
+cd wolfPKCS11
+mkdir build && cd build
+cmake ..
+cmake --build .
+ctest
+```
+
+To enable additional features, pass options during the configure step:
+
+```sh
+cmake -DWOLFPKCS11_DEBUG=yes \
+    -DWOLFPKCS11_AESKEYWRAP=yes \
+    -DWOLFPKCS11_AESCTR=yes \
+    -DWOLFPKCS11_AESCCM=yes \
+    -DWOLFPKCS11_AESECB=yes \
+    -DWOLFPKCS11_AESCTS=yes \
+    -DWOLFPKCS11_AESCMAC=yes \
+    -DWOLFPKCS11_PBKDF2=yes \
+    ..
+cmake --build .
+ctest
+```
+
+If wolfSSL was installed to a non-system prefix, point CMake to it:
+
+```sh
+cmake -DCMAKE_PREFIX_PATH=/path/to/wolfssl/install ..
+```
+
+### CMake Build Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `WOLFPKCS11_DEBUG` | `no` | Enable debug logging |
+| `WOLFPKCS11_SINGLE_THREADED` | `no` | Single-threaded mode |
+| `WOLFPKCS11_RSA` | `yes` | RSA support |
+| `WOLFPKCS11_OAEP` | `yes` | RSA OAEP support |
+| `WOLFPKCS11_RSA_PSS` | `yes` | RSA-PSS support |
+| `WOLFPKCS11_KEYGEN` | `yes` | Key generation support |
+| `WOLFPKCS11_ECC` | `yes` | ECC support |
+| `WOLFPKCS11_DH` | `yes` | DH support |
+| `WOLFPKCS11_AES` | `yes` | AES support |
+| `WOLFPKCS11_AESCBC` | `yes` | AES-CBC support |
+| `WOLFPKCS11_AESGCM` | `yes` | AES-GCM support |
+| `WOLFPKCS11_AESKEYWRAP` | `no` | AES Key Wrap support |
+| `WOLFPKCS11_AESCTR` | `no` | AES-CTR support |
+| `WOLFPKCS11_AESCCM` | `no` | AES-CCM support |
+| `WOLFPKCS11_AESECB` | `no` | AES-ECB support |
+| `WOLFPKCS11_AESCTS` | `no` | AES-CTS support |
+| `WOLFPKCS11_AESCMAC` | `no` | AES-CMAC support |
+| `WOLFPKCS11_HMAC` | `yes` | HMAC support |
+| `WOLFPKCS11_HKDF` | `yes` | HKDF support |
+| `WOLFPKCS11_PBKDF2` | `no` | PBKDF2 for PIN hashing |
+| `PBKDF2_ITERATIONS` | `600000` | PBKDF2 iteration count (used when `WOLFPKCS11_PBKDF2=yes`) |
+| `WOLFPKCS11_MD5` | `yes` | MD5 support |
+| `WOLFPKCS11_SHA1` | `yes` | SHA-1 support |
+| `WOLFPKCS11_SHA224` | `yes` | SHA-224 support |
+| `WOLFPKCS11_SHA256` | `yes` | SHA-256 support |
+| `WOLFPKCS11_SHA384` | `yes` | SHA-384 support |
+| `WOLFPKCS11_SHA512` | `yes` | SHA-512 support |
+| `WOLFPKCS11_SHA3` | `yes` | SHA-3 support |
+| `WOLFPKCS11_TPM` | `no` | wolfTPM keystore support |
+| `WOLFPKCS11_NSS` | `no` | NSS-specific modifications |
+| `WOLFPKCS11_PKCS11_V3_0` | `yes` | PKCS#11 v3.0 support |
+| `WOLFPKCS11_PKCS11_V3_2` | `no` | PKCS#11 v3.2 support |
+| `WOLFPKCS11_EXAMPLES` | `yes` | Build examples |
+| `WOLFPKCS11_TESTS` | `yes` | Build and register tests |
+| `WOLFPKCS11_COVERAGE` | `no` | Code coverage support |
+| `WOLFPKCS11_INSTALL` | `yes` | Create install targets |
+| `WOLFPKCS11_DEFAULT_TOKEN_PATH` | `""` | Default token storage path compiled into library |
+| `WOLFPKCS11_BUILD_OUT_OF_TREE` | `yes` | Generate build artifacts outside source tree |
+| `BUILD_SHARED_LIBS` | `ON` | Build shared (`ON`) or static (`OFF`) library |
+
+Note: wolfSSL must be built with the corresponding features enabled for the
+options above to work (e.g. enabling `WOLFPKCS11_AESCCM` requires wolfSSL built
+with `-DWOLFSSL_AESCCM=yes`).
+
 ## Environment variables
 
 ### WOLFPKCS11_TOKEN_PATH
