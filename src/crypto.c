@@ -87,6 +87,16 @@ static CK_ATTRIBUTE_TYPE ecKeyParams[] = {
 #define EC_KEY_PARAMS_CNT     (sizeof(ecKeyParams)/sizeof(*ecKeyParams))
 #endif
 
+#ifdef WOLFPKCS11_MLDSA
+/* ML-DSA key data attributes. */
+static CK_ATTRIBUTE_TYPE mldsaKeyParams[] = {
+    CKA_PARAMETER_SET,
+    CKA_VALUE
+};
+/* Count of ML-DSA key data attributes. */
+#define MLDSA_KEY_PARAMS_CNT   (sizeof(mldsaKeyParams)/sizeof(*mldsaKeyParams))
+#endif
+
 #ifndef NO_DH
 /* DH key data attributes. */
 static CK_ATTRIBUTE_TYPE dhKeyParams[] = {
@@ -224,6 +234,7 @@ static AttributeType attrType[] = {
     { CKA_HASH_OF_ISSUER_PUBLIC_KEY,   ATTR_TYPE_DATA  },
     { CKA_NAME_HASH_ALGORITHM,         ATTR_TYPE_ULONG },
     { CKA_CHECK_VALUE,                 ATTR_TYPE_DATA  },
+    { CKA_PARAMETER_SET,               ATTR_TYPE_ULONG },
 #ifdef WOLFPKCS11_NSS
     { CKA_CERT_SHA1_HASH,              ATTR_TYPE_DATA  },
     { CKA_CERT_MD5_HASH,               ATTR_TYPE_DATA  },
@@ -455,6 +466,14 @@ static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
             wrap = CK_FALSE;
             sign = CK_TRUE;
             break;
+        case CKK_ML_DSA:
+            derive = CK_FALSE;
+            verify = CK_TRUE;
+            encrypt = CK_FALSE;
+            recover = CK_FALSE;
+            wrap = CK_FALSE;
+            sign = CK_TRUE;
+            break;
     }
 
     /* Defaults if not set */
@@ -602,6 +621,12 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
                 cnt = EC_KEY_PARAMS_CNT;
                 break;
         #endif
+        #ifdef WOLFPKCS11_MLDSA
+            case CKK_ML_DSA:
+                attrs = mldsaKeyParams;
+                cnt = MLDSA_KEY_PARAMS_CNT;
+                break;
+        #endif
         #ifndef NO_DH
             case CKK_DH:
                 attrs = dhKeyParams;
@@ -666,6 +691,11 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
                 case CKK_EC:
                     ret = WP11_Object_SetEcKey(obj, data, len);
                     break;
+        #endif
+        #ifdef WOLFPKCS11_MLDSA
+            case CKK_ML_DSA:
+                ret = WP11_Object_SetMldsaKey(obj, data, len);
+                break;
         #endif
         #ifndef NO_DH
                 case CKK_DH:
@@ -1028,7 +1058,7 @@ static CK_RV CreateObject(WP11_Session* session, CK_ATTRIBUTE_PTR pTemplate,
 
         if (objType != CKK_RSA && objType != CKK_EC && objType != CKK_DH &&
             objType != CKK_AES && objType != CKK_HKDF &&
-            objType != CKK_GENERIC_SECRET) {
+            objType != CKK_GENERIC_SECRET && objType != CKK_ML_DSA) {
             return CKR_ATTRIBUTE_VALUE_INVALID;
         }
     }
@@ -4163,6 +4193,46 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
                ((pMechanism->mechanism - CKM_ECDSA) << WP11_INIT_DIGEST_SHIFT));
             break;
 #endif
+#ifdef WOLFPKCS11_MLDSA
+        case CKM_ML_DSA:
+            if (type != CKK_ML_DSA)
+                return CKR_KEY_TYPE_INCONSISTENT;
+            if ((pMechanism->pParameter != NULL) &&
+                (pMechanism->ulParameterLen !=
+                                            sizeof(CK_SIGN_ADDITIONAL_CONTEXT)))
+                return CKR_MECHANISM_PARAM_INVALID;
+            if ((pMechanism->pParameter == NULL) &&
+                                              (pMechanism->ulParameterLen != 0))
+                return CKR_MECHANISM_PARAM_INVALID;
+
+            ret = WP11_Session_SetMldsaParams(session,
+                                              pMechanism->pParameter,
+                                              pMechanism->ulParameterLen);
+            if (ret != 0)
+                return CKR_MECHANISM_PARAM_INVALID;
+
+            init |= WP11_INIT_MLDSA_SIGN;
+            break;
+        case CKM_HASH_ML_DSA:
+            if (type != CKK_ML_DSA)
+                return CKR_KEY_TYPE_INCONSISTENT;
+            if ((pMechanism->pParameter != NULL) &&
+                (pMechanism->ulParameterLen !=
+                                       sizeof(CK_HASH_SIGN_ADDITIONAL_CONTEXT)))
+                return CKR_MECHANISM_PARAM_INVALID;
+            if ((pMechanism->pParameter == NULL) &&
+                                              (pMechanism->ulParameterLen != 0))
+                return CKR_MECHANISM_PARAM_INVALID;
+
+            ret = WP11_Session_SetMldsaParams(session,
+                                              pMechanism->pParameter,
+                                              pMechanism->ulParameterLen);
+            if (ret != 0)
+                return CKR_MECHANISM_PARAM_INVALID;
+
+            init |= WP11_INIT_MLDSA_SIGN;
+            break;
+#endif
 #ifndef NO_HMAC
     #ifndef NO_MD5
         case CKM_MD5_HMAC:
@@ -4524,6 +4594,25 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             *pulSignatureLen = sigLen;
             break;
         }
+#endif
+#ifdef WOLFPKCS11_MLDSA
+        case CKM_ML_DSA:
+        case CKM_HASH_ML_DSA:
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_MLDSA_SIGN))
+                return CKR_OPERATION_NOT_INITIALIZED;
+
+            sigLen = WP11_Mldsa_SigLen(obj);
+            if (pSignature == NULL) {
+                *pulSignatureLen = sigLen;
+                return CKR_OK;
+            }
+            if (sigLen > (word32)*pulSignatureLen)
+                return CKR_BUFFER_TOO_SMALL;
+
+            ret = WP11_Mldsa_Sign(pData, (int)ulDataLen, pSignature,
+                                  &sigLen, obj, session);
+            *pulSignatureLen = sigLen;
+            break;
 #endif
 #ifndef NO_HMAC
     #ifndef NO_MD5
@@ -5178,6 +5267,46 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
                ((pMechanism->mechanism - CKM_ECDSA) << WP11_INIT_DIGEST_SHIFT));
             break;
 #endif
+#ifdef WOLFPKCS11_MLDSA
+        case CKM_ML_DSA:
+            if (type != CKK_ML_DSA)
+                return CKR_KEY_TYPE_INCONSISTENT;
+            if ((pMechanism->pParameter != NULL) &&
+                (pMechanism->ulParameterLen !=
+                                            sizeof(CK_SIGN_ADDITIONAL_CONTEXT)))
+                return CKR_MECHANISM_PARAM_INVALID;
+            if ((pMechanism->pParameter == NULL) &&
+                                              (pMechanism->ulParameterLen != 0))
+                return CKR_MECHANISM_PARAM_INVALID;
+
+            ret = WP11_Session_SetMldsaParams(session,
+                                              pMechanism->pParameter,
+                                              pMechanism->ulParameterLen);
+            if (ret != 0)
+                return CKR_MECHANISM_PARAM_INVALID;
+
+            init |= WP11_INIT_MLDSA_VERIFY;
+            break;
+        case CKM_HASH_ML_DSA:
+            if (type != CKK_ML_DSA)
+                return CKR_KEY_TYPE_INCONSISTENT;
+            if ((pMechanism->pParameter != NULL) &&
+                (pMechanism->ulParameterLen !=
+                                       sizeof(CK_HASH_SIGN_ADDITIONAL_CONTEXT)))
+                return CKR_MECHANISM_PARAM_INVALID;
+            if ((pMechanism->pParameter == NULL) &&
+                                              (pMechanism->ulParameterLen != 0))
+                return CKR_MECHANISM_PARAM_INVALID;
+
+            ret = WP11_Session_SetMldsaParams(session,
+                                              pMechanism->pParameter,
+                                              pMechanism->ulParameterLen);
+            if (ret != 0)
+                return CKR_MECHANISM_PARAM_INVALID;
+
+            init |= WP11_INIT_MLDSA_VERIFY;
+            break;
+#endif
 #ifndef NO_HMAC
     #ifndef NO_MD5
         case CKM_MD5_HMAC:
@@ -5494,6 +5623,16 @@ CK_RV C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                                  (word32)dataSz, &stat, obj);
             break;
         }
+#endif
+#ifdef WOLFPKCS11_MLDSA
+        case CKM_ML_DSA:
+        case CKM_HASH_ML_DSA:
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_MLDSA_VERIFY))
+                return CKR_OPERATION_NOT_INITIALIZED;
+
+            ret = WP11_Mldsa_Verify(pSignature, (int)ulSignatureLen, pData,
+                                    (int)ulDataLen, &stat, obj, session);
+            break;
 #endif
 #ifndef NO_HMAC
     #ifndef NO_MD5
@@ -6728,7 +6867,7 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
             break;
 #endif
 #ifdef HAVE_ECC
-       case CKM_EC_KEY_PAIR_GEN:
+        case CKM_EC_KEY_PAIR_GEN:
             if (pMechanism->pParameter != NULL ||
                                               pMechanism->ulParameterLen != 0) {
                 return CKR_MECHANISM_PARAM_INVALID;
@@ -6745,6 +6884,29 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
             }
             if (rv == CKR_OK) {
                 ret = WP11_Ec_GenerateKeyPair(pub, priv,
+                                                 WP11_Session_GetSlot(session));
+                if (ret != 0)
+                    rv = CKR_FUNCTION_FAILED;
+            }
+            break;
+#endif
+#ifdef WOLFPKCS11_MLDSA
+        case CKM_ML_DSA_KEY_PAIR_GEN:
+            if (pMechanism->pParameter != NULL ||
+                                              pMechanism->ulParameterLen != 0) {
+                return CKR_MECHANISM_PARAM_INVALID;
+            }
+
+            *phPublicKey = *phPrivateKey = CK_INVALID_HANDLE;
+            rv = NewObject(session, CKK_ML_DSA, CKO_PUBLIC_KEY,
+                           pPublicKeyTemplate, ulPublicKeyAttributeCount, &pub);
+            if (rv == CKR_OK) {
+                rv = NewObject(session, CKK_ML_DSA, CKO_PRIVATE_KEY,
+                               pPrivateKeyTemplate, ulPrivateKeyAttributeCount,
+                               &priv);
+            }
+            if (rv == CKR_OK) {
+                ret = WP11_Mldsa_GenerateKeyPair(pub, priv,
                                                  WP11_Session_GetSlot(session));
                 if (ret != 0)
                     rv = CKR_FUNCTION_FAILED;

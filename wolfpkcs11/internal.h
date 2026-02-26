@@ -32,6 +32,10 @@
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/wolfcrypt/wc_encrypt.h>
 
+#ifdef WOLFPKCS11_MLDSA
+#include <wolfssl/wolfcrypt/dilithium.h>
+#endif
+
 #include <wolfpkcs11/pkcs11.h>
 #include <wolfpkcs11/version.h>
 
@@ -95,6 +99,9 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
     #endif
 #endif
 
+#if defined(WOLFPKCS11_MLDSA) && !defined(HAVE_DILITHIUM)
+#error Compiling with ML-DSA requires ML-DSA support in wolfSSL.
+#endif
 
 /* We need the next two for NSS, just for storage, even if we have no algos */
 #ifndef WC_MD5_DIGEST_SIZE
@@ -240,6 +247,8 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #define WP11_INIT_AES_KEYWRAP_DEC      0x0061
 #define WP11_INIT_TLS_MAC_SIGN         0x0070
 #define WP11_INIT_TLS_MAC_VERIFY       0x0071
+#define WP11_INIT_MLDSA_SIGN           0x0080
+#define WP11_INIT_MLDSA_VERIFY         0x0081
 /* Some operations can have an additional hashing step before the sign/verify */
 #define WP11_INIT_DIGEST_SHIFT         12
 #define WP11_INIT_DIGEST_MASK          (0xF << WP11_INIT_DIGEST_SHIFT)
@@ -378,6 +387,8 @@ WP11_LOCAL int WP11_Session_SetCcmParams(WP11_Session* session, int dataSz,
                               int macSz);
 WP11_LOCAL int WP11_Session_SetCtsParams(WP11_Session* session, unsigned char* iv,
                               int enc, WP11_Object* object);
+WP11_LOCAL int WP11_Session_SetMldsaParams(WP11_Session* session, CK_VOID_PTR params,
+                                           CK_ULONG paramsLen);
 WP11_LOCAL int WP11_Session_AddObject(WP11_Session* session, int onToken,
                            WP11_Object* object);
 WP11_LOCAL int WP11_Session_RemoveObject(WP11_Session* session, WP11_Object* object);
@@ -406,6 +417,8 @@ WP11_LOCAL int WP11_Object_SetRsaKey(WP11_Object* object, unsigned char** data,
                           CK_ULONG* len);
 WP11_LOCAL int WP11_Object_SetEcKey(WP11_Object* object, unsigned char** data,
                          CK_ULONG* len);
+WP11_LOCAL int WP11_Object_SetMldsaKey(WP11_Object* object, unsigned char** data,
+                                       CK_ULONG* len);
 WP11_LOCAL int WP11_Object_SetDhKey(WP11_Object* object, unsigned char** data,
                          CK_ULONG* len);
 WP11_LOCAL int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
@@ -492,6 +505,15 @@ WP11_LOCAL int WP11_Ec_Verify(unsigned char* sig, word32 sigLen, unsigned char* 
                    word32 hashLen, int* stat, WP11_Object* pub);
 WP11_LOCAL int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
                    word32* keyLen, WP11_Object* priv);
+
+WP11_LOCAL int WP11_Mldsa_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
+                                          WP11_Slot* slot);
+WP11_LOCAL int WP11_Mldsa_SigLen(WP11_Object* key);
+WP11_LOCAL int WP11_Mldsa_Sign(unsigned char* data, word32 dataLen, unsigned char* sig,
+                               word32* sigLen, WP11_Object* priv, WP11_Session* session);
+WP11_LOCAL int WP11_Mldsa_Verify(unsigned char* sig, word32 sigLen, unsigned char* data,
+                                 word32 dataLen, int* stat, WP11_Object* pub,
+                                 WP11_Session* session);
 
 WP11_LOCAL int WP11_Dh_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
                             WP11_Slot* slot);

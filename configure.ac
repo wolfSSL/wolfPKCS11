@@ -516,6 +516,27 @@ then
     AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_PKCS11_V3_2"
 fi
 
+AC_ARG_ENABLE([mldsa],
+    [AS_HELP_STRING([--enable-mldsa],[Enable ML-DSA (default: disabled)])],
+    [ ENABLED_MLDSA=$enableval ],
+    [ ENABLED_MLDSA=no ]
+    )
+
+if test "$ENABLED_SHA3" = "no"
+then
+    echo "ML-DSA requires SHA-3 support (disabled), disabling ML-DSA"
+    ENABLED_MLDSA=no
+fi
+
+if test "$ENABLED_MLDSA" = "yes"
+then
+    if test "$ENABLED_PKCS11V3_2" = "no"; then
+        ENABLED_PKCS11V3_2=yes
+        AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_PKCS11_V3_2"
+    fi
+    AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_MLDSA"
+fi
+
 
 AM_CONDITIONAL([BUILD_STATIC],[test "x$enable_shared" = "xno"])
 
@@ -703,6 +724,7 @@ echo "   * RSA-PSS:                    $ENABLED_RSAPSS"
 echo "   * DH:                         $ENABLED_DH"
 echo "   * ECC:                        $ENABLED_ECC"
 echo "   * HKDF:                       $ENABLED_HKDF"
+echo "   * ML-DSA:                     $ENABLED_MLDSA"
 echo "   * NSS modifications:          $ENABLED_NSS"
 echo "   * Default token path:         $WOLFPKCS11_DEFAULT_TOKEN_PATH"
 echo "   * PKCS#11 Version 3.0:        $ENABLED_PKCS11V3_0"

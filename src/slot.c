@@ -364,6 +364,11 @@ static CK_MECHANISM_TYPE mechanismList[] = {
 #endif
     CKM_ECDH1_DERIVE,
 #endif
+#ifdef WOLFPKCS11_MLDSA
+    CKM_ML_DSA_KEY_PAIR_GEN,
+    CKM_ML_DSA,
+    CKM_HASH_ML_DSA,
+#endif
 #ifdef WOLFPKCS11_HKDF
     CKM_HKDF_DERIVE,
     CKM_HKDF_DATA,
@@ -617,6 +622,20 @@ static CK_MECHANISM_INFO ecdsaSha512MechInfo = {
 /* Info on ECDH mechanism. */
 static CK_MECHANISM_INFO ecdhMechInfo = {
     256, 521, CKF_DERIVE
+};
+#endif
+#ifdef WOLFPKCS11_MLDSA
+/* Info on ML-DSA key generation mechanism. */
+static CK_MECHANISM_INFO mldsaKgMechInfo = {
+    ML_DSA_LEVEL2_PUB_KEY_SIZE,
+    ML_DSA_LEVEL5_PUB_KEY_SIZE,
+    CKF_GENERATE_KEY_PAIR
+};
+/* Info on ML-DSA mechanism (also for pre-hash variant). */
+static CK_MECHANISM_INFO mldsaMechInfo = {
+    ML_DSA_LEVEL2_PUB_KEY_SIZE,
+    ML_DSA_LEVEL5_PUB_KEY_SIZE,
+    CKF_SIGN | CKF_VERIFY
 };
 #endif
 #ifdef WOLFPKCS11_HKDF
@@ -956,6 +975,15 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
 #endif
         case CKM_ECDH1_DERIVE:
             XMEMCPY(pInfo, &ecdhMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
+#ifdef WOLFPKCS11_MLDSA
+        case CKM_ML_DSA_KEY_PAIR_GEN:
+            XMEMCPY(pInfo, &mldsaKgMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+        case CKM_HASH_ML_DSA:
+        case CKM_ML_DSA:
+            XMEMCPY(pInfo, &mldsaMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
 #endif
 #ifdef WOLFPKCS11_HKDF
