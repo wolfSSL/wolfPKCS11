@@ -8659,6 +8659,7 @@ int WP11_Object_SetMldsaKey(WP11_Object* object, unsigned char** data,
 {
     int ret;
     MlDsaKey* key;
+    int seedUsed = 0;
 
     if (object->onToken)
         WP11_Lock_LockRW(object->lock);
@@ -8667,19 +8668,71 @@ int WP11_Object_SetMldsaKey(WP11_Object* object, unsigned char** data,
     ret = wc_MlDsaKey_Init(key, NULL, object->devId);
 
     /* Set parameters */
-    if (ret == 0) {
+    if (ret == 0 && data[0] != NULL) {
         ret = mldsaSetParameters(key,
                                  (CK_ML_DSA_PARAMETER_SET_TYPE*)data[0],
                                  (int)len[0]);
     }
 
-    /* Set key data */
+    /* Set seed (only for private keys) */
     if (ret == 0 && data[1] != NULL) {
-        if (object->objClass == CKO_PUBLIC_KEY) {
-            ret = wc_MlDsaKey_ImportPubRaw(key, data[1], len[1]);
+        if (object->objClass != CKO_PRIVATE_KEY) {
+            ret = BAD_FUNC_ARG;
+        }
+        else if (len[1] != DILITHIUM_SEED_SZ) {
+            ret = BAD_FUNC_ARG;
         }
         else {
-            ret = wc_MlDsaKey_ImportPrivRaw(key, data[1], len[1]);
+            ret = wc_dilithium_make_key_from_seed(key, data[1]);
+            seedUsed = 1;
+        }
+    }
+
+    /* Set key data */
+    if (ret == 0 && data[2] != NULL) {
+        if (seedUsed == 0) {
+            /* Import given public/private key data */
+            if (object->objClass == CKO_PUBLIC_KEY) {
+                ret = wc_MlDsaKey_ImportPubRaw(key, data[2], len[2]);
+            }
+            else {
+                ret = wc_MlDsaKey_ImportPrivRaw(key, data[2], len[2]);
+            }
+        }
+        else {
+            if (object->objClass == CKO_PUBLIC_KEY) {
+                /* Seed is only allowed for private keys */
+                ret = BAD_FUNC_ARG;
+            }
+            else {
+                /* Check if the provided expanded private key is identical
+                 * to the one generated from the seed */
+                byte* expandedKey = NULL;
+                word32 expandedKeyLen = 0;
+
+                expandedKeyLen = wc_dilithium_size(key);
+                if (expandedKeyLen != len[2]) {
+                    ret = BAD_FUNC_ARG;
+                }
+                if (ret == 0) {
+                    expandedKey = XMALLOC(expandedKeyLen, NULL,
+                                          DYNAMIC_TYPE_TMP_BUFFER);
+                    if (expandedKey == NULL) {
+                        ret = MEMORY_E;
+                    }
+                }
+                if (ret == 0) {
+                    ret = wc_MlDsaKey_ExportPrivRaw(key, expandedKey,
+                                                    &expandedKeyLen);
+                    if (ret == 0) {
+                        if (WP11_ConstantCompare(expandedKey, data[2],
+                                                    (int)expandedKeyLen) != 1) {
+                            ret = BAD_FUNC_ARG;
+                        }
+                    }
+                    XFREE(expandedKey, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                }
+            }
         }
     }
 
@@ -9646,6 +9699,9 @@ static int MldsaObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
         case CKA_PARAMETER_SET:
             ret = GetMldsaParams(object->data.mldsaKey, data, len);
             break;
+        case CKA_SEED:
+            *len = CK_UNAVAILABLE_INFORMATION;
+            break;
         case CKA_VALUE:
             if (object->objClass == CKO_PRIVATE_KEY) {
                 if (noPriv)
@@ -10467,6 +10523,7 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             }
             break;
         case CKA_PARAMETER_SET:
+        case CKA_SEED:
 #ifdef WOLFPKCS11_MLDSA
             if (object->type != CKK_ML_DSA)
 #endif
@@ -11982,16 +12039,26 @@ int WP11_Mldsa_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
     byte* pubKey = NULL;
     word32 pubKeyLen = 0;
     WC_RNG rng;
+    byte level = 0;
 
     /* Both MlDsaKey object inside the pub and priv WP11_Objects are
-     * already initialized and set to a proper level within
-     * WP11_Object_SetMldsaKey() based on the given parameter set. */
+     * already initialized. The pub key is also set to a proper level
+     * within WP11_Object_SetMldsaKey() based on the given parameter
+     * set. */
+
+    /* Copy level from pub to priv */
+    ret = wc_MlDsaKey_GetParams(pub->data.mldsaKey, &level);
+    if (ret == 0) {
+        ret = wc_MlDsaKey_SetParams(priv->data.mldsaKey, level);
+    }
 
     /* Generate into the private key. */
-    ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
     if (ret == 0) {
-        ret = wc_MlDsaKey_MakeKey(priv->data.mldsaKey, &rng);
-        Rng_Free(&rng);
+        ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
+        if (ret == 0) {
+            ret = wc_MlDsaKey_MakeKey(priv->data.mldsaKey, &rng);
+            Rng_Free(&rng);
+        }
     }
     if (ret == 0) {
         ret = wc_MlDsaKey_GetPubLen(priv->data.mldsaKey, (int*)&pubKeyLen);
