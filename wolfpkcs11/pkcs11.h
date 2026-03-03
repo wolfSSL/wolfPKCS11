@@ -254,6 +254,7 @@ extern "C" {
 
 /* new post-quantum (general) */
 #define CKA_PARAMETER_SET                     0x0000061DUL
+#define CKA_SEED                              0x00000637UL
 
 #ifdef WOLFPKCS11_NSS
 #define CKA_NSS_EMAIL                         (CKA_NSS + 2)

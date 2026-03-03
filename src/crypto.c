@@ -91,6 +91,7 @@ static CK_ATTRIBUTE_TYPE ecKeyParams[] = {
 /* ML-DSA key data attributes. */
 static CK_ATTRIBUTE_TYPE mldsaKeyParams[] = {
     CKA_PARAMETER_SET,
+    CKA_SEED,
     CKA_VALUE
 };
 /* Count of ML-DSA key data attributes. */
@@ -235,6 +236,7 @@ static AttributeType attrType[] = {
     { CKA_NAME_HASH_ALGORITHM,         ATTR_TYPE_ULONG },
     { CKA_CHECK_VALUE,                 ATTR_TYPE_DATA  },
     { CKA_PARAMETER_SET,               ATTR_TYPE_ULONG },
+    { CKA_SEED,                        ATTR_TYPE_DATA  },
 #ifdef WOLFPKCS11_NSS
     { CKA_CERT_SHA1_HASH,              ATTR_TYPE_DATA  },
     { CKA_CERT_MD5_HASH,               ATTR_TYPE_DATA  },
