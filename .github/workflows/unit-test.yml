@@ -102,6 +102,10 @@ jobs:
     uses: ./.github/workflows/build-workflow.yml
     with:
       config: --enable-pkcs11v32 --disable-shared
+  mldsa:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --enable-mldsa
   debug:
     uses: ./.github/workflows/build-workflow.yml
     with:
