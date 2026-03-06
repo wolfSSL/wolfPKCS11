@@ -10626,8 +10626,12 @@ int WP11_Rsa_Verify(unsigned char* sig, word32 sigLen, unsigned char* in,
     if (pub->onToken)
         WP11_Lock_LockRO(pub->lock);
     decSigLen = wc_RsaEncryptSize(pub->data.rsaKey);
-    if (inLen > decSigLen)
+    if (inLen > decSigLen) {
+        if(pub->onToken)
+            WP11_Lock_UnlockRO(pub->lock);
         return BUFFER_E;
+    }
+
     ret = wc_RsaDirect(sig, sigLen, decSig, &decSigLen, pub->data.rsaKey,
                        RSA_PUBLIC_DECRYPT, NULL);
     if (pub->onToken)
