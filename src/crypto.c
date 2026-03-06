@@ -1,6 +1,6 @@
 /* crypto.c
  *
- * Copyright (C) 2006-2025 wolfSSL Inc.
+ * Copyright (C) 2006-2026 wolfSSL Inc.
  *
  * This file is part of wolfPKCS11.
  *
@@ -878,7 +878,7 @@ static CK_RV AddRSAPrivateKeyObject(WP11_Session* session,
         WP11_Object* pubKeyObject = NULL;
         CK_ATTRIBUTE* attr = NULL;
         CK_BBOOL trueVal = CK_TRUE;
-        CK_BBOOL falseVal = CK_TRUE;
+        CK_BBOOL falseVal = CK_FALSE;
 
         CK_OBJECT_HANDLE hPub;
 
