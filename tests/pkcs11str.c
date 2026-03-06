@@ -300,7 +300,11 @@ static CK_RV find_rsa_pub_key_label(CK_SESSION_HANDLE session,
     CK_ATTRIBUTE      pubKeyTmpl[] = {
         { CKA_CLASS,     &pubKeyClass,   sizeof(pubKeyClass)  },
         { CKA_KEY_TYPE,  &rsaKeyType,    sizeof(rsaKeyType)   },
+#ifndef WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL
         { CKA_LABEL,     (unsigned char*)"", 0 },
+#else
+        { CKA_LABEL,     (unsigned char*)"priv_label", 10 },
+#endif
     };
     CK_ULONG pubKeyTmplCnt = sizeof(pubKeyTmpl) / sizeof(*pubKeyTmpl);
     CK_ULONG count;
