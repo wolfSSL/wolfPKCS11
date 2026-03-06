@@ -195,7 +195,7 @@ else
 fi
 
 AC_ARG_ENABLE([dh],
-    [AS_HELP_STRING([--enable-dh],[Enable RSA (default: enabled)])],
+    [AS_HELP_STRING([--enable-dh],[Enable DH (default: enabled)])],
     [ ENABLED_DH=$enableval ],
     [ ENABLED_DH=yes ]
     )
