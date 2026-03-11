@@ -9169,7 +9169,10 @@ static int GetEcbCheckValue(WP11_Object* secret, byte* dataOut,
     if (!hash)
         return MEMORY_E;
     input = XMALLOC(key->len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-
+    if (input == NULL) {
+        XFREE(hash, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        return MEMORY_E;
+    }
     inLen = key->len;
     XMEMSET(input, 0, inLen);
 
