@@ -1821,7 +1821,7 @@ static CK_RV test_wrap_unwrap_key(void* args)
     ret = get_generic_key(session, wrappingKeyData, sizeof(wrappingKeyData),
                                                         CK_FALSE, &wrappingKey);
     if (ret == CKR_OK) {
-        ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE,
+        ret = get_generic_key(session, keyData, sizeof(keyData), CK_TRUE,
                                                                           &key);
     }
     if (ret == CKR_OK) {
