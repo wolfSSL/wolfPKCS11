@@ -5760,7 +5760,7 @@ static CK_RV test_aes_wrap_unwrap_key(void* args)
 
     ret = get_aes_128_key(session, NULL, 0, &wrappingKey);
     if (ret == CKR_OK) {
-        ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE,
+        ret = get_generic_key(session, keyData, sizeof(keyData), CK_TRUE,
                                                                           &key);
     }
     if (ret == CKR_OK) {
@@ -5804,7 +5804,7 @@ static CK_RV test_aes_wrap_unwrap_pad_key(void* args)
 
     ret = get_aes_128_key(session, NULL, 0, &wrappingKey);
     if (ret == CKR_OK) {
-        ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE,
+        ret = get_generic_key(session, keyData, sizeof(keyData), CK_TRUE,
                                                                           &key);
     }
     if (ret == CKR_OK) {
@@ -5854,7 +5854,7 @@ static CK_RV test_wrap_unwrap_key(void* args)
     ret = get_generic_key(session, wrappingKeyData, sizeof(wrappingKeyData),
                                                         CK_FALSE, &wrappingKey);
     if (ret == CKR_OK) {
-        ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE,
+        ret = get_generic_key(session, keyData, sizeof(keyData), CK_TRUE,
                                                                           &key);
     }
     if (ret == CKR_OK) {
@@ -5948,6 +5948,134 @@ static CK_RV test_wrap_unwrap_key(void* args)
     }
 
     funcList->C_DestroyObject(session, wrappingKey);
+    funcList->C_DestroyObject(session, key);
+
+    return ret;
+}
+
+/* Regression test: C_WrapKey on a key with CKA_EXTRACTABLE=CK_FALSE must
+ * return CKR_KEY_UNEXTRACTABLE (PKCS#11 spec 2.1.4). */
+static CK_RV test_wrap_key_unextractable(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_MECHANISM mech = { CKM_AES_KEY_WRAP, NULL, 0 };
+    CK_OBJECT_HANDLE wrappingKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    byte wrappedKey[40], keyData[16];
+    CK_ULONG wrappedKeyLen = sizeof(wrappedKey);
+    //CK_BBOOL ckfalse = CK_FALSE;
+    CK_ATTRIBUTE wrapKeyTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass,   sizeof(secretKeyClass)    },
+        { CKA_KEY_TYPE,    &aesKeyType,       sizeof(aesKeyType)        },
+        { CKA_VALUE,       aes_128_key,       sizeof(aes_128_key)       },
+        { CKA_WRAP,        &ckTrue,           sizeof(ckTrue)            },
+    };
+    CK_ULONG wrapKeyTmplCnt = sizeof(wrapKeyTmpl) / sizeof(*wrapKeyTmpl);
+    CK_ATTRIBUTE nonExtractTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass,   sizeof(secretKeyClass)    },
+        { CKA_KEY_TYPE,    &genericKeyType,   sizeof(genericKeyType)    },
+        { CKA_VALUE,       keyData,           sizeof(keyData)           },
+        { CKA_EXTRACTABLE, &ckFalse,          sizeof(CK_BBOOL)          },
+    };
+    CK_ULONG nonExtractTmplCnt = sizeof(nonExtractTmpl) /
+                                                        sizeof(*nonExtractTmpl);
+
+    memset(keyData, 0x42, sizeof(keyData));
+
+    ret = funcList->C_CreateObject(session, wrapKeyTmpl, wrapKeyTmplCnt,
+                                   &wrappingKey);
+    CHECK_CKR(ret, "Create AES wrapping key for unextractable test");
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, nonExtractTmpl,
+                                       nonExtractTmplCnt, &key);
+        CHECK_CKR(ret, "Create non-extractable key");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_WrapKey(session, &mech, wrappingKey, key,
+                                  wrappedKey, &wrappedKeyLen);
+        CHECK_CKR_FAIL(ret, CKR_KEY_UNEXTRACTABLE,
+                       "Wrap non-extractable key must return CKR_KEY_UNEXTRACTABLE");
+    }
+
+    funcList->C_DestroyObject(session, wrappingKey);
+    funcList->C_DestroyObject(session, key);
+
+    return ret;
+}
+
+/* Regression test: C_WrapKey on a key with CKA_WRAP_WITH_TRUSTED=CK_TRUE must
+ * return CKR_KEY_NOT_WRAPPABLE when the wrapping key lacks CKA_TRUSTED, and
+ * succeed when the wrapping key has CKA_TRUSTED=CK_TRUE. */
+static CK_RV test_wrap_key_wrap_with_trusted(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_MECHANISM mech = { CKM_AES_KEY_WRAP, NULL, 0 };
+    CK_OBJECT_HANDLE untrustedKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE trustedKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    byte wrappedKey[40], keyData[16];
+    CK_ULONG wrappedKeyLen;
+    CK_BBOOL ckTrusted = CK_TRUE;
+    CK_ATTRIBUTE untrustedWrapTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass,   sizeof(secretKeyClass)    },
+        { CKA_KEY_TYPE,    &aesKeyType,       sizeof(aesKeyType)        },
+        { CKA_VALUE,       aes_128_key,       sizeof(aes_128_key)       },
+        { CKA_WRAP,        &ckTrue,           sizeof(ckTrue)            },
+    };
+    CK_ULONG untrustedWrapTmplCnt = sizeof(untrustedWrapTmpl) /
+                                    sizeof(*untrustedWrapTmpl);
+    CK_ATTRIBUTE trustedWrapTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass,   sizeof(secretKeyClass)    },
+        { CKA_KEY_TYPE,    &aesKeyType,       sizeof(aesKeyType)        },
+        { CKA_VALUE,       aes_128_key,       sizeof(aes_128_key)       },
+        { CKA_WRAP,        &ckTrue,           sizeof(ckTrue)            },
+        { CKA_TRUSTED,     &ckTrusted,        sizeof(CK_BBOOL)          },
+    };
+    CK_ULONG trustedWrapTmplCnt = sizeof(trustedWrapTmpl) /
+                                  sizeof(*trustedWrapTmpl);
+    CK_ATTRIBUTE wwtTmpl[] = {
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
+        { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
+        { CKA_VALUE,             keyData,           sizeof(keyData)           },
+        { CKA_EXTRACTABLE,       &ckTrue,           sizeof(ckTrue)            },
+        { CKA_WRAP_WITH_TRUSTED, &ckTrusted,        sizeof(CK_BBOOL)          },
+    };
+    CK_ULONG wwtTmplCnt = sizeof(wwtTmpl) / sizeof(*wwtTmpl);
+
+    memset(keyData, 0x55, sizeof(keyData));
+
+    ret = funcList->C_CreateObject(session, untrustedWrapTmpl,
+                                   untrustedWrapTmplCnt, &untrustedKey);
+    CHECK_CKR(ret, "Create untrusted AES wrapping key");
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, trustedWrapTmpl,
+                                       trustedWrapTmplCnt, &trustedKey);
+        CHECK_CKR(ret, "Create trusted AES wrapping key");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, wwtTmpl, wwtTmplCnt, &key);
+        CHECK_CKR(ret, "Create CKA_WRAP_WITH_TRUSTED key");
+    }
+    /* Wrap with untrusted key must fail */
+    if (ret == CKR_OK) {
+        wrappedKeyLen = sizeof(wrappedKey);
+        ret = funcList->C_WrapKey(session, &mech, untrustedKey, key,
+                                  wrappedKey, &wrappedKeyLen);
+        CHECK_CKR_FAIL(ret, CKR_KEY_NOT_WRAPPABLE,
+                       "Wrap CKA_WRAP_WITH_TRUSTED key with untrusted wrapping key");
+    }
+    /* Wrap with trusted key must succeed */
+    if (ret == CKR_OK) {
+        wrappedKeyLen = sizeof(wrappedKey);
+        ret = funcList->C_WrapKey(session, &mech, trustedKey, key,
+                                  wrappedKey, &wrappedKeyLen);
+        CHECK_CKR(ret, "Wrap CKA_WRAP_WITH_TRUSTED key with trusted wrapping key");
+    }
+
+    funcList->C_DestroyObject(session, untrustedKey);
+    funcList->C_DestroyObject(session, trustedKey);
     funcList->C_DestroyObject(session, key);
 
     return ret;
@@ -6339,7 +6467,7 @@ static CK_RV test_rsa_wrap_unwrap_key(void* args)
 
     /* Create a secret key to wrap */
     if (ret == CKR_OK) {
-        ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE,
+        ret = get_generic_key(session, keyData, sizeof(keyData), CK_TRUE,
                               &key);
     }
 
@@ -6364,7 +6492,7 @@ static CK_RV test_rsa_wrap_unwrap_key(void* args)
 
     /* Test getting wrapped key length */
     if (ret == CKR_OK) {
-        ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE,
+        ret = get_generic_key(session, keyData, sizeof(keyData), CK_TRUE,
                               &key);
         if (ret == CKR_OK) {
             CK_ULONG testLen = 0;
@@ -6409,7 +6537,7 @@ static CK_RV test_rsa_wrap_unwrap_key(void* args)
     /* Test buffer too small error */
     if (ret == CKR_OK) {
         /* Create fresh key for this test since original was destroyed */
-        ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE,
+        ret = get_generic_key(session, keyData, sizeof(keyData), CK_TRUE,
                               &key);
         if (ret == CKR_OK) {
             CK_ULONG smallLen = 1;
@@ -15822,6 +15950,8 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_aes_wrap_unwrap_key),
     PKCS11TEST_FUNC_SESS_DECL(test_aes_wrap_unwrap_pad_key),
     PKCS11TEST_FUNC_SESS_DECL(test_wrap_unwrap_key),
+    PKCS11TEST_FUNC_SESS_DECL(test_wrap_key_unextractable),
+    PKCS11TEST_FUNC_SESS_DECL(test_wrap_key_wrap_with_trusted),
 #endif /* HAVE_AES_KEYWRAP && !WOLFPKCS11_NO_STORE */
 #if (!defined(NO_RSA) && !defined(WOLFPKCS11_NO_STORE))
     PKCS11TEST_FUNC_SESS_DECL(test_rsa_wrap_unwrap_key),
