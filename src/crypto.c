@@ -6838,7 +6838,15 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pMechanism or pulWrappedKeyLen is NULL.
- *          CKR_OBJECT_HANDLE_INVALID when a key object handle is not valid.
+ *          CKR_OBJECT_HANDLE_INVALID when hKey object handle is not valid.
+ *          CKR_WRAPPING_KEY_HANDLE_INVALID when hWrappingKey handle is not
+ *          valid.
+ *          CKR_KEY_UNEXTRACTABLE when hKey has CKA_EXTRACTABLE set to
+ *          CK_FALSE.
+ *          CKR_KEY_NOT_WRAPPABLE when hKey has CKA_WRAP_WITH_TRUSTED set to
+ *          CK_TRUE but hWrappingKey does not have CKA_TRUSTED set to CK_TRUE,
+ *          or when the key class/type combination is not supported for
+ *          wrapping.
  *          CKR_MECHANISM_INVALID when the mechanism is not supported with this
  *          type of operation.
  */
@@ -6858,6 +6866,8 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
     CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
     word32 serialSize = 0;
     byte* serialBuff = NULL;
+    CK_BBOOL getVar;
+    CK_ULONG getVarLen = sizeof(CK_BBOOL);
 
     WOLFPKCS11_ENTER("C_WrapKey");
     #ifdef DEBUG_WOLFPKCS11
@@ -6889,6 +6899,14 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
     if (ret != 0)
         return CKR_OBJECT_HANDLE_INVALID;
 
+    ret = WP11_Object_GetAttr(key, CKA_EXTRACTABLE, &getVar, &getVarLen);
+    if (ret != 0) {
+        return CKR_KEY_NOT_WRAPPABLE;
+    }
+    if (getVar == CK_FALSE) {
+        return CKR_KEY_UNEXTRACTABLE;
+    }
+
     ret = WP11_Object_Find(session, hWrappingKey, &wrappingKey);
     if (ret != 0)
         return CKR_WRAPPING_KEY_HANDLE_INVALID;
@@ -6896,6 +6914,20 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
     ret = CheckOpSupported(wrappingKey, CKA_WRAP);
     if (ret != CKR_OK)
         return ret;
+
+    /* key can only be wrapped by a trusted wrapping key */
+    getVarLen = sizeof(CK_BBOOL);
+    ret = WP11_Object_GetAttr(key, CKA_WRAP_WITH_TRUSTED,
+                                        &getVar, &getVarLen);
+    if (ret == CKR_OK && getVar == CK_TRUE) {
+        CK_BBOOL trustedVar = CK_FALSE;
+        CK_ULONG trustedVarLen = sizeof(CK_BBOOL);
+        ret = WP11_Object_GetAttr(wrappingKey, CKA_TRUSTED,
+                                        &trustedVar, &trustedVarLen);
+        if (ret != CKR_OK || trustedVar != CK_TRUE) {
+            return CKR_KEY_NOT_WRAPPABLE;
+        }
+    }
 
     wrapkeyType = WP11_Object_GetType(wrappingKey);
 
