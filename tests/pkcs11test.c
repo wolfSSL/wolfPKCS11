@@ -7634,6 +7634,46 @@ static CK_RV test_rsa_x_509_fail(void* args)
     return ret;
 }
 
+#ifdef WC_RSA_DIRECT
+/* Regression test for WP11_Rsa_Verify early return when inLen > key size. */
+static CK_RV test_rsa_x_509_verify_lock(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_MECHANISM mech;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    /* One byte larger than RSA-2048 key size (256 bytes) */
+    byte overData[2048/8 + 1];
+    byte sig[2048/8];
+    CK_ULONG sigSz = sizeof(sig);
+
+    mech.mechanism      = CKM_RSA_X_509;
+    mech.ulParameterLen = 0;
+    mech.pParameter     = NULL;
+
+    memset(overData, 0, sizeof(overData));
+    memset(sig, 0, sizeof(sig));
+
+    /* Token-based key so pub->onToken=1 and the lock path is active */
+    ret = get_rsa_pub_key(session, NULL, 0, &pub);
+
+    /* inLen > decSigLen triggers the early return path in WP11_Rsa_Verify */
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, pub);
+        CHECK_CKR(ret, "RSA X_509 Verify Init token key");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Verify(session, overData, sizeof(overData),
+                                 sig, sigSz);
+        CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED,
+                       "RSA X_509 Verify oversized data");
+    }
+
+    funcList->C_DestroyObject(session, pub);
+    return ret;
+}
+#endif /* WC_RSA_DIRECT */
+
 static CK_RV test_rsa_pkcs_encdec_fail(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -15846,6 +15886,9 @@ static TEST_FUNC testFunc[] = {
 #endif
     PKCS11TEST_FUNC_SESS_DECL(test_rsa_fixed_keys_store_token),
     PKCS11TEST_FUNC_SESS_DECL(test_rsa_x_509_fail),
+#ifdef WC_RSA_DIRECT
+    PKCS11TEST_FUNC_SESS_DECL(test_rsa_x_509_verify_lock),
+#endif
     PKCS11TEST_FUNC_SESS_DECL(test_rsa_pkcs_encdec_fail),
 #ifndef WC_NO_RSA_OAEP
     PKCS11TEST_FUNC_SESS_DECL(test_rsa_pkcs_oaep_encdec_fail),
