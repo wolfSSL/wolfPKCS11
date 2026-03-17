@@ -6430,6 +6430,138 @@ static CK_RV test_rsa_wrap_unwrap_key(void* args)
 }
 #endif
 
+#if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
+    defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
+    !defined(NO_RSA) && !defined(NO_AES) && \
+    (defined(WOLFSSL_KEY_GEN) || defined(OPENSSL_EXTRA))
+/* Test that the companion public key auto-generated during RSA private key
+ * unwrap has CKA_WRAP set to CK_FALSE (not CK_TRUE). */
+static CK_RV test_rsa_unwrap_companion_pub_cka_wrap(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_MECHANISM mech = { CKM_AES_KEY_WRAP_PAD, NULL, 0 };
+    CK_OBJECT_HANDLE wrappingKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE privKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE unwrappedPrivKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE pubKey = CK_INVALID_HANDLE;
+    byte wrappedKey[2048];
+    CK_ULONG wrappedKeyLen = sizeof(wrappedKey);
+    CK_BBOOL wrapAttr = CK_TRUE;
+    CK_BBOOL sessionObj = CK_FALSE;
+    CK_BBOOL wrapTrue = CK_TRUE;
+    CK_BBOOL unwrapTrue = CK_TRUE;
+    CK_ULONG count;
+    CK_ATTRIBUTE aesKeyTmpl[] = {
+        { CKA_CLASS,    &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE, &aesKeyType,     sizeof(aesKeyType)     },
+        { CKA_ENCRYPT,  &ckTrue,         sizeof(ckTrue)         },
+        { CKA_DECRYPT,  &ckTrue,         sizeof(ckTrue)         },
+        { CKA_WRAP,     &wrapTrue,       sizeof(wrapTrue)       },
+        { CKA_UNWRAP,   &unwrapTrue,     sizeof(unwrapTrue)     },
+        { CKA_TOKEN,    &sessionObj,     sizeof(sessionObj)     },
+        { CKA_VALUE,    aes_128_key,     sizeof(aes_128_key)    },
+    };
+    CK_ULONG aesKeyTmplCnt = sizeof(aesKeyTmpl) / sizeof(*aesKeyTmpl);
+    CK_ATTRIBUTE rsaPrivTmpl[] = {
+        { CKA_CLASS,            &privKeyClass,     sizeof(privKeyClass)      },
+        { CKA_KEY_TYPE,         &rsaKeyType,       sizeof(rsaKeyType)        },
+        { CKA_DECRYPT,          &ckTrue,           sizeof(ckTrue)            },
+        { CKA_MODULUS,          rsa_2048_modulus,  sizeof(rsa_2048_modulus)  },
+        { CKA_PRIVATE_EXPONENT, rsa_2048_priv_exp, sizeof(rsa_2048_priv_exp) },
+        { CKA_PRIME_1,          rsa_2048_p,        sizeof(rsa_2048_p)        },
+        { CKA_PRIME_2,          rsa_2048_q,        sizeof(rsa_2048_q)        },
+        { CKA_EXPONENT_1,       rsa_2048_dP,       sizeof(rsa_2048_dP)       },
+        { CKA_EXPONENT_2,       rsa_2048_dQ,       sizeof(rsa_2048_dQ)       },
+        { CKA_COEFFICIENT,      rsa_2048_u,        sizeof(rsa_2048_u)        },
+        { CKA_PUBLIC_EXPONENT,  rsa_2048_pub_exp,  sizeof(rsa_2048_pub_exp)  },
+        { CKA_EXTRACTABLE,      &ckTrue,           sizeof(ckTrue)            },
+        { CKA_TOKEN,            &sessionObj,       sizeof(sessionObj)        },
+    };
+    CK_ULONG rsaPrivTmplCnt = sizeof(rsaPrivTmpl) / sizeof(*rsaPrivTmpl);
+    CK_ATTRIBUTE unwrapTmpl[] = {
+        { CKA_CLASS,    &privKeyClass, sizeof(privKeyClass) },
+        { CKA_KEY_TYPE, &rsaKeyType,   sizeof(rsaKeyType)   },
+        { CKA_TOKEN,    &sessionObj,   sizeof(sessionObj)   },
+    };
+    CK_ULONG unwrapTmplCnt = sizeof(unwrapTmpl) / sizeof(*unwrapTmpl);
+    CK_ATTRIBUTE pubKeySearchTmpl[] = {
+        { CKA_CLASS,    &pubKeyClass, sizeof(pubKeyClass) },
+        { CKA_KEY_TYPE, &rsaKeyType,  sizeof(rsaKeyType)  },
+        { CKA_TOKEN,    &sessionObj,  sizeof(sessionObj)  },
+    };
+    CK_ULONG pubKeySearchTmplCnt =
+        sizeof(pubKeySearchTmpl) / sizeof(*pubKeySearchTmpl);
+    CK_ATTRIBUTE getWrapTmpl[] = {
+        { CKA_WRAP, &wrapAttr, sizeof(wrapAttr) },
+    };
+    /* Create the AES wrapping key */
+    ret = funcList->C_CreateObject(session, aesKeyTmpl, aesKeyTmplCnt,
+                                   &wrappingKey);
+    CHECK_CKR(ret, "AES Wrapping Key Create Object");
+    /* Create the RSA private key */
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, rsaPrivTmpl, rsaPrivTmplCnt,
+                                       &privKey);
+        CHECK_CKR(ret, "RSA Private Key Create Object");
+    }
+    /* Wrap the RSA private key */
+    if (ret == CKR_OK) {
+        ret = funcList->C_WrapKey(session, &mech, wrappingKey, privKey,
+                                  wrappedKey, &wrappedKeyLen);
+        CHECK_CKR(ret, "Wrap RSA Private Key with AES");
+    }
+    /* Clean up */
+    funcList->C_DestroyObject(session, privKey);
+    privKey = CK_INVALID_HANDLE;
+    /* Unwrap the RSA private key */
+    if (ret == CKR_OK) {
+        ret = funcList->C_UnwrapKey(session, &mech, wrappingKey,
+                                    wrappedKey, wrappedKeyLen,
+                                    unwrapTmpl, unwrapTmplCnt,
+                                    &unwrappedPrivKey);
+        CHECK_CKR(ret, "Unwrap RSA Private Key");
+    }
+    /* Find the companion public key */
+    if (ret == CKR_OK) {
+        ret = funcList->C_FindObjectsInit(session, pubKeySearchTmpl,
+                                          pubKeySearchTmplCnt);
+        CHECK_CKR(ret, "Find companion public key Init");
+    }
+    /* Find the companion public key */
+    if (ret == CKR_OK) {
+        ret = funcList->C_FindObjects(session, &pubKey, 1, &count);
+        CHECK_CKR(ret, "Find companion public key");
+    }
+    /* Finalize the object search */
+    if (ret == CKR_OK) {
+        ret = funcList->C_FindObjectsFinal(session);
+        CHECK_CKR(ret, "Find companion public key Final");
+    }
+    /* Check if the companion public key was found */
+    if (ret == CKR_OK && count == 0) {
+        ret = -1;
+        CHECK_CKR(ret, "Companion public key not found");
+    }
+    /* Check the wrap attribute of the companion public key */
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, pubKey, getWrapTmpl, 1);
+        CHECK_CKR(ret, "Get CKA_WRAP from companion public key");
+    }
+    /* Check that the companion public key has CKA_WRAP set to CK_FALSE */
+    if (ret == CKR_OK && wrapAttr != CK_FALSE) {
+        ret = -1;
+        CHECK_CKR(ret, "CKA_WRAP must be CK_FALSE on companion public key");
+    }
+    /* Clean up */
+    funcList->C_DestroyObject(session, wrappingKey);
+    funcList->C_DestroyObject(session, unwrappedPrivKey);
+    funcList->C_DestroyObject(session, pubKey);
+
+    return ret;
+}
+#endif /* WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL && HAVE_AES_KEYWRAP && ... */
+
 static CK_RV test_attributes_rsa(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -15865,6 +15997,12 @@ static TEST_FUNC testFunc[] = {
 #endif /* HAVE_AES_KEYWRAP && !WOLFPKCS11_NO_STORE */
 #if (!defined(NO_RSA) && !defined(WOLFPKCS11_NO_STORE))
     PKCS11TEST_FUNC_SESS_DECL(test_rsa_wrap_unwrap_key),
+#endif
+#if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
+    defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
+    !defined(NO_RSA) && !defined(NO_AES) && \
+    (defined(WOLFSSL_KEY_GEN) || defined(OPENSSL_EXTRA))
+    PKCS11TEST_FUNC_SESS_DECL(test_rsa_unwrap_companion_pub_cka_wrap),
 #endif
 #ifndef NO_DH
     PKCS11TEST_FUNC_SESS_DECL(test_derive_key),
