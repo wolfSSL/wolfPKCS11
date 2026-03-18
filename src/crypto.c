@@ -7421,15 +7421,22 @@ static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
         secretKeyData[1] = ptr + (length - symmKeyLen);
         secretKeyLen[1] = symmKeyLen;
         ret = WP11_Object_SetSecretKey(secret, secretKeyData, secretKeyLen);
-        if (ret != CKR_OK)
+        if (ret != CKR_OK) {
+            WP11_Object_Free(secret);
             return CKR_FUNCTION_FAILED;
+        }
         ret = (int)AddObject(session, secret, pTemplate, ulAttributeCount,
             handle);
         if (ret != CKR_OK) {
+            WP11_Object_Free(secret);
             return ret;
         }
     }
-    if ((ret == 0) && (isMac)) {
+    else {
+        WP11_Object_Free(secret);
+        return ret;
+    }
+    if (isMac) {
         ret = WP11_Object_SetAttr(secret, CKA_KEY_TYPE, (byte*)&keyType,
                                   sizeof(keyType));
         if (ret != CKR_OK)
