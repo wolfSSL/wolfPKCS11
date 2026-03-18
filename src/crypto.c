@@ -1222,15 +1222,21 @@ CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
 
     /* Set the object class from the original object */
     ret = WP11_Object_SetClass(newObj, WP11_Object_GetClass(obj));
-    if (ret != 0)
+    if (ret != 0) {
+        WP11_Object_Free(newObj);
         return CKR_FUNCTION_FAILED;
+    }
 
     /* Now that object class is set, allocate type-specific data */
     ret = wp11_Object_AllocateTypeData(newObj);
-    if (ret == MEMORY_E)
+    if (ret == MEMORY_E) {
+        WP11_Object_Free(newObj);
         return CKR_DEVICE_MEMORY;
-    if (ret != 0)
+    }
+    if (ret != 0) {
+        WP11_Object_Free(newObj);
         return CKR_FUNCTION_FAILED;
+    }
 
     /* copy all the attributes from the original object to the new object */
     rv = WP11_Object_Copy(obj, newObj);
