@@ -173,6 +173,7 @@ extern "C" {
 #define CKK_AES                               0x0000001FUL
 #define CKK_DES3                              0x00000015UL /* not supported */
 #define CKK_HKDF                              0x00000042UL
+#define CKK_ML_DSA                            0x0000004AUL
 
 #ifdef WOLFPKCS11_NSS
 /* Not defined by NSS, but we need one */
@@ -251,6 +252,10 @@ extern "C" {
 #define CKA_DERIVE_TEMPLATE                   0x40000213UL
 #define CKA_ALLOWED_MECHANISMS                0x40000600UL
 
+/* new post-quantum (general) */
+#define CKA_PARAMETER_SET                     0x0000061DUL
+#define CKA_SEED                              0x00000637UL
+
 #ifdef WOLFPKCS11_NSS
 #define CKA_NSS_EMAIL                         (CKA_NSS + 2)
 #define CKA_TRUST                             (CKA_NSS + 0x2000)
@@ -294,6 +299,7 @@ extern "C" {
 #define CKM_SHA512_RSA_PKCS_PSS               0x00000045UL
 #define CKM_SHA224_RSA_PKCS                   0x00000046UL
 #define CKM_SHA224_RSA_PKCS_PSS               0x00000047UL
+#define CKM_SHA512_256                        0x0000004CUL
 #define CKM_MD5                               0x00000210UL
 #define CKM_MD5_HMAC                          0x00000211UL
 #define CKM_SHA1                              0x00000220UL
@@ -347,6 +353,9 @@ extern "C" {
 #define CKM_HKDF_DERIVE                       0x0000402AUL
 #define CKM_HKDF_DATA                         0x0000402BUL
 #define CKM_HKDF_KEY_GEN                      0x0000402CUL
+#define CKM_ML_DSA_KEY_PAIR_GEN               0x0000001CUL
+#define CKM_ML_DSA                            0x0000001DUL
+#define CKM_HASH_ML_DSA                       0x0000001FUL
 
 #ifdef WOLFPKCS11_NSS
 #define CKM_NSS_TLS_PRF_GENERAL_SHA256            (CKM_NSS + 21)
@@ -825,6 +834,33 @@ typedef struct CK_ASYNC_DATA {
     CK_OBJECT_HANDLE  hAdditionalObject;
 } CK_ASYNC_DATA;
 typedef CK_ASYNC_DATA* CK_ASYNC_DATA_PTR;
+
+
+/* generic PQ mechanism parameters */
+typedef CK_ULONG CK_HEDGE_TYPE;
+#define CKH_HEDGE_PREFERRED        0x00000000UL
+#define CKH_HEDGE_REQUIRED         0x00000001UL
+#define CKH_DETERMINISTIC_REQUIRED 0x00000002UL
+
+typedef struct CK_SIGN_ADDITIONAL_CONTEXT {
+     CK_HEDGE_TYPE   hedgeVariant;
+     CK_BYTE_PTR     pContext;
+     CK_ULONG        ulContextLen;
+} CK_SIGN_ADDITIONAL_CONTEXT;
+
+typedef struct CK_HASH_SIGN_ADDITIONAL_CONTEXT {
+     CK_HEDGE_TYPE     hedgeVariant;
+     CK_BYTE_PTR       pContext;
+     CK_ULONG          ulContextLen;
+     CK_MECHANISM_TYPE hash;
+} CK_HASH_SIGN_ADDITIONAL_CONTEXT;
+
+
+/* ML-DSA values for CKA_PARAMETER_SET */
+typedef CK_ULONG CK_ML_DSA_PARAMETER_SET_TYPE;
+#define CKP_ML_DSA_44          0x00000001UL
+#define CKP_ML_DSA_65          0x00000002UL
+#define CKP_ML_DSA_87          0x00000003UL
 
 
 /* Function list types. */

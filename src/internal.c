@@ -254,6 +254,9 @@ struct WP11_Object {
     #ifdef HAVE_ECC
         ecc_key* ecKey;                /* EC key object                       */
     #endif
+    #ifdef WOLFPKCS11_MLDSA
+        MlDsaKey* mldsaKey;            /* ML-DSA key object                   */
+    #endif
     #ifndef NO_DH
         WP11_DhKey* dhKey;             /* DH parameters object                */
     #endif
@@ -341,6 +344,15 @@ typedef struct WP11_PssParams {
     int saltLen;
 } WP11_PssParams;
 #endif
+#endif
+
+#ifdef WOLFPKCS11_MLDSA
+typedef struct WP11_MldsaParams {
+    enum wc_HashType preHashType;
+    word32 hedgeType;
+    byte* ctx;
+    byte ctxSz;
+} WP11_MldsaParams;
 #endif
 
 #ifndef NO_AES
@@ -449,6 +461,9 @@ struct WP11_Session {
     #ifdef WC_RSA_PSS
         WP11_PssParams pss;            /* RSA-PSS parameters                  */
     #endif
+#endif
+#ifdef WOLFPKCS11_MLDSA
+        WP11_MldsaParams mldsa;        /* ML-DSA parameters                   */
 #endif
 #ifndef NO_AES
     #ifdef HAVE_AES_CBC
@@ -890,7 +905,15 @@ static void wp11_Session_Final(WP11_Session* session)
         session->params.oaep.label = NULL;
     }
 #endif
-#ifndef NO_RSA
+#ifdef WOLFPKCS11_MLDSA
+    if ((session->mechanism == CKM_ML_DSA ||
+         session->mechanism == CKM_HASH_ML_DSA) &&
+                                            session->params.mldsa.ctx != NULL) {
+        XFREE(session->params.mldsa.ctx, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        session->params.mldsa.ctx = NULL;
+    }
+#endif
+#ifndef NO_AES
 #ifdef HAVE_AES_CBC
     if ((session->mechanism == CKM_AES_CBC ||
                       session->mechanism == CKM_AES_CBC_PAD) && session->init) {
@@ -1370,6 +1393,14 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
             break;
         case WOLFPKCS11_STORE_DATA:
             ret = XSNPRINTF(name, nameLen, "%s/wp11_data_%016lx_%016lx",
+                    str, id1, id2);
+            break;
+        case WOLFPKCS11_STORE_MLDSAKEY_PRIV:
+            ret = XSNPRINTF(name, nameLen, "%s/wp11_mldsakey_priv_%016lx_%016lx",
+                    str, id1, id2);
+            break;
+        case WOLFPKCS11_STORE_MLDSAKEY_PUB:
+            ret = XSNPRINTF(name, nameLen, "%s/wp11_mldsakey_pub_%016lx_%016lx",
                     str, id1, id2);
             break;
 
@@ -2438,6 +2469,20 @@ int wp11_Object_AllocateTypeData(WP11_Object* object)
                     }
                     else {
                         XMEMSET(object->data.rsaKey, 0, sizeof(RsaKey));
+                    }
+                }
+                break;
+            #endif
+            #ifdef WOLFPKCS11_MLDSA
+            case CKK_ML_DSA:
+                if (object->data.mldsaKey == NULL) {
+                    object->data.mldsaKey = (MlDsaKey*)XMALLOC(
+                        sizeof(MlDsaKey), NULL, DYNAMIC_TYPE_DILITHIUM);
+                    if (object->data.mldsaKey == NULL) {
+                        ret = MEMORY_E;
+                    }
+                    else {
+                        XMEMSET(object->data.mldsaKey, 0, sizeof(MlDsaKey));
                     }
                 }
                 break;
@@ -4096,6 +4141,254 @@ static int wp11_Object_Store_EccKey(WP11_Object* object, int tokenId, int objId)
 }
 #endif /* HAVE_ECC */
 
+#ifdef WOLFPKCS11_MLDSA
+static int MldsaKeyTryDecode(MlDsaKey* key, byte level, byte* data,
+                             word32 len, CK_OBJECT_CLASS class)
+{
+    int ret = 0;
+    word32 idx = 0;
+
+    /* Init key */
+    ret = wc_MlDsaKey_Init(key, NULL, INVALID_DEVID);
+
+    if (ret == 0) {
+        /* Set level */
+        ret = wc_MlDsaKey_SetParams(key, level);
+    }
+    if (ret == 0) {
+        if (class == CKO_PRIVATE_KEY) {
+            /* Decode ML-DSA private key. */
+            ret = wc_Dilithium_PrivateKeyDecode(data, &idx, key, len);
+        }
+        else {
+            /* Decode ML-DSA public key. */
+            ret = wc_Dilithium_PublicKeyDecode(data, &idx, key, len);
+        }
+    }
+
+    if (ret != 0) {
+        wc_MlDsaKey_Free(key);
+    }
+
+    return ret;
+}
+
+/**
+ * Decode the ML-DSA key.
+ *
+ * Encoded private keys are encrypted.
+ *
+ * @param [in, out]  object  ML-DSA key object.
+ * @return  0 on success.
+ * @return  -ve on failure.
+ */
+static int wp11_Object_Decode_MldsaKey(WP11_Object* object)
+{
+    int ret = 0;
+
+    if (object->objClass == CKO_PRIVATE_KEY) {
+        unsigned char* der;
+        int len = object->keyDataLen - AES_BLOCK_SIZE;
+
+        der = (unsigned char*)XMALLOC(len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (der == NULL) {
+            ret = MEMORY_E;
+        }
+        if (ret == 0) {
+            ret = wp11_DecryptData(der, object->keyData, len,
+                                   object->slot->token.key,
+                                   sizeof(object->slot->token.key), object->iv,
+                                   sizeof(object->iv), object->devId);
+        }
+        if (ret == 0) {
+            /* Decode ML-DSA private key. */
+            ret = MldsaKeyTryDecode(object->data.mldsaKey, WC_ML_DSA_44,
+                                    der, len, object->objClass);
+            if (ret != 0) {
+                ret = MldsaKeyTryDecode(object->data.mldsaKey, WC_ML_DSA_65,
+                                        der, len, object->objClass);
+            }
+            if (ret != 0) {
+                ret = MldsaKeyTryDecode(object->data.mldsaKey, WC_ML_DSA_87,
+                                        der, len, object->objClass);
+            }
+            XMEMSET(der, 0, len);
+        }
+        if (der != NULL)
+            XFREE(der, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    }
+    else {
+        /* Decode ML-DSA public key. */
+        ret = MldsaKeyTryDecode(object->data.mldsaKey, WC_ML_DSA_44,
+                                object->keyData, object->keyDataLen,
+                                object->objClass);
+        if (ret != 0) {
+            ret = MldsaKeyTryDecode(object->data.mldsaKey, WC_ML_DSA_65,
+                                    object->keyData, object->keyDataLen,
+                                    object->objClass);
+        }
+        if (ret != 0) {
+            ret = MldsaKeyTryDecode(object->data.mldsaKey, WC_ML_DSA_87,
+                                    object->keyData, object->keyDataLen,
+                                    object->objClass);
+        }
+    }
+    object->encoded = (ret != 0);
+
+    return ret;
+}
+
+/**
+ * Encode the ML-DSA key.
+ *
+ * Private keys are encoded and then encrypted.
+ *
+ * @param [in, out]  object  ML-DSA key object.
+ * @return  0 on success.
+ * @return  -ve on failure.
+ */
+static int wp11_Object_Encode_MldsaKey(WP11_Object* object)
+{
+    int ret;
+
+    if (object->objClass == CKO_PRIVATE_KEY) {
+        /* Get length of encoded private key. */
+        ret = wc_MlDsaKey_PrivateKeyToDer(object->data.mldsaKey, NULL, 0);
+        if (ret >= 0) {
+            object->keyDataLen = ret + AES_BLOCK_SIZE;
+            ret = 0;
+        }
+    }
+    else {
+        /* Get length of encoded public key. */
+        ret = wc_MlDsaKey_PublicKeyToDer(object->data.mldsaKey, NULL, 0, 1);
+        if (ret >= 0) {
+            object->keyDataLen = ret;
+            ret = 0;
+        }
+    }
+
+    if (ret == 0) {
+        XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        /* Allocate buffer to hold encoded key. */
+        object->keyData = (unsigned char*)XMALLOC(object->keyDataLen, NULL,
+                                                  DYNAMIC_TYPE_TMP_BUFFER);
+        if (object->keyData == NULL)
+            ret = MEMORY_E;
+    }
+
+    if (ret == 0 && object->objClass == CKO_PRIVATE_KEY) {
+        /* Encode private key. */
+        ret = wc_MlDsaKey_PrivateKeyToDer(object->data.mldsaKey,
+                                          object->keyData,
+                                          object->keyDataLen);
+        if (ret >= 0) {
+            ret = wp11_EncryptData(object->keyData, object->keyData, ret,
+                                    object->slot->token.key,
+                                    sizeof(object->slot->token.key), object->iv,
+                                    sizeof(object->iv), object->devId);
+        }
+    }
+    else if (ret == 0 && object->objClass == CKO_PUBLIC_KEY) {
+        /* Encode public key. */
+        ret = wc_MlDsaKey_PublicKeyToDer(object->data.mldsaKey,
+                                         object->keyData,
+                                         object->keyDataLen, 1);
+        if (ret >= 0) {
+            ret = 0;
+        }
+    }
+
+    if (ret != 0) {
+        XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        object->keyData = NULL;
+        object->keyDataLen = 0;
+    }
+
+    return ret;
+}
+
+/**
+ * Load a ML-DSA key from storage.
+ *
+ * @param [in, out]  object   ML-DSA key object.
+ * @param [in]       tokenId  Id of token this key belongs to.
+ * @param [in]       objId    Id of object for token.
+ * @return  0 on success.
+ * @return  MEMORY_E when dynamic memory allocation fails.
+ * @return  BUFFER_E when loading fails.
+ * @return  NOT_AVAILABLE_E when unable to locate data.
+ */
+static int wp11_Object_Load_MldsaKey(WP11_Object* object, int tokenId,
+                                     int objId)
+{
+    int ret;
+    void* storage = NULL;
+    int storeType;
+
+    /* Determine store type - private keys may be encrypted. */
+    if (object->objClass == CKO_PRIVATE_KEY)
+        storeType = WOLFPKCS11_STORE_MLDSAKEY_PRIV;
+    else
+        storeType = WOLFPKCS11_STORE_MLDSAKEY_PUB;
+
+    /* Open access to ML-DSA key. */
+    ret = wp11_storage_open_readonly(storeType, tokenId, objId, &storage);
+    if (ret == 0) {
+        /* Read DER encoded ML-DSA key. */
+        ret = wp11_storage_read_alloc_array(storage, &object->keyData,
+                                                           &object->keyDataLen);
+        wp11_storage_close(storage);
+    }
+
+    return ret;
+}
+
+/**
+ * Store a ML-DSA key to storage.
+ *
+ * @param [in]  object   ML-DSA key object.
+ * @param [in]  tokenId  Id of token this key belongs to.
+ * @param [in]  objId    Id of object for token.
+ * @return  0 on success.
+ * @return  MEMORY_E when dynamic memory allocation fails.
+ * @return  BUFFER_E when storing fails.
+ * @return  NOT_AVAILABLE_E when unable to write data.
+ */
+static int wp11_Object_Store_MldsaKey(WP11_Object* object, int tokenId,
+                                      int objId)
+{
+    int ret = 0;
+    void* storage = NULL;
+    int storeType;
+
+    if (object->keyData == NULL) {
+        ret = wp11_Object_Encode_MldsaKey(object);
+    }
+
+    /* Determine store type - private keys may be encrypted. */
+    if (object->objClass == CKO_PRIVATE_KEY)
+        storeType = WOLFPKCS11_STORE_MLDSAKEY_PRIV;
+    else
+        storeType = WOLFPKCS11_STORE_MLDSAKEY_PUB;
+
+    if (ret == 0) {
+        /* Open access to ML-DSA key. */
+        ret = wp11_storage_open(storeType, tokenId, objId, object->keyDataLen,
+                                &storage);
+    }
+    if (ret == 0) {
+        /* Write encoded ML-DSA key to storage. */
+        ret = wp11_storage_write_array(storage, object->keyData,
+                                                            object->keyDataLen);
+
+        wp11_storage_close(storage);
+    }
+
+    return ret;
+}
+#endif /* WOLFPKCS11_MLDSA */
+
 #ifndef NO_DH
 /**
  * Decode the DH key.
@@ -4710,6 +5003,11 @@ static int wp11_Object_Load(WP11_Object* object, int tokenId, int objId)
                     ret = wp11_Object_Load_EccKey(object, tokenId, objId);
                     break;
             #endif
+            #ifdef WOLFPKCS11_MLDSA
+                case CKK_ML_DSA:
+                    ret = wp11_Object_Load_MldsaKey(object, tokenId, objId);
+                    break;
+            #endif
             #ifndef NO_DH
                 case CKK_DH:
                     ret = wp11_Object_Load_DhKey(object, tokenId, objId);
@@ -4881,6 +5179,11 @@ static int wp11_Object_Store(WP11_Object* object, int tokenId, int objId)
                     ret = wp11_Object_Store_EccKey(object, tokenId, objId);
                     break;
             #endif
+            #ifdef WOLFPKCS11_MLDSA
+                case CKK_ML_DSA:
+                    ret = wp11_Object_Store_MldsaKey(object, tokenId, objId);
+                    break;
+            #endif
             #ifndef NO_DH
                 case CKK_DH:
                     ret = wp11_Object_Store_DhKey(object, tokenId, objId);
@@ -4939,6 +5242,11 @@ static int wp11_Object_Decode(WP11_Object* object)
         #ifdef HAVE_ECC
             case CKK_EC:
                 ret = wp11_Object_Decode_EccKey(object);
+                break;
+        #endif
+        #ifdef WOLFPKCS11_MLDSA
+            case CKK_ML_DSA:
+                ret = wp11_Object_Decode_MldsaKey(object);
                 break;
         #endif
         #ifndef NO_DH
@@ -5002,6 +5310,15 @@ static int wp11_Object_Encode(WP11_Object* object, int protect)
                 ret = wp11_Object_Encode_EccKey(object);
                 if (protect && ret == 0 && object->objClass == CKO_PRIVATE_KEY) {
                     wc_ecc_free(object->data.ecKey);
+                    object->encoded = 1;
+                }
+                break;
+        #endif
+        #ifdef WOLFPKCS11_MLDSA
+            case CKK_ML_DSA:
+                ret = wp11_Object_Encode_MldsaKey(object);
+                if (protect && ret == 0 && object->objClass == CKO_PRIVATE_KEY) {
+                    wc_MlDsaKey_Free(object->data.mldsaKey);
                     object->encoded = 1;
                 }
                 break;
@@ -5086,6 +5403,14 @@ static int wp11_Object_Unstore(WP11_Object* object, int tokenId, int objId)
                 storeObjType = WOLFPKCS11_STORE_ECCKEY_PRIV;
             else
                 storeObjType = WOLFPKCS11_STORE_ECCKEY_PUB;
+            break;
+    #endif
+    #ifdef WOLFPKCS11_MLDSA
+        case CKK_ML_DSA:
+            if (object->objClass == CKO_PRIVATE_KEY)
+                storeObjType = WOLFPKCS11_STORE_MLDSAKEY_PRIV;
+            else
+                storeObjType = WOLFPKCS11_STORE_MLDSAKEY_PUB;
             break;
     #endif
     #ifndef NO_DH
@@ -7034,7 +7359,7 @@ void WP11_Session_SetMechanism(WP11_Session* session,
 }
 
 #if !defined(NO_RSA) || !defined(WC_NO_RSA_OAEP) || defined(WC_RSA_PSS) || \
-    defined(WOLFPKCS11_HKDF)
+    defined(WOLFPKCS11_HKDF) || defined(WOLFPKCS11_MLDSA)
 /**
  * Convert the digest mechanism to a hash type for wolfCrypt.
  *
@@ -7069,6 +7394,11 @@ static int wp11_hash_type(CK_MECHANISM_TYPE hashMech,
         case CKM_SHA512_HMAC:
             *hashType = WC_HASH_TYPE_SHA512;
             break;
+    #ifndef WOLFSSL_NOSHA512_256
+        case CKM_SHA512_256:
+            *hashType = WC_HASH_TYPE_SHA512_256;
+            break;
+    #endif
         case CKM_SHA3_224:
             *hashType = WC_HASH_TYPE_SHA3_224;
             break;
@@ -7200,6 +7530,102 @@ int WP11_Session_SetPssParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
 }
 #endif /* WC_RSA_PSS */
 #endif /* !NO_RSA */
+
+#ifdef WOLFPKCS11_MLDSA
+/**
+ * Set the parameters to use for a ML-DSA operation.
+ *
+ * @param  session   [in]  Session object.
+ * @param  params    [in]  Pointer to the parameters (may be NULL).
+ * @param  paramsLen [in]  Length of parameters (may be 0).
+ * @return  BAD_FUNC_ARG when the parameters contain problems.
+ *          0 on success.
+ */
+int WP11_Session_SetMldsaParams(WP11_Session* session, CK_VOID_PTR params,
+                                CK_ULONG paramsLen)
+{
+    int ret = 0;
+    WP11_MldsaParams* mldsa = &session->params.mldsa;
+
+    XFREE(mldsa->ctx, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    XMEMSET(mldsa, 0, sizeof(*mldsa));
+
+    if (params != NULL) {
+        if (paramsLen == sizeof(CK_SIGN_ADDITIONAL_CONTEXT)) {
+            CK_SIGN_ADDITIONAL_CONTEXT* ctx =
+                                            (CK_SIGN_ADDITIONAL_CONTEXT*)params;
+
+            /* Copy context if present */
+            if (ctx->pContext != NULL && ctx->ulContextLen > 0) {
+                /* FIPS 204 limits the context length to 255 bytes */
+                if (ctx->ulContextLen > 255) {
+                    ret = BAD_FUNC_ARG;
+                }
+                if (ret == 0) {
+                    mldsa->ctx = (byte*)XMALLOC(ctx->ulContextLen, NULL,
+                                                DYNAMIC_TYPE_TMP_BUFFER);
+                    if (mldsa->ctx == NULL)
+                        ret = MEMORY_E;
+                }
+                if (ret == 0) {
+                    XMEMCPY(mldsa->ctx, ctx->pContext, ctx->ulContextLen);
+                    mldsa->ctxSz = ctx->ulContextLen;
+                }
+            }
+            else {
+                mldsa->ctx = NULL;
+                mldsa->ctxSz = 0;
+            }
+
+            mldsa->preHashType = WC_HASH_TYPE_NONE;
+            mldsa->hedgeType = (word32)ctx->hedgeVariant;
+        }
+        else if (paramsLen == sizeof(CK_HASH_SIGN_ADDITIONAL_CONTEXT)) {
+            CK_HASH_SIGN_ADDITIONAL_CONTEXT* ctx =
+                                       (CK_HASH_SIGN_ADDITIONAL_CONTEXT*)params;
+
+            /* Copy context if present */
+            if (ctx->pContext != NULL && ctx->ulContextLen > 0) {
+                /* FIPS 204 limits the context length to 255 bytes */
+                if (ctx->ulContextLen > 255) {
+                    ret = BAD_FUNC_ARG;
+                }
+                if (ret == 0) {
+                    mldsa->ctx = (byte*)XMALLOC(ctx->ulContextLen, NULL,
+                                                DYNAMIC_TYPE_TMP_BUFFER);
+                    if (mldsa->ctx == NULL)
+                        ret = MEMORY_E;
+                }
+                if (ret == 0) {
+                    XMEMCPY(mldsa->ctx, ctx->pContext, ctx->ulContextLen);
+                    mldsa->ctxSz = ctx->ulContextLen;
+                }
+            }
+            else {
+                mldsa->ctx = NULL;
+                mldsa->ctxSz = 0;
+            }
+
+            /* Get hash type */
+            if (ret == 0) {
+                ret = wp11_hash_type(ctx->hash, &mldsa->preHashType);
+            }
+            mldsa->hedgeType = (word32)ctx->hedgeVariant;
+        }
+        else {
+            ret = BAD_FUNC_ARG;
+        }
+    }
+    else {
+        mldsa->preHashType = WC_HASH_TYPE_NONE;
+        mldsa->hedgeType = CKH_HEDGE_PREFERRED;
+        mldsa->ctx = NULL;
+        mldsa->ctxSz = 0;
+    }
+
+    return ret;
+}
+#endif /* WOLFPKCS11_MLDSA */
 
 #ifndef NO_AES
 #ifdef HAVE_AES_CBC
@@ -7830,6 +8256,13 @@ void WP11_Object_Free(WP11_Object* object)
             object->data.ecKey = NULL;
         }
     #endif
+    #ifdef WOLFPKCS11_MLDSA
+        if (object->type == CKK_ML_DSA && object->data.mldsaKey != NULL) {
+            wc_MlDsaKey_Free(object->data.mldsaKey);
+            XFREE(object->data.mldsaKey, NULL, DYNAMIC_TYPE_DILITHIUM);
+            object->data.mldsaKey = NULL;
+        }
+    #endif
     #ifndef NO_DH
         if (object->type == CKK_DH && object->data.dhKey != NULL) {
             wc_FreeDhKey(&object->data.dhKey->params);
@@ -8167,6 +8600,151 @@ int WP11_Object_SetEcKey(WP11_Object* object, unsigned char** data,
     return ret;
 }
 #endif /* HAVE_ECC */
+
+#ifdef WOLFPKCS11_MLDSA
+/**
+ * Set the ML-DSA parameters based on provided data.
+ *
+ * @param  key    [in]  ML-DSA key object.
+ * @param  params [in]  Pointer to parameters structure.
+ * @param  len    [in]  Length of parameters.
+ * @return  BUFFER_E when len is too short.
+ *          ASN_PARSE_E when parameter is bad.
+ *          Other -ve on failure.
+ *          0 on success.
+ */
+static int mldsaSetParameters(MlDsaKey* key,
+                              CK_ML_DSA_PARAMETER_SET_TYPE* params,
+                              int len)
+{
+    int ret = 0;
+
+    if (params == NULL || key == NULL)
+        return BAD_FUNC_ARG;
+
+    if (len != sizeof(CK_ML_DSA_PARAMETER_SET_TYPE))
+        return BUFFER_E;
+
+    /* Set ML-DSA level based on the parameter */
+    switch (*params) {
+        case CKP_ML_DSA_44:
+            ret = wc_MlDsaKey_SetParams(key, WC_ML_DSA_44);
+            break;
+        case CKP_ML_DSA_65:
+            ret = wc_MlDsaKey_SetParams(key, WC_ML_DSA_65);
+            break;
+        case CKP_ML_DSA_87:
+            ret = wc_MlDsaKey_SetParams(key, WC_ML_DSA_87);
+            break;
+        default:
+            ret = ASN_PARSE_E;
+            break;
+    }
+
+    return ret;
+}
+
+/**
+* Set the ML-DSA key data into the object.
+* Store the data in the wolfCrypt data structure.
+*
+* @param  object  [in]  Object object.
+* @param  data    [in]  Array of byte arrays.
+* @param  len     [in]  Array of lengths of byte arrays.
+* @return  -ve on failure.
+*          0 on success.
+*/
+int WP11_Object_SetMldsaKey(WP11_Object* object, unsigned char** data,
+                            CK_ULONG* len)
+{
+    int ret;
+    MlDsaKey* key;
+    int seedUsed = 0;
+
+    if (object->onToken)
+        WP11_Lock_LockRW(object->lock);
+
+    key = object->data.mldsaKey;
+    ret = wc_MlDsaKey_Init(key, NULL, object->devId);
+
+    /* Set parameters */
+    if (ret == 0 && data[0] != NULL) {
+        ret = mldsaSetParameters(key,
+                                 (CK_ML_DSA_PARAMETER_SET_TYPE*)data[0],
+                                 (int)len[0]);
+    }
+
+    /* Set seed (only for private keys) */
+    if (ret == 0 && data[1] != NULL) {
+        if (object->objClass != CKO_PRIVATE_KEY) {
+            ret = BAD_FUNC_ARG;
+        }
+        else if (len[1] != DILITHIUM_SEED_SZ) {
+            ret = BAD_FUNC_ARG;
+        }
+        else {
+            ret = wc_dilithium_make_key_from_seed(key, data[1]);
+            seedUsed = 1;
+        }
+    }
+
+    /* Set key data */
+    if (ret == 0 && data[2] != NULL) {
+        if (seedUsed == 0) {
+            /* Import given public/private key data */
+            if (object->objClass == CKO_PUBLIC_KEY) {
+                ret = wc_MlDsaKey_ImportPubRaw(key, data[2], len[2]);
+            }
+            else {
+                ret = wc_MlDsaKey_ImportPrivRaw(key, data[2], len[2]);
+            }
+        }
+        else {
+            if (object->objClass == CKO_PUBLIC_KEY) {
+                /* Seed is only allowed for private keys */
+                ret = BAD_FUNC_ARG;
+            }
+            else {
+                /* Check if the provided expanded private key is identical
+                 * to the one generated from the seed */
+                byte* expandedKey = NULL;
+                word32 expandedKeyLen = 0;
+
+                expandedKeyLen = wc_dilithium_size(key);
+                if (expandedKeyLen != len[2]) {
+                    ret = BAD_FUNC_ARG;
+                }
+                if (ret == 0) {
+                    expandedKey = XMALLOC(expandedKeyLen, NULL,
+                                          DYNAMIC_TYPE_TMP_BUFFER);
+                    if (expandedKey == NULL) {
+                        ret = MEMORY_E;
+                    }
+                }
+                if (ret == 0) {
+                    ret = wc_MlDsaKey_ExportPrivRaw(key, expandedKey,
+                                                    &expandedKeyLen);
+                    if (ret == 0) {
+                        if (WP11_ConstantCompare(expandedKey, data[2],
+                                                    (int)expandedKeyLen) != 1) {
+                            ret = BAD_FUNC_ARG;
+                        }
+                    }
+                    XFREE(expandedKey, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                }
+            }
+        }
+    }
+
+    if (ret != 0)
+        wc_MlDsaKey_Free(key);
+
+    if (object->onToken)
+        WP11_Lock_UnlockRW(object->lock);
+
+    return ret;
+}
+#endif /* WOLFPKCS11_MLDSA */
 
 #ifndef NO_DH
 /**
@@ -8995,6 +9573,158 @@ static int EcObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
 }
 #endif
 
+#ifdef WOLFPKCS11_MLDSA
+static int GetMldsaParams(MlDsaKey* key, byte* data, CK_ULONG* len)
+{
+    int ret = 0;
+    CK_ML_DSA_PARAMETER_SET_TYPE params;
+
+    if (len == NULL)
+        return BUFFER_E;
+
+    switch (key->level) {
+        case WC_ML_DSA_44:
+            params = CKP_ML_DSA_44;
+            break;
+        case WC_ML_DSA_65:
+            params = CKP_ML_DSA_65;
+            break;
+        case WC_ML_DSA_87:
+            params = CKP_ML_DSA_87;
+            break;
+        default:
+            return ASN_PARSE_E;
+    }
+
+    if (data == NULL)
+        *len = sizeof(CK_ML_DSA_PARAMETER_SET_TYPE);
+    else if (*len < sizeof(CK_ML_DSA_PARAMETER_SET_TYPE))
+        ret = BUFFER_E;
+    else
+        XMEMCPY(data, &params, sizeof(CK_ML_DSA_PARAMETER_SET_TYPE));
+
+    return ret;
+}
+
+static int GetMldsaPublicKey(MlDsaKey* key, byte* data, CK_ULONG* len)
+{
+    int ret = 0;
+    word32 dataLen = 0;
+    byte level = 0;
+
+    ret = wc_MlDsaKey_GetParams(key, &level);
+    if (ret != 0)
+        return ret;
+
+    if (level == WC_ML_DSA_44)
+        dataLen = ML_DSA_LEVEL2_PUB_KEY_SIZE;
+    else if (level == WC_ML_DSA_65)
+        dataLen = ML_DSA_LEVEL3_PUB_KEY_SIZE;
+    else if (level == WC_ML_DSA_87)
+        dataLen = ML_DSA_LEVEL5_PUB_KEY_SIZE;
+    else
+        return ASN_PARSE_E;
+
+    if (data == NULL)
+        *len = dataLen;
+    else if (*len < dataLen)
+        ret = BUFFER_E;
+    else {
+        ret = wc_MlDsaKey_ExportPubRaw(key, data, &dataLen);
+        if (ret == 0)
+            *len = dataLen;
+    }
+
+    return ret;
+}
+
+static int GetMldsaPrivateKey(MlDsaKey* key, byte* data, CK_ULONG* len)
+{
+    int ret = 0;
+    word32 dataLen = 0;
+    byte level = 0;
+
+    ret = wc_MlDsaKey_GetParams(key, &level);
+    if (ret != 0)
+        return ret;
+
+    if (level == WC_ML_DSA_44)
+        dataLen = ML_DSA_LEVEL2_KEY_SIZE;
+    else if (level == WC_ML_DSA_65)
+        dataLen = ML_DSA_LEVEL3_KEY_SIZE;
+    else if (level == WC_ML_DSA_87)
+        dataLen = ML_DSA_LEVEL5_KEY_SIZE;
+    else
+        return ASN_PARSE_E;
+
+    if (data == NULL)
+        *len = dataLen;
+    else if (*len < dataLen)
+        ret = BUFFER_E;
+    else {
+        ret = wc_MlDsaKey_ExportPrivRaw(key, data, &dataLen);
+        if (ret == 0)
+            *len = dataLen;
+    }
+
+    return ret;
+}
+
+/**
+ * Get a ML-DSA object's data as an attribute.
+ *
+ * @param  object  [in]      Object object.
+ * @param  type    [in]      Attribute type.
+ * @param  data    [in]      Attribute data buffer.
+ * @param  len     [in,out]  On in, length of attribute data buffer in bytes.
+ *                           On out, length of attribute data in bytes.
+ * @return  BUFFER_E when buffer is too small for data.
+ *          NOT_AVAILABLE_E when attribute type is not supported.
+ *          0 on success.
+ */
+static int MldsaObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
+                               byte* data, CK_ULONG* len)
+{
+    int ret = 0;
+    int noPriv = (((object->opFlag & WP11_FLAG_SENSITIVE) != 0) ||
+                  ((object->opFlag & WP11_FLAG_EXTRACTABLE) == 0));
+    int noPub = 0;
+
+    if (!object->data.mldsaKey->prvKeySet)
+        noPriv = 1;
+    if (!object->data.mldsaKey->pubKeySet)
+        noPub = 1;
+
+    switch (type) {
+        case CKA_PARAMETER_SET:
+            ret = GetMldsaParams(object->data.mldsaKey, data, len);
+            break;
+        case CKA_SEED:
+            *len = CK_UNAVAILABLE_INFORMATION;
+            break;
+        case CKA_VALUE:
+            if (object->objClass == CKO_PRIVATE_KEY) {
+                if (noPriv)
+                    *len = CK_UNAVAILABLE_INFORMATION;
+                else
+                    ret = GetMldsaPrivateKey(object->data.mldsaKey, data, len);
+            }
+            else if (object->objClass == CKO_PUBLIC_KEY) {
+                if (noPub)
+                    *len = CK_UNAVAILABLE_INFORMATION;
+                else
+                    ret = GetMldsaPublicKey(object->data.mldsaKey, data, len);
+            }
+            break;
+        default:
+            ret = NOT_AVAILABLE_E;
+            break;
+    }
+
+    return ret;
+}
+#endif /* WOLFPKCS11_MLDSA */
+
 #ifndef NO_DH
 /**
  * Get a DH object's data as an attribute.
@@ -9381,6 +10111,11 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                             ret = EcObject_GetAttr(object, type, data, len);
                             break;
 #endif
+#ifdef WOLFPKCS11_MLDSA
+                        case CKK_ML_DSA:
+                            ret = MldsaObject_GetAttr(object, type, data, len);
+                            break;
+#endif
 #ifndef NO_DH
                         case CKK_DH:
                             ret = DhObject_GetAttr(object, type, data, len);
@@ -9699,6 +10434,9 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
 #ifdef HAVE_ECC
                 case CKK_EC:
 #endif
+#ifdef WOLFPKCS11_MLDSA
+                case CKK_ML_DSA:
+#endif
 #ifndef NO_DH
                 case CKK_DH:
 #endif
@@ -9783,6 +10521,13 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             if (object->objClass != CKO_CERTIFICATE) {
                 ret = BAD_FUNC_ARG;
             }
+            break;
+        case CKA_PARAMETER_SET:
+        case CKA_SEED:
+#ifdef WOLFPKCS11_MLDSA
+            if (object->type != CKK_ML_DSA)
+#endif
+                ret = BAD_FUNC_ARG;
             break;
 
         case CKA_WOLFSSL_DEVID:
@@ -11276,6 +12021,222 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
     return ret;
 }
 #endif /* HAVE_ECC */
+
+#ifdef WOLFPKCS11_MLDSA
+/**
+ * Generate an ML-DSA key pair.
+ *
+ * @param  pub      [in]  Public key object.
+ * @param  priv     [in]  Private key object.
+ * @param  slot     [in]  Slot operation is performed on.
+ * @return  -ve when key generation fails.
+ *          0 on success.
+ */
+int WP11_Mldsa_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
+                               WP11_Slot* slot)
+{
+    int ret = 0;
+    byte* pubKey = NULL;
+    word32 pubKeyLen = 0;
+    WC_RNG rng;
+    byte level = 0;
+
+    /* Both MlDsaKey object inside the pub and priv WP11_Objects are
+     * already initialized. The pub key is also set to a proper level
+     * within WP11_Object_SetMldsaKey() based on the given parameter
+     * set. */
+
+    /* Copy level from pub to priv */
+    ret = wc_MlDsaKey_GetParams(pub->data.mldsaKey, &level);
+    if (ret == 0) {
+        ret = wc_MlDsaKey_SetParams(priv->data.mldsaKey, level);
+    }
+
+    /* Generate into the private key. */
+    if (ret == 0) {
+        ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
+        if (ret == 0) {
+            ret = wc_MlDsaKey_MakeKey(priv->data.mldsaKey, &rng);
+            Rng_Free(&rng);
+        }
+    }
+    if (ret == 0) {
+        ret = wc_MlDsaKey_GetPubLen(priv->data.mldsaKey, (int*)&pubKeyLen);
+    }
+    if (ret == 0) {
+        /* Allocate memory for the public key */
+        pubKey = XMALLOC(pubKeyLen, NULL, DYNAMIC_TYPE_PUBLIC_KEY);
+        if (pubKey == NULL) {
+            ret = MEMORY_E;
+        }
+    }
+    if (ret == 0) {
+        /* Export the public key */
+        ret = wc_MlDsaKey_ExportPubRaw(priv->data.mldsaKey, pubKey, &pubKeyLen);
+    }
+    if (ret == 0) {
+        /* Copy the public part into public key. */
+        ret = wc_MlDsaKey_ImportPubRaw(pub->data.mldsaKey, pubKey, pubKeyLen);
+    }
+    if (ret == 0) {
+        priv->local = 1;
+        pub->local = 1;
+        priv->keyGenMech = CKM_ML_DSA_KEY_PAIR_GEN;
+        pub->keyGenMech = CKM_ML_DSA_KEY_PAIR_GEN;
+    }
+
+    if (pubKey != NULL) {
+        XFREE(pubKey, NULL, DYNAMIC_TYPE_PUBLIC_KEY);
+    }
+
+    return ret;
+}
+
+/**
+* Return the length of a signature in bytes.
+*
+* @param  key  [in]  ML-DSA key object.
+* @return  Length of ML-DSA signature in bytes.
+*/
+int WP11_Mldsa_SigLen(WP11_Object* key)
+{
+    int len = 0;
+
+    if (wc_MlDsaKey_GetSigLen(key->data.mldsaKey, &len) != 0)
+        len = 0;
+
+    return len;
+}
+
+/**
+* ML-DSA sign data with private key.
+*
+* @param  data     [in]      Data to sign (message or hash).
+* @param  dataLen  [in]      Length of data in bytes.
+* @param  sig      [in]      Buffer to hold signature data.
+* @param  sigLen   [in,out]  On in, length of buffer.
+*                            On out, length data in buffer.
+* @param  priv     [in]      Private key object.
+* @param  session  [in]      Session object holding parameters.
+* @return  BUFFER_E when sigLen is too small.
+*          Other -ve when signing fails.
+*          0 on success.
+*/
+int WP11_Mldsa_Sign(unsigned char* data, word32 dataLen, unsigned char* sig,
+                    word32* sigLen, WP11_Object* priv, WP11_Session* session)
+{
+    int ret = 0;
+    WP11_Slot* slot = WP11_Session_GetSlot(session);
+    WP11_MldsaParams* params = &session->params.mldsa;
+    WC_RNG rng;
+
+    if (priv->onToken)
+        WP11_Lock_LockRO(priv->lock);
+
+    ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
+    if (ret == 0) {
+        if (params->preHashType == WC_HASH_TYPE_NONE) {
+            if (params->hedgeType == CKH_HEDGE_PREFERRED ||
+                                      params->hedgeType == CKH_HEDGE_REQUIRED) {
+                ret = wc_MlDsaKey_SignCtx(priv->data.mldsaKey, params->ctx,
+                                        params->ctxSz, sig, sigLen, data,
+                                        dataLen, &rng);
+            }
+            else if (params->hedgeType == CKH_DETERMINISTIC_REQUIRED) {
+                /* FIPS 204: 32 zeros as seed for deterministic ML-DSA */
+                byte seed[32];
+                XMEMSET(seed, 0x00, sizeof(seed));
+                ret = wc_dilithium_sign_ctx_msg_with_seed(params->ctx, params->ctxSz,
+                                                          data, dataLen, sig, sigLen,
+                                                          priv->data.mldsaKey, seed);
+            }
+            else {
+                ret = BAD_FUNC_ARG;
+            }
+        }
+        else {
+            if (params->hedgeType == CKH_HEDGE_PREFERRED ||
+                                      params->hedgeType == CKH_HEDGE_REQUIRED) {
+                ret = wc_dilithium_sign_ctx_hash(params->ctx, params->ctxSz,
+                                                params->preHashType, data, dataLen,
+                                                sig, sigLen, priv->data.mldsaKey,
+                                                &rng);
+            }
+            else if (params->hedgeType == CKH_DETERMINISTIC_REQUIRED) {
+                /* FIPS 204: 32 zeros as seed for deterministic ML-DSA */
+                byte seed[32];
+                XMEMSET(seed, 0x00, sizeof(seed));
+                ret = wc_dilithium_sign_ctx_hash_with_seed(params->ctx,
+                        params->ctxSz, params->preHashType, data, dataLen, sig,
+                        sigLen, priv->data.mldsaKey, seed);
+            }
+            else {
+                ret = BAD_FUNC_ARG;
+            }
+        }
+        Rng_Free(&rng);
+    }
+
+    XFREE(params->ctx, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    params->ctx = NULL;
+    params->ctxSz = 0;
+
+    if (priv->onToken)
+        WP11_Lock_UnlockRO(priv->lock);
+
+    return ret;
+}
+
+/**
+* ML-DSA verify signature for data with public key.
+*
+* @param  sig      [in]   Signature data.
+* @param  sigLen   [in]   Length of buffer in bytes.
+* @param  data     [in]   Data to verify.
+* @param  dataLen  [in]   Length of data in bytes.
+* @param  stat     [out]  Status of verification. 1 on success, otherwise 0.
+* @param  pub      [in]   Public key object.
+* @param  session  [in]   Session object holding parameters.
+* @return  -ve when verifying fails.
+*          0 on success.
+*/
+int WP11_Mldsa_Verify(unsigned char* sig, word32 sigLen, unsigned char* data,
+                      word32 dataLen, int* stat, WP11_Object* pub,
+                      WP11_Session* session)
+{
+    int ret = 0;
+    WP11_MldsaParams* params = &session->params.mldsa;
+
+    *stat = 0;
+    if (pub->onToken)
+        WP11_Lock_LockRO(pub->lock);
+
+    if (sigLen != (word32)WP11_Mldsa_SigLen(pub))
+        ret = BAD_FUNC_ARG;
+
+    if (ret == 0) {
+        if (params->preHashType == WC_HASH_TYPE_NONE) {
+            ret = wc_dilithium_verify_ctx_msg(sig, sigLen, params->ctx,
+                                              params->ctxSz, data, dataLen,
+                                              stat, pub->data.mldsaKey);
+        }
+        else {
+            ret = wc_dilithium_verify_ctx_hash(sig, sigLen, params->ctx,
+                    params->ctxSz, params->preHashType, data, dataLen, stat,
+                    pub->data.mldsaKey);
+        }
+    }
+
+    XFREE(params->ctx, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    params->ctx = NULL;
+    params->ctxSz = 0;
+
+    if (pub->onToken)
+        WP11_Lock_UnlockRO(pub->lock);
+
+    return ret;
+}
+#endif /* WOLFPKCS11_MLDSA */
 
 #if defined(WOLFPKCS11_HKDF) || !defined(NO_AES)
 /**
