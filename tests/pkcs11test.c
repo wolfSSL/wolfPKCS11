@@ -1076,6 +1076,9 @@ static CK_RV test_session(void* args)
     }
     if (ret == CKR_OK)
         CHECK_COND((info.ulDeviceError == 0), ret, "Get Session info error");
+    if (ret == CKR_OK)
+        CHECK_COND((info.slotID == (CK_SLOT_ID)slot), ret,
+                                                    "Get Session info slotID");
 
     /* Get function status and cancel function are not valid anymore. */
     if (ret == CKR_OK) {

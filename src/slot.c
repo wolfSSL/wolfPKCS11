@@ -1639,6 +1639,7 @@ CK_RV C_GetSessionInfo(CK_SESSION_HANDLE hSession,
         return rv;
     }
 
+    pInfo->slotID = WP11_Session_GetSlotId(session);
     pInfo->state = WP11_Session_GetState(session);
     pInfo->flags = CKF_SERIAL_SESSION;
     if (WP11_Session_IsRW(session))

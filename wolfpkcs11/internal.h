@@ -356,6 +356,7 @@ WP11_LOCAL int WP11_Session_IsHashOpInitialized(WP11_Session* session, int mecha
 WP11_LOCAL enum wc_HashType WP11_Session_ToHashType(WP11_Session* session);
 WP11_LOCAL void WP11_Session_SetOpInitialized(WP11_Session* session, int init);
 WP11_LOCAL WP11_Slot* WP11_Session_GetSlot(WP11_Session* session);
+WP11_LOCAL CK_SLOT_ID WP11_Session_GetSlotId(WP11_Session* session);
 WP11_LOCAL CK_MECHANISM_TYPE WP11_Session_GetMechanism(WP11_Session* session);
 WP11_LOCAL void WP11_Session_SetMechanism(WP11_Session* session,
                                CK_MECHANISM_TYPE mechanism);

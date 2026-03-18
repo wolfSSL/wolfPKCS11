@@ -7011,6 +7011,17 @@ WP11_Slot* WP11_Session_GetSlot(WP11_Session* session)
 }
 
 /**
+ * Get the slot id associated with the session.
+ *
+ * @param  session  [in]  Session object.
+ * @return  Slot id.
+ */
+CK_SLOT_ID WP11_Session_GetSlotId(WP11_Session* session)
+{
+    return session->slotId;
+}
+
+/**
  * Get the mechanism associated with the session.
  *
  * @param  session  [in]  Session object.
