@@ -7869,8 +7869,10 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
                 secretKeyLen[1] = symmKeyLen;
                 ret = WP11_Object_SetSecretKey(obj, secretKeyData,
                                                 secretKeyLen);
-                if (ret != 0)
+                if (ret != 0) {
+                    WP11_Object_Free(obj);
                     rv = CKR_FUNCTION_FAILED;
+                }
                 if (ret == 0) {
                     rv = AddObject(session, obj, pTemplate,
                                     ulAttributeCount, phKey);
