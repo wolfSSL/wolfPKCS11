@@ -704,6 +704,16 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
             if ((getVar == CK_TRUE) && (*(CK_BBOOL*)attr->pValue == CK_FALSE))
                 return CKR_ATTRIBUTE_READ_ONLY;
         }
+        /* Cannot change extractable from false to true */
+        if (!newObject && attr->type == CKA_EXTRACTABLE) {
+            rv = WP11_Object_GetAttr(obj, CKA_EXTRACTABLE, &getVar,
+                                     &getVarLen);
+            if (rv != CKR_OK)
+                return rv;
+
+            if ((getVar == CK_FALSE) && (*(CK_BBOOL*)attr->pValue == CK_TRUE))
+                return CKR_ATTRIBUTE_READ_ONLY;
+        }
         ret = WP11_Object_SetAttr(obj, attr->type, (byte*)attr->pValue,
                                                               attr->ulValueLen);
         if (ret == MEMORY_E)
