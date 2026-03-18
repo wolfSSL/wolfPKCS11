@@ -197,8 +197,10 @@ static CK_RV pkcs11_open_session(CK_SESSION_HANDLE* session)
         return ret;
 
     ret = funcList->C_Login(*session, CKU_USER, userPin, userPinLen);
-    if (ret != CKR_OK)
+    if (ret != CKR_OK) {
+        funcList->C_CloseSession(*session);
         return ret;
+    }
 
     return CKR_OK;
 }

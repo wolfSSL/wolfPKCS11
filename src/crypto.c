@@ -706,6 +706,7 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
         }
         /* Cannot change extractable from false to true */
         if (!newObject && attr->type == CKA_EXTRACTABLE) {
+            getVarLen = sizeof(getVar);
             rv = WP11_Object_GetAttr(obj, CKA_EXTRACTABLE, &getVar,
                                      &getVarLen);
             if (rv != CKR_OK)
