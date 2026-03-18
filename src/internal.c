@@ -2831,6 +2831,7 @@ static int wp11_EncryptData(byte* out, byte* data, int len, byte* key,
         ret = wc_AesGcmEncrypt(&aes, out, data, len, iv, ivSz, out + len,
                                                        AES_BLOCK_SIZE, NULL, 0);
     }
+    wc_AesFree(&aes);
 
     return ret;
 }
@@ -2865,6 +2866,7 @@ static int wp11_DecryptData(byte* out, byte* data, int len, byte* key,
         ret = wc_AesGcmDecrypt(&aes, out, data, len, iv, ivSz, data + len,
                                                        AES_BLOCK_SIZE, NULL, 0);
     }
+    wc_AesFree(&aes);
 
     return ret;
 }
