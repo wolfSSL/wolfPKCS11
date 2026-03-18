@@ -54,6 +54,16 @@ configure step.
 WARNING: ECB (Electronic Code Book) mode AES is generally considered to be
 insecure. Please consider using a different mode of AES.
 
+### Optional: PQC ML-DSA Support
+
+To have ML-DSA support in wolfPKCS11, configure wolfSSL with ML-DSA (Dilithium)
+support enabled, either by adding `--enable-mldsa` to `./configure` or by
+setting `WOLFSSL_DILITHIUM` to `yes` in CMake.
+
+As ML-DSA is a feature of PKCS#11 version 3.2, support for that is required,
+too. Hence, to enable all in wolfPKCS11, add `--enable-pkcs11v32 --enable-mldsa`
+during the configure step.
+
 ### Build options and defines
 
 #### Define WOLFPKCS11_TPM_STORE
@@ -116,7 +126,8 @@ cmake -DCMAKE_INSTALL_PREFIX=/usr/local \
     -DWOLFSSL_SHA=yes -DWOLFSSL_SHA224=yes -DWOLFSSL_SHA3=yes \
     -DWOLFSSL_SHA384=yes -DWOLFSSL_SHA512=yes \
     -DWOLFSSL_SP_MATH_ALL=yes -DWOLFSSL_PUBLIC_MP=yes \
-    -DWOLFSSL_WC_RSA_DIRECT=yes -DCMAKE_BUILD_TYPE=Release \
+    -DWOLFSSL_WC_RSA_DIRECT=yes -DWOLFSSL_DILITHIUM=yes \
+    -DCMAKE_BUILD_TYPE=Release \
     ..
 cmake --build .
 sudo cmake --install .
@@ -147,6 +158,8 @@ cmake -DWOLFPKCS11_DEBUG=yes \
     -DWOLFPKCS11_AESCTS=yes \
     -DWOLFPKCS11_AESCMAC=yes \
     -DWOLFPKCS11_PBKDF2=yes \
+    -DWOLFPKCS11_PKCS11_V3_2=yes \
+    -DWOLFPKCS11_MLDSA=yes \
     ..
 cmake --build .
 ctest
@@ -194,6 +207,7 @@ cmake -DCMAKE_PREFIX_PATH=/path/to/wolfssl/install ..
 | `WOLFPKCS11_NSS` | `no` | NSS-specific modifications |
 | `WOLFPKCS11_PKCS11_V3_0` | `yes` | PKCS#11 v3.0 support |
 | `WOLFPKCS11_PKCS11_V3_2` | `no` | PKCS#11 v3.2 support |
+| `WOLFPKCS11_MLDSA` | `no`| ML-DSA support |
 | `WOLFPKCS11_EXAMPLES` | `yes` | Build examples |
 | `WOLFPKCS11_TESTS` | `yes` | Build and register tests |
 | `WOLFPKCS11_COVERAGE` | `no` | Code coverage support |
