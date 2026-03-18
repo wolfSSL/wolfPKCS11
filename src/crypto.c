@@ -1595,7 +1595,7 @@ CK_RV C_FindObjectsInit(CK_SESSION_HANDLE hSession,
         WOLFPKCS11_LEAVE("C_FindObjectsInit", rv);
         return rv;
     }
-    if (pTemplate == NULL) {
+    if (pTemplate == NULL && ulCount != 0) {
         rv = CKR_ARGUMENTS_BAD;
         WOLFPKCS11_LEAVE("C_FindObjectsInit", rv);
         return rv;
