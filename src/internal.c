@@ -9146,10 +9146,11 @@ static int GetSha1CheckValue(const byte* dataIn, int inLen, byte* dataOut,
     }
 
     ret = wc_Hash(WC_HASH_TYPE_SHA, dataIn, inLen, hash, WC_SHA_DIGEST_SIZE);
-    if (ret == 0) {
-        XMEMCPY(dataOut, hash, PKCS11_CHECK_VALUE_SIZE);
-        *outLen = PKCS11_CHECK_VALUE_SIZE;
+    if (ret != 0) {
+        return CKR_FUNCTION_FAILED;
     }
+    XMEMCPY(dataOut, hash, PKCS11_CHECK_VALUE_SIZE);
+    *outLen = PKCS11_CHECK_VALUE_SIZE;
 
     return CKR_OK;
 }
