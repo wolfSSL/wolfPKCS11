@@ -1076,6 +1076,9 @@ static CK_RV test_session(void* args)
     }
     if (ret == CKR_OK)
         CHECK_COND((info.ulDeviceError == 0), ret, "Get Session info error");
+    if (ret == CKR_OK)
+        CHECK_COND((info.slotID == (CK_SLOT_ID)slot), ret,
+                                                    "Get Session info slotID");
 
     /* Get function status and cancel function are not valid anymore. */
     if (ret == CKR_OK) {
@@ -3712,6 +3715,109 @@ static CK_RV test_attribute_get(void* args)
     }
     if (obj != CK_INVALID_HANDLE)
         funcList->C_DestroyObject(session, obj);
+
+    return ret;
+}
+
+static CK_RV test_extractable_set_false_to_true(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE objFalse = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE objTrue = CK_INVALID_HANDLE;
+    static byte keyData[] = { 0x01 };
+    static byte id[] = { 0x04, 0x05, 0x06 };
+    CK_BBOOL val;
+    /* Object created with CKA_EXTRACTABLE = FALSE */
+    CK_ATTRIBUTE createTmplFalse[] = {
+        { CKA_CLASS,             &pubKeyClass,      sizeof(pubKeyClass)     },
+        { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)  },
+        { CKA_EXTRACTABLE,       &ckFalse,          sizeof(ckFalse)         },
+        { CKA_VALUE,             keyData,            sizeof(keyData)         },
+        { CKA_ID,                id,                 sizeof(id)             },
+    };
+    CK_ULONG createTmplFalseCnt =
+        sizeof(createTmplFalse) / sizeof(*createTmplFalse);
+    /* Object created with CKA_EXTRACTABLE = TRUE */
+    CK_ATTRIBUTE createTmplTrue[] = {
+        { CKA_CLASS,             &pubKeyClass,      sizeof(pubKeyClass)     },
+        { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)  },
+        { CKA_EXTRACTABLE,       &ckTrue,           sizeof(ckTrue)          },
+        { CKA_VALUE,             keyData,            sizeof(keyData)         },
+        { CKA_ID,                id,                 sizeof(id)             },
+    };
+    CK_ULONG createTmplTrueCnt =
+        sizeof(createTmplTrue) / sizeof(*createTmplTrue);
+    CK_ATTRIBUTE setExtractTrue[] = {
+        { CKA_EXTRACTABLE,       &ckTrue,           sizeof(ckTrue)          },
+    };
+    CK_ULONG setExtractTrueCnt =
+        sizeof(setExtractTrue) / sizeof(*setExtractTrue);
+    CK_ATTRIBUTE setExtractFalse[] = {
+        { CKA_EXTRACTABLE,       &ckFalse,          sizeof(ckFalse)         },
+    };
+    CK_ULONG setExtractFalseCnt =
+        sizeof(setExtractFalse) / sizeof(*setExtractFalse);
+    CK_ATTRIBUTE getExtract[] = {
+        { CKA_EXTRACTABLE,       &val,              sizeof(val)             },
+    };
+    CK_ULONG getExtractCnt = sizeof(getExtract) / sizeof(*getExtract);
+
+    /* Create object with CKA_EXTRACTABLE = FALSE */
+    ret = funcList->C_CreateObject(session, createTmplFalse, createTmplFalseCnt,
+                                   &objFalse);
+    CHECK_CKR(ret, "Create Object extractable=false");
+
+    /* Attempt to change CKA_EXTRACTABLE FALSE -> TRUE (must fail) */
+    if (ret == CKR_OK) {
+        ret = funcList->C_SetAttributeValue(session, objFalse, setExtractTrue,
+                                            setExtractTrueCnt);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_READ_ONLY,
+                       "Set extractable false->true");
+    }
+
+    /* Verify CKA_EXTRACTABLE is still FALSE */
+    if (ret == CKR_OK) {
+        val = CK_TRUE;
+        ret = funcList->C_GetAttributeValue(session, objFalse, getExtract,
+                                            getExtractCnt);
+        CHECK_CKR(ret, "Get extractable after failed set");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(val == CK_FALSE, ret,
+                   "Extractable still false after failed set");
+    }
+
+    /* Create object with CKA_EXTRACTABLE = TRUE */
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, createTmplTrue,
+                                       createTmplTrueCnt, &objTrue);
+        CHECK_CKR(ret, "Create Object extractable=true");
+    }
+
+    /* Change CKA_EXTRACTABLE TRUE -> FALSE (must succeed) */
+    if (ret == CKR_OK) {
+        ret = funcList->C_SetAttributeValue(session, objTrue, setExtractFalse,
+                                            setExtractFalseCnt);
+        CHECK_CKR(ret, "Set extractable true->false");
+    }
+
+    /* Verify CKA_EXTRACTABLE is now FALSE */
+    if (ret == CKR_OK) {
+        val = CK_TRUE;
+        ret = funcList->C_GetAttributeValue(session, objTrue, getExtract,
+                                            getExtractCnt);
+        CHECK_CKR(ret, "Get extractable after set false");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(val == CK_FALSE, ret,
+                   "Extractable now false after set");
+    }
+
+    if (objFalse != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, objFalse);
+    if (objTrue != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, objTrue);
 
     return ret;
 }
@@ -16090,6 +16196,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_attribute),
     PKCS11TEST_FUNC_SESS_DECL(test_attribute_types),
     PKCS11TEST_FUNC_SESS_DECL(test_attribute_get),
+    PKCS11TEST_FUNC_SESS_DECL(test_extractable_set_false_to_true),
     PKCS11TEST_FUNC_SESS_DECL(test_data_object),
     PKCS11TEST_FUNC_SESS_DECL(test_data_object_null_value),
     PKCS11TEST_FUNC_SESS_DECL(test_attributes_secret),

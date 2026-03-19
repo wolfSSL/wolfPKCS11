@@ -2876,6 +2876,7 @@ static int wp11_EncryptData(byte* out, byte* data, int len, byte* key,
         ret = wc_AesGcmEncrypt(&aes, out, data, len, iv, ivSz, out + len,
                                                        AES_BLOCK_SIZE, NULL, 0);
     }
+    wc_AesFree(&aes);
 
     return ret;
 }
@@ -2910,6 +2911,7 @@ static int wp11_DecryptData(byte* out, byte* data, int len, byte* key,
         ret = wc_AesGcmDecrypt(&aes, out, data, len, iv, ivSz, data + len,
                                                        AES_BLOCK_SIZE, NULL, 0);
     }
+    wc_AesFree(&aes);
 
     return ret;
 }
@@ -7336,6 +7338,17 @@ WP11_Slot* WP11_Session_GetSlot(WP11_Session* session)
 }
 
 /**
+ * Get the slot id associated with the session.
+ *
+ * @param  session  [in]  Session object.
+ * @return  Slot id.
+ */
+CK_SLOT_ID WP11_Session_GetSlotId(WP11_Session* session)
+{
+    return session->slotId;
+}
+
+/**
  * Get the mechanism associated with the session.
  *
  * @param  session  [in]  Session object.
@@ -9863,10 +9876,11 @@ static int GetSha1CheckValue(const byte* dataIn, int inLen, byte* dataOut,
     }
 
     ret = wc_Hash(WC_HASH_TYPE_SHA, dataIn, inLen, hash, WC_SHA_DIGEST_SIZE);
-    if (ret == 0) {
-        XMEMCPY(dataOut, hash, PKCS11_CHECK_VALUE_SIZE);
-        *outLen = PKCS11_CHECK_VALUE_SIZE;
+    if (ret != 0) {
+        return CKR_FUNCTION_FAILED;
     }
+    XMEMCPY(dataOut, hash, PKCS11_CHECK_VALUE_SIZE);
+    *outLen = PKCS11_CHECK_VALUE_SIZE;
 
     return CKR_OK;
 }

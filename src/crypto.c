@@ -736,6 +736,17 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
             if ((getVar == CK_TRUE) && (*(CK_BBOOL*)attr->pValue == CK_FALSE))
                 return CKR_ATTRIBUTE_READ_ONLY;
         }
+        /* Cannot change extractable from false to true */
+        if (!newObject && attr->type == CKA_EXTRACTABLE) {
+            getVarLen = sizeof(getVar);
+            rv = WP11_Object_GetAttr(obj, CKA_EXTRACTABLE, &getVar,
+                                     &getVarLen);
+            if (rv != CKR_OK)
+                return rv;
+
+            if ((getVar == CK_FALSE) && (*(CK_BBOOL*)attr->pValue == CK_TRUE))
+                return CKR_ATTRIBUTE_READ_ONLY;
+        }
         ret = WP11_Object_SetAttr(obj, attr->type, (byte*)attr->pValue,
                                                               attr->ulValueLen);
         if (ret == MEMORY_E)
@@ -779,15 +790,21 @@ static CK_RV NewObject(WP11_Session* session, CK_KEY_TYPE keyType,
         return CKR_FUNCTION_FAILED;
 
     ret = WP11_Object_SetClass(obj, keyClass);
-    if (ret != 0)
+    if (ret != 0) {
+        WP11_Object_Free(obj);
         return CKR_FUNCTION_FAILED;
+    }
 
     /* Now that object class is set, allocate type-specific data */
     ret = wp11_Object_AllocateTypeData(obj);
-    if (ret == MEMORY_E)
+    if (ret == MEMORY_E) {
+        WP11_Object_Free(obj);
         return CKR_DEVICE_MEMORY;
-    if (ret != 0)
+    }
+    if (ret != 0) {
+        WP11_Object_Free(obj);
         return CKR_FUNCTION_FAILED;
+    }
 
     rv = SetAttributeValue(session, obj, pTemplate, ulCount, CK_TRUE);
     if (rv != CKR_OK) {
@@ -1238,15 +1255,21 @@ CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
 
     /* Set the object class from the original object */
     ret = WP11_Object_SetClass(newObj, WP11_Object_GetClass(obj));
-    if (ret != 0)
+    if (ret != 0) {
+        WP11_Object_Free(newObj);
         return CKR_FUNCTION_FAILED;
+    }
 
     /* Now that object class is set, allocate type-specific data */
     ret = wp11_Object_AllocateTypeData(newObj);
-    if (ret == MEMORY_E)
+    if (ret == MEMORY_E) {
+        WP11_Object_Free(newObj);
         return CKR_DEVICE_MEMORY;
-    if (ret != 0)
+    }
+    if (ret != 0) {
+        WP11_Object_Free(newObj);
         return CKR_FUNCTION_FAILED;
+    }
 
     /* copy all the attributes from the original object to the new object */
     rv = WP11_Object_Copy(obj, newObj);
@@ -1605,7 +1628,7 @@ CK_RV C_FindObjectsInit(CK_SESSION_HANDLE hSession,
         WOLFPKCS11_LEAVE("C_FindObjectsInit", rv);
         return rv;
     }
-    if (pTemplate == NULL) {
+    if (pTemplate == NULL && ulCount != 0) {
         rv = CKR_ARGUMENTS_BAD;
         WOLFPKCS11_LEAVE("C_FindObjectsInit", rv);
         return rv;
@@ -7563,15 +7586,22 @@ static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
         secretKeyData[1] = ptr + (length - symmKeyLen);
         secretKeyLen[1] = symmKeyLen;
         ret = WP11_Object_SetSecretKey(secret, secretKeyData, secretKeyLen);
-        if (ret != CKR_OK)
+        if (ret != CKR_OK) {
+            WP11_Object_Free(secret);
             return CKR_FUNCTION_FAILED;
+        }
         ret = (int)AddObject(session, secret, pTemplate, ulAttributeCount,
             handle);
         if (ret != CKR_OK) {
+            WP11_Object_Free(secret);
             return ret;
         }
     }
-    if ((ret == 0) && (isMac)) {
+    else {
+        WP11_Object_Free(secret);
+        return ret;
+    }
+    if (isMac) {
         ret = WP11_Object_SetAttr(secret, CKA_KEY_TYPE, (byte*)&keyType,
                                   sizeof(keyType));
         if (ret != CKR_OK)
@@ -8004,8 +8034,10 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
                 secretKeyLen[1] = symmKeyLen;
                 ret = WP11_Object_SetSecretKey(obj, secretKeyData,
                                                 secretKeyLen);
-                if (ret != 0)
+                if (ret != 0) {
+                    WP11_Object_Free(obj);
                     rv = CKR_FUNCTION_FAILED;
+                }
                 if (ret == 0) {
                     rv = AddObject(session, obj, pTemplate,
                                     ulAttributeCount, phKey);

@@ -576,7 +576,7 @@ static CK_MECHANISM_INFO rsaOaepMechInfo = {
 #ifdef WC_RSA_PSS
 /* Info on RSA PKCS#1 PSS mechanism. */
 static CK_MECHANISM_INFO rsaPssMechInfo = {
-    256, 521, CKF_SIGN | CKF_VERIFY
+    1024, 4096, CKF_SIGN | CKF_VERIFY
 };
 #endif
 #ifndef NO_SHA256
@@ -1667,6 +1667,7 @@ CK_RV C_GetSessionInfo(CK_SESSION_HANDLE hSession,
         return rv;
     }
 
+    pInfo->slotID = WP11_Session_GetSlotId(session);
     pInfo->state = WP11_Session_GetState(session);
     pInfo->flags = CKF_SERIAL_SESSION;
     if (WP11_Session_IsRW(session))
