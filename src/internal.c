@@ -12993,7 +12993,26 @@ int WP11_AesCbcPad_DecryptFinal(unsigned char* dec, word32* decSz,
     ret = wc_AesCbcDecrypt(&cbc->aes, cbc->partial, cbc->partial,
                                                                 cbc->partialSz);
     if (ret == 0) {
+        byte padBad;
+
         padCnt = cbc->partial[AES_BLOCK_SIZE-1];
+
+        /* Validate PKCS#7 padding in constant time:
+         * padCnt must be 1..AES_BLOCK_SIZE and all padding bytes must equal
+         * padCnt. */
+        padBad = (byte)(0 - (padCnt == 0));
+        padBad |= (byte)(0 - (padCnt > AES_BLOCK_SIZE));
+        for (i = 0; i < AES_BLOCK_SIZE; i++) {
+            /* inPad is 0xFF when i is in the padding region, 0x00 otherwise */
+            byte inPad = (byte)(0 -
+                ((unsigned)(AES_BLOCK_SIZE - 1 - i) < (unsigned)padCnt));
+            padBad |= inPad & (cbc->partial[i] ^ padCnt);
+        }
+        if (padBad) {
+            ret = BAD_PADDING_E;
+        }
+    }
+    if (ret == 0) {
         outSz = AES_BLOCK_SIZE - (padCnt & (0 - (padCnt <= AES_BLOCK_SIZE)));
         for (i = 0; i < AES_BLOCK_SIZE; i++) {
             mask = (size_t)0 - (i != outSz);
