@@ -3209,6 +3209,8 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_GCM_DEC))
                 return CKR_OPERATION_NOT_INITIALIZED;
 
+            if (ulEncryptedDataLen < (CK_ULONG)WP11_AesGcm_GetTagBits(session) / 8)
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
             decDataLen = (word32)ulEncryptedDataLen -
                                             WP11_AesGcm_GetTagBits(session) / 8;
             if (pData == NULL) {
@@ -3230,6 +3232,8 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CCM_DEC))
                 return CKR_OPERATION_NOT_INITIALIZED;
 
+            if (ulEncryptedDataLen < (CK_ULONG)WP11_AesCcm_GetMacLen(session))
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
             decDataLen = (word32)ulEncryptedDataLen -
                                             WP11_AesCcm_GetMacLen(session);
             if (pData == NULL) {
@@ -3297,6 +3301,8 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
             /* AES Key Wrap unwrapping reduces the size by 8 bytes (the
              * integrity check value). If using padding then its even smaller
              * but we can't know the final size without decrypting first. */
+            if (ulEncryptedDataLen < KEYWRAP_BLOCK_SIZE)
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
             decDataLen = (word32)(ulEncryptedDataLen - KEYWRAP_BLOCK_SIZE);
             if (pData == NULL) {
                 *pulDataLen = decDataLen;
@@ -3623,6 +3629,9 @@ CK_RV C_DecryptFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastPart,
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_GCM_DEC))
                 return CKR_OPERATION_NOT_INITIALIZED;
 
+            if (WP11_AesGcm_EncDataLen(session) <
+                                            WP11_AesGcm_GetTagBits(session) / 8)
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
             decPartLen = WP11_AesGcm_EncDataLen(session) -
                                             WP11_AesGcm_GetTagBits(session) / 8;
             if (pLastPart == NULL) {
