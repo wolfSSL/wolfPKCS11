@@ -20,10 +20,10 @@
  *
  * Test for GetEcbCheckValue error propagation (bug #496).
  *
- * GetEcbCheckValue always returns CKR_OK even when WP11_AesEcb_Encrypt fails.
- * A generic secret key with an invalid AES key length (e.g. 5 bytes) causes
- * the encrypt to fail, but C_GetAttributeValue still returns CKR_OK with
- * uninitialized output.
+ * Verifies that GetEcbCheckValue correctly propagates failures from
+ * WP11_AesEcb_Encrypt. A generic secret key with an invalid AES key length
+ * (e.g. 5 bytes) causes the encrypt to fail, and C_GetAttributeValue must
+ * return CKR_FUNCTION_FAILED.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -268,14 +268,12 @@ cleanup:
 }
 
 /*
- * Test 2 (bug demonstration): Create a 5-byte CKK_GENERIC_SECRET key and
- * query CKA_CHECK_VALUE. The 5-byte key is not a valid AES key length, so
- * WP11_AesEcb_Encrypt (called by GetEcbCheckValue) fails internally.
+ * Test 2: Create a 5-byte CKK_GENERIC_SECRET key and query CKA_CHECK_VALUE.
+ * The 5-byte key is not a valid AES key length, so WP11_AesEcb_Encrypt
+ * (called by GetEcbCheckValue) fails internally.
  *
- * BUG #496: GetEcbCheckValue always returns CKR_OK regardless of whether the
- * encrypt succeeded. This test expects CKR_OK (proving the bug exists).
- * Once the bug is fixed, this test should be updated to expect
- * CKR_FUNCTION_FAILED.
+ * Verifies the fix for BUG #496: GetEcbCheckValue now correctly propagates
+ * the encrypt failure, returning CKR_FUNCTION_FAILED.
  */
 static int test_invalid_key_check_value(CK_SESSION_HANDLE session)
 {
