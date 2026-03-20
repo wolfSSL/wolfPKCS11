@@ -448,7 +448,7 @@ CK_RV C_GetInterfaceList(CK_INTERFACE_PTR pInterfacesList, CK_ULONG_PTR pulCount
         return CKR_BUFFER_TOO_SMALL;
     }
 
-    memcpy(pInterfacesList, interfaces, NUM_INTERFACES * sizeof(CK_INTERFACE));
+    XMEMCPY(pInterfacesList, interfaces, NUM_INTERFACES * sizeof(CK_INTERFACE));
     *pulCount = NUM_INTERFACES;
 
     return CKR_OK;
