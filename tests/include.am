@@ -51,6 +51,11 @@ noinst_PROGRAMS += tests/aes_cbc_pad_padding_test
 tests_aes_cbc_pad_padding_test_SOURCES = tests/aes_cbc_pad_padding_test.c
 tests_aes_cbc_pad_padding_test_LDADD =
 
+check_PROGRAMS += tests/ecb_check_value_error_test
+noinst_PROGRAMS += tests/ecb_check_value_error_test
+tests_ecb_check_value_error_test_SOURCES = tests/ecb_check_value_error_test.c
+tests_ecb_check_value_error_test_LDADD =
+
 check_PROGRAMS += tests/pkcs11v3test
 noinst_PROGRAMS += tests/pkcs11v3test
 tests_pkcs11v3test_SOURCES = tests/pkcs11v3test.c
@@ -67,12 +72,14 @@ tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
 tests_empty_pin_store_test_LDADD += src/libwolfpkcs11.la
 tests_find_objects_null_template_test_LDADD += src/libwolfpkcs11.la
 tests_aes_cbc_pad_padding_test_LDADD += src/libwolfpkcs11.la
+tests_ecb_check_value_error_test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11v3test_LDADD += src/libwolfpkcs11.la
 else
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
 tests_empty_pin_store_test_LDADD += src/libwolfpkcs11.la
 tests_find_objects_null_template_test_LDADD += src/libwolfpkcs11.la
 tests_aes_cbc_pad_padding_test_LDADD += src/libwolfpkcs11.la
+tests_ecb_check_value_error_test_LDADD += src/libwolfpkcs11.la
 endif
 
 EXTRA_DIST += tests/unit.h \
