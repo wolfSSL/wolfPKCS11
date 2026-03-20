@@ -328,7 +328,7 @@ static CK_MECHANISM_TYPE mechanismList[] = {
 #ifdef WC_RSA_PSS
     CKM_RSA_PKCS_PSS,
 #ifndef NO_SHA
-    CKM_SHA1_RSA_PKCS,
+    CKM_SHA1_RSA_PKCS_PSS,
 #endif
 #ifdef WOLFSSL_SHA224
     CKM_SHA224_RSA_PKCS_PSS,
@@ -579,11 +579,9 @@ static CK_MECHANISM_INFO rsaPssMechInfo = {
     1024, 4096, CKF_SIGN | CKF_VERIFY
 };
 #endif
-#ifndef NO_SHA256
 static CK_MECHANISM_INFO shaRsaPkcsMechInfo = {
     1024, 4096, CKF_SIGN | CKF_VERIFY
 };
-#endif
 #endif
 #ifdef HAVE_ECC
 /* Info on EC key generation mechanism. */

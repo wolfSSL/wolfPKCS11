@@ -102,6 +102,17 @@
     #error "wolfTPM and MAXQ10XX are incompatible with each other."
 #endif
 
+/* wc_ForceZero was added in wolfSSL 5.8.4. Provide a fallback for older
+ * versions to securely zero sensitive memory. */
+#if defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX >= 0x05008004
+    #include <wolfssl/wolfcrypt/memory.h>
+#else
+    static void wc_ForceZero(void* mem, size_t len) {
+        volatile byte* p = (volatile byte*)mem;
+        while (len--) *p++ = 0;
+    }
+#endif
+
 /* Helper to get size of struct field */
 #define FIELD_SIZE(type, field) (sizeof(((type *)0)->field))
 
@@ -2738,7 +2749,10 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                         }
                     }
 
-                    XFREE(derBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                    if (derBuf != NULL) {
+                        wc_ForceZero(derBuf, derSz);
+                        XFREE(derBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                    }
 
                     /* Free destination key on failure */
                     if (ret != 0) {
@@ -2811,7 +2825,7 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
 
                     /* Clean up */
                     if (derBuf != NULL) {
-                        XMEMSET(derBuf, 0, derSz); /* Clear sensitive data */
+                        wc_ForceZero(derBuf, derSz);
                         XFREE(derBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                     }
 
@@ -7819,8 +7833,8 @@ int WP11_Session_SetCcmParams(WP11_Session* session, int dataSz,
         ret = BAD_FUNC_ARG;
 
     if (ret == 0) {
-        ccm->dataSz = dataSz;
         XMEMSET(ccm, 0, sizeof(*ccm));
+        ccm->dataSz = dataSz;
         XMEMCPY(ccm->iv, iv, ivSz);
         ccm->ivSz = ivSz;
         if (aad != NULL) {
@@ -8285,8 +8299,7 @@ void WP11_Object_Free(WP11_Object* object)
     #endif
         if ((object->type == CKK_AES || object->type == CKK_GENERIC_SECRET ||
              object->type == CKK_HKDF) && object->data.symmKey != NULL) {
-            /* TODO: ForceZero */
-            XMEMSET(object->data.symmKey->data, 0, object->data.symmKey->len);
+            wc_ForceZero(object->data.symmKey->data, object->data.symmKey->len);
             XFREE(object->data.symmKey, NULL, DYNAMIC_TYPE_AES);
             object->data.symmKey = NULL;
         }
@@ -9930,6 +9943,9 @@ static int GetEcbCheckValue(WP11_Object* secret, byte* dataOut,
 
     XFREE(hash, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     XFREE(input, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+
+    if (ret != 0)
+        return CKR_FUNCTION_FAILED;
 
     return CKR_OK;
 }
@@ -12991,7 +13007,26 @@ int WP11_AesCbcPad_DecryptFinal(unsigned char* dec, word32* decSz,
     ret = wc_AesCbcDecrypt(&cbc->aes, cbc->partial, cbc->partial,
                                                                 cbc->partialSz);
     if (ret == 0) {
+        byte padBad;
+
         padCnt = cbc->partial[AES_BLOCK_SIZE-1];
+
+        /* Validate PKCS#7 padding in constant time:
+         * padCnt must be 1..AES_BLOCK_SIZE and all padding bytes must equal
+         * padCnt. */
+        padBad = (byte)(0 - (padCnt == 0));
+        padBad |= (byte)(0 - (padCnt > AES_BLOCK_SIZE));
+        for (i = 0; i < AES_BLOCK_SIZE; i++) {
+            /* inPad is 0xFF when i is in the padding region, 0x00 otherwise */
+            byte inPad = (byte)(0 -
+                ((unsigned)(AES_BLOCK_SIZE - 1 - i) < (unsigned)padCnt));
+            padBad |= inPad & (cbc->partial[i] ^ padCnt);
+        }
+        if (padBad) {
+            ret = BAD_PADDING_E;
+        }
+    }
+    if (ret == 0) {
         outSz = AES_BLOCK_SIZE - (padCnt & (0 - (padCnt <= AES_BLOCK_SIZE)));
         for (i = 0; i < AES_BLOCK_SIZE; i++) {
             mask = (size_t)0 - (i != outSz);
