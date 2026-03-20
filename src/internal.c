@@ -2739,7 +2739,7 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                     }
 
                     if (derBuf != NULL) {
-                        ForceZero(derBuf, derSz);
+                        wc_ForceZero(derBuf, derSz);
                         XFREE(derBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                     }
 
@@ -2814,7 +2814,7 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
 
                     /* Clean up */
                     if (derBuf != NULL) {
-                        ForceZero(derBuf, derSz);
+                        wc_ForceZero(derBuf, derSz);
                         XFREE(derBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                     }
 
@@ -8288,7 +8288,7 @@ void WP11_Object_Free(WP11_Object* object)
     #endif
         if ((object->type == CKK_AES || object->type == CKK_GENERIC_SECRET ||
              object->type == CKK_HKDF) && object->data.symmKey != NULL) {
-            ForceZero(object->data.symmKey->data, object->data.symmKey->len);
+            wc_ForceZero(object->data.symmKey->data, object->data.symmKey->len);
             XFREE(object->data.symmKey, NULL, DYNAMIC_TYPE_AES);
             object->data.symmKey = NULL;
         }

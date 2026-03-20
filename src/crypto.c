@@ -3318,12 +3318,31 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
             if (mechanism == CKM_AES_KEY_WRAP_PAD) {
                 int i;
                 byte padValue = pData[decDataLen - 1];
-                if (padValue > KEYWRAP_BLOCK_SIZE || padValue > decDataLen)
-                    return CKR_ENCRYPTED_DATA_LEN_RANGE;
-                for (i = 0; i < padValue; i++) {
-                    if (pData[decDataLen - 1 - i] != padValue)
-                        return CKR_ENCRYPTED_DATA_INVALID;
+                unsigned int badPad = 0;
+                unsigned int inPad;
+
+                /* Constant-time range check: padValue must be 1..KEYWRAP_BLOCK_SIZE
+                 * and must not exceed decDataLen. */
+                badPad |= ((unsigned int)padValue - 1) >> 31;
+                badPad |= ((unsigned int)KEYWRAP_BLOCK_SIZE -
+                           (unsigned int)padValue) >> 31;
+                badPad |= ((unsigned int)decDataLen -
+                           (unsigned int)padValue) >> 31;
+
+                /* Constant-time padding byte verification.
+                 * Always iterate KEYWRAP_BLOCK_SIZE times to avoid leaking
+                 * padValue through iteration count. */
+                for (i = 0; i < KEYWRAP_BLOCK_SIZE; i++) {
+                    /* Full mask: all-ones when i < padValue, else 0 */
+                    inPad = 0 - (((unsigned int)i -
+                                   (unsigned int)padValue) >> 31);
+                    badPad |= inPad &
+                              ((unsigned int)pData[decDataLen - 1 - i] ^
+                               (unsigned int)padValue);
                 }
+
+                if (badPad != 0)
+                    return CKR_ENCRYPTED_DATA_INVALID;
                 decDataLen -= padValue;
             }
             *pulDataLen = decDataLen;
