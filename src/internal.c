@@ -8285,8 +8285,7 @@ void WP11_Object_Free(WP11_Object* object)
     #endif
         if ((object->type == CKK_AES || object->type == CKK_GENERIC_SECRET ||
              object->type == CKK_HKDF) && object->data.symmKey != NULL) {
-            /* TODO: ForceZero */
-            XMEMSET(object->data.symmKey->data, 0, object->data.symmKey->len);
+            ForceZero(object->data.symmKey->data, object->data.symmKey->len);
             XFREE(object->data.symmKey, NULL, DYNAMIC_TYPE_AES);
             object->data.symmKey = NULL;
         }
