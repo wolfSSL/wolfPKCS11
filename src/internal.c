@@ -7822,8 +7822,8 @@ int WP11_Session_SetCcmParams(WP11_Session* session, int dataSz,
         ret = BAD_FUNC_ARG;
 
     if (ret == 0) {
-        ccm->dataSz = dataSz;
         XMEMSET(ccm, 0, sizeof(*ccm));
+        ccm->dataSz = dataSz;
         XMEMCPY(ccm->iv, iv, ivSz);
         ccm->ivSz = ivSz;
         if (aad != NULL) {
