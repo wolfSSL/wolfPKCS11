@@ -2738,7 +2738,10 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                         }
                     }
 
-                    XFREE(derBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                    if (derBuf != NULL) {
+                        ForceZero(derBuf, derSz);
+                        XFREE(derBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                    }
 
                     /* Free destination key on failure */
                     if (ret != 0) {
@@ -2811,7 +2814,7 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
 
                     /* Clean up */
                     if (derBuf != NULL) {
-                        XMEMSET(derBuf, 0, derSz); /* Clear sensitive data */
+                        ForceZero(derBuf, derSz);
                         XFREE(derBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                     }
 
