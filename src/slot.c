@@ -579,11 +579,9 @@ static CK_MECHANISM_INFO rsaPssMechInfo = {
     1024, 4096, CKF_SIGN | CKF_VERIFY
 };
 #endif
-#ifndef NO_SHA256
 static CK_MECHANISM_INFO shaRsaPkcsMechInfo = {
     1024, 4096, CKF_SIGN | CKF_VERIFY
 };
-#endif
 #endif
 #ifdef HAVE_ECC
 /* Info on EC key generation mechanism. */
