@@ -3298,10 +3298,9 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_KEYWRAP_DEC))
                 return CKR_OPERATION_NOT_INITIALIZED;
 
-            /* AES Key Wrap unwrapping reduces the size by 8 bytes (the
-             * integrity check value). If using padding then its even smaller
-             * but we can't know the final size without decrypting first. */
-            if (ulEncryptedDataLen < KEYWRAP_BLOCK_SIZE)
+            /* AES Key Wrap ciphertext is at least two semiblocks: one data
+             * semiblock plus the 8-byte integrity check value. */
+            if (ulEncryptedDataLen < 2 * KEYWRAP_BLOCK_SIZE)
                 return CKR_ENCRYPTED_DATA_LEN_RANGE;
             decDataLen = (word32)(ulEncryptedDataLen - KEYWRAP_BLOCK_SIZE);
             if (pData == NULL) {

@@ -236,8 +236,8 @@ static int test_valid_roundtrip(CK_SESSION_HANDLE session,
     CK_ULONG encSz, decSz;
     int result = 0;
 
-    memset(plain, 9, sizeof(plain));
-    memset(iv, 9, sizeof(iv));
+    XMEMSET(plain, 9, sizeof(plain));
+    XMEMSET(iv, 9, sizeof(iv));
 
     mech.mechanism      = CKM_AES_CBC_PAD;
     mech.ulParameterLen = sizeof(iv);
@@ -270,7 +270,7 @@ static int test_valid_roundtrip(CK_SESSION_HANDLE session,
     ret = funcList->C_Decrypt(session, cipherOut, encSz, dec, &decSz);
     CHECK_CKR(ret, "Test1: C_Decrypt", CKR_OK);
 
-    if (decSz != sizeof(plain) || memcmp(dec, plain, sizeof(plain)) != 0) {
+    if (decSz != sizeof(plain) || XMEMCMP(dec, plain, sizeof(plain)) != 0) {
         fprintf(stderr, "FAIL: Test1: decrypted plaintext mismatch\n");
         test_failed++;
         result = -1;
@@ -299,8 +299,8 @@ static int test_tampered_last_byte_oneshot(CK_SESSION_HANDLE session,
     CK_ULONG decSz;
     int result = 0;
 
-    memset(iv, 9, sizeof(iv));
-    memcpy(tampered, cipher, cipherLen);
+    XMEMSET(iv, 9, sizeof(iv));
+    XMEMCPY(tampered, cipher, cipherLen);
     tampered[cipherLen - 1] ^= 0x01; /* flip one bit in last byte */
 
     mech.mechanism      = CKM_AES_CBC_PAD;
@@ -334,8 +334,8 @@ static int test_tampered_last_byte_multipart(CK_SESSION_HANDLE session,
     CK_ULONG decSz, lastPartLen;
     int result = 0;
 
-    memset(iv, 9, sizeof(iv));
-    memcpy(tampered, cipher, cipherLen);
+    XMEMSET(iv, 9, sizeof(iv));
+    XMEMCPY(tampered, cipher, cipherLen);
     tampered[cipherLen - 1] ^= 0x01;
 
     mech.mechanism      = CKM_AES_CBC_PAD;
@@ -375,8 +375,8 @@ static int test_tampered_first_block_oneshot(CK_SESSION_HANDLE session,
     CK_ULONG decSz;
     int result = 0;
 
-    memset(iv, 9, sizeof(iv));
-    memcpy(tampered, cipher, cipherLen);
+    XMEMSET(iv, 9, sizeof(iv));
+    XMEMCPY(tampered, cipher, cipherLen);
     tampered[15] ^= 0x01; /* flip one bit in last byte of first block */
 
     mech.mechanism      = CKM_AES_CBC_PAD;
