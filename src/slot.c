@@ -328,7 +328,7 @@ static CK_MECHANISM_TYPE mechanismList[] = {
 #ifdef WC_RSA_PSS
     CKM_RSA_PKCS_PSS,
 #ifndef NO_SHA
-    CKM_SHA1_RSA_PKCS,
+    CKM_SHA1_RSA_PKCS_PSS,
 #endif
 #ifdef WOLFSSL_SHA224
     CKM_SHA224_RSA_PKCS_PSS,
