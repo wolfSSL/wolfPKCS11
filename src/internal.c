@@ -3846,8 +3846,10 @@ int WP11_Rsa_SerializeKeyPTPKC8(WP11_Object* object, byte* output, word32* pouts
         ret = 0;
 
 end_func:
-    if (NULL != der)
+    if (NULL != der) {
+        wc_ForceZero(der, dersz);
         XFREE(der, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    }
 
     return ret;
 }
