@@ -3630,7 +3630,7 @@ static int wp11_Object_Decode_RsaKey(WP11_Object* object)
         if (ret == 0) {
             /* Decode RSA private key. */
             ret = wc_RsaPrivateKeyDecode(der, &idx, key, len);
-            XMEMSET(der, 0, len);
+            wc_ForceZero(der, len);
         }
         if (der != NULL)
             XFREE(der, NULL, DYNAMIC_TYPE_TMP_BUFFER);
