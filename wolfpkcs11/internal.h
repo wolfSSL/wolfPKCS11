@@ -39,6 +39,16 @@
 #include <wolfpkcs11/pkcs11.h>
 #include <wolfpkcs11/version.h>
 
+/* wc_ForceZero was added in wolfSSL 5.8.4. Provide a fallback for older
+ * versions to securely zero sensitive memory. */
+#include <wolfssl/version.h>
+#if !defined(LIBWOLFSSL_VERSION_HEX) || LIBWOLFSSL_VERSION_HEX < 0x05008004
+    static WC_INLINE void wc_ForceZero(void* mem, size_t len) {
+        volatile byte* p = (volatile byte*)mem;
+        while (len--) *p++ = 0;
+    }
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif

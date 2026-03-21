@@ -6643,6 +6643,7 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
                              hashType);
 
             if (ret != 0) {
+                wc_ForceZero(derivedKey, derivedKeyLen);
                 XFREE(derivedKey, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 return CKR_FUNCTION_FAILED;
             }
@@ -6668,6 +6669,7 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
                 }
             }
 
+            wc_ForceZero(derivedKey, derivedKeyLen);
             XFREE(derivedKey, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             return rv;
         }
@@ -6738,6 +6740,7 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
                                   (int)derivedKeyLen, hashType);
 
             if (ret != 0) {
+                wc_ForceZero(derivedKey, derivedKeyLen);
                 XFREE(derivedKey, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 return CKR_FUNCTION_FAILED;
             }
@@ -6763,6 +6766,7 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
                 }
             }
 
+            wc_ForceZero(derivedKey, derivedKeyLen);
             XFREE(derivedKey, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             return rv;
         }

@@ -102,17 +102,6 @@
     #error "wolfTPM and MAXQ10XX are incompatible with each other."
 #endif
 
-/* wc_ForceZero was added in wolfSSL 5.8.4. Provide a fallback for older
- * versions to securely zero sensitive memory. */
-#if defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX >= 0x05008004
-    #include <wolfssl/wolfcrypt/memory.h>
-#else
-    static void wc_ForceZero(void* mem, size_t len) {
-        volatile byte* p = (volatile byte*)mem;
-        while (len--) *p++ = 0;
-    }
-#endif
-
 /* Helper to get size of struct field */
 #define FIELD_SIZE(type, field) (sizeof(((type *)0)->field))
 
@@ -2056,10 +2045,10 @@ static int wp11_storage_read_word32(void* storage, word32* val)
     ret = wp11_storage_read(storage, num, sizeof(num));
     if (ret == 0) {
         /* Convert to 32-bit value. */
-        *val = ((int)num[0] << 24) |
-               ((int)num[1] << 16) |
-               ((int)num[2] <<  8) |
-               ((int)num[3] <<  0);
+        *val = ((word32)num[0] << 24) |
+               ((word32)num[1] << 16) |
+               ((word32)num[2] <<  8) |
+               ((word32)num[3] <<  0);
     }
 
     return ret;
@@ -3630,7 +3619,7 @@ static int wp11_Object_Decode_RsaKey(WP11_Object* object)
         if (ret == 0) {
             /* Decode RSA private key. */
             ret = wc_RsaPrivateKeyDecode(der, &idx, key, len);
-            XMEMSET(der, 0, len);
+            wc_ForceZero(der, len);
         }
         if (der != NULL)
             XFREE(der, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -3846,8 +3835,10 @@ int WP11_Rsa_SerializeKeyPTPKC8(WP11_Object* object, byte* output, word32* pouts
         ret = 0;
 
 end_func:
-    if (NULL != der)
+    if (NULL != der) {
+        wc_ForceZero(der, dersz);
         XFREE(der, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    }
 
     return ret;
 }
@@ -3979,7 +3970,7 @@ static int wp11_Object_Decode_EccKey(WP11_Object* object)
         if (ret == 0) {
             /* Decode ECC private key. */
             ret = wc_EccPrivateKeyDecode(der, &idx, key, len);
-            XMEMSET(der, 0, len);
+            wc_ForceZero(der, len);
         }
         if (der != NULL)
             XFREE(der, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -5343,7 +5334,7 @@ static int wp11_Object_Encode(WP11_Object* object, int protect)
             case CKK_DH:
                 ret = wp11_Object_Encode_DhKey(object);
                 if (protect && ret == 0 && object->objClass == CKO_PRIVATE_KEY) {
-                    XMEMSET(object->data.dhKey->key, 0, object->data.dhKey->len);
+                    wc_ForceZero(object->data.dhKey->key, object->data.dhKey->len);
                     object->encoded = 1;
                 }
                 break;
@@ -5354,7 +5345,7 @@ static int wp11_Object_Encode(WP11_Object* object, int protect)
             case CKK_GENERIC_SECRET:
                 ret = wp11_Object_Encode_SymmKey(object);
                 if (protect && ret == 0) {
-                    XMEMSET(object->data.symmKey->data, 0, object->data.symmKey->len);
+                    wc_ForceZero(object->data.symmKey->data, object->data.symmKey->len);
                     object->encoded = 1;
                 }
                 break;
@@ -8476,7 +8467,8 @@ static int ecc_lookup_curve(const byte* oid, word32 len)
 
     for (curve = DefinedCurves; curve->curve_id < ECC_CURVE_MAX; curve++)
     {
-        if (XMEMCMP(oid, curve->curve_oid, MIN(len, curve->curve_size)) == 0) {
+        if (len == curve->curve_size &&
+                XMEMCMP(oid, curve->curve_oid, len) == 0) {
             return curve->curve_id;
         }
     }
