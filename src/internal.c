@@ -102,17 +102,6 @@
     #error "wolfTPM and MAXQ10XX are incompatible with each other."
 #endif
 
-/* wc_ForceZero was added in wolfSSL 5.8.4. Provide a fallback for older
- * versions to securely zero sensitive memory. */
-#if defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX >= 0x05008004
-    #include <wolfssl/wolfcrypt/memory.h>
-#else
-    static void wc_ForceZero(void* mem, size_t len) {
-        volatile byte* p = (volatile byte*)mem;
-        while (len--) *p++ = 0;
-    }
-#endif
-
 /* Helper to get size of struct field */
 #define FIELD_SIZE(type, field) (sizeof(((type *)0)->field))
 
