@@ -8476,7 +8476,8 @@ static int ecc_lookup_curve(const byte* oid, word32 len)
 
     for (curve = DefinedCurves; curve->curve_id < ECC_CURVE_MAX; curve++)
     {
-        if (XMEMCMP(oid, curve->curve_oid, MIN(len, curve->curve_size)) == 0) {
+        if (len == curve->curve_size &&
+                XMEMCMP(oid, curve->curve_oid, len) == 0) {
             return curve->curve_id;
         }
     }
