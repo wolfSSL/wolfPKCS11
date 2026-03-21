@@ -5354,7 +5354,7 @@ static int wp11_Object_Encode(WP11_Object* object, int protect)
             case CKK_GENERIC_SECRET:
                 ret = wp11_Object_Encode_SymmKey(object);
                 if (protect && ret == 0) {
-                    XMEMSET(object->data.symmKey->data, 0, object->data.symmKey->len);
+                    wc_ForceZero(object->data.symmKey->data, object->data.symmKey->len);
                     object->encoded = 1;
                 }
                 break;
