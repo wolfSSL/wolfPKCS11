@@ -2056,10 +2056,10 @@ static int wp11_storage_read_word32(void* storage, word32* val)
     ret = wp11_storage_read(storage, num, sizeof(num));
     if (ret == 0) {
         /* Convert to 32-bit value. */
-        *val = ((int)num[0] << 24) |
-               ((int)num[1] << 16) |
-               ((int)num[2] <<  8) |
-               ((int)num[3] <<  0);
+        *val = ((word32)num[0] << 24) |
+               ((word32)num[1] << 16) |
+               ((word32)num[2] <<  8) |
+               ((word32)num[3] <<  0);
     }
 
     return ret;
