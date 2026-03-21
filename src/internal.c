@@ -5343,7 +5343,7 @@ static int wp11_Object_Encode(WP11_Object* object, int protect)
             case CKK_DH:
                 ret = wp11_Object_Encode_DhKey(object);
                 if (protect && ret == 0 && object->objClass == CKO_PRIVATE_KEY) {
-                    XMEMSET(object->data.dhKey->key, 0, object->data.dhKey->len);
+                    wc_ForceZero(object->data.dhKey->key, object->data.dhKey->len);
                     object->encoded = 1;
                 }
                 break;
