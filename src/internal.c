@@ -3965,9 +3965,6 @@ static int wp11_Object_Decode_EccKey(WP11_Object* object)
                                     sizeof(object->iv), object->devId);
         }
         if (ret == 0) {
-            ret = wc_ecc_init_ex(key, NULL, object->devId);
-        }
-        if (ret == 0) {
             /* Decode ECC private key. */
             ret = wc_EccPrivateKeyDecode(der, &idx, key, len);
             wc_ForceZero(der, len);
@@ -4219,7 +4216,7 @@ static int wp11_Object_Decode_MldsaKey(WP11_Object* object)
                 ret = MldsaKeyTryDecode(object->data.mldsaKey, WC_ML_DSA_87,
                                         der, len, object->objClass);
             }
-            XMEMSET(der, 0, len);
+            wc_ForceZero(der, len);
         }
         if (der != NULL)
             XFREE(der, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -6424,7 +6421,7 @@ void WP11_Slot_CloseSessions(WP11_Slot* slot)
     WP11_Lock_LockRW(&slot->lock);
     /* Finalize the rest. */
     for (curr = slot->session; curr != NULL; curr = curr->next)
-        wp11_Session_Final(slot->session);
+        wp11_Session_Final(curr);
     WP11_Lock_UnlockRW(&slot->lock);
 }
 
@@ -10663,6 +10660,9 @@ static int WP11_Object_WrapTpmKey(WP11_Object* object)
                         (word32)exponent, q, qSz, TPM_ALG_NULL, TPM_ALG_NULL);
                 }
                 (void)p;
+                wc_ForceZero(d, sizeof(d));
+                wc_ForceZero(p, sizeof(p));
+                wc_ForceZero(q, sizeof(q));
             #endif
                 if (ret == 0) {
                     /* set flag indicating this is TPM based key */
@@ -10745,6 +10745,7 @@ static int WP11_Object_WrapTpmKey(WP11_Object* object)
                         &object->slot->tpmSrk, object->tpmKey, curve_id,
                         qx, qxSz, qy, qySz, d, dSz);
                 }
+                wc_ForceZero(d, sizeof(d));
         #endif
                 if (ret == 0) {
                     /* set flag indicating this is TPM based key */
