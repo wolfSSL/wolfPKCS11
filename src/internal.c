@@ -3965,9 +3965,6 @@ static int wp11_Object_Decode_EccKey(WP11_Object* object)
                                     sizeof(object->iv), object->devId);
         }
         if (ret == 0) {
-            ret = wc_ecc_init_ex(key, NULL, object->devId);
-        }
-        if (ret == 0) {
             /* Decode ECC private key. */
             ret = wc_EccPrivateKeyDecode(der, &idx, key, len);
             wc_ForceZero(der, len);
@@ -6424,7 +6421,7 @@ void WP11_Slot_CloseSessions(WP11_Slot* slot)
     WP11_Lock_LockRW(&slot->lock);
     /* Finalize the rest. */
     for (curr = slot->session; curr != NULL; curr = curr->next)
-        wp11_Session_Final(slot->session);
+        wp11_Session_Final(curr);
     WP11_Lock_UnlockRW(&slot->lock);
 }
 
