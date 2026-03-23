@@ -2372,7 +2372,7 @@ CK_RV C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 
             ret = WP11_AesKeyWrap_Encrypt(paddedData, (word32)ulDataLen + padding,
                                           pEncryptedData, &encDataLen, session);
-            XMEMSET(paddedData, 0, ulDataLen + padding);
+            wc_ForceZero(paddedData, ulDataLen + padding);
             XFREE(paddedData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             if (ret != 0)
                 return CKR_FUNCTION_FAILED;
@@ -7301,7 +7301,7 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
 err_out:
 
     if (serialBuff != NULL) {
-        XMEMSET(serialBuff, 0, serialSize);
+        wc_ForceZero(serialBuff, serialSize);
         XFREE(serialBuff, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     }
 
@@ -7532,7 +7532,7 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
 err_out:
 
     if (workBuffer != NULL) {
-        XMEMSET(workBuffer, 0, ulWrappedKeyLen);
+        wc_ForceZero(workBuffer, ulWrappedKeyLen);
         XFREE(workBuffer, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     }
 
@@ -7968,7 +7968,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
 
             /* Freeing here so that we don't attempt to generate a key at the
              * end of the function */
-            XMEMSET(derivedKey, 0, keyLen);
+            wc_ForceZero(derivedKey, keyLen);
             XFREE(derivedKey, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             derivedKey = NULL;
 
@@ -8086,7 +8086,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
     }
 
     if (derivedKey != NULL) {
-        XMEMSET(derivedKey, 0, keyLen);
+        wc_ForceZero(derivedKey, keyLen);
         XFREE(derivedKey, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     }
 #endif

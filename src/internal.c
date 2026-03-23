@@ -4219,7 +4219,7 @@ static int wp11_Object_Decode_MldsaKey(WP11_Object* object)
                 ret = MldsaKeyTryDecode(object->data.mldsaKey, WC_ML_DSA_87,
                                         der, len, object->objClass);
             }
-            XMEMSET(der, 0, len);
+            wc_ForceZero(der, len);
         }
         if (der != NULL)
             XFREE(der, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -10663,6 +10663,9 @@ static int WP11_Object_WrapTpmKey(WP11_Object* object)
                         (word32)exponent, q, qSz, TPM_ALG_NULL, TPM_ALG_NULL);
                 }
                 (void)p;
+                wc_ForceZero(d, sizeof(d));
+                wc_ForceZero(p, sizeof(p));
+                wc_ForceZero(q, sizeof(q));
             #endif
                 if (ret == 0) {
                     /* set flag indicating this is TPM based key */
@@ -10745,6 +10748,7 @@ static int WP11_Object_WrapTpmKey(WP11_Object* object)
                         &object->slot->tpmSrk, object->tpmKey, curve_id,
                         qx, qxSz, qy, qySz, d, dSz);
                 }
+                wc_ForceZero(d, sizeof(d));
         #endif
                 if (ret == 0) {
                     /* set flag indicating this is TPM based key */
