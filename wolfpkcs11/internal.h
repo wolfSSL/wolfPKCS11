@@ -113,6 +113,10 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #error Compiling with ML-DSA requires ML-DSA support in wolfSSL.
 #endif
 
+#if defined(WOLFPKCS11_MLKEM) && !defined(WOLFSSL_HAVE_MLKEM)
+#error Compiling with ML-KEM requires ML-KEM support in wolfSSL.
+#endif
+
 /* We need the next two for NSS, just for storage, even if we have no algos */
 #ifndef WC_MD5_DIGEST_SIZE
 #define WC_MD5_DIGEST_SIZE 16
@@ -212,6 +216,8 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #define WP11_FLAG_UNWRAP               0x00010000
 #define WP11_FLAG_WRAP                 0x00020000
 #define WP11_FLAG_DERIVE               0x00040000
+#define WP11_FLAG_ENCAPSULATE          0x00080000
+#define WP11_FLAG_DECAPSULATE          0x00100000
 
 /* Flags for token. */
 #define WP11_TOKEN_FLAG_USER_PIN_SET   0x00000001
@@ -543,6 +549,19 @@ WP11_LOCAL int WP11_Dh_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
                             WP11_Slot* slot);
 WP11_LOCAL int WP11_Dh_Derive(unsigned char* pub, word32 pubLen, unsigned char* key,
                    word32* keyLen, WP11_Object* priv);
+
+#ifdef WOLFPKCS11_MLKEM
+WP11_LOCAL int WP11_Object_SetMlKemKey(WP11_Object* object, unsigned char** data,
+                            CK_ULONG* len);
+WP11_LOCAL int WP11_MlKem_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
+                               WP11_Slot* slot);
+WP11_LOCAL int WP11_MlKem_Encapsulate(WP11_Object* pub, unsigned char** sharedSecret,
+                           word32* ssLen, CK_BYTE_PTR pCiphertext,
+                           CK_ULONG_PTR pulCiphertextLen);
+WP11_LOCAL int WP11_MlKem_Decapsulate(WP11_Object* priv, unsigned char** sharedSecret,
+                           word32* ssLen, CK_BYTE_PTR pCiphertext,
+                           CK_ULONG ulCiphertextLen);
+#endif
 
 WP11_LOCAL int WP11_GenerateRandomKey(WP11_Object* secret, WP11_Slot* slot);
 
