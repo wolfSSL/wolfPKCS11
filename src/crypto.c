@@ -8436,7 +8436,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
         }
     }
 
-    if (rv == CKR_OK) {
+    if ((rv == CKR_OK) && (derivedKey != NULL)) {
         rv = SetInitialStates(obj);
     }
 
