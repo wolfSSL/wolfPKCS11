@@ -14915,8 +14915,9 @@ static CK_RV test_hkdf_gen_key(void* args)
     return ret;
 }
 
-/* Test that HKDF expand with NULL pValue in CKA_VALUE_LEN crashes.
- * Issue #1315: lenAttr->pValue is dereferenced without NULL check.
+/* Regression test: HKDF expand with NULL pValue in CKA_VALUE_LEN
+ * previously crashed (Issue #1315: lenAttr->pValue was dereferenced
+ * without NULL check).
  */
 static CK_RV test_hkdf_derive_expand_null_value_len(void* args)
 {
@@ -15007,7 +15008,7 @@ static CK_RV test_hkdf_derive_expand_null_value_len(void* args)
         CHECK_CKR(ret, "HKDF extract");
     }
 
-    /* Step 3: Expand with NULL CKA_VALUE_LEN pValue - should crash here */
+    /* Step 3: Expand with NULL CKA_VALUE_LEN pValue - previously crashed */
     if (ret == CKR_OK) {
         ret = funcList->C_DeriveKey(session, &mechExpand, hPrk,
             templateExpand, templateExpandCount, &hExpandKey);

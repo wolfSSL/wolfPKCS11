@@ -8219,10 +8219,18 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
             FindAttributeType(pTemplate, ulAttributeCount, CKA_VALUE_LEN,
                 &lenAttr);
             if (kdfParams->bExpand) {
+                CK_ULONG reqLen;
                 if (!lenAttr || !lenAttr->pValue) {
                     return CKR_ATTRIBUTE_VALUE_INVALID;
                 }
-                keyLen = (word32)*(CK_ULONG*)lenAttr->pValue;
+                if (lenAttr->ulValueLen != sizeof(CK_ULONG)) {
+                    return CKR_ATTRIBUTE_VALUE_INVALID;
+                }
+                XMEMCPY(&reqLen, lenAttr->pValue, sizeof(CK_ULONG));
+                if (reqLen == 0 || reqLen > (CK_ULONG)0xFFFFFFFF) {
+                    return CKR_ATTRIBUTE_VALUE_INVALID;
+                }
+                keyLen = (word32)reqLen;
             }
             else {
                 keyLen = WC_MAX_DIGEST_SIZE;
@@ -8301,6 +8309,12 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
 
             {
                 CK_ULONG totalBits;
+                /* Validate individual fields won't overflow when doubled */
+                if (tlsParams->ulMacSizeInBits > ((CK_ULONG)0xFFFFFFFF / 2) ||
+                    tlsParams->ulKeySizeInBits > ((CK_ULONG)0xFFFFFFFF / 2) ||
+                    tlsParams->ulIVSizeInBits  > ((CK_ULONG)0xFFFFFFFF / 2)) {
+                    return CKR_MECHANISM_PARAM_INVALID;
+                }
                 totalBits = (2 * tlsParams->ulMacSizeInBits) +
                             (2 * tlsParams->ulKeySizeInBits) +
                             (2 * tlsParams->ulIVSizeInBits);
