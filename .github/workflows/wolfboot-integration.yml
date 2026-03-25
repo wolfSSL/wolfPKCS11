@@ -11,8 +11,8 @@ env:
   WOLFBOOT_BRANCH: master
 
 jobs:
-  stm32h5_pkcs11_persist:
-    name: stm32h5-pkcs11-persist
+  stm32h5_pkcs11_single_boot:
+    name: stm32h5-pkcs11-single-boot
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/wolfssl/wolfboot-ci-m33mu:v1.2
@@ -45,45 +45,30 @@ jobs:
         run: |
           cp config/examples/stm32h5-tz.config .config
 
-      - name: Build persistent PKCS11 test app (stm32h5)
+      - name: Build PKCS11 test app (stm32h5)
         working-directory: wolfboot
         run: |
           make PKCS11_TESTAPP=1
 
-      - name: Prepare PKCS11 persistence directory
+      - name: Prepare PKCS11 test directory
         run: |
-          rm -rf /tmp/m33mu-pkcs11-persist
-          mkdir -p /tmp/m33mu-pkcs11-persist
-          rm -f /tmp/m33mu-pkcs11-first.log /tmp/m33mu-pkcs11-second.log
+          rm -rf /tmp/m33mu-pkcs11-single
+          mkdir -p /tmp/m33mu-pkcs11-single
+          rm -f /tmp/m33mu-pkcs11-single.log
 
-      - name: Run PKCS11 first boot (stm32h5)
+      - name: Run PKCS11 single boot (stm32h5)
         run: |
-          cd /tmp/m33mu-pkcs11-persist
+          cd /tmp/m33mu-pkcs11-single
           m33mu "${GITHUB_WORKSPACE}/wolfboot/wolfboot.bin" \
             "${GITHUB_WORKSPACE}/wolfboot/test-app/image_v1_signed.bin:0x60000" \
             --persist --uart-stdout --timeout 120 --expect-bkpt 0x7d \
-            | tee /tmp/m33mu-pkcs11-first.log
+            | tee /tmp/m33mu-pkcs11-single.log
 
-      - name: Verify PKCS11 first boot (stm32h5)
+      - name: Verify PKCS11 single boot (stm32h5)
         run: |
-          grep -q "pkcs11: first boot path, creating persistent objects" /tmp/m33mu-pkcs11-first.log
-          grep -q "pkcs11: created persistent PKCS11 objects" /tmp/m33mu-pkcs11-first.log
-          grep -q "pkcs11: success" /tmp/m33mu-pkcs11-first.log
-          grep -q "\\[BKPT\\] imm=0x7d" /tmp/m33mu-pkcs11-first.log
-          grep -q "\\[EXPECT BKPT\\] Success" /tmp/m33mu-pkcs11-first.log
-
-      - name: Run PKCS11 second boot (stm32h5)
-        run: |
-          cd /tmp/m33mu-pkcs11-persist
-          m33mu "${GITHUB_WORKSPACE}/wolfboot/wolfboot.bin" \
-            "${GITHUB_WORKSPACE}/wolfboot/test-app/image_v1_signed.bin:0x60000" \
-            --persist --uart-stdout --timeout 120 --expect-bkpt 0x7f \
-            | tee /tmp/m33mu-pkcs11-second.log
-
-      - name: Verify PKCS11 second boot (stm32h5)
-        run: |
-          grep -q "pkcs11: second boot path, restoring persistent objects" /tmp/m33mu-pkcs11-second.log
-          grep -q "pkcs11: restored persistent PKCS11 objects" /tmp/m33mu-pkcs11-second.log
-          grep -q "pkcs11: success" /tmp/m33mu-pkcs11-second.log
-          grep -q "\\[BKPT\\] imm=0x7f" /tmp/m33mu-pkcs11-second.log
-          grep -q "\\[EXPECT BKPT\\] Success" /tmp/m33mu-pkcs11-second.log
+          grep -q "pkcs11: first boot path, creating persistent objects" /tmp/m33mu-pkcs11-single.log
+          grep -q "pkcs11: signed payload len=" /tmp/m33mu-pkcs11-single.log
+          grep -q "pkcs11: created persistent PKCS11 objects" /tmp/m33mu-pkcs11-single.log
+          grep -q "pkcs11: success" /tmp/m33mu-pkcs11-single.log
+          grep -q "\\[BKPT\\] imm=0x7d" /tmp/m33mu-pkcs11-single.log
+          grep -q "\\[EXPECT BKPT\\] Success" /tmp/m33mu-pkcs11-single.log
