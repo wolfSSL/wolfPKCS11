@@ -8815,6 +8815,7 @@ void WP11_Object_Free(WP11_Object* object)
     #ifndef NO_DH
         if (object->type == CKK_DH && object->data.dhKey != NULL) {
             wc_FreeDhKey(&object->data.dhKey->params);
+            wc_ForceZero(object->data.dhKey->key, object->data.dhKey->len);
             XFREE(object->data.dhKey, NULL, DYNAMIC_TYPE_DH);
             object->data.dhKey = NULL;
         }
@@ -9301,6 +9302,7 @@ int WP11_Object_SetMldsaKey(WP11_Object* object, unsigned char** data,
                             ret = BAD_FUNC_ARG;
                         }
                     }
+                    wc_ForceZero(expandedKey, expandedKeyLen);
                     XFREE(expandedKey, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 }
             }
@@ -9499,7 +9501,7 @@ int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
 
     key = object->data.symmKey;
     key->len = 0;
-    XMEMSET(key->data, 0, sizeof(key->data));
+    wc_ForceZero(key->data, sizeof(key->data));
 
     /* First item is the key's length. */
     if (ret == 0 && data[0] != NULL && len[0] != (int)sizeof(CK_ULONG))
