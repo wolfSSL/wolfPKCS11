@@ -15,7 +15,7 @@ jobs:
     name: stm32h5-pkcs11-persist
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/wolfssl/wolfboot-ci-m33mu:v1.1
+      image: ghcr.io/wolfssl/wolfboot-ci-m33mu:v1.2
     timeout-minutes: 15
 
     steps:
