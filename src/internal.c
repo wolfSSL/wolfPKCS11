@@ -2578,7 +2578,7 @@ static long GetRsaExponentValue(unsigned char* eData, word32 eSz)
     long e = 0;
 
     /* Convert big-endian data into number. */
-    for (i = eSz - 1; i >= 0; i--) {
+    for (i = 0; i < (int)eSz; i++) {
         e <<= 8;
         e |= eData[i];
     }
