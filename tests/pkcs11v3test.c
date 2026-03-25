@@ -669,7 +669,13 @@ static CK_RV mldsa_sign_verify(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE privK
     }
     if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, data, dataSz - 1, sig, sigSz);
-        CHECK_CKR_FAIL(ret, CKR_SIGNATURE_INVALID, "ML-DSA Verify bad data");
+        if (mech->mechanism == CKM_HASH_ML_DSA) {
+            /* Invalid hash digest size is not allowed, so operation fails */
+            CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED, "ML-DSA Verify bad data");
+        } else {
+            /* Invalid data size results in invalid signature*/
+            CHECK_CKR_FAIL(ret, CKR_SIGNATURE_INVALID, "ML-DSA Verify bad data");
+        }
     }
     if (ret == CKR_OK) {
         XMEMCPY(sigBad, sig, sigSz);

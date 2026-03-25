@@ -5923,10 +5923,6 @@ CK_RV C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 
             ret = WP11_Mldsa_Verify(pSignature, (int)ulSignatureLen, pData,
                                     (int)ulDataLen, &stat, obj, session);
-            if (ret < 0) {
-                stat = 0;
-                ret = 0;
-            }
             break;
 #endif
 #ifndef NO_HMAC
