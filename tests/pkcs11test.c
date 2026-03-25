@@ -14914,6 +14914,111 @@ static CK_RV test_hkdf_gen_key(void* args)
 
     return ret;
 }
+
+/* Test that HKDF expand with NULL pValue in CKA_VALUE_LEN crashes.
+ * Issue #1315: lenAttr->pValue is dereferenced without NULL check.
+ */
+static CK_RV test_hkdf_derive_expand_null_value_len(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE hBaseKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hPrk = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hExpandKey = CK_INVALID_HANDLE;
+
+    CK_BYTE ikm[] = {
+        0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b,
+        0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b,
+        0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b
+    };
+    CK_ULONG ikm_len = sizeof(ikm);
+    CK_BYTE salt[] = {
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f
+    };
+    CK_BYTE info[] = { 0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7,
+                        0xf8, 0xf9 };
+    CK_ULONG prk_len = 32;
+
+    /* Create IKM as a secret key object */
+    CK_ATTRIBUTE templateSecret[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_TOKEN, &ckFalse, sizeof(ckFalse)},
+        {CKA_PRIVATE, &ckTrue, sizeof(ckTrue)},
+        {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
+        {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
+        {CKA_VALUE, ikm, ikm_len},
+        {CKA_VALUE_LEN, &ikm_len, sizeof(ikm_len)},
+        {CKA_DERIVE, &ckTrue, sizeof(ckTrue)}
+    };
+    CK_ULONG templateSecretCount =
+        sizeof(templateSecret) / sizeof(templateSecret[0]);
+
+    /* Extract params */
+    CK_HKDF_PARAMS paramsExtract = {
+        CK_TRUE, CK_FALSE, CKM_SHA256_HMAC,
+        CKF_HKDF_SALT_DATA, salt, sizeof(salt),
+        CK_INVALID_HANDLE, NULL_PTR, 0
+    };
+    CK_MECHANISM mechExtract =
+        { CKM_HKDF_DERIVE, &paramsExtract, sizeof(paramsExtract) };
+    CK_ATTRIBUTE templateExtract[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
+        {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
+        {CKA_VALUE_LEN, &prk_len, sizeof(prk_len)}
+    };
+    CK_ULONG templateExtractCount =
+        sizeof(templateExtract) / sizeof(templateExtract[0]);
+
+    /* Expand params - expand only */
+    CK_HKDF_PARAMS paramsExpand = {
+        CK_FALSE, CK_TRUE, CKM_SHA256_HMAC,
+        CKF_HKDF_SALT_NULL, NULL_PTR, 0,
+        CK_INVALID_HANDLE, info, sizeof(info)
+    };
+    CK_MECHANISM mechExpand =
+        { CKM_HKDF_DERIVE, &paramsExpand, sizeof(paramsExpand) };
+
+    /* Expand template with NULL pValue for CKA_VALUE_LEN.
+     * This triggers the NULL dereference at crypto.c:7870.
+     */
+    CK_ATTRIBUTE templateExpand[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
+        {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
+        {CKA_VALUE_LEN, NULL_PTR, 0}
+    };
+    CK_ULONG templateExpandCount =
+        sizeof(templateExpand) / sizeof(templateExpand[0]);
+
+    /* Step 1: Create base key */
+    ret = funcList->C_CreateObject(session, templateSecret,
+        templateSecretCount, &hBaseKey);
+    CHECK_CKR(ret, "Create IKM object");
+
+    /* Step 2: Extract to get PRK */
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mechExtract, hBaseKey,
+            templateExtract, templateExtractCount, &hPrk);
+        CHECK_CKR(ret, "HKDF extract");
+    }
+
+    /* Step 3: Expand with NULL CKA_VALUE_LEN pValue - should crash here */
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mechExpand, hPrk,
+            templateExpand, templateExpandCount, &hExpandKey);
+        /* Before the fix, this line is never reached (NULL deref crash).
+         * After the fix, expect an error return. */
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+            "HKDF expand with NULL CKA_VALUE_LEN pValue");
+    }
+
+    return ret;
+}
 #endif
 
 #ifndef NO_SHA
@@ -17003,6 +17108,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_expand_with_extract_null_salt),
     PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_extract_with_expand_salt_key),
     PKCS11TEST_FUNC_SESS_DECL(test_hkdf_gen_key),
+    PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_expand_null_value_len),
 #endif
 #ifdef WOLFSSL_HAVE_PRF
 #ifndef NO_MD5

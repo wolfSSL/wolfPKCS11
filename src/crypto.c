@@ -8219,10 +8219,10 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
             FindAttributeType(pTemplate, ulAttributeCount, CKA_VALUE_LEN,
                 &lenAttr);
             if (kdfParams->bExpand) {
-                if (!lenAttr) {
-                    return CKR_MECHANISM_PARAM_INVALID;
+                if (!lenAttr || !lenAttr->pValue) {
+                    return CKR_ATTRIBUTE_VALUE_INVALID;
                 }
-                keyLen = *(word32*)lenAttr->pValue;
+                keyLen = (word32)*(CK_ULONG*)lenAttr->pValue;
             }
             else {
                 keyLen = WC_MAX_DIGEST_SIZE;
