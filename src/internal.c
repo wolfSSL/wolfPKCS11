@@ -943,6 +943,13 @@ static void wp11_Session_Final(WP11_Session* session)
         session->init = 0;
     }
 #endif
+#ifdef HAVE_AES_KEYWRAP
+    if ((session->mechanism == CKM_AES_KEY_WRAP ||
+                  session->mechanism == CKM_AES_KEY_WRAP_PAD) && session->init) {
+        wc_AesFree(&session->params.kw.aes);
+        session->init = 0;
+    }
+#endif
 #ifdef HAVE_AESCCM
     if (session->mechanism == CKM_AES_CCM) {
         if (session->params.ccm.aad != NULL) {
@@ -14728,6 +14735,7 @@ int WP11_AesKeyWrap_Encrypt(unsigned char* plain, word32 plainSz,
 
     ret = wc_AesKeyWrap_ex(&wrap->aes, plain, plainSz, enc, *encSz,
             wrap->ivSz != 0 ? wrap->iv : NULL);
+    wc_AesFree(&wrap->aes);
     session->init = 0;
     if (ret < 0)
         return ret;
@@ -14743,6 +14751,7 @@ int WP11_AesKeyWrap_Decrypt(unsigned char* enc, word32 encSz,
 
     ret = wc_AesKeyUnWrap_ex(&wrap->aes, enc, encSz, dec, *decSz,
             wrap->ivSz != 0 ? wrap->iv : NULL);
+    wc_AesFree(&wrap->aes);
     session->init = 0;
     if (ret < 0)
         return ret;
