@@ -8299,14 +8299,20 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
             if (tlsParams->pReturnedKeyMaterial == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
 
-            keyLen = (word32)(2 * tlsParams->ulMacSizeInBits) +
-                     (word32)(2 * tlsParams->ulKeySizeInBits) +
-                     (word32)(2 * tlsParams->ulIVSizeInBits);
-            if (keyLen == 0)
-                return CKR_MECHANISM_PARAM_INVALID;
-            if ((keyLen % 8) != 0)
-                return CKR_MECHANISM_PARAM_INVALID;
-            keyLen /= 8;
+            {
+                CK_ULONG totalBits;
+                totalBits = (2 * tlsParams->ulMacSizeInBits) +
+                            (2 * tlsParams->ulKeySizeInBits) +
+                            (2 * tlsParams->ulIVSizeInBits);
+                if (totalBits == 0)
+                    return CKR_MECHANISM_PARAM_INVALID;
+                if ((totalBits % 8) != 0)
+                    return CKR_MECHANISM_PARAM_INVALID;
+                totalBits /= 8;
+                if (totalBits > (CK_ULONG)0xFFFFFFFF)
+                    return CKR_MECHANISM_PARAM_INVALID;
+                keyLen = (word32)totalBits;
+            }
 
             derivedKey = (byte*)XMALLOC(keyLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             if (derivedKey == NULL)
