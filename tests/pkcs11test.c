@@ -7228,6 +7228,10 @@ static CK_RV rsa_x_509_sig_test(CK_SESSION_HANDLE session,
         CHECK_CKR(ret, "RSA X_509 Verify");
     }
     if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, pub);
+        CHECK_CKR(ret, "RSA X_509 Verify Init bad hash");
+    }
+    if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, badHash, sizeof(badHash), out, outSz);
         CHECK_CKR_FAIL(ret, CKR_SIGNATURE_INVALID, "RSA X_509 Verify bad hash");
     }
@@ -7281,6 +7285,10 @@ static CK_RV rsa_pkcs15_sig_test(CK_SESSION_HANDLE session,
     if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, hash, hashSz, out, outSz);
         CHECK_CKR(ret, "RSA PKCS#1.5 Verify");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, pub);
+        CHECK_CKR(ret, "RSA PKCS#1.5 Verify Init bad hash");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, badHash, sizeof(badHash), out, outSz);
@@ -7416,6 +7424,10 @@ static CK_RV sha256_rsa_pkcs15_sig_test(CK_SESSION_HANDLE session,
         CHECK_CKR(ret, "RSA PKCS#1.5 Verify");
     }
     if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, pub);
+        CHECK_CKR(ret, "RSA PKCS#1.5 Verify Init bad hash");
+    }
+    if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, badHash, sizeof(badHash), out, outSz);
         CHECK_CKR_FAIL(ret, CKR_SIGNATURE_INVALID,
                                                 "RSA PKCS#1.5 Verify bad hash");
@@ -7477,6 +7489,10 @@ static CK_RV rsa_pss_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE priv,
         CHECK_CKR(ret, "RSA PKCS#1 PSS Verify");
     }
     if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, pub);
+        CHECK_CKR(ret, "RSA PKCS#1 PSS Verify Init bad hash");
+    }
+    if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, badHash, hashSz, out, outSz);
         CHECK_CKR_FAIL(ret, CKR_SIGNATURE_INVALID,
                                               "RSA PKCS#1 PSS Verify bad hash");
@@ -7491,6 +7507,10 @@ static CK_RV rsa_pss_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE priv,
         CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
                                       "RSA PKCS#1 PSS Sign out size too small");
         outSz = sizeof(out);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Sign(session, hash, hashSz, out, &outSz);
+        CHECK_CKR(ret, "RSA PKCS#1 PSS Sign cleanup");
     }
 
     return ret;
@@ -7549,6 +7569,10 @@ static CK_RV sha256_rsa_pss_test(CK_SESSION_HANDLE session,
         CHECK_CKR(ret, "RSA PKCS#1 PSS Verify");
     }
     if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, pub);
+        CHECK_CKR(ret, "RSA PKCS#1 PSS Verify Init bad hash");
+    }
+    if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, badHash, hashSz, out, outSz);
         CHECK_CKR_FAIL(ret, CKR_SIGNATURE_INVALID,
                                 "RSA PKCS#1 PSS Verify bad hash");
@@ -7563,6 +7587,10 @@ static CK_RV sha256_rsa_pss_test(CK_SESSION_HANDLE session,
         CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
                         "RSA PKCS#1 PSS Sign out size too small");
         outSz = sizeof(out);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Sign(session, hash, hashSz, out, &outSz);
+        CHECK_CKR(ret, "RSA PKCS#1 PSS Sign cleanup");
     }
 
     return ret;
@@ -8851,8 +8879,16 @@ static CK_RV ecdsa_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE privKey,
     }
 #endif
     if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, pubKey);
+        CHECK_CKR(ret, "ECDSA Verify Init bad hash");
+    }
+    if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, hash, hashSz - 1, out, outSz);
         CHECK_CKR_FAIL(ret, CKR_SIGNATURE_INVALID, "ECDSA Verify bad hash");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, pubKey);
+        CHECK_CKR(ret, "ECDSA Verify Init bad sig");
     }
     if (ret == CKR_OK) {
         outSz = 1;
@@ -8909,8 +8945,16 @@ static CK_RV ecdsa_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE privKey,
         }
 #endif
         if (ret == CKR_OK) {
+            ret = funcList->C_VerifyInit(session, &mech, pubKey);
+            CHECK_CKR(ret, "ECDSA Verify Init bad hash");
+        }
+        if (ret == CKR_OK) {
             ret = funcList->C_Verify(session, data, dataSz - 1, out, outSz);
             CHECK_CKR_FAIL(ret, CKR_SIGNATURE_INVALID, "ECDSA Verify bad hash");
+        }
+        if (ret == CKR_OK) {
+            ret = funcList->C_VerifyInit(session, &mech, pubKey);
+            CHECK_CKR(ret, "ECDSA Verify Init bad sig");
         }
         if (ret == CKR_OK) {
             outSz = 1;
@@ -12411,6 +12455,10 @@ static CK_RV test_aes_cmac_update(CK_SESSION_HANDLE session, unsigned char* exp,
                                           "AES-CMAC Sign Final out size too small");
         outSz = sizeof(out);
     }
+    if (ret == CKR_OK) {
+        ret = funcList->C_SignFinal(session, out, &outSz);
+        CHECK_CKR(ret, "AES-CMAC Sign Final cleanup");
+    }
 
     return ret;
 }
@@ -12582,6 +12630,10 @@ static CK_RV test_aes_cmac_general_update(CK_SESSION_HANDLE session,
         CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
                                           "AES-CMAC Sign Final out size too small");
         outSz = sizeof(out);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_SignFinal(session, out, &outSz);
+        CHECK_CKR(ret, "AES-CMAC Sign Final cleanup");
     }
 
     return ret;
@@ -12929,6 +12981,10 @@ static CK_RV test_hmac_update(CK_SESSION_HANDLE session, int mechanism,
         CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
                                           "HMAC Sign Final out size too small");
         outSz = sizeof(out);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_SignFinal(session, out, &outSz);
+        CHECK_CKR(ret, "HMAC Sign Final cleanup");
     }
 
     return ret;
@@ -16494,16 +16550,22 @@ static CK_RV test_oaep_reinit(void* args)
         ret = funcList->C_EncryptInit(session, &mech, pub);
         CHECK_CKR(ret, "OAEP Encrypt Init #1 with label");
     }
+    /* Complete the first operation to release session state */
+    if (ret == CKR_OK) {
+        memset(plain, 9, sizeof(plain));
+        ret = funcList->C_Encrypt(session, plain, plainSz, enc, &encSz);
+        CHECK_CKR(ret, "OAEP Encrypt #1");
+    }
     /* Second init with label2 — old label must be freed, not leaked */
     if (ret == CKR_OK) {
         params.pSourceData = label2;
         params.ulSourceDataLen = sizeof(label2);
+        encSz = sizeof(enc);
         ret = funcList->C_EncryptInit(session, &mech, pub);
         CHECK_CKR(ret, "OAEP Encrypt Init #2 with different label (reinit)");
     }
-    /* Complete the operation so session state is clean */
+    /* Complete the second operation */
     if (ret == CKR_OK) {
-        memset(plain, 9, sizeof(plain));
         ret = funcList->C_Encrypt(session, plain, plainSz, enc, &encSz);
         CHECK_CKR(ret, "OAEP Encrypt after reinit");
     }
@@ -16548,14 +16610,20 @@ static CK_RV test_gcm_reinit(void* args)
         ret = funcList->C_EncryptInit(session, &mech, key);
         CHECK_CKR(ret, "AES-GCM Encrypt Init #1 with AAD");
     }
+    /* Complete the first operation to release session state */
+    if (ret == CKR_OK) {
+        ret = funcList->C_Encrypt(session, plain, plainSz, enc, &encSz);
+        CHECK_CKR(ret, "AES-GCM Encrypt #1");
+    }
     /* Second init with aad2 — old AAD must be freed, not leaked */
     if (ret == CKR_OK) {
         gcmParams.pAAD = aad2;
         gcmParams.ulAADLen = sizeof(aad2);
+        encSz = sizeof(enc);
         ret = funcList->C_EncryptInit(session, &mech, key);
         CHECK_CKR(ret, "AES-GCM Encrypt Init #2 with different AAD (reinit)");
     }
-    /* Complete the operation */
+    /* Complete the second operation */
     if (ret == CKR_OK) {
         ret = funcList->C_Encrypt(session, plain, plainSz, enc, &encSz);
         CHECK_CKR(ret, "AES-GCM Encrypt after reinit");
@@ -16600,14 +16668,20 @@ static CK_RV test_ccm_reinit(void* args)
         ret = funcList->C_EncryptInit(session, &mech, key);
         CHECK_CKR(ret, "AES-CCM Encrypt Init #1 with AAD");
     }
+    /* Complete the first operation to release session state */
+    if (ret == CKR_OK) {
+        ret = funcList->C_Encrypt(session, plain, plainSz, enc, &encSz);
+        CHECK_CKR(ret, "AES-CCM Encrypt #1");
+    }
     /* Second init with aad2 — old AAD must be freed, not leaked */
     if (ret == CKR_OK) {
         ccmParams.pAAD = aad2;
         ccmParams.ulAADLen = sizeof(aad2);
+        encSz = sizeof(enc);
         ret = funcList->C_EncryptInit(session, &mech, key);
         CHECK_CKR(ret, "AES-CCM Encrypt Init #2 with different AAD (reinit)");
     }
-    /* Complete the operation */
+    /* Complete the second operation */
     if (ret == CKR_OK) {
         ret = funcList->C_Encrypt(session, plain, plainSz, enc, &encSz);
         CHECK_CKR(ret, "AES-CCM Encrypt after reinit");

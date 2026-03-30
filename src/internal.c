@@ -954,6 +954,8 @@ static void wp11_Session_Final(WP11_Session* session)
     }
 #endif
 #endif
+    /* Clear any remaining active operation state not handled above. */
+    session->init = 0;
 }
 
 #ifndef WOLFPKCS11_NO_STORE
@@ -7145,6 +7147,21 @@ int WP11_Session_IsOpInitialized(WP11_Session* session, int init)
     return (session->init & ~WP11_INIT_DIGEST_MASK) == init;
 }
 
+/**
+ * Check whether the session is initialized for an exact operation value.
+ * Unlike WP11_Session_IsOpInitialized, this compares the full init value
+ * including digest hash bits.
+ *
+ * @param  session  [in]  Session object.
+ * @param  init     [in]  Expected full init value (including digest bits).
+ * @return  1 when session init matches exactly.
+ *          0 otherwise.
+ */
+int WP11_Session_IsOpInitializedExact(WP11_Session* session, int init)
+{
+    return session->init == init;
+}
+
 int WP11_Session_UpdateData(WP11_Session *session, byte *data, word32 dataLen)
 {
     int ret = 0;
@@ -8764,10 +8781,12 @@ int WP11_Object_SetMldsaKey(WP11_Object* object, unsigned char** data,
         if (seedUsed == 0) {
             /* Import given public/private key data */
             if (object->objClass == CKO_PUBLIC_KEY) {
-                ret = wc_MlDsaKey_ImportPubRaw(key, data[2], len[2]);
+                ret = wc_MlDsaKey_ImportPubRaw(key, data[2],
+                                               (word32)len[2]);
             }
             else {
-                ret = wc_MlDsaKey_ImportPrivRaw(key, data[2], len[2]);
+                ret = wc_MlDsaKey_ImportPrivRaw(key, data[2],
+                                                (word32)len[2]);
             }
         }
         else {
@@ -14801,6 +14820,8 @@ int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
     #else
         hashAlg = &session->params.digest.hash.alg;
     #endif
+
+    session->init = WP11_INIT_DIGEST;
 
     switch (session->mechanism) {
 #ifndef NO_MD5

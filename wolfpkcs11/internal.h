@@ -369,6 +369,8 @@ WP11_LOCAL int WP11_Session_Get(CK_SESSION_HANDLE sessionHandle, WP11_Session** 
 WP11_LOCAL int WP11_Session_GetState(WP11_Session* session);
 WP11_LOCAL int WP11_Session_IsRW(WP11_Session* session);
 WP11_LOCAL int WP11_Session_IsOpInitialized(WP11_Session* session, int init);
+WP11_LOCAL int WP11_Session_IsOpInitializedExact(WP11_Session* session,
+    int init);
 WP11_LOCAL int WP11_Session_UpdateData(WP11_Session *session, byte *data, word32 dataLen);
 WP11_LOCAL void WP11_Session_GetData(WP11_Session *session, byte** data, word32* dataLen);
 WP11_LOCAL void WP11_Session_FreeData(WP11_Session *session);

@@ -2639,6 +2639,10 @@ static CK_RV rsa_pkcs15_sig_test(CK_SESSION_HANDLE session,
         CHECK_CKR(ret, "RSA PKCS#1.5 Verify");
     }
     if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, pub);
+        CHECK_CKR(ret, "RSA PKCS#1.5 Verify Init bad hash");
+    }
+    if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, badHash, sizeof(badHash), out, outSz);
         CHECK_CKR_FAIL(ret, CKR_SIGNATURE_INVALID,
                                                 "RSA PKCS#1.5 Verify bad hash");
@@ -2699,6 +2703,10 @@ static CK_RV rsa_pss_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE priv,
         CHECK_CKR(ret, "RSA PKCS#1 PSS Verify");
     }
     if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, pub);
+        CHECK_CKR(ret, "RSA PKCS#1 PSS Verify Init bad hash");
+    }
+    if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, badHash, hashSz, out, outSz);
         CHECK_CKR_FAIL(ret, CKR_SIGNATURE_INVALID,
                                               "RSA PKCS#1 PSS Verify bad hash");
@@ -2713,6 +2721,10 @@ static CK_RV rsa_pss_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE priv,
         CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
                                       "RSA PKCS#1 PSS Sign out size too small");
         outSz = sizeof(out);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Sign(session, hash, hashSz, out, &outSz);
+        CHECK_CKR(ret, "RSA PKCS#1 PSS Sign cleanup");
     }
 
     return ret;
@@ -3817,8 +3829,16 @@ static CK_RV ecdsa_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE privKey,
         CHECK_CKR(ret, "ECDSA Verify");
     }
     if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, pubKey);
+        CHECK_CKR(ret, "ECDSA Verify Init bad hash");
+    }
+    if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, hash, hashSz - 1, out, outSz);
         CHECK_CKR_FAIL(ret, CKR_SIGNATURE_INVALID, "ECDSA Verify bad hash");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, pubKey);
+        CHECK_CKR(ret, "ECDSA Verify Init bad sig");
     }
     if (ret == CKR_OK) {
         outSz = 1;
@@ -5961,6 +5981,10 @@ static CK_RV test_hmac_update(CK_SESSION_HANDLE session, int mechanism,
         CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
                                           "HMAC Sign Final out size too small");
         outSz = sizeof(out);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_SignFinal(session, out, &outSz);
+        CHECK_CKR(ret, "HMAC Sign Final cleanup");
     }
 
     return ret;
