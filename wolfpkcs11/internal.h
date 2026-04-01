@@ -353,6 +353,7 @@ WP11_LOCAL int WP11_Slot_Has_Empty_Pin(WP11_Slot* slot);
 WP11_LOCAL int WP11_Slot_SOPin_IsSet(WP11_Slot* slot);
 WP11_LOCAL int WP11_Slot_SOLogin(WP11_Slot* slot, char* pin, int pinLen);
 WP11_LOCAL int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen);
+WP11_LOCAL int WP11_Slot_IsLoggedIn(WP11_Slot* slot);
 WP11_LOCAL void WP11_Slot_Logout(WP11_Slot* slot);
 WP11_LOCAL int WP11_Slot_SetSOPin(WP11_Slot* slot, char* pin, int pinLen);
 WP11_LOCAL int WP11_Slot_SetUserPin(WP11_Slot* slot, char* pin, int pinLen);
@@ -411,6 +412,7 @@ WP11_LOCAL void WP11_Session_Find(WP11_Session* session, int onToken,
                        CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount);
 WP11_LOCAL int WP11_Session_FindGet(WP11_Session* session, CK_OBJECT_HANDLE* id);
 WP11_LOCAL void WP11_Session_FindFinal(WP11_Session* session);
+WP11_LOCAL int WP11_Session_IsFindActive(WP11_Session* session);
 
 WP11_LOCAL int WP11_ConstantCompare(const byte* a, const byte* b, int length);
 
@@ -421,6 +423,7 @@ WP11_LOCAL void WP11_Object_Free(WP11_Object* object);
 WP11_LOCAL int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest);
 
 WP11_LOCAL CK_OBJECT_HANDLE WP11_Object_GetHandle(WP11_Object* object);
+WP11_LOCAL int WP11_Object_OnToken(WP11_Object* object);
 WP11_LOCAL CK_KEY_TYPE WP11_Object_GetType(WP11_Object* object);
 WP11_LOCAL CK_ULONG WP11_Object_GetDevId(WP11_Object* object);
 

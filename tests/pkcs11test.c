@@ -1016,6 +1016,13 @@ static CK_RV test_login_logout(void* args)
         CHECK_CKR_FAIL(ret, CKR_SESSION_HANDLE_INVALID,
                                                "Logout invalid session handle");
     }
+    /* C_Logout should return CKR_USER_NOT_LOGGED_IN when no user is
+     * currently logged in. */
+    if (ret == CKR_OK) {
+        ret = funcList->C_Logout(session);
+        CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN,
+                                               "Logout when not logged in");
+    }
 
     if (ret == CKR_OK) {
         ret = funcList->C_GetTokenInfo(slot, &tokenInfo);
@@ -2182,21 +2189,17 @@ static CK_RV test_object(void* args)
         CHECK_CKR(ret, "Open Session - read-only");
     }
 
+    /* Token objects must be blocked in RO sessions */
     if (ret == CKR_OK) {
-        ret = funcList->C_CreateObject(sessionRO, tmpl, tmplCnt, &obj);
+        ret = funcList->C_CreateObject(sessionRO, tmplOnToken, tmplOnTokenCnt,
+                                                                          &obj);
         CHECK_CKR_FAIL(ret, CKR_SESSION_READ_ONLY,
-                                          "Create Object in read-only session");
-    }
-    if (ret == CKR_OK) {
-        ret = funcList->C_CopyObject(sessionRO, objOnToken, copyTmpl,
-                                                         copyTmplCnt, &copyObj);
-        CHECK_CKR_FAIL(ret, CKR_SESSION_READ_ONLY,
-                              "Copy Object symmetric key in read-only session");
+                                  "Create token Object in read-only session");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_DestroyObject(sessionRO, objOnToken);
         CHECK_CKR_FAIL(ret, CKR_SESSION_READ_ONLY,
-                                         "Destroy object in read-only session");
+                                    "Destroy token object in read-only session");
     }
 
     if (ret == CKR_OK && sessionRO != CK_INVALID_HANDLE) {
@@ -4568,6 +4571,18 @@ static CK_RV test_find_objects(void* args)
         ret = funcList->C_FindObjectsFinal(CK_INVALID_HANDLE);
         CHECK_CKR_FAIL(ret, CKR_SESSION_HANDLE_INVALID,
                                    "Find Objects Final invalid session handle");
+    }
+    /* C_FindObjects and C_FindObjectsFinal should return
+     * CKR_OPERATION_NOT_INITIALIZED when called without C_FindObjectsInit. */
+    if (ret == CKR_OK) {
+        ret = funcList->C_FindObjects(session, &found, 1, &count);
+        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
+                                          "Find Objects without Init");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_FindObjectsFinal(session);
+        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
+                                    "Find Objects Final without Init");
     }
 
     if (ret == CKR_OK) {
@@ -16160,6 +16175,482 @@ static CK_RV test_private_object_access(void* args)
     return ret;
 }
 
+/* C_GetAttributeValue must process all attributes in the template even when one
+ * returns an error, setting ulValueLen to (CK_ULONG)-1 for invalid types and
+ * returning the accumulated error. */
+static CK_RV test_get_attr_value_all_processed(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE obj;
+    static byte keyData[] = { 0x00 };
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
+        { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
+        { CKA_VALUE,             keyData,           sizeof(keyData)           },
+    };
+    CK_ULONG tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
+    CK_ATTRIBUTE getTmpl[3];
+
+    ret = funcList->C_CreateObject(session, tmpl, tmplCnt, &obj);
+    CHECK_CKR(ret, "Create Object for get attr test");
+
+    if (ret == CKR_OK) {
+        /* Query: valid attr, invalid attr (0xFFFFFFFF), valid attr.
+         * Per PKCS#11 spec, all attrs should be processed. */
+        getTmpl[0].type = CKA_CLASS;
+        getTmpl[0].pValue = NULL;
+        getTmpl[0].ulValueLen = 0;
+        getTmpl[1].type = 0xFFFFFFFF;
+        getTmpl[1].pValue = NULL;
+        getTmpl[1].ulValueLen = 0;
+        getTmpl[2].type = CKA_KEY_TYPE;
+        getTmpl[2].pValue = NULL;
+        getTmpl[2].ulValueLen = 0;
+
+        ret = funcList->C_GetAttributeValue(session, obj, getTmpl, 3);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_TYPE_INVALID,
+                      "Get Attr Value with invalid type in middle");
+    }
+    if (ret == CKR_OK) {
+        /* First attr should have its size set */
+        CHECK_COND(getTmpl[0].ulValueLen == sizeof(CK_OBJECT_CLASS), ret,
+                   "First attr ulValueLen set");
+    }
+    if (ret == CKR_OK) {
+        /* Invalid attr should have ulValueLen set to (CK_ULONG)-1 */
+        CHECK_COND(getTmpl[1].ulValueLen == (CK_ULONG)-1, ret,
+                   "Invalid attr ulValueLen set to -1");
+    }
+    if (ret == CKR_OK) {
+        /* Third attr must also be processed (not skipped by early return) */
+        CHECK_COND(getTmpl[2].ulValueLen == sizeof(CK_KEY_TYPE), ret,
+                   "Third attr ulValueLen set (not skipped)");
+    }
+
+    return ret;
+}
+
+#ifndef WOLFPKCS11_NSS
+/* Creating, copying, destroying, and setting attributes on session objects
+ * should be allowed in read-only sessions per the PKCS#11 spec. Only token
+ * objects require a R/W session. */
+static CK_RV test_create_session_obj_ro_session(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_SESSION_HANDLE sessionRO = CK_INVALID_HANDLE;
+    CK_RV ret;
+
+    static byte keyData[] = { 0x00 };
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
+        { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
+        { CKA_VALUE,             keyData,           sizeof(keyData)           },
+    };
+    CK_ULONG tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
+    CK_ATTRIBUTE tmplOnToken[] = {
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
+        { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
+        { CKA_VALUE,             keyData,           sizeof(keyData)           },
+        { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
+    };
+    CK_ULONG tmplOnTokenCnt = sizeof(tmplOnToken) / sizeof(*tmplOnToken);
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE, objOnToken = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE copyObj = CK_INVALID_HANDLE, copyBad = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE copyTmpl[] = {
+        { CKA_VALUE,             keyData,           sizeof(keyData)           },
+    };
+    CK_ULONG copyTmplCnt = sizeof(copyTmpl) / sizeof(*copyTmpl);
+    char newLabel[] = "updated";
+    CK_ATTRIBUTE setTmpl[] = {
+        { CKA_LABEL,             newLabel,          sizeof(newLabel)-1        },
+    };
+
+    ret = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION, NULL, NULL,
+                                                                    &sessionRO);
+    CHECK_CKR(ret, "Open RO session");
+
+    /* Create session object in RO session - spec says this is allowed */
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(sessionRO, tmpl, tmplCnt, &obj);
+        CHECK_CKR(ret, "Create session object in RO session");
+    }
+    /* Create token object in RO session - spec says this must fail */
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(sessionRO, tmplOnToken, tmplOnTokenCnt,
+                                                                   &objOnToken);
+        CHECK_CKR_FAIL(ret, CKR_SESSION_READ_ONLY,
+                                    "Create token object in RO session blocked");
+    }
+    /* SetAttributeValue on session object from RO session */
+    if (ret == CKR_OK) {
+        ret = funcList->C_SetAttributeValue(sessionRO, obj, setTmpl, 1);
+        CHECK_CKR(ret, "SetAttributeValue session obj in RO session");
+    }
+    /* CopyObject session object in RO session */
+    if (ret == CKR_OK) {
+        ret = funcList->C_CopyObject(sessionRO, obj, copyTmpl, copyTmplCnt,
+                                                                      &copyObj);
+        CHECK_CKR(ret, "Copy session object in RO session");
+    }
+    /* CopyObject token object from RO session - must fail even with empty
+     * template, because copy inherits source's CKA_TOKEN. */
+    if (ret == CKR_OK) {
+        /* Create a token object via the RW session */
+        ret = funcList->C_CreateObject(session, tmplOnToken, tmplOnTokenCnt,
+                                                                   &objOnToken);
+        CHECK_CKR(ret, "Create token object via RW session");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_CopyObject(sessionRO, objOnToken, copyTmpl,
+                                                          copyTmplCnt, &copyBad);
+        CHECK_CKR_FAIL(ret, CKR_SESSION_READ_ONLY,
+                                    "Copy token object in RO session blocked");
+    }
+    /* DestroyObject session object from RO session */
+    if (ret == CKR_OK) {
+        ret = funcList->C_DestroyObject(sessionRO, obj);
+        CHECK_CKR(ret, "Destroy session object in RO session");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DestroyObject(sessionRO, copyObj);
+        CHECK_CKR(ret, "Destroy copied session object in RO session");
+    }
+
+    if (sessionRO != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(sessionRO);
+    if (objOnToken != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, objOnToken);
+
+    return ret;
+}
+#endif /* !WOLFPKCS11_NSS */
+
+#if defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
+    !defined(WOLFPKCS11_NSS)
+/* C_WrapKey should not require a R/W session since it creates no new object.
+ * C_UnwrapKey should allow creating session objects in R/O sessions. */
+static CK_RV test_wrap_key_ro_session(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_SESSION_HANDLE sessionRO = CK_INVALID_HANDLE;
+    CK_RV ret;
+    CK_MECHANISM mech = { CKM_AES_KEY_WRAP, NULL, 0 };
+    CK_OBJECT_HANDLE wrappingKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE unwrappedKey = CK_INVALID_HANDLE;
+    byte wrappedKey[40], keyData[32];
+    CK_ULONG wrappedKeyLen;
+    unsigned char keyId[] = { 0xBB };
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
+        { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
+        { CKA_EXTRACTABLE,       &ckTrue,           sizeof(ckTrue)            },
+        { CKA_SIGN,              &ckTrue,           sizeof(ckTrue)            },
+        { CKA_VERIFY,            &ckTrue,           sizeof(ckTrue)            },
+        { CKA_VALUE,             keyData,           sizeof(keyData)           },
+        { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
+        { CKA_ID,                keyId,             sizeof(keyId)             },
+    };
+    CK_ULONG keyTmplCnt = sizeof(keyTmpl) / sizeof(*keyTmpl);
+    CK_ATTRIBUTE unwrapTmpl[] = {
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
+        { CKA_KEY_TYPE,          &aesKeyType,       sizeof(aesKeyType)        },
+    };
+    CK_ULONG unwrapTmplCnt = sizeof(unwrapTmpl) / sizeof(*unwrapTmpl);
+
+    memset(keyData, 7, sizeof(keyData));
+    wrappedKeyLen = sizeof(wrappedKey);
+
+    /* Use token-based keys so they're visible from the RO session */
+    {
+        unsigned char wrapId[] = { 0xAA };
+        ret = get_aes_128_key(session, wrapId, sizeof(wrapId), &wrappingKey);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, keyTmpl, keyTmplCnt, &key);
+        CHECK_CKR(ret, "Create token key for wrap");
+    }
+
+    /* Open RO session */
+    if (ret == CKR_OK) {
+        ret = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION, NULL, NULL,
+                                                                    &sessionRO);
+        CHECK_CKR(ret, "Open RO session for wrap");
+    }
+
+    /* Wrap using the RW session first */
+    if (ret == CKR_OK) {
+        ret = funcList->C_WrapKey(session, &mech, wrappingKey, key,
+                                                   wrappedKey, &wrappedKeyLen);
+        CHECK_CKR(ret, "WrapKey in RW session");
+    }
+
+    /* C_WrapKey from RO session should succeed (token keys visible) */
+    if (ret == CKR_OK) {
+        wrappedKeyLen = sizeof(wrappedKey);
+        ret = funcList->C_WrapKey(sessionRO, &mech, wrappingKey, key,
+                                                   wrappedKey, &wrappedKeyLen);
+        CHECK_CKR(ret, "WrapKey in RO session");
+    }
+
+    /* C_UnwrapKey creating session object from RO session should succeed */
+    if (ret == CKR_OK) {
+        ret = funcList->C_UnwrapKey(sessionRO, &mech, wrappingKey,
+                                    wrappedKey, wrappedKeyLen,
+                                    unwrapTmpl, unwrapTmplCnt, &unwrappedKey);
+        CHECK_CKR(ret, "UnwrapKey session object in RO session");
+    }
+
+    if (sessionRO != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(sessionRO);
+    funcList->C_DestroyObject(session, wrappingKey);
+    if (key != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, key);
+    if (unwrappedKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, unwrappedKey);
+
+    return ret;
+}
+#endif
+
+#ifndef NO_AES
+#ifdef HAVE_AES_CBC
+/* Verify that C_Encrypt rejects data lengths that exceed word32 range on
+ * platforms where CK_ULONG is 64-bit (LP64). */
+static CK_RV test_encrypt_data_len_range(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE key;
+    byte plain[16], enc[32], iv[16];
+    CK_ULONG encSz;
+    CK_MECHANISM mech;
+
+    if (sizeof(CK_ULONG) <= sizeof(word32))
+        return CKR_SKIPPED;
+
+    memset(plain, 9, sizeof(plain));
+    memset(iv, 9, sizeof(iv));
+    encSz = sizeof(enc);
+
+    mech.mechanism      = CKM_AES_CBC;
+    mech.ulParameterLen = sizeof(iv);
+    mech.pParameter     = iv;
+
+    ret = get_aes_128_key(session, NULL, 0, &key);
+    if (ret == CKR_OK) {
+        ret = funcList->C_EncryptInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CBC Encrypt Init for data len range test");
+    }
+    /* Pass a data length that overflows word32 */
+    if (ret == CKR_OK) {
+        CK_ULONG bigLen = ((CK_ULONG)1 << 32) + 16;
+        ret = funcList->C_Encrypt(session, plain, bigLen, enc, &encSz);
+        CHECK_CKR_FAIL(ret, CKR_DATA_LEN_RANGE,
+                           "AES-CBC Encrypt rejects oversized data length");
+    }
+
+    return ret;
+}
+#endif /* HAVE_AES_CBC */
+#endif /* !NO_AES */
+
+#if !defined(NO_RSA) && !defined(WC_NO_RSA_OAEP)
+/* Calling C_EncryptInit with OAEP twice in a row without completing the first
+ * operation exercises the re-initialization path in SetOaepParams. Any label
+ * from the first init must be freed before being overwritten. */
+static CK_RV test_oaep_reinit(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_MECHANISM mech;
+    CK_RSA_PKCS_OAEP_PARAMS params;
+    byte plain[32], enc[2048/8];
+    CK_ULONG plainSz = sizeof(plain), encSz = sizeof(enc);
+    unsigned char label1[] = "first-label";
+    unsigned char label2[] = "second-label-longer";
+
+    ret = get_rsa_priv_key(session, NULL, 0, CK_FALSE, &priv);
+    if (ret == CKR_OK)
+        ret = get_rsa_pub_key(session, NULL, 0, &pub);
+
+    params.hashAlg = CKM_SHA256;
+    params.mgf = CKG_MGF1_SHA256;
+    params.source = CKZ_DATA_SPECIFIED;
+    params.pSourceData = label1;
+    params.ulSourceDataLen = sizeof(label1);
+
+    mech.mechanism      = CKM_RSA_PKCS_OAEP;
+    mech.ulParameterLen = sizeof(params);
+    mech.pParameter     = &params;
+
+    /* First init with label1 */
+    if (ret == CKR_OK) {
+        ret = funcList->C_EncryptInit(session, &mech, pub);
+        CHECK_CKR(ret, "OAEP Encrypt Init #1 with label");
+    }
+    /* Second init with label2 — old label must be freed, not leaked */
+    if (ret == CKR_OK) {
+        params.pSourceData = label2;
+        params.ulSourceDataLen = sizeof(label2);
+        ret = funcList->C_EncryptInit(session, &mech, pub);
+        CHECK_CKR(ret, "OAEP Encrypt Init #2 with different label (reinit)");
+    }
+    /* Complete the operation so session state is clean */
+    if (ret == CKR_OK) {
+        memset(plain, 9, sizeof(plain));
+        ret = funcList->C_Encrypt(session, plain, plainSz, enc, &encSz);
+        CHECK_CKR(ret, "OAEP Encrypt after reinit");
+    }
+
+    return ret;
+}
+#endif
+
+#ifdef HAVE_AESGCM
+/* Calling C_EncryptInit with AES-GCM twice in a row without completing the
+ * first operation exercises the re-initialization path in SetGcmParams. Any
+ * AAD from the first init must be freed before being overwritten. */
+static CK_RV test_gcm_reinit(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE key;
+    CK_MECHANISM mech;
+    CK_GCM_PARAMS gcmParams;
+    byte iv[12], aad1[10], aad2[20];
+    byte plain[32], enc[48];
+    CK_ULONG plainSz = sizeof(plain), encSz = sizeof(enc);
+
+    memset(iv, 9, sizeof(iv));
+    memset(aad1, 1, sizeof(aad1));
+    memset(aad2, 2, sizeof(aad2));
+    memset(plain, 9, sizeof(plain));
+
+    gcmParams.pIv       = iv;
+    gcmParams.ulIvLen   = sizeof(iv);
+    gcmParams.pAAD      = aad1;
+    gcmParams.ulAADLen  = sizeof(aad1);
+    gcmParams.ulTagBits = 128;
+
+    mech.mechanism      = CKM_AES_GCM;
+    mech.ulParameterLen = sizeof(gcmParams);
+    mech.pParameter     = &gcmParams;
+
+    ret = get_aes_128_key(session, NULL, 0, &key);
+    /* First init with aad1 */
+    if (ret == CKR_OK) {
+        ret = funcList->C_EncryptInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-GCM Encrypt Init #1 with AAD");
+    }
+    /* Second init with aad2 — old AAD must be freed, not leaked */
+    if (ret == CKR_OK) {
+        gcmParams.pAAD = aad2;
+        gcmParams.ulAADLen = sizeof(aad2);
+        ret = funcList->C_EncryptInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-GCM Encrypt Init #2 with different AAD (reinit)");
+    }
+    /* Complete the operation */
+    if (ret == CKR_OK) {
+        ret = funcList->C_Encrypt(session, plain, plainSz, enc, &encSz);
+        CHECK_CKR(ret, "AES-GCM Encrypt after reinit");
+    }
+
+    return ret;
+}
+#endif /* HAVE_AESGCM */
+
+#ifdef HAVE_AESCCM
+/* Same as GCM reinit test but for AES-CCM. */
+static CK_RV test_ccm_reinit(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE key;
+    CK_MECHANISM mech;
+    CK_CCM_PARAMS ccmParams;
+    byte iv[13], aad1[10], aad2[20];
+    byte plain[32], enc[48];
+    CK_ULONG plainSz = sizeof(plain), encSz = sizeof(enc);
+
+    memset(iv, 9, sizeof(iv));
+    memset(aad1, 1, sizeof(aad1));
+    memset(aad2, 2, sizeof(aad2));
+    memset(plain, 9, sizeof(plain));
+
+    ccmParams.ulDataLen = 0;
+    ccmParams.pIv       = iv;
+    ccmParams.ulIvLen   = sizeof(iv);
+    ccmParams.pAAD      = aad1;
+    ccmParams.ulAADLen  = sizeof(aad1);
+    ccmParams.ulMacLen  = 16;
+
+    mech.mechanism      = CKM_AES_CCM;
+    mech.ulParameterLen = sizeof(ccmParams);
+    mech.pParameter     = &ccmParams;
+
+    ret = gen_aes_key(session, 16, NULL, 0, 0, &key);
+    /* First init with aad1 */
+    if (ret == CKR_OK) {
+        ret = funcList->C_EncryptInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CCM Encrypt Init #1 with AAD");
+    }
+    /* Second init with aad2 — old AAD must be freed, not leaked */
+    if (ret == CKR_OK) {
+        ccmParams.pAAD = aad2;
+        ccmParams.ulAADLen = sizeof(aad2);
+        ret = funcList->C_EncryptInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-CCM Encrypt Init #2 with different AAD (reinit)");
+    }
+    /* Complete the operation */
+    if (ret == CKR_OK) {
+        ret = funcList->C_Encrypt(session, plain, plainSz, enc, &encSz);
+        CHECK_CKR(ret, "AES-CCM Encrypt after reinit");
+    }
+
+    return ret;
+}
+#endif /* HAVE_AESCCM */
+
+#if !defined(NO_RSA) && defined(WC_RSA_DIRECT)
+/* C_VerifyRecoverInit should return CKR_OPERATION_ACTIVE when called twice
+ * without completing the first operation. */
+static CK_RV test_verify_recover_init_double(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_MECHANISM verifyMech = { CKM_RSA_PKCS, NULL, 0 };
+    CK_OBJECT_HANDLE pubKey;
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_CLASS,             &pubKeyClass,      sizeof(pubKeyClass)       },
+        { CKA_KEY_TYPE,          &rsaKeyType,       sizeof(rsaKeyType)        },
+        { CKA_VERIFY,            &ckTrue,           sizeof(ckTrue)            },
+        { CKA_VERIFY_RECOVER,    &ckTrue,           sizeof(ckTrue)            },
+        { CKA_MODULUS,           rsa_2048_modulus,   sizeof(rsa_2048_modulus)  },
+        { CKA_PUBLIC_EXPONENT,   rsa_2048_pub_exp,  sizeof(rsa_2048_pub_exp)  },
+    };
+    CK_ULONG pubTmplCnt = sizeof(pubTmpl) / sizeof(*pubTmpl);
+
+    ret = funcList->C_CreateObject(session, pubTmpl, pubTmplCnt, &pubKey);
+    CHECK_CKR(ret, "Create RSA public key for verify recover");
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyRecoverInit(session, &verifyMech, pubKey);
+        CHECK_CKR(ret, "First C_VerifyRecoverInit");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyRecoverInit(session, &verifyMech, pubKey);
+        CHECK_CKR_FAIL(ret, CKR_OPERATION_ACTIVE,
+                        "Second C_VerifyRecoverInit without completing first");
+    }
+
+    return ret;
+}
+#endif
+
 static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_NO_INIT_DECL(test_get_function_list),
     PKCS11TEST_FUNC_NO_INIT_DECL(test_not_initialized),
@@ -16182,6 +16673,9 @@ static TEST_FUNC testFunc[] = {
 #endif
     PKCS11TEST_FUNC_SESS_DECL(test_op_state_fail),
     PKCS11TEST_FUNC_SESS_DECL(test_object),
+#ifndef WOLFPKCS11_NSS
+    PKCS11TEST_FUNC_SESS_DECL(test_create_session_obj_ro_session),
+#endif
     PKCS11TEST_FUNC_SESS_DECL(test_copy_object_deep_copy),
 #if (!defined(NO_RSA) && !defined(WOLFPKCS11_TPM) && defined(WOLFSSL_KEY_GEN))
     PKCS11TEST_FUNC_SESS_DECL(test_copy_object_rsa_key),
@@ -16209,6 +16703,7 @@ static TEST_FUNC testFunc[] = {
 #ifndef NO_DH
     PKCS11TEST_FUNC_SESS_DECL(test_attributes_dh),
 #endif
+    PKCS11TEST_FUNC_SESS_DECL(test_get_attr_value_all_processed),
     PKCS11TEST_FUNC_SESS_DECL(test_find_objects),
     PKCS11TEST_FUNC_SESS_DECL(test_private_object_access),
     PKCS11TEST_FUNC_SESS_DECL(test_encrypt_decrypt),
@@ -16218,6 +16713,7 @@ static TEST_FUNC testFunc[] = {
 #if !defined(NO_RSA) && defined(WC_RSA_DIRECT)
     PKCS11TEST_FUNC_SESS_DECL(test_verify_recover_pkcs),
     PKCS11TEST_FUNC_SESS_DECL(test_verify_recover_x509),
+    PKCS11TEST_FUNC_SESS_DECL(test_verify_recover_init_double),
 #endif
     PKCS11TEST_FUNC_SESS_DECL(test_encdec_digest),
     PKCS11TEST_FUNC_SESS_DECL(test_encdec_signverify),
@@ -16231,6 +16727,9 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_wrap_unwrap_key),
     PKCS11TEST_FUNC_SESS_DECL(test_wrap_key_unextractable),
     PKCS11TEST_FUNC_SESS_DECL(test_wrap_key_wrap_with_trusted),
+#if !defined(WOLFPKCS11_NSS)
+    PKCS11TEST_FUNC_SESS_DECL(test_wrap_key_ro_session),
+#endif
 #endif /* HAVE_AES_KEYWRAP && !WOLFPKCS11_NO_STORE */
 #if (!defined(NO_RSA) && !defined(WOLFPKCS11_NO_STORE))
     PKCS11TEST_FUNC_SESS_DECL(test_rsa_wrap_unwrap_key),
@@ -16251,6 +16750,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_rsa_fixed_keys_pkcs15_enc),
 #ifndef WC_NO_RSA_OAEP
     PKCS11TEST_FUNC_SESS_DECL(test_rsa_fixed_keys_oaep),
+    PKCS11TEST_FUNC_SESS_DECL(test_oaep_reinit),
 #endif
 #ifdef WC_RSA_DIRECT
     PKCS11TEST_FUNC_SESS_DECL(test_rsa_fixed_keys_x_509_sig),
@@ -16310,6 +16810,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_aes_cbc_pad_fail),
     PKCS11TEST_FUNC_SESS_DECL(test_aes_cbc_pad_gen_key),
     PKCS11TEST_FUNC_SESS_DECL(test_aes_cbc_pad_gen_key_id),
+    PKCS11TEST_FUNC_SESS_DECL(test_encrypt_data_len_range),
 #endif
 #ifdef HAVE_AESCTR
     PKCS11TEST_FUNC_SESS_DECL(test_aes_ctr_fixed_key),
@@ -16319,9 +16820,11 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_aes_gcm_fail),
     PKCS11TEST_FUNC_SESS_DECL(test_aes_gcm_gen_key),
     PKCS11TEST_FUNC_SESS_DECL(test_aes_gcm_gen_key_id),
+    PKCS11TEST_FUNC_SESS_DECL(test_gcm_reinit),
 #endif
 #ifdef HAVE_AESCCM
     PKCS11TEST_FUNC_SESS_DECL(test_aes_ccm_gen_key),
+    PKCS11TEST_FUNC_SESS_DECL(test_ccm_reinit),
 #endif
 #ifdef HAVE_AESCTS
     PKCS11TEST_FUNC_SESS_DECL(test_aes_cts_fixed_key),
