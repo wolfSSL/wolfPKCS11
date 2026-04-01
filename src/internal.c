@@ -7517,7 +7517,7 @@ int WP11_Session_SetOaepParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
     int ret;
     WP11_OaepParams* oaep = &session->params.oaep;
 
-    if (oaep->label != NULL) {
+    if (session->mechanism == CKM_RSA_PKCS_OAEP && oaep->label != NULL) {
         XFREE(oaep->label, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     }
     XMEMSET(oaep, 0, sizeof(*oaep));
@@ -7800,7 +7800,7 @@ int WP11_Session_SetGcmParams(WP11_Session* session, unsigned char* iv,
         ret = BAD_FUNC_ARG;
 
     if (ret == 0) {
-        if (gcm->aad != NULL) {
+        if (session->mechanism == CKM_AES_GCM && gcm->aad != NULL) {
             XFREE(gcm->aad, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         }
         XMEMSET(gcm, 0, sizeof(*gcm));
@@ -7850,7 +7850,7 @@ int WP11_Session_SetCcmParams(WP11_Session* session, int dataSz,
         ret = BAD_FUNC_ARG;
 
     if (ret == 0) {
-        if (ccm->aad != NULL) {
+        if (session->mechanism == CKM_AES_CCM && ccm->aad != NULL) {
             XFREE(ccm->aad, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         }
         XMEMSET(ccm, 0, sizeof(*ccm));

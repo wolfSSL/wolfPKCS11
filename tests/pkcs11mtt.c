@@ -435,10 +435,21 @@ static CK_RV test_object(void* args)
         CHECK_CKR(ret, "Open Session - read-only");
     }
 #ifndef WOLFPKCS11_NSS
+    /* Session objects can be created/copied/destroyed in RO sessions */
     if (ret == CKR_OK) {
         ret = funcList->C_CreateObject(sessionRO, tmpl, tmplCnt, &obj);
+        CHECK_CKR(ret, "Create session Object in read-only session");
+    }
+    if (ret == CKR_OK) {
+        funcList->C_DestroyObject(sessionRO, obj);
+        obj = CK_INVALID_HANDLE;
+    }
+    /* Token objects must be blocked in RO sessions */
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(sessionRO, tmplOnToken, tmplOnTokenCnt,
+                                                                          &obj);
         CHECK_CKR_FAIL(ret, CKR_SESSION_READ_ONLY,
-                                          "Create Object in read-only session");
+                                   "Create token Object in read-only session");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_CopyObject(sessionRO, objOnToken, copyTmpl,
