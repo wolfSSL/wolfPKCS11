@@ -6578,6 +6578,8 @@ int WP11_Slot_CheckSOPin(WP11_Slot* slot, char* pin, int pinLen)
         ret = PIN_INVALID_E;
     WP11_Lock_UnlockRO(&slot->lock);
 
+    wc_ForceZero(hash, sizeof(hash));
+
     return ret;
 }
 
@@ -6618,6 +6620,8 @@ int WP11_Slot_CheckUserPin(WP11_Slot* slot, char* pin, int pinLen)
             !WP11_ConstantCompare(hash, token->userPin, token->userPinLen))
         ret = PIN_INVALID_E;
     WP11_Lock_UnlockRO(&slot->lock);
+
+    wc_ForceZero(hash, sizeof(hash));
 
     return ret;
 }
@@ -6922,6 +6926,25 @@ int WP11_Slot_SetUserPin(WP11_Slot* slot, char* pin, int pinLen)
  *
  * @param  slot  [in]  Slot object referencing token.
  */
+/**
+ * Check whether any user is logged in to the token.
+ *
+ * @param  slot  [in]  Slot object referencing token.
+ * @return  1 when a user (SO or normal) is logged in.
+ *          0 when no user is logged in (public session).
+ */
+int WP11_Slot_IsLoggedIn(WP11_Slot* slot)
+{
+    int state;
+
+    WP11_Lock_LockRO(&slot->lock);
+    state = slot->token.loginState;
+    WP11_Lock_UnlockRO(&slot->lock);
+
+    return (state != WP11_APP_STATE_RO_PUBLIC &&
+            state != WP11_APP_STATE_RW_PUBLIC);
+}
+
 void WP11_Slot_Logout(WP11_Slot* slot)
 {
 #ifndef WOLFPKCS11_NO_STORE
@@ -7494,6 +7517,9 @@ int WP11_Session_SetOaepParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
     int ret;
     WP11_OaepParams* oaep = &session->params.oaep;
 
+    if (session->mechanism == CKM_RSA_PKCS_OAEP && oaep->label != NULL) {
+        XFREE(oaep->label, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    }
     XMEMSET(oaep, 0, sizeof(*oaep));
     ret = wp11_hash_type(hashAlg, &oaep->hashType);
     if (ret == 0)
@@ -7774,6 +7800,9 @@ int WP11_Session_SetGcmParams(WP11_Session* session, unsigned char* iv,
         ret = BAD_FUNC_ARG;
 
     if (ret == 0) {
+        if (session->mechanism == CKM_AES_GCM && gcm->aad != NULL) {
+            XFREE(gcm->aad, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        }
         XMEMSET(gcm, 0, sizeof(*gcm));
         XMEMCPY(gcm->iv, iv, ivSz);
         gcm->ivSz = ivSz;
@@ -7821,6 +7850,9 @@ int WP11_Session_SetCcmParams(WP11_Session* session, int dataSz,
         ret = BAD_FUNC_ARG;
 
     if (ret == 0) {
+        if (session->mechanism == CKM_AES_CCM && ccm->aad != NULL) {
+            XFREE(ccm->aad, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        }
         XMEMSET(ccm, 0, sizeof(*ccm));
         ccm->dataSz = dataSz;
         XMEMCPY(ccm->iv, iv, ivSz);
@@ -8216,6 +8248,18 @@ void WP11_Session_FindFinal(WP11_Session* session)
     session->find.state = WP11_FIND_STATE_NULL;
 }
 
+/**
+ * Check whether a find operation is active on the session.
+ *
+ * @param  session  [in]  Session object.
+ * @return  1 when a find operation is active.
+ *          0 when no find operation is active.
+ */
+int WP11_Session_IsFindActive(WP11_Session* session)
+{
+    return session->find.state != WP11_FIND_STATE_NULL;
+}
+
 
 /**
  * Free the object and take it out of the linked list.
@@ -8313,6 +8357,18 @@ void WP11_Object_Free(WP11_Object* object)
 CK_OBJECT_HANDLE WP11_Object_GetHandle(WP11_Object* object)
 {
     return object->handle;
+}
+
+/**
+ * Check whether the object is stored on the token.
+ *
+ * @param  object  [in]  Object object.
+ * @return  1 when object is on token.
+ *          0 when object is a session object.
+ */
+int WP11_Object_OnToken(WP11_Object* object)
+{
+    return object->onToken;
 }
 
 /**
@@ -11277,6 +11333,9 @@ int WP11_Rsa_Sign(unsigned char* in, word32 inLen, unsigned char* sig,
     byte data[RSA_MAX_SIZE / 8];
     word32 keyLen;
 
+    if (priv->onToken)
+        WP11_Lock_LockRO(priv->lock);
+
     keyLen = wc_RsaEncryptSize(priv->data.rsaKey);
     if (inLen < keyLen) {
         XMEMSET(data, 0, keyLen - inLen);
@@ -11285,8 +11344,6 @@ int WP11_Rsa_Sign(unsigned char* in, word32 inLen, unsigned char* sig,
         inLen = keyLen;
     }
 
-    if (priv->onToken)
-        WP11_Lock_LockRO(priv->lock);
     ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
     if (ret == 0) {
     #ifdef WOLFPKCS11_TPM
@@ -11333,16 +11390,23 @@ int WP11_Rsa_Verify_Recover(CK_MECHANISM_TYPE mechanism, unsigned char* sig,
 {
     int ret;
 
+    if (pub->onToken)
+        WP11_Lock_LockRO(pub->lock);
+
     switch (mechanism) {
         case CKM_RSA_PKCS:
             ret = wc_RsaSSL_Verify(sig, sigLen, out, (word32)*outLen,
                                          pub->data.rsaKey);
-            if (ret == RSA_BUFFER_E)
-                return CKR_BUFFER_TOO_SMALL;
-            if (ret < 0)
-                return CKR_FUNCTION_FAILED;
-
-            *outLen = ret;
+            if (ret == RSA_BUFFER_E) {
+                ret = CKR_BUFFER_TOO_SMALL;
+            }
+            else if (ret < 0) {
+                ret = CKR_FUNCTION_FAILED;
+            }
+            else {
+                *outLen = ret;
+                ret = CKR_OK;
+            }
             break;
 
         case CKM_RSA_X_509: {
@@ -11350,27 +11414,35 @@ int WP11_Rsa_Verify_Recover(CK_MECHANISM_TYPE mechanism, unsigned char* sig,
             byte* pos;
             ret =  wc_RsaDirect(sig, sigLen, out, (word32*)outLen,
                                 pub->data.rsaKey, RSA_PUBLIC_DECRYPT, NULL);
-            if (ret < 0)
-                return CKR_FUNCTION_FAILED;
-            /* Result is front padded with 0x00 */
-            for (pos = out; pos < out + *outLen; pos++) {
-                if (*pos != 0x00) {
-                    data_out = pos;
-                    break;
-                }
+            if (ret < 0) {
+                ret = CKR_FUNCTION_FAILED;
             }
-            if (data_out != NULL) {
-                *outLen = (out + *outLen) - data_out;
-                XMEMMOVE(out, data_out, *outLen);
+            else {
+                ret = CKR_OK;
+                /* Result is front padded with 0x00 */
+                for (pos = out; pos < out + *outLen; pos++) {
+                    if (*pos != 0x00) {
+                        data_out = pos;
+                        break;
+                    }
+                }
+                if (data_out != NULL) {
+                    *outLen = (out + *outLen) - data_out;
+                    XMEMMOVE(out, data_out, *outLen);
+                }
             }
             break;
         }
         default:
             /* Should never happen */
-            return CKR_FUNCTION_FAILED;
+            ret = CKR_FUNCTION_FAILED;
+            break;
     }
 
-    return CKR_OK;
+    if (pub->onToken)
+        WP11_Lock_UnlockRO(pub->lock);
+
+    return ret;
 }
 
 /**
@@ -11970,6 +12042,9 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
     WC_RNG rng;
 #endif
 
+    if (priv->onToken)
+        WP11_Lock_LockRO(priv->lock);
+
     /* Check if the point data is DER-encoded (starts with OCTET STRING tag) */
     if (pointLen >= 3 && point[0] == ASN_OCTET_STRING) {
         /* Strip DER encoding - similar to EcSetPoint function */
@@ -12012,12 +12087,11 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
     (defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION > 2)))
     if (ret == 0) {
         ret = Rng_New(&priv->slot->token.rng, &priv->slot->token.rngLock, &rng);
-        wc_ecc_set_rng(priv->data.ecKey, &rng);
+        if (ret == 0)
+            wc_ecc_set_rng(priv->data.ecKey, &rng);
     }
 #endif
     if (ret == 0) {
-        if (priv->onToken)
-            WP11_Lock_LockRO(priv->lock);
     #ifdef WOLFPKCS11_TPM
         ret = WP11_Object_LoadTpmKey(priv);
         if (ret == 0)
@@ -12031,13 +12105,14 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
             wolfTPM2_UnloadHandle(&priv->slot->tpmDev, &priv->tpmKey->handle);
         #endif
         }
-        if (priv->onToken)
-            WP11_Lock_UnlockRO(priv->lock);
 #if defined(ECC_TIMING_RESISTANT) && (!defined(HAVE_FIPS) || \
     (defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION > 2)))
         Rng_Free(&rng);
 #endif
     }
+
+    if (priv->onToken)
+        WP11_Lock_UnlockRO(priv->lock);
 
     wc_ecc_free(&pubKey);
 

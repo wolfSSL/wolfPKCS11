@@ -1930,6 +1930,13 @@ CK_RV C_Logout(CK_SESSION_HANDLE hSession)
     }
 
     slot = WP11_Session_GetSlot(session);
+
+    if (!WP11_Slot_IsLoggedIn(slot)) {
+        rv = CKR_USER_NOT_LOGGED_IN;
+        WOLFPKCS11_LEAVE("C_Logout", rv);
+        return rv;
+    }
+
     WP11_Slot_Logout(slot);
 
     rv = CKR_OK;
