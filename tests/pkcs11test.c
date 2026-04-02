@@ -16443,13 +16443,15 @@ static CK_RV test_encrypt_data_len_range(void* args)
         ret = funcList->C_EncryptInit(session, &mech, key);
         CHECK_CKR(ret, "AES-CBC Encrypt Init for data len range test");
     }
-    /* Pass a data length that overflows word32 */
+    /* Pass a data length that overflows word32 (only testable on LP64) */
+#if SIZEOF_LONG > 4
     if (ret == CKR_OK) {
         CK_ULONG bigLen = ((CK_ULONG)1 << 32) + 16;
         ret = funcList->C_Encrypt(session, plain, bigLen, enc, &encSz);
         CHECK_CKR_FAIL(ret, CKR_DATA_LEN_RANGE,
                            "AES-CBC Encrypt rejects oversized data length");
     }
+#endif
 
     return ret;
 }

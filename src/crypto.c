@@ -42,9 +42,12 @@
 
 #define PRF_KEY_SIZE            48
 
-/* Check that a CK_ULONG value fits in word32. On LP64 platforms CK_ULONG is
- * 64-bit but wolfCrypt functions use word32/int for lengths. */
-#define CK_ULONG_FITS_WORD32(v) ((v) <= (CK_ULONG)0xFFFFFFFF)
+/* Check that a CK_ULONG value fits in word32 with room for overhead such as
+ * authentication tags, key wrap blocks, or padding. On LP64 platforms CK_ULONG
+ * is 64-bit but wolfCrypt functions use word32/int for lengths. */
+#define CK_ULONG_MAX_OVERHEAD  ((CK_ULONG)64)
+#define CK_ULONG_FITS_WORD32(v) \
+    ((v) <= (CK_ULONG)0xFFFFFFFF - CK_ULONG_MAX_OVERHEAD)
 
 #define CHECK_KEYTYPE(kt) \
    (kt == CKK_RSA || kt == CKK_EC || kt == CKK_DH || \
@@ -1153,11 +1156,18 @@ CK_RV C_CreateObject(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate,
     if (!WP11_Session_IsRW(session)) {
         CK_ATTRIBUTE* tokenAttr = NULL;
         FindAttributeType(pTemplate, ulCount, CKA_TOKEN, &tokenAttr);
-        if (tokenAttr != NULL && tokenAttr->pValue != NULL &&
-            *(CK_BBOOL*)tokenAttr->pValue == CK_TRUE) {
-            rv = CKR_SESSION_READ_ONLY;
-            WOLFPKCS11_LEAVE("C_CreateObject", rv);
-            return rv;
+        if (tokenAttr != NULL) {
+            if (tokenAttr->pValue == NULL ||
+                tokenAttr->ulValueLen != sizeof(CK_BBOOL)) {
+                rv = CKR_ATTRIBUTE_VALUE_INVALID;
+                WOLFPKCS11_LEAVE("C_CreateObject", rv);
+                return rv;
+            }
+            if (*(CK_BBOOL*)tokenAttr->pValue == CK_TRUE) {
+                rv = CKR_SESSION_READ_ONLY;
+                WOLFPKCS11_LEAVE("C_CreateObject", rv);
+                return rv;
+            }
         }
     }
 
@@ -1257,8 +1267,10 @@ CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
         int willBeOnToken = WP11_Object_OnToken(obj);
         CK_ATTRIBUTE* tokenAttr = NULL;
         FindAttributeType(pTemplate, ulCount, CKA_TOKEN, &tokenAttr);
-        if (tokenAttr != NULL && tokenAttr->pValue != NULL)
+        if (tokenAttr != NULL && tokenAttr->pValue != NULL &&
+            tokenAttr->ulValueLen == sizeof(CK_BBOOL)) {
             willBeOnToken = *(CK_BBOOL*)tokenAttr->pValue;
+        }
         if (willBeOnToken) {
             rv = CKR_SESSION_READ_ONLY;
             WOLFPKCS11_LEAVE("C_CopyObject", rv);
@@ -7460,11 +7472,18 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
     if (!WP11_Session_IsRW(session)) {
         CK_ATTRIBUTE* tokenAttr = NULL;
         FindAttributeType(pTemplate, ulAttributeCount, CKA_TOKEN, &tokenAttr);
-        if (tokenAttr != NULL && tokenAttr->pValue != NULL &&
-            *(CK_BBOOL*)tokenAttr->pValue == CK_TRUE) {
-            rv = CKR_SESSION_READ_ONLY;
-            WOLFPKCS11_LEAVE("C_UnwrapKey", rv);
-            return rv;
+        if (tokenAttr != NULL) {
+            if (tokenAttr->pValue == NULL ||
+                tokenAttr->ulValueLen != sizeof(CK_BBOOL)) {
+                rv = CKR_ATTRIBUTE_VALUE_INVALID;
+                WOLFPKCS11_LEAVE("C_UnwrapKey", rv);
+                return rv;
+            }
+            if (*(CK_BBOOL*)tokenAttr->pValue == CK_TRUE) {
+                rv = CKR_SESSION_READ_ONLY;
+                WOLFPKCS11_LEAVE("C_UnwrapKey", rv);
+                return rv;
+            }
         }
     }
 
