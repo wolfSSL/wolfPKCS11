@@ -16420,15 +16420,13 @@ static CK_RV test_wrap_key_ro_session(void* args)
  * platforms where CK_ULONG is 64-bit (LP64). */
 static CK_RV test_encrypt_data_len_range(void* args)
 {
+#if SIZEOF_LONG > 4
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_RV ret;
     CK_OBJECT_HANDLE key;
     byte plain[16], enc[32], iv[16];
     CK_ULONG encSz;
     CK_MECHANISM mech;
-
-    if (sizeof(CK_ULONG) <= sizeof(word32))
-        return CKR_SKIPPED;
 
     memset(plain, 9, sizeof(plain));
     memset(iv, 9, sizeof(iv));
@@ -16443,17 +16441,19 @@ static CK_RV test_encrypt_data_len_range(void* args)
         ret = funcList->C_EncryptInit(session, &mech, key);
         CHECK_CKR(ret, "AES-CBC Encrypt Init for data len range test");
     }
-    /* Pass a data length that overflows word32 (only testable on LP64) */
-#if SIZEOF_LONG > 4
+    /* Pass a data length that overflows word32 */
     if (ret == CKR_OK) {
         CK_ULONG bigLen = ((CK_ULONG)1 << 32) + 16;
         ret = funcList->C_Encrypt(session, plain, bigLen, enc, &encSz);
         CHECK_CKR_FAIL(ret, CKR_DATA_LEN_RANGE,
                            "AES-CBC Encrypt rejects oversized data length");
     }
-#endif
 
     return ret;
+#else
+    (void)args;
+    return CKR_SKIPPED;
+#endif
 }
 #endif /* HAVE_AES_CBC */
 #endif /* !NO_AES */
