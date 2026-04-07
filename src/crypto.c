@@ -3940,7 +3940,10 @@ CK_RV C_DigestInit(CK_SESSION_HANDLE hSession,
         WP11_Session_SetOpInitialized(session, init);
     }
 
-    rv = ret;
+    if (ret != 0 && ret != (int)CKR_MECHANISM_INVALID)
+        rv = CKR_FUNCTION_FAILED;
+    else
+        rv = ret;
     WOLFPKCS11_LEAVE("C_DigestInit", rv);
     return rv;
 }
@@ -4043,7 +4046,9 @@ CK_RV C_DigestUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
 
     ret = WP11_Digest_Update(pPart, (word32)ulPartLen, session);
 
-    return ret;
+    if (ret < 0)
+        return CKR_FUNCTION_FAILED;
+    return CKR_OK;
 }
 
 /**
@@ -4086,7 +4091,9 @@ CK_RV C_DigestKey(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hKey)
 
     ret = WP11_Digest_Key(obj, session);
 
-    return ret;
+    if (ret < 0)
+        return CKR_FUNCTION_FAILED;
+    return CKR_OK;
 }
 
 /**
