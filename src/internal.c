@@ -13171,6 +13171,10 @@ int WP11_GenerateRandomKey(WP11_Object* secret, WP11_Slot* slot)
     ret = wc_RNG_GenerateBlock(&slot->token.rng, key->data, key->len);
     WP11_Lock_UnlockRW(&slot->token.rngLock);
 
+    if (ret == 0) {
+        secret->local = 1;
+    }
+
     return ret;
 }
 #endif /* WOLFPKCS11_HKDF || !NO_AES */
