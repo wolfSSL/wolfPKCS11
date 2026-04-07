@@ -6327,7 +6327,7 @@ CK_RV C_VerifyRecoverInit(CK_SESSION_HANDLE hSession,
         return CKR_KEY_TYPE_INCONSISTENT;
     }
 
-    ret = CheckOpSupported(obj, CKA_VERIFY);
+    ret = CheckOpSupported(obj, CKA_VERIFY_RECOVER);
     if (ret != CKR_OK)
         return ret;
 
