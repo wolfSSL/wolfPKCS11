@@ -699,11 +699,11 @@ static CK_RV test_token(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_InitToken(slot, soPin, 3, label);
-        CHECK_CKR_FAIL(ret, CKR_PIN_INCORRECT, "Init Token too short PIN");
+        CHECK_CKR_FAIL(ret, CKR_PIN_LEN_RANGE, "Init Token too short PIN");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_InitToken(slot, soPin, 33, label);
-        CHECK_CKR_FAIL(ret, CKR_PIN_INCORRECT, "Init Token too long PIN");
+        CHECK_CKR_FAIL(ret, CKR_PIN_LEN_RANGE, "Init Token too long PIN");
     }
 
     if (ret == CKR_OK) {
@@ -833,13 +833,13 @@ static CK_RV test_pin(void* args)
 #if WP11_MIN_PIN_LEN > 3
                 if (ret == CKR_OK) {
                     ret = funcList->C_InitPIN(session, userPin, 3);
-                    CHECK_CKR_FAIL(ret, CKR_PIN_INCORRECT,
+                    CHECK_CKR_FAIL(ret, CKR_PIN_LEN_RANGE,
                                                       "Init PIN too short PIN");
                 }
 #endif
                 if (ret == CKR_OK) {
                     ret = funcList->C_InitPIN(session, userPin, 33);
-                    CHECK_CKR_FAIL(ret, CKR_PIN_INCORRECT,
+                    CHECK_CKR_FAIL(ret, CKR_PIN_LEN_RANGE,
                                                        "Init PIN too long PIN");
                 }
                 funcList->C_Logout(session);
@@ -882,14 +882,14 @@ static CK_RV test_pin(void* args)
             if (ret == CKR_OK) {
                 ret = funcList->C_SetPIN(session, userPin, userPinLen,userPin,
                                                                              3);
-                CHECK_CKR_FAIL(ret, CKR_PIN_INCORRECT,
+                CHECK_CKR_FAIL(ret, CKR_PIN_LEN_RANGE,
                                                    "Set PIN too short new pin");
             }
 #endif
             if (ret == CKR_OK) {
                 ret = funcList->C_SetPIN(session, userPin, userPinLen, userPin,
                                                                             33);
-                CHECK_CKR_FAIL(ret, CKR_PIN_INCORRECT,
+                CHECK_CKR_FAIL(ret, CKR_PIN_LEN_RANGE,
                                                     "Set PIN too long new pin");
             }
             if (ret == CKR_OK) {

@@ -154,7 +154,7 @@ static CK_RV checkPinLen(CK_ULONG pinLen)
 #else
     if (pinLen > WP11_MAX_PIN_LEN)
 #endif
-        return CKR_PIN_INCORRECT;
+        return CKR_PIN_LEN_RANGE;
     return CKR_OK;
 }
 
@@ -1277,8 +1277,8 @@ CK_RV C_InitToken(CK_SLOT_ID slotID, CK_UTF8CHAR_PTR pPin,
         return rv;
     }
 
-    if (checkPinLen(ulPinLen) != CKR_OK) {
-        rv = CKR_PIN_INCORRECT;
+    rv = checkPinLen(ulPinLen);
+    if (rv != CKR_OK) {
         WOLFPKCS11_LEAVE("C_InitToken", rv);
         return rv;
     }
@@ -1361,8 +1361,8 @@ CK_RV C_InitPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pPin,
         return rv;
     }
 
-    if (checkPinLen(ulPinLen) != CKR_OK) {
-        rv = CKR_PIN_INCORRECT;
+    rv = checkPinLen(ulPinLen);
+    if (rv != CKR_OK) {
         WOLFPKCS11_LEAVE("C_InitPIN", rv);
         return rv;
     }
@@ -1436,8 +1436,8 @@ CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
         WOLFPKCS11_LEAVE("C_SetPIN", rv);
         return rv;
     }
-    if (checkPinLen(ulNewLen) != CKR_OK) {
-        rv = CKR_PIN_INCORRECT;
+    rv = checkPinLen(ulNewLen);
+    if (rv != CKR_OK) {
         WOLFPKCS11_LEAVE("C_SetPIN", rv);
         return rv;
     }
