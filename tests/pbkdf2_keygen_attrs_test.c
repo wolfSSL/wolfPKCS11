@@ -45,7 +45,7 @@
 
 #include "testdata.h"
 
-#ifndef NO_PWDBASED
+#if !defined(NO_PWDBASED) && !defined(NO_HMAC)
 
 #define TEST_DIR "./store/pbkdf2_keygen_attrs_test"
 #define WOLFPKCS11_TOKEN_FILENAME "wp11_token_0000000000000001"
@@ -428,14 +428,14 @@ int main(int argc, char* argv[])
     return (test_failed == 0) ? 0 : 1;
 }
 
-#else /* NO_PWDBASED */
+#else /* NO_PWDBASED || NO_HMAC */
 
 int main(int argc, char* argv[])
 {
     (void)argc;
     (void)argv;
 
-    printf("PWDBASED not available, skipping PBKDF2 keygen attributes test\n");
+    printf("PWDBASED/HMAC not available, skipping PBKDF2 keygen attributes test\n");
     return 0;
 }
 
