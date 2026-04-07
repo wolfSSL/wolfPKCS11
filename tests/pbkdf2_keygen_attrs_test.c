@@ -208,6 +208,8 @@ static int test_pbkdf2_keygen_attrs(CK_SESSION_HANDLE session)
     CK_OBJECT_HANDLE key;
     CK_BBOOL local = CK_FALSE;
     CK_MECHANISM_TYPE genMech = CK_UNAVAILABLE_INFORMATION;
+    CK_BBOOL alwaysSensitive = CK_FALSE;
+    CK_BBOOL neverExtractable = CK_FALSE;
     int result = 0;
 
     CK_BYTE password[] = "TestPassword123";
@@ -239,17 +241,23 @@ static int test_pbkdf2_keygen_attrs(CK_SESSION_HANDLE session)
 
     CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
     CK_KEY_TYPE keyType = CKK_GENERIC_SECRET;
+    CK_BBOOL bTrue = CK_TRUE;
+    CK_BBOOL bFalse = CK_FALSE;
 
     CK_ATTRIBUTE genTmpl[] = {
-        { CKA_CLASS,     &keyClass, sizeof(keyClass) },
-        { CKA_KEY_TYPE,  &keyType,  sizeof(keyType)  },
-        { CKA_VALUE_LEN, &keyLength, sizeof(keyLength) },
+        { CKA_CLASS,       &keyClass,  sizeof(keyClass) },
+        { CKA_KEY_TYPE,    &keyType,   sizeof(keyType)  },
+        { CKA_VALUE_LEN,   &keyLength, sizeof(keyLength) },
+        { CKA_SENSITIVE,   &bTrue,     sizeof(bTrue) },
+        { CKA_EXTRACTABLE, &bFalse,    sizeof(bFalse) },
     };
     CK_ULONG genTmplCnt = sizeof(genTmpl) / sizeof(*genTmpl);
 
     CK_ATTRIBUTE getTmpl[] = {
-        { CKA_LOCAL,             &local,   sizeof(local)   },
-        { CKA_KEY_GEN_MECHANISM, &genMech, sizeof(genMech) },
+        { CKA_LOCAL,              &local,             sizeof(local)             },
+        { CKA_KEY_GEN_MECHANISM,  &genMech,           sizeof(genMech)           },
+        { CKA_ALWAYS_SENSITIVE,   &alwaysSensitive,   sizeof(alwaysSensitive)   },
+        { CKA_NEVER_EXTRACTABLE,  &neverExtractable,  sizeof(neverExtractable)  },
     };
     CK_ULONG getTmplCnt = sizeof(getTmpl) / sizeof(*getTmpl);
 
@@ -280,6 +288,28 @@ static int test_pbkdf2_keygen_attrs(CK_SESSION_HANDLE session)
         goto cleanup;
     }
     printf("PASS: CKA_KEY_GEN_MECHANISM is CKM_PKCS5_PBKD2\n");
+    test_passed++;
+
+    if (alwaysSensitive != CK_TRUE) {
+        fprintf(stderr,
+                "FAIL: CKA_ALWAYS_SENSITIVE: expected CK_TRUE, got %d\n",
+                (int)alwaysSensitive);
+        test_failed++;
+        result = -1;
+        goto cleanup;
+    }
+    printf("PASS: CKA_ALWAYS_SENSITIVE is CK_TRUE\n");
+    test_passed++;
+
+    if (neverExtractable != CK_TRUE) {
+        fprintf(stderr,
+                "FAIL: CKA_NEVER_EXTRACTABLE: expected CK_TRUE, got %d\n",
+                (int)neverExtractable);
+        test_failed++;
+        result = -1;
+        goto cleanup;
+    }
+    printf("PASS: CKA_NEVER_EXTRACTABLE is CK_TRUE\n");
     test_passed++;
 
 cleanup:

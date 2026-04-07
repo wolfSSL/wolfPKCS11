@@ -6928,6 +6928,25 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
 
             wc_ForceZero(derivedKey, derivedKeyLen);
             XFREE(derivedKey, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+
+            if (rv == CKR_OK) {
+                rv = WP11_Object_GetAttr(pbkdf2Key, CKA_SENSITIVE, &getVar,
+                                         &getVarLen);
+                if ((rv == CKR_OK) && (getVar == CK_TRUE)) {
+                    rv = WP11_Object_SetAttr(pbkdf2Key, CKA_ALWAYS_SENSITIVE,
+                                             &trueVar, sizeof(CK_BBOOL));
+                }
+                if (rv == CKR_OK) {
+                    rv = WP11_Object_GetAttr(pbkdf2Key, CKA_EXTRACTABLE,
+                                             &getVar, &getVarLen);
+                    if ((rv == CKR_OK) && (getVar == CK_FALSE)) {
+                        rv = WP11_Object_SetAttr(pbkdf2Key,
+                                                 CKA_NEVER_EXTRACTABLE,
+                                                 &trueVar, sizeof(CK_BBOOL));
+                    }
+                }
+            }
+
             return rv;
         }
 #ifdef WOLFPKCS11_NSS
@@ -7026,6 +7045,25 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
 
             wc_ForceZero(derivedKey, derivedKeyLen);
             XFREE(derivedKey, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+
+            if (rv == CKR_OK) {
+                rv = WP11_Object_GetAttr(pbeKey, CKA_SENSITIVE, &getVar,
+                                         &getVarLen);
+                if ((rv == CKR_OK) && (getVar == CK_TRUE)) {
+                    rv = WP11_Object_SetAttr(pbeKey, CKA_ALWAYS_SENSITIVE,
+                                             &trueVar, sizeof(CK_BBOOL));
+                }
+                if (rv == CKR_OK) {
+                    rv = WP11_Object_GetAttr(pbeKey, CKA_EXTRACTABLE,
+                                             &getVar, &getVarLen);
+                    if ((rv == CKR_OK) && (getVar == CK_FALSE)) {
+                        rv = WP11_Object_SetAttr(pbeKey,
+                                                 CKA_NEVER_EXTRACTABLE,
+                                                 &trueVar, sizeof(CK_BBOOL));
+                    }
+                }
+            }
+
             return rv;
         }
 #endif
