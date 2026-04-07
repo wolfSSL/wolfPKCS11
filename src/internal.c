@@ -11449,6 +11449,19 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
 }
 
 /**
+ * Mark an object as locally generated and record the mechanism used.
+ *
+ * @param  object     [in]  Object to update.
+ * @param  mechanism  [in]  Generation mechanism.
+ */
+void WP11_Object_SetKeyGeneration(WP11_Object* object,
+                                  CK_MECHANISM_TYPE mechanism)
+{
+    object->local = 1;
+    object->keyGenMech = mechanism;
+}
+
+/**
  * Check whether the attribute matches in the object.
  *
  * @param  object  [in]  Object object.

@@ -6915,6 +6915,7 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
 
                 ret = WP11_Object_SetSecretKey(pbkdf2Key, secretKeyData, secretKeyLen);
                 if (ret == 0) {
+                    WP11_Object_SetKeyGeneration(pbkdf2Key, pMechanism->mechanism);
                     rv = AddObject(session, pbkdf2Key, pTemplate, ulCount, phKey);
                     if (rv != CKR_OK) {
                         WP11_Object_Free(pbkdf2Key);
@@ -7012,6 +7013,7 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
 
                 ret = WP11_Object_SetSecretKey(pbeKey, secretKeyData, secretKeyLen);
                 if (ret == 0) {
+                    WP11_Object_SetKeyGeneration(pbeKey, pMechanism->mechanism);
                     rv = AddObject(session, pbeKey, pTemplate, ulCount, phKey);
                     if (rv != CKR_OK) {
                         WP11_Object_Free(pbeKey);
