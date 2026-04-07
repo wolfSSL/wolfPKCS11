@@ -563,7 +563,8 @@ WP11_LOCAL int WP11_MlKem_Decapsulate(WP11_Object* priv, unsigned char** sharedS
                            CK_ULONG ulCiphertextLen);
 #endif
 
-WP11_LOCAL int WP11_GenerateRandomKey(WP11_Object* secret, WP11_Slot* slot);
+WP11_LOCAL int WP11_GenerateRandomKey(WP11_Object* secret, WP11_Slot* slot,
+                            CK_MECHANISM_TYPE mechanism);
 
 WP11_LOCAL int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
                     unsigned char* key, word32* keyLen, WP11_Object* priv);

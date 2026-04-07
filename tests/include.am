@@ -61,6 +61,11 @@ noinst_PROGRAMS += tests/operation_active_test
 tests_operation_active_test_SOURCES = tests/operation_active_test.c
 tests_operation_active_test_LDADD =
 
+check_PROGRAMS += tests/aes_keygen_attrs_test
+noinst_PROGRAMS += tests/aes_keygen_attrs_test
+tests_aes_keygen_attrs_test_SOURCES = tests/aes_keygen_attrs_test.c
+tests_aes_keygen_attrs_test_LDADD =
+
 check_PROGRAMS += tests/pkcs11v3test
 noinst_PROGRAMS += tests/pkcs11v3test
 tests_pkcs11v3test_SOURCES = tests/pkcs11v3test.c
@@ -84,6 +89,7 @@ tests_find_objects_null_template_test_LDADD += src/libwolfpkcs11.la
 tests_aes_cbc_pad_padding_test_LDADD += src/libwolfpkcs11.la
 tests_ecb_check_value_error_test_LDADD += src/libwolfpkcs11.la
 tests_operation_active_test_LDADD += src/libwolfpkcs11.la
+tests_aes_keygen_attrs_test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11v3test_LDADD += src/libwolfpkcs11.la
 tests_rsa_exponent_test_LDADD += src/libwolfpkcs11.la
 else
@@ -93,6 +99,7 @@ tests_find_objects_null_template_test_LDADD += src/libwolfpkcs11.la
 tests_aes_cbc_pad_padding_test_LDADD += src/libwolfpkcs11.la
 tests_ecb_check_value_error_test_LDADD += src/libwolfpkcs11.la
 tests_operation_active_test_LDADD += src/libwolfpkcs11.la
+tests_aes_keygen_attrs_test_LDADD += src/libwolfpkcs11.la
 endif
 
 EXTRA_DIST += tests/unit.h \

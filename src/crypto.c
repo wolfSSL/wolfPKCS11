@@ -7051,7 +7051,8 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
                        &key);
         if (rv == CKR_OK) {
             int ret = WP11_GenerateRandomKey(key,
-                                             WP11_Session_GetSlot(session));
+                                             WP11_Session_GetSlot(session),
+                                             pMechanism->mechanism);
             if (ret != 0) {
                 WP11_Object_Free(key);
                 rv = CKR_FUNCTION_FAILED;

@@ -13157,12 +13157,14 @@ int WP11_Mldsa_Verify(unsigned char* sig, word32 sigLen, unsigned char* data,
 /**
  * Generate a secret key.
  *
- * @param  secret  [in]  Secret object.
- * @param  slot    [in]  Slot operation is performed on.
+ * @param  secret     [in]  Secret object.
+ * @param  slot       [in]  Slot operation is performed on.
+ * @param  mechanism  [in]  Key generation mechanism.
  * @return  -ve on random number generation failure.
  *          0 on success.
  */
-int WP11_GenerateRandomKey(WP11_Object* secret, WP11_Slot* slot)
+int WP11_GenerateRandomKey(WP11_Object* secret, WP11_Slot* slot,
+                           CK_MECHANISM_TYPE mechanism)
 {
     int ret;
     WP11_Data* key = secret->data.symmKey;
@@ -13173,6 +13175,7 @@ int WP11_GenerateRandomKey(WP11_Object* secret, WP11_Slot* slot)
 
     if (ret == 0) {
         secret->local = 1;
+        secret->keyGenMech = mechanism;
     }
 
     return ret;
