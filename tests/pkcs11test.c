@@ -14984,7 +14984,7 @@ static CK_RV test_hkdf_derive_expand_null_value_len(void* args)
         { CKM_HKDF_DERIVE, &paramsExpand, sizeof(paramsExpand) };
 
     /* Expand template with NULL pValue for CKA_VALUE_LEN.
-     * This triggers the NULL dereference at crypto.c:7870.
+     * This exercises the NULL CKA_VALUE_LEN pValue check in HKDF expand.
      */
     CK_ATTRIBUTE templateExpand[] = {
         {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
@@ -15017,6 +15017,11 @@ static CK_RV test_hkdf_derive_expand_null_value_len(void* args)
         CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
             "HKDF expand with NULL CKA_VALUE_LEN pValue");
     }
+
+    if (hBaseKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hBaseKey);
+    if (hPrk != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hPrk);
 
     return ret;
 }

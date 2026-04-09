@@ -82,7 +82,7 @@
     }                                                                      \
     while (0)
 
-static int verbose = 0;
+static int verbose;
 
 #ifndef HAVE_PKCS11_STATIC
 static void* dlib;
@@ -101,7 +101,7 @@ static CK_BBOOL ckTrue = CK_TRUE;
 static unsigned char exp_65537[] = { 0x01, 0x00, 0x01 };
 
 /* Non-palindromic exponent: 65539 = 0x010003
- * If byte-order is reversed, this becomes 0x030001 = 196611.
+ * If byte-order is reversed, this becomes 0x030001 = 196609.
  * The byte-reversal bug in GetRsaExponentValue would cause the wrong
  * exponent to be used during key generation, leading to a mismatch
  * between the public key's exponent (from the template) and the
@@ -471,6 +471,8 @@ static CK_RV rsa_exponent_test(void)
      * forwards and backwards.
      */
     printf("\nTest 1: Palindromic exponent (65537 = 0x010001)\n");
+    if (verbose)
+        printf("  Control: palindrome reads same in both byte orders\n");
     ret = generate_and_test_rsa_exponent(session, exp_65537,
                                          sizeof(exp_65537),
                                          "palindromic-65537");
@@ -482,12 +484,14 @@ static CK_RV rsa_exponent_test(void)
 
     /* Test 2: Non-palindromic exponent 65539 (0x010003) - bug trigger.
      * If GetRsaExponentValue reads bytes in little-endian order (the bug),
-     * it will interpret {0x01, 0x00, 0x03} as 0x030001 = 196611 instead
+     * it will interpret {0x01, 0x00, 0x03} as 0x030001 = 196609 instead
      * of the correct 0x010003 = 65539. The key will be generated with
-     * exponent 196611 but the public key object retains exponent 65539,
+     * exponent 196609 but the public key object retains exponent 65539,
      * causing encrypt/decrypt to fail.
      */
     printf("\nTest 2: Non-palindromic exponent (65539 = 0x010003)\n");
+    if (verbose)
+        printf("  Bug trigger: 0x010003 vs reversed 0x030001\n");
     ret = generate_and_test_rsa_exponent(session, exp_65539,
                                          sizeof(exp_65539),
                                          "non-palindromic-65539");
@@ -497,7 +501,7 @@ static CK_RV rsa_exponent_test(void)
         fprintf(stderr, "  GetRsaExponentValue reads big-endian data in "
                         "little-endian order.\n");
         fprintf(stderr, "  Exponent 65539 (0x010003) was likely interpreted "
-                        "as 196611 (0x030001).\n");
+                        "as 196609 (0x030001).\n");
         goto cleanup;
     }
     printf("  PASSED\n");
