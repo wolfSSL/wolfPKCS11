@@ -938,6 +938,87 @@ static CK_RV test_mldsa_fixed_keys_both(void* args)
 
     return ret;
 }
+
+static CK_RV test_copy_object_mldsa_key(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE copiedPub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE copiedPriv = CK_INVALID_HANDLE;
+    static byte modifiedLabel[] = "mldsa-copied-key";
+    CK_ATTRIBUTE copyTmpl[] = {
+        { CKA_LABEL, modifiedLabel, sizeof(modifiedLabel) - 1 },
+    };
+    CK_ULONG copyTmplCnt = sizeof(copyTmpl) / sizeof(*copyTmpl);
+
+    /* Generate ML-DSA key pair */
+    ret = gen_mldsa_keys(session, CKP_ML_DSA_44, &pub, &priv, NULL, 0, NULL, 0,
+                         0);
+
+    /* Copy private key */
+    if (ret == CKR_OK) {
+        ret = funcList->C_CopyObject(session, priv, copyTmpl, copyTmplCnt,
+                                     &copiedPriv);
+        CHECK_CKR(ret, "Copy ML-DSA private key");
+    }
+
+    /* Copy public key */
+    if (ret == CKR_OK) {
+        ret = funcList->C_CopyObject(session, pub, copyTmpl, copyTmplCnt,
+                                     &copiedPub);
+        CHECK_CKR(ret, "Copy ML-DSA public key");
+    }
+
+    /* Verify copied keys work: sign with copied private, verify with both
+     * original and copied public key */
+    if (ret == CKR_OK)
+        ret = mldsa_test(session, copiedPriv, pub);
+    if (ret == CKR_OK)
+        ret = mldsa_test(session, copiedPriv, copiedPub);
+
+    /* Verify copied label */
+    if (ret == CKR_OK) {
+        byte label[64];
+        CK_ATTRIBUTE getTmpl[] = {
+            { CKA_LABEL, label, sizeof(label) },
+        };
+        ret = funcList->C_GetAttributeValue(session, copiedPriv, getTmpl, 1);
+        CHECK_CKR(ret, "Get copied ML-DSA private key label");
+        if (ret == CKR_OK) {
+            CHECK_COND(getTmpl[0].ulValueLen == sizeof(modifiedLabel) - 1 &&
+                       XMEMCMP(label, modifiedLabel,
+                               sizeof(modifiedLabel) - 1) == 0,
+                       ret, "Copied ML-DSA private key label matches");
+        }
+    }
+    if (ret == CKR_OK) {
+        byte label[64];
+        CK_ATTRIBUTE getTmpl[] = {
+            { CKA_LABEL, label, sizeof(label) },
+        };
+        ret = funcList->C_GetAttributeValue(session, copiedPub, getTmpl, 1);
+        CHECK_CKR(ret, "Get copied ML-DSA public key label");
+        if (ret == CKR_OK) {
+            CHECK_COND(getTmpl[0].ulValueLen == sizeof(modifiedLabel) - 1 &&
+                       XMEMCMP(label, modifiedLabel,
+                               sizeof(modifiedLabel) - 1) == 0,
+                       ret, "Copied ML-DSA public key label matches");
+        }
+    }
+
+    if (copiedPriv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, copiedPriv);
+    if (copiedPub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, copiedPub);
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+
+    return ret;
+}
 #endif /* WOLFPKCS11_MLDSA */
 
 #ifdef WOLFPKCS11_MLKEM
@@ -2692,6 +2773,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_fixed_keys_expanded),
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_fixed_keys_seed),
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_fixed_keys_both),
+    PKCS11TEST_FUNC_SESS_DECL(test_copy_object_mldsa_key),
 #endif
 #ifdef WOLFPKCS11_MLKEM
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_gen_keys),

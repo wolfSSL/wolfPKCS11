@@ -136,7 +136,7 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #ifdef WOLFPKCS11_NSS
 #define WP11_SESSION_CNT_MAX           7000
 #else
-#define WP11_SESSION_CNT_MAX           70
+#define WP11_SESSION_CNT_MAX           80
 #endif
 #endif
 /* Minimum number of sessions allocated per slot/token. */
