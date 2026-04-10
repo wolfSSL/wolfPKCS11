@@ -491,6 +491,7 @@ static CK_RV test_attribute(void* args)
         { CKA_CLASS,             &privKeyClass,     sizeof(privKeyClass)      },
         { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
         { CKA_EXTRACTABLE,       &ckTrue,           sizeof(ckTrue)            },
+        { CKA_SENSITIVE,         &ckFalse,          sizeof(ckFalse)           },
         { CKA_VALUE,             keyData,           sizeof(keyData)           },
     };
     CK_ULONG tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
@@ -789,10 +790,12 @@ static CK_RV get_generic_key(CK_SESSION_HANDLE session, unsigned char* data,
                              CK_OBJECT_HANDLE* key)
 {
     CK_RV ret;
+    CK_BBOOL sensitive = (extractable == CK_TRUE) ? CK_FALSE : CK_TRUE;
     CK_ATTRIBUTE generic_key[] = {
         { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
         { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
         { CKA_EXTRACTABLE,       &extractable,      sizeof(CK_BBOOL)          },
+        { CKA_SENSITIVE,         &sensitive,         sizeof(CK_BBOOL)          },
         { CKA_SIGN,              &ckTrue,           sizeof(ckTrue)            },
         { CKA_VERIFY,            &ckTrue,           sizeof(ckTrue)            },
         { CKA_VALUE,             data,              len                       },
@@ -2053,6 +2056,7 @@ static CK_RV get_rsa_priv_key(CK_SESSION_HANDLE session, unsigned char* privId,
                               CK_OBJECT_HANDLE* obj)
 {
     CK_RV ret;
+    CK_BBOOL sensitive = (extractable == CK_TRUE) ? CK_FALSE : CK_TRUE;
     CK_ATTRIBUTE rsa_2048_priv_key[] = {
         { CKA_CLASS,             &privKeyClass,     sizeof(privKeyClass)      },
         { CKA_KEY_TYPE,          &rsaKeyType,       sizeof(rsaKeyType)        },
@@ -2067,6 +2071,7 @@ static CK_RV get_rsa_priv_key(CK_SESSION_HANDLE session, unsigned char* privId,
         { CKA_COEFFICIENT,       rsa_2048_u,        sizeof(rsa_2048_u)        },
         { CKA_PUBLIC_EXPONENT,   rsa_2048_pub_exp,  sizeof(rsa_2048_pub_exp)  },
         { CKA_EXTRACTABLE,       &extractable,      sizeof(CK_BBOOL)          },
+        { CKA_SENSITIVE,         &sensitive,         sizeof(CK_BBOOL)          },
         { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
         { CKA_ID,                privId,            privIdLen                 },
     };
@@ -3415,10 +3420,12 @@ static CK_OBJECT_HANDLE get_ecc_priv_key(CK_SESSION_HANDLE session,
                                          CK_OBJECT_HANDLE* obj)
 {
     CK_RV ret;
+    CK_BBOOL sensitive = (extractable == CK_TRUE) ? CK_FALSE : CK_TRUE;
     CK_ATTRIBUTE ecc_p256_priv_key[] = {
         { CKA_CLASS,             &privKeyClass,     sizeof(privKeyClass)      },
         { CKA_KEY_TYPE,          &eccKeyType,       sizeof(eccKeyType)        },
         { CKA_EXTRACTABLE,       &extractable,      sizeof(CK_BBOOL)          },
+        { CKA_SENSITIVE,         &sensitive,         sizeof(CK_BBOOL)          },
         { CKA_VERIFY,            &ckTrue,           sizeof(ckTrue)            },
         { CKA_EC_PARAMS,         ecc_p256_params,   sizeof(ecc_p256_params)   },
         { CKA_VALUE,             ecc_p256_priv,     sizeof(ecc_p256_priv)     },
@@ -4212,10 +4219,12 @@ static CK_OBJECT_HANDLE get_dh_priv_key(CK_SESSION_HANDLE session,
                                         CK_OBJECT_HANDLE* obj)
 {
     CK_RV ret;
+    CK_BBOOL sensitive = (extractable == CK_TRUE) ? CK_FALSE : CK_TRUE;
     CK_ATTRIBUTE dh_2048_priv_key[] = {
         { CKA_CLASS,             &privKeyClass,     sizeof(privKeyClass)      },
         { CKA_KEY_TYPE,          &dhKeyType,        sizeof(dhKeyType)         },
         { CKA_EXTRACTABLE,       &extractable,      sizeof(CK_BBOOL)          },
+        { CKA_SENSITIVE,         &sensitive,         sizeof(CK_BBOOL)          },
         { CKA_DERIVE,            &ckTrue,           sizeof(ckTrue)            },
         { CKA_PRIME,             dh_ffdhe2048_p,    sizeof(dh_ffdhe2048_p)    },
         { CKA_BASE,              dh_ffdhe2048_g,    sizeof(dh_ffdhe2048_g)    },
