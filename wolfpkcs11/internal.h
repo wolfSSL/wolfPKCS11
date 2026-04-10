@@ -259,6 +259,14 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #define WP11_INIT_TLS_MAC_VERIFY       0x0071
 #define WP11_INIT_MLDSA_SIGN           0x0080
 #define WP11_INIT_MLDSA_VERIFY         0x0081
+
+/* Operation categories for CKR_OPERATION_ACTIVE checks */
+#define WP11_OP_ENCRYPT                0
+#define WP11_OP_DECRYPT                1
+#define WP11_OP_DIGEST                 2
+#define WP11_OP_SIGN                   3
+#define WP11_OP_VERIFY                 4
+
 /* Some operations can have an additional hashing step before the sign/verify */
 #define WP11_INIT_DIGEST_SHIFT         12
 #define WP11_INIT_DIGEST_MASK          (0xF << WP11_INIT_DIGEST_SHIFT)
@@ -369,6 +377,8 @@ WP11_LOCAL int WP11_Session_Get(CK_SESSION_HANDLE sessionHandle, WP11_Session** 
 WP11_LOCAL int WP11_Session_GetState(WP11_Session* session);
 WP11_LOCAL int WP11_Session_IsRW(WP11_Session* session);
 WP11_LOCAL int WP11_Session_IsOpInitialized(WP11_Session* session, int init);
+WP11_LOCAL int WP11_Session_IsOpCategoryActive(WP11_Session* session,
+    int opCategory);
 WP11_LOCAL int WP11_Session_UpdateData(WP11_Session *session, byte *data, word32 dataLen);
 WP11_LOCAL void WP11_Session_GetData(WP11_Session *session, byte** data, word32* dataLen);
 WP11_LOCAL void WP11_Session_FreeData(WP11_Session *session);

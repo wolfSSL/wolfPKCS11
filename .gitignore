@@ -35,14 +35,12 @@ coverage.info
 cmake/wolfpkcs11Config.cmake
 cmake/wolfpkcs11Targets.cmake
 cmake/wolfpkcs11ConfigVersion.cmake
-tests/pkcs11test
-tests/pkcs11mtt
-tests/pkcs11str
-tests/object_id_uniqueness_test
-tests/rsa_session_persistence_test
-tests/debug_test
-tests/token_path_test
-tests/pkcs11v3test
+# Test binaries and build artifacts
+tests/*
+!tests/*.c
+!tests/*.h
+!tests/*.am
+!tests/README.md
 examples/add_aes_key
 examples/add_hmac_key
 examples/add_rsa_key
@@ -53,16 +51,7 @@ examples/mech_info
 examples/obj_list
 examples/slot_info
 examples/token_info
-store/wp11*
-store/debug
-store/empty_pin_test
-store/object
-store/pkcs11mtt
-store/pkcs11test
-store/pkcs11v3test
-store/rsa
-store/str
-store/debug
+store/*
 test/*
 *.gcda
 *.gcno
@@ -73,18 +62,13 @@ add_cert_file
 .cache
 compile_commands.json
 
-tests/wp11_rsakey_*
-tests/wp11_dhkey_*
-tests/wp11_ecckey_*
-tests/wp11_symmkey_*
-tests/wp11_token_*
-tests/wp11_obj_*
-tests/token_path_test
-tests/rsa_session_persistence_test
-tests/empty_pin_store_test
 
 IDE/VisualStudio/.vs
 
 doc/doxygen_warnings
 doc/html/
 doc/refman.pdf
+
+AGENTS.md
+CLAUDE.md
+.clangd
