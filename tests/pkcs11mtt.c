@@ -2038,6 +2038,8 @@ static CK_RV test_pubkey_sig_fail(CK_SESSION_HANDLE session, CK_MECHANISM* mech,
         ret = funcList->C_Sign(session, hash, hashSz, out, &outSz);
         CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED, "Sign wrong init");
     }
+    /* Clean up active verify operation from cross-type testing */
+    (void)funcList->C_Verify(session, hash, hashSz, out, outSz);
 
     funcList->C_DestroyObject(session, key);
 
@@ -2984,6 +2986,9 @@ static CK_RV rsa_encdec_fail(CK_SESSION_HANDLE session, CK_MECHANISM* mech,
         CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
                                                       "RSA Encrypt wrong init");
     }
+    /* Clean up active decrypt operation from cross-type testing */
+    decSz = sizeof(dec);
+    (void)funcList->C_Decrypt(session, enc, encSz, dec, &decSz);
 
     funcList->C_DestroyObject(session, key);
 
@@ -5040,6 +5045,10 @@ static CK_RV test_aes_cbc_fail(void* args)
                                             "AES-CBC Encrypt Final wrong init");
     }
 
+    /* Clean up active decrypt operation from cross-type testing */
+    decSz = sizeof(dec);
+    (void)funcList->C_Decrypt(session, enc, encSz, dec, &decSz);
+
     funcList->C_DestroyObject(session, key);
     funcList->C_DestroyObject(session, generic);
 
@@ -5489,6 +5498,10 @@ static CK_RV test_aes_gcm_fail(void* args)
         CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
                                             "AES-GCM Encrypt Final wrong init");
     }
+
+    /* Clean up active decrypt operation from cross-type testing */
+    decSz = sizeof(dec);
+    (void)funcList->C_Decrypt(session, enc, encSz, dec, &decSz);
 
     funcList->C_DestroyObject(session, key);
     funcList->C_DestroyObject(session, generic);
@@ -6074,6 +6087,9 @@ static CK_RV test_hmac_fail(CK_SESSION_HANDLE session, CK_MECHANISM* mech,
         CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
                                                   "HMAC Sign Final wrong init");
     }
+
+    /* Clean up active verify operation from cross-type testing */
+    (void)funcList->C_Verify(session, data, dataSz, out, outSz);
 
     funcList->C_DestroyObject(session, key);
     funcList->C_DestroyObject(session, aesKey);

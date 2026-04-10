@@ -7148,18 +7148,88 @@ int WP11_Session_IsOpInitialized(WP11_Session* session, int init)
 }
 
 /**
- * Check whether the session is initialized for an exact operation value.
- * Unlike WP11_Session_IsOpInitialized, this compares the full init value
- * including digest hash bits.
+ * Get the operation category for an init value.
  *
- * @param  session  [in]  Session object.
- * @param  init     [in]  Expected full init value (including digest bits).
- * @return  1 when session init matches exactly.
+ * @param  init  [in]  Init value (with digest bits masked out).
+ * @return  Operation category (WP11_OP_*), or -1 if unknown.
+ */
+static int wp11_init_get_op_category(int init)
+{
+    switch (init) {
+        case WP11_INIT_AES_CBC_ENC:
+        case WP11_INIT_AES_GCM_ENC:
+        case WP11_INIT_AES_CBC_PAD_ENC:
+        case WP11_INIT_AES_CCM_ENC:
+        case WP11_INIT_AES_ECB_ENC:
+        case WP11_INIT_AES_CTS_ENC:
+        case WP11_INIT_AES_CTR_ENC:
+        case WP11_INIT_RSA_X_509_ENC:
+        case WP11_INIT_RSA_PKCS_ENC:
+        case WP11_INIT_RSA_PKCS_OAEP_ENC:
+        case WP11_INIT_AES_KEYWRAP_ENC:
+            return WP11_OP_ENCRYPT;
+
+        case WP11_INIT_AES_CBC_DEC:
+        case WP11_INIT_AES_GCM_DEC:
+        case WP11_INIT_AES_CBC_PAD_DEC:
+        case WP11_INIT_AES_CCM_DEC:
+        case WP11_INIT_AES_ECB_DEC:
+        case WP11_INIT_AES_CTS_DEC:
+        case WP11_INIT_AES_CTR_DEC:
+        case WP11_INIT_RSA_X_509_DEC:
+        case WP11_INIT_RSA_PKCS_DEC:
+        case WP11_INIT_RSA_PKCS_OAEP_DEC:
+        case WP11_INIT_AES_KEYWRAP_DEC:
+            return WP11_OP_DECRYPT;
+
+        case WP11_INIT_DIGEST:
+            return WP11_OP_DIGEST;
+
+        case WP11_INIT_HMAC_SIGN:
+        case WP11_INIT_RSA_PKCS_SIGN:
+        case WP11_INIT_RSA_PKCS_PSS_SIGN:
+        case WP11_INIT_RSA_X_509_SIGN:
+        case WP11_INIT_ECDSA_SIGN:
+        case WP11_INIT_AES_CMAC_SIGN:
+        case WP11_INIT_TLS_MAC_SIGN:
+        case WP11_INIT_MLDSA_SIGN:
+            return WP11_OP_SIGN;
+
+        case WP11_INIT_HMAC_VERIFY:
+        case WP11_INIT_RSA_PKCS_VERIFY:
+        case WP11_INIT_RSA_PKCS_PSS_VERIFY:
+        case WP11_INIT_RSA_X_509_VERIFY:
+        case WP11_INIT_RSA_PKCS_VERIFY_RECOVER:
+        case WP11_INIT_RSA_X_509_VERIFY_RECOVER:
+        case WP11_INIT_ECDSA_VERIFY:
+        case WP11_INIT_AES_CMAC_VERIFY:
+        case WP11_INIT_TLS_MAC_VERIFY:
+        case WP11_INIT_MLDSA_VERIFY:
+            return WP11_OP_VERIFY;
+
+        default:
+            return -1;
+    }
+}
+
+/**
+ * Check whether the session has an active operation of the given category.
+ * Per PKCS#11 spec, only operations of the same type block re-initialization.
+ *
+ * @param  session     [in]  Session object.
+ * @param  opCategory  [in]  Operation category (WP11_OP_*).
+ * @return  1 when an operation of the same category is active.
  *          0 otherwise.
  */
-int WP11_Session_IsOpInitializedExact(WP11_Session* session, int init)
+int WP11_Session_IsOpCategoryActive(WP11_Session* session, int opCategory)
 {
-    return session->init == init;
+    int currentInit;
+
+    if (session->init == 0)
+        return 0;
+
+    currentInit = session->init & ~WP11_INIT_DIGEST_MASK;
+    return wp11_init_get_op_category(currentInit) == opCategory;
 }
 
 int WP11_Session_UpdateData(WP11_Session *session, byte *data, word32 dataLen)

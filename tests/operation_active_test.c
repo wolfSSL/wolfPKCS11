@@ -241,7 +241,7 @@ static CK_RV create_hmac_key(CK_SESSION_HANDLE session,
 #endif /* !NO_HMAC */
 
 /*
- * Test 1: C_EncryptInit called twice without completing the operation.
+ * C_EncryptInit called twice without completing the operation.
  * Second call must return CKR_OPERATION_ACTIVE.
  */
 static int test_encrypt_init_double(CK_SESSION_HANDLE session,
@@ -278,7 +278,92 @@ cleanup:
 }
 
 /*
- * Test 2: C_DecryptInit called twice without completing the operation.
+ * After a rejected second C_EncryptInit, the first operation must
+ * still be usable.
+ */
+static int test_encrypt_survives_rejected_reinit(CK_SESSION_HANDLE session,
+                                                  CK_OBJECT_HANDLE aesKey)
+{
+    CK_RV ret;
+    CK_MECHANISM mech;
+    byte iv[16];
+    byte plaintext[16];
+    byte ciphertext[16];
+    CK_ULONG ciphertextLen;
+    int result = 0;
+
+    XMEMSET(iv, 0, sizeof(iv));
+    XMEMSET(plaintext, 0xAA, sizeof(plaintext));
+
+    mech.mechanism      = CKM_AES_CBC;
+    mech.pParameter     = iv;
+    mech.ulParameterLen = sizeof(iv);
+
+    /* First init should succeed */
+    ret = funcList->C_EncryptInit(session, &mech, aesKey);
+    CHECK_CKR(ret, "Encrypt survives: first C_EncryptInit", CKR_OK);
+
+    /* Second init should be rejected */
+    ret = funcList->C_EncryptInit(session, &mech, aesKey);
+    CHECK_CKR(ret, "Encrypt survives: second C_EncryptInit",
+              CKR_OPERATION_ACTIVE);
+
+    /* First operation should still complete successfully */
+    ciphertextLen = sizeof(ciphertext);
+    ret = funcList->C_Encrypt(session, plaintext, sizeof(plaintext),
+                              ciphertext, &ciphertextLen);
+    CHECK_CKR(ret, "Encrypt survives: C_Encrypt after rejected reinit",
+              CKR_OK);
+
+cleanup:
+    return result;
+}
+
+#ifdef HAVE_AESECB
+/*
+ * C_EncryptInit with AES-CBC active, then C_EncryptInit with AES-ECB.
+ * Cross-mechanism double init must return CKR_OPERATION_ACTIVE.
+ */
+static int test_encrypt_cross_mechanism(CK_SESSION_HANDLE session,
+                                         CK_OBJECT_HANDLE aesKey)
+{
+    CK_RV ret;
+    CK_MECHANISM mechCbc, mechEcb;
+    byte iv[16];
+    byte buf[16];
+    CK_ULONG bufSz;
+    int result = 0;
+
+    XMEMSET(iv, 0, sizeof(iv));
+
+    mechCbc.mechanism      = CKM_AES_CBC;
+    mechCbc.pParameter     = iv;
+    mechCbc.ulParameterLen = sizeof(iv);
+
+    mechEcb.mechanism      = CKM_AES_ECB;
+    mechEcb.pParameter     = NULL;
+    mechEcb.ulParameterLen = 0;
+
+    /* Init with AES-CBC */
+    ret = funcList->C_EncryptInit(session, &mechCbc, aesKey);
+    CHECK_CKR(ret, "Cross-mech encrypt: first C_EncryptInit (CBC)", CKR_OK);
+
+    /* Init with AES-ECB must fail */
+    ret = funcList->C_EncryptInit(session, &mechEcb, aesKey);
+    CHECK_CKR(ret, "Cross-mech encrypt: second C_EncryptInit (ECB)",
+              CKR_OPERATION_ACTIVE);
+
+cleanup:
+    /* Clean up active operation */
+    bufSz = sizeof(buf);
+    XMEMSET(buf, 0, sizeof(buf));
+    (void)funcList->C_Encrypt(session, buf, sizeof(buf), buf, &bufSz);
+    return result;
+}
+#endif /* HAVE_AESECB */
+
+/*
+ * C_DecryptInit called twice without completing the operation.
  * Second call must return CKR_OPERATION_ACTIVE.
  */
 static int test_decrypt_init_double(CK_SESSION_HANDLE session,
@@ -312,7 +397,7 @@ cleanup:
 }
 
 /*
- * Test 3: C_DigestInit called twice without completing the operation.
+ * C_DigestInit called twice without completing the operation.
  * Second call must return CKR_OPERATION_ACTIVE.
  */
 static int test_digest_init_double(CK_SESSION_HANDLE session)
@@ -340,9 +425,97 @@ cleanup:
     return result;
 }
 
+/*
+ * Test: Multi-part encrypt completes, then re-init must succeed.
+ * Verifies C_EncryptFinal clears the active operation state.
+ */
+static int test_encrypt_multipart_reinit(CK_SESSION_HANDLE session,
+                                          CK_OBJECT_HANDLE aesKey)
+{
+    CK_RV ret;
+    CK_MECHANISM mech;
+    byte iv[16];
+    byte plain[16], cipher[32], lastPart[16];
+    CK_ULONG cipherLen, lastPartLen;
+    byte buf[16];
+    CK_ULONG bufSz;
+    int result = 0;
+
+    XMEMSET(iv, 0, sizeof(iv));
+    XMEMSET(plain, 0xBB, sizeof(plain));
+
+    mech.mechanism      = CKM_AES_CBC;
+    mech.pParameter     = iv;
+    mech.ulParameterLen = sizeof(iv);
+
+    /* First multi-part encrypt */
+    ret = funcList->C_EncryptInit(session, &mech, aesKey);
+    CHECK_CKR(ret, "Multi-part encrypt: C_EncryptInit", CKR_OK);
+
+    cipherLen = sizeof(cipher);
+    ret = funcList->C_EncryptUpdate(session, plain, sizeof(plain),
+                                    cipher, &cipherLen);
+    CHECK_CKR(ret, "Multi-part encrypt: C_EncryptUpdate", CKR_OK);
+
+    lastPartLen = sizeof(lastPart);
+    ret = funcList->C_EncryptFinal(session, lastPart, &lastPartLen);
+    CHECK_CKR(ret, "Multi-part encrypt: C_EncryptFinal", CKR_OK);
+
+    /* Re-init must succeed — operation was completed */
+    ret = funcList->C_EncryptInit(session, &mech, aesKey);
+    CHECK_CKR(ret, "Multi-part encrypt: re-C_EncryptInit after Final", CKR_OK);
+
+cleanup:
+    /* Clean up active operation */
+    bufSz = sizeof(buf);
+    XMEMSET(buf, 0, sizeof(buf));
+    (void)funcList->C_Encrypt(session, buf, sizeof(buf), buf, &bufSz);
+    return result;
+}
+
 #ifndef NO_HMAC
 /*
- * Test 4: C_SignInit called twice without completing the operation.
+ * Test: Multi-part sign completes, then re-init must succeed.
+ * Verifies C_SignFinal clears the active operation state.
+ */
+static int test_sign_multipart_reinit(CK_SESSION_HANDLE session,
+                                       CK_OBJECT_HANDLE hmacKey)
+{
+    CK_RV ret;
+    CK_MECHANISM mech;
+    byte data[16], sig[64];
+    CK_ULONG sigLen;
+    int result = 0;
+
+    XMEMSET(data, 0xCC, sizeof(data));
+
+    mech.mechanism      = CKM_SHA256_HMAC;
+    mech.pParameter     = NULL;
+    mech.ulParameterLen = 0;
+
+    /* First multi-part sign */
+    ret = funcList->C_SignInit(session, &mech, hmacKey);
+    CHECK_CKR(ret, "Multi-part sign: C_SignInit", CKR_OK);
+
+    ret = funcList->C_SignUpdate(session, data, sizeof(data));
+    CHECK_CKR(ret, "Multi-part sign: C_SignUpdate", CKR_OK);
+
+    sigLen = sizeof(sig);
+    ret = funcList->C_SignFinal(session, sig, &sigLen);
+    CHECK_CKR(ret, "Multi-part sign: C_SignFinal", CKR_OK);
+
+    /* Re-init must succeed — operation was completed */
+    ret = funcList->C_SignInit(session, &mech, hmacKey);
+    CHECK_CKR(ret, "Multi-part sign: re-C_SignInit after Final", CKR_OK);
+
+cleanup:
+    sigLen = sizeof(sig);
+    (void)funcList->C_Sign(session, data, sizeof(data), sig, &sigLen);
+    return result;
+}
+
+/*
+ * C_SignInit called twice without completing the operation.
  * Second call must return CKR_OPERATION_ACTIVE.
  */
 static int test_sign_init_double(CK_SESSION_HANDLE session,
@@ -372,7 +545,7 @@ cleanup:
 }
 
 /*
- * Test 5: C_VerifyInit called twice without completing the operation.
+ * C_VerifyInit called twice without completing the operation.
  * Second call must return CKR_OPERATION_ACTIVE.
  */
 static int test_verify_init_double(CK_SESSION_HANDLE session,
@@ -509,6 +682,29 @@ static int operation_active_test(void)
     ret = pkcs11_open_session(&session);
     if (ret != CKR_OK) goto done;
 
+    if (test_encrypt_survives_rejected_reinit(session, aesKey) != 0)
+        result = -1;
+    pkcs11_close_session(session);
+    session = CK_INVALID_HANDLE;
+    ret = pkcs11_open_session(&session);
+    if (ret != CKR_OK) goto done;
+
+#ifdef HAVE_AESECB
+    if (test_encrypt_cross_mechanism(session, aesKey) != 0)
+        result = -1;
+    pkcs11_close_session(session);
+    session = CK_INVALID_HANDLE;
+    ret = pkcs11_open_session(&session);
+    if (ret != CKR_OK) goto done;
+#endif
+
+    if (test_encrypt_multipart_reinit(session, aesKey) != 0)
+        result = -1;
+    pkcs11_close_session(session);
+    session = CK_INVALID_HANDLE;
+    ret = pkcs11_open_session(&session);
+    if (ret != CKR_OK) goto done;
+
     if (test_decrypt_init_double(session, aesKey) != 0)
         result = -1;
     pkcs11_close_session(session);
@@ -524,6 +720,13 @@ static int operation_active_test(void)
     if (ret != CKR_OK) goto done;
 
 #ifndef NO_HMAC
+    if (test_sign_multipart_reinit(session, hmacKey) != 0)
+        result = -1;
+    pkcs11_close_session(session);
+    session = CK_INVALID_HANDLE;
+    ret = pkcs11_open_session(&session);
+    if (ret != CKR_OK) goto done;
+
     if (test_sign_init_double(session, hmacKey) != 0)
         result = -1;
     pkcs11_close_session(session);

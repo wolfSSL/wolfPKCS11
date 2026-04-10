@@ -6307,6 +6307,8 @@ static CK_RV test_pubkey_sig_fail(CK_SESSION_HANDLE session, CK_MECHANISM* mech,
         ret = funcList->C_Sign(session, hash, hashSz, out, &outSz);
         CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED, "Sign wrong init");
     }
+    /* Clean up active verify operation from cross-type testing */
+    (void)funcList->C_Verify(session, hash, hashSz, out, outSz);
 
     return ret;
 }
@@ -7989,6 +7991,9 @@ static CK_RV test_rsa_encdec_fail(CK_SESSION_HANDLE session, CK_MECHANISM* mech,
         CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
                                                       "RSA Encrypt wrong init");
     }
+    /* Clean up active decrypt operation from cross-type testing */
+    decSz = sizeof(dec);
+    (void)funcList->C_Decrypt(session, enc, encSz, dec, &decSz);
 
     return ret;
 }
@@ -10414,6 +10419,10 @@ static CK_RV test_aes_cbc_fail(void* args)
                                             "AES-CBC Encrypt Final wrong init");
     }
 
+    /* Clean up active decrypt operation from cross-type testing */
+    decSz = sizeof(dec);
+    (void)funcList->C_Decrypt(session, enc, encSz, dec, &decSz);
+
     return ret;
 }
 
@@ -11754,6 +11763,10 @@ static CK_RV test_aes_gcm_fail(void* args)
                                             "AES-GCM Encrypt Final wrong init");
     }
 
+    /* Clean up active decrypt operation from cross-type testing */
+    decSz = sizeof(dec);
+    (void)funcList->C_Decrypt(session, enc, encSz, dec, &decSz);
+
     return ret;
 }
 
@@ -13074,6 +13087,9 @@ static CK_RV test_hmac_fail(CK_SESSION_HANDLE session, CK_MECHANISM* mech,
         CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
                                                   "HMAC Sign Final wrong init");
     }
+
+    /* Clean up active verify operation from cross-type testing */
+    (void)funcList->C_Verify(session, data, dataSz, out, outSz);
 
     return ret;
 }
@@ -16721,6 +16737,14 @@ static CK_RV test_verify_recover_init_double(void* args)
         ret = funcList->C_VerifyRecoverInit(session, &verifyMech, pubKey);
         CHECK_CKR_FAIL(ret, CKR_OPERATION_ACTIVE,
                         "Second C_VerifyRecoverInit without completing first");
+    }
+    /* Clean up active verify-recover operation */
+    {
+        byte sig[256], data[256];
+        CK_ULONG dataLen = sizeof(data);
+        XMEMSET(sig, 0, sizeof(sig));
+        (void)funcList->C_VerifyRecover(session, sig, sizeof(sig),
+                                        data, &dataLen);
     }
 
     return ret;
