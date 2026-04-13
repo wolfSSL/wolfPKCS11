@@ -38,6 +38,8 @@
 #define WOLFPKCS11_STORE_DATA           0x0B
 #define WOLFPKCS11_STORE_MLDSAKEY_PRIV  0x0C
 #define WOLFPKCS11_STORE_MLDSAKEY_PUB   0x0D
+#define WOLFPKCS11_STORE_MLKEMKEY_PRIV  0x0E
+#define WOLFPKCS11_STORE_MLKEMKEY_PUB   0x0F
 
 /*
  * Opens access to location to read/write token data.

@@ -43,7 +43,7 @@ jobs:
           - name: "NSS+TPM Build"
             configure_flags: "--enable-nss --enable-tpm"
           - name: "PKCS#11 V3.2 PQC Build"
-            configure_flags: "--enable-pkcs11v32 --enable-mldsa"
+            configure_flags: "--enable-pkcs11v32 --enable-mldsa --enable-mlkem"
 
     steps:
     # Checkout wolfPKCS11

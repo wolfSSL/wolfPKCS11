@@ -65,7 +65,8 @@ static int soPinLen = 14;
 static byte* userPin = (byte*)"wolfpkcs11-test";
 static int userPinLen;
 
-#if !defined(NO_RSA) || defined(HAVE_ECC) || !defined(NO_DH)
+#if !defined(NO_RSA) || defined(HAVE_ECC) || !defined(NO_DH) || \
+    defined(WOLFPKCS11_MLDSA) || defined(WOLFPKCS11_MLKEM)
 static CK_OBJECT_CLASS pubKeyClass     = CKO_PUBLIC_KEY;
 #endif
 static CK_OBJECT_CLASS privKeyClass    = CKO_PRIVATE_KEY;
@@ -89,6 +90,12 @@ static CK_KEY_TYPE dhKeyType  = CKK_DH;
 static CK_KEY_TYPE aesKeyType  = CKK_AES;
 #endif
 static CK_KEY_TYPE genericKeyType  = CKK_GENERIC_SECRET;
+#ifdef WOLFPKCS11_MLDSA
+static CK_KEY_TYPE mldsaKeyType = CKK_ML_DSA;
+#endif
+#ifdef WOLFPKCS11_MLKEM
+static CK_KEY_TYPE mlkemKeyType = CKK_ML_KEM;
+#endif
 
 
 static CK_RV test_session(void* args)
@@ -6407,6 +6414,269 @@ static CK_RV test_hmac_sha512_fail(void* args)
 #endif
 #endif
 
+#ifdef WOLFPKCS11_MLDSA
+static CK_RV gen_mldsa_keys(CK_SESSION_HANDLE session,
+                            CK_ML_DSA_PARAMETER_SET_TYPE paramSet,
+                            CK_OBJECT_HANDLE* pubKey,
+                            CK_OBJECT_HANDLE* privKey,
+                            unsigned char* privId, int privIdLen,
+                            unsigned char* pubId, int pubIdLen, int onToken)
+{
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_MECHANISM mech;
+    CK_BBOOL token = (CK_BBOOL)onToken;
+    CK_ATTRIBUTE pubKeyTmpl[] = {
+        { CKA_PARAMETER_SET,  &paramSet,   sizeof(paramSet) },
+        { CKA_VERIFY,         &ckTrue,     sizeof(ckTrue)   },
+        { CKA_TOKEN,          &token,      sizeof(token)    },
+        { CKA_ID,             pubId,       pubIdLen         },
+    };
+    int pubTmplCnt = sizeof(pubKeyTmpl) / sizeof(*pubKeyTmpl);
+    CK_ATTRIBUTE privKeyTmpl[] = {
+        { CKA_SIGN,           &ckTrue,     sizeof(ckTrue)   },
+        { CKA_TOKEN,          &token,      sizeof(token)    },
+        { CKA_ID,             privId,      privIdLen        },
+    };
+    int privTmplCnt = sizeof(privKeyTmpl) / sizeof(*privKeyTmpl);
+
+    if (pubId == NULL)
+        pubTmplCnt--;
+    if (privId == NULL)
+        privTmplCnt--;
+
+    mech.mechanism = CKM_ML_DSA_KEY_PAIR_GEN;
+    mech.pParameter = NULL;
+    mech.ulParameterLen = 0;
+
+    ret = funcList->C_GenerateKeyPair(session, &mech, pubKeyTmpl, pubTmplCnt,
+                                      privKeyTmpl, privTmplCnt, &pub, &priv);
+    CHECK_CKR(ret, "ML-DSA Key Generation");
+    if (ret == CKR_OK && pubKey != NULL)
+        *pubKey = pub;
+    if (ret == CKR_OK && privKey != NULL)
+        *privKey = priv;
+
+    return ret;
+}
+
+static CK_RV find_mldsa_priv_key(CK_SESSION_HANDLE session,
+    CK_OBJECT_HANDLE* key, unsigned char* id, int idLen)
+{
+    CK_RV ret;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,    &privKeyClass,  sizeof(privKeyClass) },
+        { CKA_KEY_TYPE, &mldsaKeyType,  sizeof(mldsaKeyType) },
+        { CKA_ID,       id,             idLen                },
+    };
+    CK_ULONG count;
+
+    ret = funcList->C_FindObjectsInit(session, tmpl,
+                                      sizeof(tmpl) / sizeof(*tmpl));
+    CHECK_CKR(ret, "ML-DSA Find Priv Objects Init");
+    if (ret == CKR_OK) {
+        ret = funcList->C_FindObjects(session, key, 1, &count);
+        CHECK_CKR(ret, "ML-DSA Find Priv Objects");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_FindObjectsFinal(session);
+        CHECK_CKR(ret, "ML-DSA Find Priv Objects Final");
+    }
+    if (ret == CKR_OK && count == 0) {
+        ret = -1;
+        CHECK_CKR(ret, "ML-DSA Find Priv Objects Count");
+    }
+
+    return ret;
+}
+
+static CK_RV mldsa_sign_verify(CK_SESSION_HANDLE session,
+    CK_OBJECT_HANDLE privKey, CK_OBJECT_HANDLE pubKey)
+{
+    CK_RV ret;
+    CK_MECHANISM mech;
+    CK_SIGN_ADDITIONAL_CONTEXT signCtx;
+    byte data[64];
+    byte sig[4672]; /* ML-DSA-44 max sig size */
+    CK_ULONG sigSz;
+
+    XMEMSET(data, 0x5A, sizeof(data));
+    XMEMSET(&signCtx, 0, sizeof(signCtx));
+    signCtx.hedgeVariant = CKH_HEDGE_REQUIRED;
+    signCtx.pContext = NULL;
+    signCtx.ulContextLen = 0;
+
+    mech.mechanism = CKM_ML_DSA;
+    mech.pParameter = &signCtx;
+    mech.ulParameterLen = sizeof(signCtx);
+
+    ret = funcList->C_SignInit(session, &mech, privKey);
+    CHECK_CKR(ret, "ML-DSA Sign Init");
+    if (ret == CKR_OK) {
+        sigSz = sizeof(sig);
+        ret = funcList->C_Sign(session, data, sizeof(data), sig, &sigSz);
+        CHECK_CKR(ret, "ML-DSA Sign");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, pubKey);
+        CHECK_CKR(ret, "ML-DSA Verify Init");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Verify(session, data, sizeof(data), sig, sigSz);
+        CHECK_CKR(ret, "ML-DSA Verify");
+    }
+
+    return ret;
+}
+
+static CK_RV test_mldsa_gen_keys(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    unsigned char* privId = (unsigned char*)"123mldsamttpriv";
+    int privIdLen = (int)strlen((char*)privId);
+
+    /* Generate and sign/verify */
+    ret = gen_mldsa_keys(session, CKP_ML_DSA_44, &pub, &priv, NULL, 0,
+                         NULL, 0, 0);
+    if (ret == CKR_OK)
+        ret = mldsa_sign_verify(session, priv, pub);
+
+    funcList->C_DestroyObject(session, pub);
+    funcList->C_DestroyObject(session, priv);
+    pub = CK_INVALID_HANDLE;
+    priv = CK_INVALID_HANDLE;
+
+    /* Generate with ID and find */
+    if (ret == CKR_OK) {
+        ret = gen_mldsa_keys(session, CKP_ML_DSA_44, &pub, NULL, privId,
+                             privIdLen, NULL, 0, 0);
+    }
+    if (ret == CKR_OK)
+        ret = find_mldsa_priv_key(session, &priv, privId, privIdLen);
+    if (ret == CKR_OK)
+        ret = mldsa_sign_verify(session, priv, pub);
+
+    funcList->C_DestroyObject(session, pub);
+    funcList->C_DestroyObject(session, priv);
+
+    return ret;
+}
+#endif /* WOLFPKCS11_MLDSA */
+
+#ifdef WOLFPKCS11_MLKEM
+static CK_RV gen_mlkem_keys(CK_SESSION_HANDLE session,
+                            CK_ML_KEM_PARAMETER_SET_TYPE paramSet,
+                            CK_OBJECT_HANDLE* pubKey,
+                            CK_OBJECT_HANDLE* privKey,
+                            unsigned char* privId, int privIdLen,
+                            unsigned char* pubId, int pubIdLen, int onToken)
+{
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_MECHANISM mech;
+    CK_BBOOL token = (CK_BBOOL)onToken;
+    CK_ATTRIBUTE pubKeyTmpl[] = {
+        { CKA_PARAMETER_SET, &paramSet,  sizeof(paramSet) },
+        { CKA_ENCAPSULATE,   &ckTrue,    sizeof(ckTrue)   },
+        { CKA_TOKEN,         &token,     sizeof(token)    },
+        { CKA_ID,            pubId,      pubIdLen         },
+    };
+    int pubTmplCnt = sizeof(pubKeyTmpl) / sizeof(*pubKeyTmpl);
+    CK_ATTRIBUTE privKeyTmpl[] = {
+        { CKA_DECAPSULATE,   &ckTrue,    sizeof(ckTrue)   },
+        { CKA_TOKEN,         &token,     sizeof(token)    },
+        { CKA_ID,            privId,     privIdLen        },
+    };
+    int privTmplCnt = sizeof(privKeyTmpl) / sizeof(*privKeyTmpl);
+
+    if (pubId == NULL)
+        pubTmplCnt--;
+    if (privId == NULL)
+        privTmplCnt--;
+
+    mech.mechanism = CKM_ML_KEM_KEY_PAIR_GEN;
+    mech.pParameter = NULL;
+    mech.ulParameterLen = 0;
+
+    ret = funcList->C_GenerateKeyPair(session, &mech, pubKeyTmpl, pubTmplCnt,
+                                      privKeyTmpl, privTmplCnt, &pub, &priv);
+    CHECK_CKR(ret, "ML-KEM Key Generation");
+    if (ret == CKR_OK && pubKey != NULL)
+        *pubKey = pub;
+    if (ret == CKR_OK && privKey != NULL)
+        *privKey = priv;
+
+    return ret;
+}
+
+static CK_RV find_mlkem_priv_key(CK_SESSION_HANDLE session,
+    CK_OBJECT_HANDLE* key, unsigned char* id, int idLen)
+{
+    CK_RV ret;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,    &privKeyClass,  sizeof(privKeyClass) },
+        { CKA_KEY_TYPE, &mlkemKeyType,  sizeof(mlkemKeyType) },
+        { CKA_ID,       id,             idLen                },
+    };
+    CK_ULONG count;
+
+    ret = funcList->C_FindObjectsInit(session, tmpl,
+                                      sizeof(tmpl) / sizeof(*tmpl));
+    CHECK_CKR(ret, "ML-KEM Find Priv Objects Init");
+    if (ret == CKR_OK) {
+        ret = funcList->C_FindObjects(session, key, 1, &count);
+        CHECK_CKR(ret, "ML-KEM Find Priv Objects");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_FindObjectsFinal(session);
+        CHECK_CKR(ret, "ML-KEM Find Priv Objects Final");
+    }
+    if (ret == CKR_OK && count == 0) {
+        ret = -1;
+        CHECK_CKR(ret, "ML-KEM Find Priv Objects Count");
+    }
+
+    return ret;
+}
+
+static CK_RV test_mlkem_gen_keys(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    unsigned char* privId = (unsigned char*)"123mlkemmttpriv";
+    int privIdLen = (int)strlen((char*)privId);
+
+    /* Generate key pair */
+    ret = gen_mlkem_keys(session, CKP_ML_KEM_512, &pub, &priv, NULL, 0,
+                         NULL, 0, 0);
+
+    funcList->C_DestroyObject(session, pub);
+    funcList->C_DestroyObject(session, priv);
+    pub = CK_INVALID_HANDLE;
+    priv = CK_INVALID_HANDLE;
+
+    /* Generate with ID and find */
+    if (ret == CKR_OK) {
+        ret = gen_mlkem_keys(session, CKP_ML_KEM_512, &pub, NULL, privId,
+                             privIdLen, NULL, 0, 0);
+    }
+    if (ret == CKR_OK)
+        ret = find_mlkem_priv_key(session, &priv, privId, privIdLen);
+
+    funcList->C_DestroyObject(session, pub);
+    funcList->C_DestroyObject(session, priv);
+
+    return ret;
+}
+#endif /* WOLFPKCS11_MLKEM */
+
 static CK_RV test_random(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -6700,6 +6970,12 @@ static TEST_FUNC testFunc[] = {
     PKCS11MTT_CASE(test_hmac_sha512),
     PKCS11MTT_CASE(test_hmac_sha512_fail),
 #endif
+#endif
+#ifdef WOLFPKCS11_MLDSA
+    PKCS11MTT_CASE(test_mldsa_gen_keys),
+#endif
+#ifdef WOLFPKCS11_MLKEM
+    PKCS11MTT_CASE(test_mlkem_gen_keys),
 #endif
     PKCS11MTT_CASE(test_random),
 };

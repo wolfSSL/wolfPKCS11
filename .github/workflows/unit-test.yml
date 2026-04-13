@@ -106,6 +106,10 @@ jobs:
     uses: ./.github/workflows/build-workflow.yml
     with:
       config: --enable-mldsa
+  mlkem:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --enable-mlkem
   debug:
     uses: ./.github/workflows/build-workflow.yml
     with:

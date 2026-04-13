@@ -474,9 +474,39 @@ endif()
 
 if(WOLFPKCS11_MLDSA)
     if(NOT WOLFPKCS11_PKCS11_V3_2)
-        message(FATAL_ERROR "ML-DSA requires PKCS#11 Version 3.2 support (enable WOLFPKCS11_PKCS11_V3_2)")
+        message(STATUS "ML-DSA requires PKCS#11 v3.2 support — enabling WOLFPKCS11_PKCS11_V3_2 automatically")
+        override_cache(WOLFPKCS11_PKCS11_V3_2 "yes")
+        if(NOT WOLFPKCS11_PKCS11_V3_0)
+            override_cache(WOLFPKCS11_PKCS11_V3_0 "yes")
+            list(APPEND WOLFPKCS11_DEFINITIONS "-DWOLFPKCS11_PKCS11_V3_0")
+        endif()
+        list(APPEND WOLFPKCS11_DEFINITIONS "-DWOLFPKCS11_PKCS11_V3_2")
     endif()
     list(APPEND WOLFPKCS11_DEFINITIONS "-DWOLFPKCS11_MLDSA")
+endif()
+
+
+# ML-KEM
+add_option("WOLFPKCS11_MLKEM"
+    "Enable wolfPKCS11 ML-KEM support (default: disabled)"
+    "no" "yes;no"
+)
+
+if(NOT WOLFPKCS11_SHA3)
+    override_cache(WOLFPKCS11_MLKEM "no")
+endif()
+
+if(WOLFPKCS11_MLKEM)
+    if(NOT WOLFPKCS11_PKCS11_V3_2)
+        message(STATUS "ML-KEM requires PKCS#11 v3.2 support — enabling WOLFPKCS11_PKCS11_V3_2 automatically")
+        override_cache(WOLFPKCS11_PKCS11_V3_2 "yes")
+        if(NOT WOLFPKCS11_PKCS11_V3_0)
+            override_cache(WOLFPKCS11_PKCS11_V3_0 "yes")
+            list(APPEND WOLFPKCS11_DEFINITIONS "-DWOLFPKCS11_PKCS11_V3_0")
+        endif()
+        list(APPEND WOLFPKCS11_DEFINITIONS "-DWOLFPKCS11_PKCS11_V3_2")
+    endif()
+    list(APPEND WOLFPKCS11_DEFINITIONS "-DWOLFPKCS11_MLKEM")
 endif()
 
 

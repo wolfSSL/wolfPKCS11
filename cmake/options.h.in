@@ -94,6 +94,8 @@ extern "C" {
 #cmakedefine WOLFSSL_SHA3
 #undef WOLFPKCS11_MLDSA
 #cmakedefine WOLFPKCS11_MLDSA
+#undef WOLFPKCS11_MLKEM
+#cmakedefine WOLFPKCS11_MLKEM
 #undef WOLFPKCS11_TPM
 #cmakedefine WOLFPKCS11_TPM
 #undef WOLFPKCS11_NSS

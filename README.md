@@ -64,6 +64,16 @@ As ML-DSA is a feature of PKCS#11 version 3.2, support for that is required,
 too. Hence, to enable all in wolfPKCS11, add `--enable-pkcs11v32 --enable-mldsa`
 during the configure step.
 
+### Optional: PQC ML-KEM Support
+
+To have ML-KEM support in wolfPKCS11, configure wolfSSL with ML-KEM (FIPS 203)
+support enabled, either by adding `--enable-mlkem` to `./configure` or by
+setting `WOLFPKCS11_MLKEM` to `yes` in CMake.
+
+As ML-KEM is a feature of PKCS#11 version 3.2, support for that is required,
+too. Hence, to enable all in wolfPKCS11, add `--enable-pkcs11v32 --enable-mlkem`
+during the configure step.
+
 ### Build options and defines
 
 #### Define WOLFPKCS11_TPM_STORE
@@ -207,7 +217,8 @@ cmake -DCMAKE_PREFIX_PATH=/path/to/wolfssl/install ..
 | `WOLFPKCS11_NSS` | `no` | NSS-specific modifications |
 | `WOLFPKCS11_PKCS11_V3_0` | `yes` | PKCS#11 v3.0 support |
 | `WOLFPKCS11_PKCS11_V3_2` | `no` | PKCS#11 v3.2 support |
-| `WOLFPKCS11_MLDSA` | `no`| ML-DSA support |
+| `WOLFPKCS11_MLDSA` | `no` | ML-DSA support |
+| `WOLFPKCS11_MLKEM` | `no` | ML-KEM support |
 | `WOLFPKCS11_EXAMPLES` | `yes` | Build examples |
 | `WOLFPKCS11_TESTS` | `yes` | Build and register tests |
 | `WOLFPKCS11_COVERAGE` | `no` | Code coverage support |

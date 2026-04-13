@@ -533,8 +533,37 @@ then
     if test "$ENABLED_PKCS11V3_2" = "no"; then
         ENABLED_PKCS11V3_2=yes
         AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_PKCS11_V3_2"
+        if test "$ENABLED_PKCS11V3_0" = "no"; then
+            ENABLED_PKCS11V3_0=yes
+            AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_PKCS11_V3_0"
+        fi
     fi
     AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_MLDSA"
+fi
+
+AC_ARG_ENABLE([mlkem],
+    [AS_HELP_STRING([--enable-mlkem],[Enable ML-KEM (default: disabled)])],
+    [ ENABLED_MLKEM=$enableval ],
+    [ ENABLED_MLKEM=no ]
+    )
+
+if test "$ENABLED_SHA3" = "no"
+then
+    echo "ML-KEM requires SHA-3 support (disabled), disabling ML-KEM"
+    ENABLED_MLKEM=no
+fi
+
+if test "$ENABLED_MLKEM" = "yes"
+then
+    if test "$ENABLED_PKCS11V3_2" = "no"; then
+        ENABLED_PKCS11V3_2=yes
+        AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_PKCS11_V3_2"
+        if test "$ENABLED_PKCS11V3_0" = "no"; then
+            ENABLED_PKCS11V3_0=yes
+            AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_PKCS11_V3_0"
+        fi
+    fi
+    AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_MLKEM"
 fi
 
 
@@ -725,6 +754,7 @@ echo "   * DH:                         $ENABLED_DH"
 echo "   * ECC:                        $ENABLED_ECC"
 echo "   * HKDF:                       $ENABLED_HKDF"
 echo "   * ML-DSA:                     $ENABLED_MLDSA"
+echo "   * ML-KEM:                     $ENABLED_MLKEM"
 echo "   * NSS modifications:          $ENABLED_NSS"
 echo "   * Default token path:         $WOLFPKCS11_DEFAULT_TOKEN_PATH"
 echo "   * PKCS#11 Version 3.0:        $ENABLED_PKCS11V3_0"
