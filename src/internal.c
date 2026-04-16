@@ -943,6 +943,13 @@ static void wp11_Session_Final(WP11_Session* session)
         session->init = 0;
     }
 #endif
+#ifdef HAVE_AES_KEYWRAP
+    if ((session->mechanism == CKM_AES_KEY_WRAP ||
+                  session->mechanism == CKM_AES_KEY_WRAP_PAD) && session->init) {
+        wc_AesFree(&session->params.kw.aes);
+        session->init = 0;
+    }
+#endif
 #ifdef HAVE_AESCCM
     if (session->mechanism == CKM_AES_CCM) {
         if (session->params.ccm.aad != NULL) {
@@ -2578,7 +2585,7 @@ static long GetRsaExponentValue(unsigned char* eData, word32 eSz)
     long e = 0;
 
     /* Convert big-endian data into number. */
-    for (i = eSz - 1; i >= 0; i--) {
+    for (i = 0; i < (int)eSz; i++) {
         e <<= 8;
         e |= eData[i];
     }
@@ -8808,6 +8815,7 @@ void WP11_Object_Free(WP11_Object* object)
     #ifndef NO_DH
         if (object->type == CKK_DH && object->data.dhKey != NULL) {
             wc_FreeDhKey(&object->data.dhKey->params);
+            wc_ForceZero(object->data.dhKey->key, object->data.dhKey->len);
             XFREE(object->data.dhKey, NULL, DYNAMIC_TYPE_DH);
             object->data.dhKey = NULL;
         }
@@ -9294,6 +9302,7 @@ int WP11_Object_SetMldsaKey(WP11_Object* object, unsigned char** data,
                             ret = BAD_FUNC_ARG;
                         }
                     }
+                    wc_ForceZero(expandedKey, expandedKeyLen);
                     XFREE(expandedKey, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                 }
             }
@@ -9492,7 +9501,7 @@ int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
 
     key = object->data.symmKey;
     key->len = 0;
-    XMEMSET(key->data, 0, sizeof(key->data));
+    wc_ForceZero(key->data, sizeof(key->data));
 
     /* First item is the key's length. */
     if (ret == 0 && data[0] != NULL && len[0] != (int)sizeof(CK_ULONG))
@@ -14728,6 +14737,7 @@ int WP11_AesKeyWrap_Encrypt(unsigned char* plain, word32 plainSz,
 
     ret = wc_AesKeyWrap_ex(&wrap->aes, plain, plainSz, enc, *encSz,
             wrap->ivSz != 0 ? wrap->iv : NULL);
+    wc_AesFree(&wrap->aes);
     session->init = 0;
     if (ret < 0)
         return ret;
@@ -14743,6 +14753,7 @@ int WP11_AesKeyWrap_Decrypt(unsigned char* enc, word32 encSz,
 
     ret = wc_AesKeyUnWrap_ex(&wrap->aes, enc, encSz, dec, *decSz,
             wrap->ivSz != 0 ? wrap->iv : NULL);
+    wc_AesFree(&wrap->aes);
     session->init = 0;
     if (ret < 0)
         return ret;

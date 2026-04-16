@@ -8219,10 +8219,19 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
             FindAttributeType(pTemplate, ulAttributeCount, CKA_VALUE_LEN,
                 &lenAttr);
             if (kdfParams->bExpand) {
-                if (!lenAttr) {
-                    return CKR_MECHANISM_PARAM_INVALID;
+                CK_ULONG reqLen;
+                if (!lenAttr || !lenAttr->pValue) {
+                    return CKR_ATTRIBUTE_VALUE_INVALID;
                 }
-                keyLen = *(word32*)lenAttr->pValue;
+                if (lenAttr->ulValueLen != sizeof(CK_ULONG)) {
+                    return CKR_ATTRIBUTE_VALUE_INVALID;
+                }
+                XMEMCPY(&reqLen, lenAttr->pValue, sizeof(CK_ULONG));
+                /* On 64-bit, CK_ULONG may exceed word32 range */
+                if (reqLen == 0 || reqLen > (CK_ULONG)0xFFFFFFFF) {
+                    return CKR_ATTRIBUTE_VALUE_INVALID;
+                }
+                keyLen = (word32)reqLen;
             }
             else {
                 keyLen = WC_MAX_DIGEST_SIZE;
@@ -8299,14 +8308,34 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
             if (tlsParams->pReturnedKeyMaterial == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
 
-            keyLen = (word32)(2 * tlsParams->ulMacSizeInBits) +
-                     (word32)(2 * tlsParams->ulKeySizeInBits) +
-                     (word32)(2 * tlsParams->ulIVSizeInBits);
-            if (keyLen == 0)
-                return CKR_MECHANISM_PARAM_INVALID;
-            if ((keyLen % 8) != 0)
-                return CKR_MECHANISM_PARAM_INVALID;
-            keyLen /= 8;
+            {
+                CK_ULONG totalBits;
+                CK_ULONG a = 2 * tlsParams->ulMacSizeInBits;
+                CK_ULONG b = 2 * tlsParams->ulKeySizeInBits;
+                CK_ULONG c = 2 * tlsParams->ulIVSizeInBits;
+                /* Validate individual fields won't overflow when doubled */
+                if (tlsParams->ulMacSizeInBits > ((CK_ULONG)0xFFFFFFFF / 2) ||
+                    tlsParams->ulKeySizeInBits > ((CK_ULONG)0xFFFFFFFF / 2) ||
+                    tlsParams->ulIVSizeInBits  > ((CK_ULONG)0xFFFFFFFF / 2)) {
+                    return CKR_MECHANISM_PARAM_INVALID;
+                }
+                /* Check sum won't overflow on 32-bit */
+                if (a > (CK_ULONG)0xFFFFFFFF - b)
+                    return CKR_MECHANISM_PARAM_INVALID;
+                totalBits = a + b;
+                if (totalBits > (CK_ULONG)0xFFFFFFFF - c)
+                    return CKR_MECHANISM_PARAM_INVALID;
+                totalBits += c;
+                if (totalBits == 0)
+                    return CKR_MECHANISM_PARAM_INVALID;
+                if ((totalBits % 8) != 0)
+                    return CKR_MECHANISM_PARAM_INVALID;
+                totalBits /= 8;
+                /* On 64-bit, CK_ULONG may exceed word32 range */
+                if (totalBits > (CK_ULONG)0xFFFFFFFF)
+                    return CKR_MECHANISM_PARAM_INVALID;
+                keyLen = (word32)totalBits;
+            }
 
             derivedKey = (byte*)XMALLOC(keyLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             if (derivedKey == NULL)
@@ -8436,7 +8465,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
         }
     }
 
-    if (rv == CKR_OK) {
+    if ((rv == CKR_OK) && (derivedKey != NULL)) {
         rv = SetInitialStates(obj);
     }
 

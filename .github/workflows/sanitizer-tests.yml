@@ -18,7 +18,7 @@ jobs:
         sanitizer: [asan, ubsan]
         config:
           - name: "Standard Build"
-            configure_flags: ""
+            configure_flags: "--enable-aeskeywrap"
           - name: "NSS Build"
             configure_flags: "--enable-nss"
           - name: "TPM Build"
