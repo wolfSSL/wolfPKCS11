@@ -37,11 +37,13 @@
   <ItemGroup>
     <ClCompile Include="..\..\..\wolftpm\src\tpm2.c" />
     <ClCompile Include="..\..\..\wolftpm\src\tpm2_asn.c" />
+    <ClCompile Include="..\..\..\wolftpm\src\tpm2_crypto.c" />
     <ClCompile Include="..\..\..\wolftpm\src\tpm2_cryptocb.c" />
     <ClCompile Include="..\..\..\wolftpm\src\tpm2_packet.c" />
     <ClCompile Include="..\..\..\wolftpm\src\tpm2_param_enc.c" />
     <ClCompile Include="..\..\..\wolftpm\src\tpm2_swtpm.c" />
     <ClCompile Include="..\..\..\wolftpm\src\tpm2_tis.c" />
+    <ClCompile Include="..\..\..\wolftpm\src\tpm2_util.c" />
     <ClCompile Include="..\..\..\wolftpm\src\tpm2_winapi.c" />
     <ClCompile Include="..\..\..\wolftpm\src\tpm2_wrap.c" />
   </ItemGroup>

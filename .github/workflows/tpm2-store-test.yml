@@ -60,7 +60,7 @@ jobs:
         repository: wolfssl/wolfssl
         ref: ${{ matrix.wolfssl_version }}
         path: wolfssl/
-        configure: --enable-all CPPFLAGS=-DWC_RSA_DIRECT
+        configure: --enable-all --disable-anon CPPFLAGS=-DWC_RSA_DIRECT
         check: false
         install: true 
 
