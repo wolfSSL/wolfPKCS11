@@ -135,6 +135,20 @@ jobs:
         # Copy patch file from workspace to current directory for reliable access
         cp "${GITHUB_WORKSPACE}/.github/workflows/wolfpkcs11-nss-debian.patch" ./wolfpkcs11-nss-debian.patch
 
+        # Prepend the wolfPKCS11 changelog entry. Done inline (rather than in
+        # the patch) so future Debian security uploads do not break the hunk
+        # context every time a new entry lands at the top of debian/changelog.
+        {
+          echo "nss (2:3.87.1-1+wolfSSL-1) bookworm-security; urgency=medium"
+          echo
+          echo "  * First build with wolfPKCS11 backend"
+          echo
+          echo " -- wolfSSL <support@wolfssl.com>  Thu, 08 Aug 2025 15:02:11 +0100"
+          echo
+          cat debian/changelog
+        } > debian/changelog.new
+        mv debian/changelog.new debian/changelog
+
         # Apply the patch
         patch -p1 < ./wolfpkcs11-nss-debian.patch
 
