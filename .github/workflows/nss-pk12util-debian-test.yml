@@ -100,14 +100,14 @@ jobs:
       uses: actions/cache@v4
       with:
         path: /tmp/nss-build
-        key: nss-debian-source-${{ hashFiles('.github/workflows/wolfpkcs11-nss-debian.patch') }}-${{ env.WOLFSSL_VERSION }}
+        key: nss-debian-source-${{ hashFiles('.github/workflows/wolfpkcs11-nss-debian.patch', '.github/workflows/nss-pk12util-debian-test.yml') }}-${{ env.WOLFSSL_VERSION }}
 
     - name: Cache NSS built packages
       id: cache-nss-packages
       uses: actions/cache@v4
       with:
         path: /tmp/nss-packages
-        key: nss-debian-packages-${{ hashFiles('.github/workflows/wolfpkcs11-nss-debian.patch') }}-${{ env.WOLFSSL_VERSION }}
+        key: nss-debian-packages-${{ hashFiles('.github/workflows/wolfpkcs11-nss-debian.patch', '.github/workflows/nss-pk12util-debian-test.yml') }}-${{ env.WOLFSSL_VERSION }}
 
     - name: Get NSS Debian sources and apply wolfPKCS11 patch
       if: steps.cache-nss-source.outputs.cache-hit != 'true'
@@ -138,16 +138,12 @@ jobs:
         # Prepend the wolfPKCS11 changelog entry. Done inline (rather than in
         # the patch) so future Debian security uploads do not break the hunk
         # context every time a new entry lands at the top of debian/changelog.
-        {
-          echo "nss (2:3.87.1-1+wolfSSL-1) bookworm-security; urgency=medium"
-          echo
-          echo "  * First build with wolfPKCS11 backend"
-          echo
-          echo " -- wolfSSL <support@wolfssl.com>  Thu, 08 Aug 2025 15:02:11 +0100"
-          echo
-          cat debian/changelog
-        } > debian/changelog.new
-        mv debian/changelog.new debian/changelog
+        # `dch --local` derives the new version from whatever is currently at
+        # the top, so this works regardless of which deb12uN the apt mirror
+        # currently ships.
+        DEBEMAIL="support@wolfssl.com" DEBFULLNAME="wolfSSL" \
+          dch --local "+wolfSSL-" --distribution bookworm-security \
+          "First build with wolfPKCS11 backend"
 
         # Apply the patch
         patch -p1 < ./wolfpkcs11-nss-debian.patch
