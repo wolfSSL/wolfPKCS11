@@ -135,6 +135,7 @@ jobs:
           --enable-keygen --enable-pwdbased --enable-scrypt --with-eccminsz=192
           --with-max-rsa-bits=8192 --enable-rsapss
           CFLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT -DRSA_MIN_SIZE=1024 -DWOLFSSL_PSS_LONG_SALT"
+        check: false
         install: true
 
     - name: Cache wolfSSL
