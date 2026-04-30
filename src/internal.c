@@ -2706,6 +2706,15 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
         else
 #endif
         {
+#ifndef WOLFPKCS11_NO_STORE
+            /* When the source key is encoded (encrypted at rest), the crypto
+             * key struct has been freed. The keyData blob is already copied
+             * above via OBJ_COPY_DATA, so skip the deep key copy. */
+            if (src->encoded) {
+                dest->type = src->type;
+            }
+            else
+#endif
             switch (src->type) {
 #ifndef NO_RSA
                 case CKK_RSA: {
@@ -4903,10 +4912,9 @@ static int MlKemKeyTryDecode(MlKemKey* key, int level, byte* data, word32 len,
         else {
             ret = wc_MlKemKey_DecodePublicKey(key, data, len);
         }
-    }
-
-    if (ret != 0) {
-        wc_MlKemKey_Free(key);
+        if (ret != 0) {
+            wc_MlKemKey_Free(key);
+        }
     }
 
     return ret;
@@ -4929,7 +4937,7 @@ static int wp11_Object_Decode_MlKemKey(WP11_Object* object)
         unsigned char* der;
         int len;
 
-        if (object->keyDataLen < AES_BLOCK_SIZE)
+        if (object->keyDataLen <= AES_BLOCK_SIZE)
             return BAD_FUNC_ARG;
         len = object->keyDataLen - AES_BLOCK_SIZE;
 
@@ -9412,7 +9420,9 @@ int WP11_Object_SetMlKemKey(WP11_Object* object, unsigned char** data,
                                     object->devId);
             break;
         default:
-            ret = ASN_PARSE_E;
+            if (object->onToken)
+                WP11_Lock_UnlockRW(object->lock);
+            return ASN_PARSE_E;
     }
 
     /* Set seed (only for private keys). */
@@ -11449,6 +11459,19 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
 }
 
 /**
+ * Mark an object as locally generated and record the mechanism used.
+ *
+ * @param  object     [in]  Object to update.
+ * @param  mechanism  [in]  Generation mechanism.
+ */
+void WP11_Object_SetKeyGeneration(WP11_Object* object,
+                                  CK_MECHANISM_TYPE mechanism)
+{
+    object->local = 1;
+    object->keyGenMech = mechanism;
+}
+
+/**
  * Check whether the attribute matches in the object.
  *
  * @param  object  [in]  Object object.
@@ -13157,12 +13180,14 @@ int WP11_Mldsa_Verify(unsigned char* sig, word32 sigLen, unsigned char* data,
 /**
  * Generate a secret key.
  *
- * @param  secret  [in]  Secret object.
- * @param  slot    [in]  Slot operation is performed on.
+ * @param  secret     [in]  Secret object.
+ * @param  slot       [in]  Slot operation is performed on.
+ * @param  mechanism  [in]  Key generation mechanism.
  * @return  -ve on random number generation failure.
  *          0 on success.
  */
-int WP11_GenerateRandomKey(WP11_Object* secret, WP11_Slot* slot)
+int WP11_GenerateRandomKey(WP11_Object* secret, WP11_Slot* slot,
+                           CK_MECHANISM_TYPE mechanism)
 {
     int ret;
     WP11_Data* key = secret->data.symmKey;
@@ -13170,6 +13195,11 @@ int WP11_GenerateRandomKey(WP11_Object* secret, WP11_Slot* slot)
     WP11_Lock_LockRW(&slot->token.rngLock);
     ret = wc_RNG_GenerateBlock(&slot->token.rng, key->data, key->len);
     WP11_Lock_UnlockRW(&slot->token.rngLock);
+
+    if (ret == 0) {
+        secret->local = 1;
+        secret->keyGenMech = mechanism;
+    }
 
     return ret;
 }
@@ -13377,6 +13407,13 @@ int WP11_MlKem_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
                                           pubKeyLen);
     }
     if (ret == 0) {
+        /* Re-init the public key before decoding into it since it was
+         * already Init'd during NewObject -> WP11_Object_SetMlKemKey. */
+        wc_MlKemKey_Free(pub->data.mlKemKey);
+        ret = wc_MlKemKey_Init(pub->data.mlKemKey, priv->data.mlKemKey->type,
+                               NULL, pub->devId);
+    }
+    if (ret == 0) {
         ret = wc_MlKemKey_DecodePublicKey(pub->data.mlKemKey, pubKeyBytes,
                                           pubKeyLen);
     }
@@ -13412,7 +13449,7 @@ int WP11_MlKem_Encapsulate(WP11_Object* pub, unsigned char** sharedSecret,
     int ret;
     int rngInit = 0;
     WC_RNG rng;
-    MlKemKey* mlKemKey = pub->data.mlKemKey;
+    MlKemKey* mlKemKey;
     word32 ctLen = 0;
 
     *sharedSecret = NULL;
@@ -13425,6 +13462,7 @@ int WP11_MlKem_Encapsulate(WP11_Object* pub, unsigned char** sharedSecret,
     if (pub->onToken)
         WP11_Lock_LockRO(pub->lock);
 
+    mlKemKey = pub->data.mlKemKey;
     ret = wc_MlKemKey_CipherTextSize(mlKemKey, &ctLen);
     if (ret == 0) {
         if (pCiphertext == NULL) {
@@ -13490,7 +13528,7 @@ int WP11_MlKem_Decapsulate(WP11_Object* priv, unsigned char** sharedSecret,
                            CK_ULONG ulCiphertextLen)
 {
     int ret;
-    MlKemKey* mlKemKey = priv->data.mlKemKey;
+    MlKemKey* mlKemKey;
 
     *sharedSecret = NULL;
 
@@ -13502,6 +13540,7 @@ int WP11_MlKem_Decapsulate(WP11_Object* priv, unsigned char** sharedSecret,
     if (priv->onToken)
         WP11_Lock_LockRO(priv->lock);
 
+    mlKemKey = priv->data.mlKemKey;
     ret = wc_MlKemKey_SharedSecretSize(mlKemKey, ssLen);
     if (ret == 0) {
         *sharedSecret = (unsigned char*)XMALLOC(*ssLen, NULL,

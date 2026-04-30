@@ -3940,7 +3940,10 @@ CK_RV C_DigestInit(CK_SESSION_HANDLE hSession,
         WP11_Session_SetOpInitialized(session, init);
     }
 
-    rv = ret;
+    if (ret != 0 && ret != (int)CKR_MECHANISM_INVALID)
+        rv = CKR_FUNCTION_FAILED;
+    else
+        rv = ret;
     WOLFPKCS11_LEAVE("C_DigestInit", rv);
     return rv;
 }
@@ -4043,7 +4046,9 @@ CK_RV C_DigestUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
 
     ret = WP11_Digest_Update(pPart, (word32)ulPartLen, session);
 
-    return ret;
+    if (ret < 0)
+        return CKR_FUNCTION_FAILED;
+    return CKR_OK;
 }
 
 /**
@@ -4086,7 +4091,11 @@ CK_RV C_DigestKey(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hKey)
 
     ret = WP11_Digest_Key(obj, session);
 
-    return ret;
+    if (ret < 0)
+        return CKR_FUNCTION_FAILED;
+    if (ret > 0)
+        return (CK_RV)ret;
+    return CKR_OK;
 }
 
 /**
@@ -6327,7 +6336,7 @@ CK_RV C_VerifyRecoverInit(CK_SESSION_HANDLE hSession,
         return CKR_KEY_TYPE_INCONSISTENT;
     }
 
-    ret = CheckOpSupported(obj, CKA_VERIFY);
+    ret = CheckOpSupported(obj, CKA_VERIFY_RECOVER);
     if (ret != CKR_OK)
         return ret;
 
@@ -6697,9 +6706,6 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
     CK_RV rv = CKR_OK;
     WP11_Session* session = NULL;
     WP11_Object* key = NULL;
-    CK_BBOOL trueVar = CK_TRUE;
-    CK_BBOOL getVar;
-    CK_ULONG getVarLen = sizeof(CK_BBOOL);
     CK_KEY_TYPE keyType;
 
     WOLFPKCS11_ENTER("C_GenerateKey");
@@ -6908,18 +6914,22 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
 
                 ret = WP11_Object_SetSecretKey(pbkdf2Key, secretKeyData, secretKeyLen);
                 if (ret == 0) {
-                    rv = AddObject(session, pbkdf2Key, pTemplate, ulCount, phKey);
-                    if (rv != CKR_OK) {
-                        WP11_Object_Free(pbkdf2Key);
-                    }
+                    WP11_Object_SetKeyGeneration(pbkdf2Key, pMechanism->mechanism);
+                    rv = SetInitialStates(pbkdf2Key);
                 } else {
-                    WP11_Object_Free(pbkdf2Key);
                     rv = CKR_FUNCTION_FAILED;
+                }
+                if (rv == CKR_OK) {
+                    rv = AddObject(session, pbkdf2Key, pTemplate, ulCount, phKey);
+                }
+                if (rv != CKR_OK) {
+                    WP11_Object_Free(pbkdf2Key);
                 }
             }
 
             wc_ForceZero(derivedKey, derivedKeyLen);
             XFREE(derivedKey, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+
             return rv;
         }
 #ifdef WOLFPKCS11_NSS
@@ -7005,18 +7015,22 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
 
                 ret = WP11_Object_SetSecretKey(pbeKey, secretKeyData, secretKeyLen);
                 if (ret == 0) {
-                    rv = AddObject(session, pbeKey, pTemplate, ulCount, phKey);
-                    if (rv != CKR_OK) {
-                        WP11_Object_Free(pbeKey);
-                    }
+                    WP11_Object_SetKeyGeneration(pbeKey, pMechanism->mechanism);
+                    rv = SetInitialStates(pbeKey);
                 } else {
-                    WP11_Object_Free(pbeKey);
                     rv = CKR_FUNCTION_FAILED;
+                }
+                if (rv == CKR_OK) {
+                    rv = AddObject(session, pbeKey, pTemplate, ulCount, phKey);
+                }
+                if (rv != CKR_OK) {
+                    WP11_Object_Free(pbeKey);
                 }
             }
 
             wc_ForceZero(derivedKey, derivedKeyLen);
             XFREE(derivedKey, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+
             return rv;
         }
 #endif
@@ -7044,31 +7058,19 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
                        &key);
         if (rv == CKR_OK) {
             int ret = WP11_GenerateRandomKey(key,
-                                             WP11_Session_GetSlot(session));
+                                             WP11_Session_GetSlot(session),
+                                             pMechanism->mechanism);
             if (ret != 0) {
-                WP11_Object_Free(key);
                 rv = CKR_FUNCTION_FAILED;
             }
-            else {
-               rv = AddObject(session, key, pTemplate, ulCount, phKey);
-               if (rv != CKR_OK) {
-                   WP11_Object_Free(key);
-               }
-            }
         }
-    }
-    if (rv == CKR_OK) {
-        rv = WP11_Object_GetAttr(key, CKA_SENSITIVE, &getVar, &getVarLen);
-        if ((rv == CKR_OK) && (getVar == CK_TRUE)) {
-            rv = WP11_Object_SetAttr(key, CKA_ALWAYS_SENSITIVE, &trueVar,
-                                     sizeof(CK_BBOOL));
-        }
+        if (rv == CKR_OK)
+            rv = SetInitialStates(key);
         if (rv == CKR_OK) {
-            rv = WP11_Object_GetAttr(key, CKA_EXTRACTABLE, &getVar, &getVarLen);
-            if ((rv == CKR_OK) && (getVar == CK_FALSE)) {
-                rv = WP11_Object_SetAttr(key, CKA_NEVER_EXTRACTABLE, &trueVar,
-                                     sizeof(CK_BBOOL));
-            }
+            rv = AddObject(session, key, pTemplate, ulCount, phKey);
+        }
+        if (rv != CKR_OK && key != NULL) {
+            WP11_Object_Free(key);
         }
     }
 
@@ -9034,10 +9036,10 @@ CK_RV C_EncapsulateKey(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
             if (ret != 0)
                 rv = CKR_FUNCTION_FAILED;
             if (rv == CKR_OK)
+                rv = SetInitialStates(secretObj);
+            if (rv == CKR_OK)
                 rv = AddObject(session, secretObj, pTemplate, ulAttributeCount,
                                phKey);
-            if (rv == CKR_OK)
-                rv = SetInitialStates(secretObj);
         }
         if (rv != CKR_OK && secretObj != NULL) {
             WP11_Object_Free(secretObj);
@@ -9140,10 +9142,10 @@ CK_RV C_DecapsulateKey(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
             if (ret != 0)
                 rv = CKR_FUNCTION_FAILED;
             if (rv == CKR_OK)
+                rv = SetInitialStates(secretObj);
+            if (rv == CKR_OK)
                 rv = AddObject(session, secretObj, pTemplate, ulAttributeCount,
                                phKey);
-            if (rv == CKR_OK)
-                rv = SetInitialStates(secretObj);
         }
         if (rv != CKR_OK && secretObj != NULL) {
             WP11_Object_Free(secretObj);

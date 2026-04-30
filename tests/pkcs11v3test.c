@@ -1414,6 +1414,46 @@ static CK_RV test_mlkem_gen_keys(void* args)
     return ret;
 }
 
+static CK_RV test_mlkem_gen_keys_768(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+
+    ret = gen_mlkem_keys(session, CKP_ML_KEM_768, &pub, &priv, NULL, 0,
+                         NULL, 0, 0);
+    if (ret == CKR_OK)
+        ret = mlkem_encap_decap(session, pub, priv);
+
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+
+    return ret;
+}
+
+static CK_RV test_mlkem_gen_keys_1024(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+
+    ret = gen_mlkem_keys(session, CKP_ML_KEM_1024, &pub, &priv, NULL, 0,
+                         NULL, 0, 0);
+    if (ret == CKR_OK)
+        ret = mlkem_encap_decap(session, pub, priv);
+
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+
+    return ret;
+}
+
 static CK_RV test_mlkem_gen_keys_id(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -2777,6 +2817,8 @@ static TEST_FUNC testFunc[] = {
 #endif
 #ifdef WOLFPKCS11_MLKEM
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_gen_keys),
+    PKCS11TEST_FUNC_SESS_DECL(test_mlkem_gen_keys_768),
+    PKCS11TEST_FUNC_SESS_DECL(test_mlkem_gen_keys_1024),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_gen_keys_id),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_gen_keys_token),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_token_keys),

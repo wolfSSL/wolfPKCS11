@@ -2649,7 +2649,7 @@ static CK_RV rsa_pkcs15_sig_test(CK_SESSION_HANDLE session,
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyInit(session, &mech, pub);
-        CHECK_CKR(ret, "RSA PKCS#1.5 Verify Init bad hash");
+        CHECK_CKR(ret, "RSA PKCS#1.5 Verify Init before bad hash");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, badHash, sizeof(badHash), out, outSz);
@@ -2713,7 +2713,7 @@ static CK_RV rsa_pss_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE priv,
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyInit(session, &mech, pub);
-        CHECK_CKR(ret, "RSA PKCS#1 PSS Verify Init bad hash");
+        CHECK_CKR(ret, "RSA PKCS#1 PSS Verify Init before bad hash");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, badHash, hashSz, out, outSz);
@@ -3842,7 +3842,7 @@ static CK_RV ecdsa_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE privKey,
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyInit(session, &mech, pubKey);
-        CHECK_CKR(ret, "ECDSA Verify Init bad hash");
+        CHECK_CKR(ret, "ECDSA Verify Init before bad hash");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, hash, hashSz - 1, out, outSz);
@@ -3850,7 +3850,7 @@ static CK_RV ecdsa_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE privKey,
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyInit(session, &mech, pubKey);
-        CHECK_CKR(ret, "ECDSA Verify Init bad sig");
+        CHECK_CKR(ret, "ECDSA Verify Init before bad sig");
     }
     if (ret == CKR_OK) {
         outSz = 1;
@@ -6644,6 +6644,106 @@ static CK_RV find_mlkem_priv_key(CK_SESSION_HANDLE session,
     return ret;
 }
 
+static CK_RV mlkem_encap_decap(CK_SESSION_HANDLE session,
+                               CK_OBJECT_HANDLE pubKey,
+                               CK_OBJECT_HANDLE privKey)
+{
+    CK_RV ret = CKR_OK;
+    CK_INTERFACE* interface = NULL;
+    CK_FUNCTION_LIST_3_2* funcListExt = NULL;
+    CK_VERSION version = { 3, 2 };
+    CK_MECHANISM mech;
+
+#ifndef HAVE_PKCS11_STATIC
+    {
+        CK_C_GetInterface getInterface;
+        getInterface = (CK_C_GetInterface)dlsym(dlib, "C_GetInterface");
+        if (getInterface == NULL)
+            return CKR_FUNCTION_NOT_SUPPORTED;
+        ret = getInterface((CK_UTF8CHAR_PTR)"PKCS 11", &version,
+                           &interface, 0);
+    }
+#else
+    ret = C_GetInterface((CK_UTF8CHAR_PTR)"PKCS 11", &version,
+                         &interface, 0);
+#endif
+    CHECK_CKR(ret, "ML-KEM Get v3.2 Interface");
+    if (ret == CKR_OK)
+        funcListExt = (CK_FUNCTION_LIST_3_2*)interface->pFunctionList;
+    CK_OBJECT_CLASS secClass = CKO_SECRET_KEY;
+    CK_BBOOL extr = CK_TRUE;
+    CK_ATTRIBUTE secretTmpl[] = {
+        { CKA_CLASS,       &secClass,       sizeof(secClass)       },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_EXTRACTABLE, &extr,           sizeof(extr)           },
+    };
+    CK_ULONG secretTmplCnt = sizeof(secretTmpl) / sizeof(*secretTmpl);
+    CK_OBJECT_HANDLE encapKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE decapKey = CK_INVALID_HANDLE;
+    CK_BYTE* ciphertext = NULL;
+    CK_ULONG ctLen = 0;
+    CK_BYTE ss1[64];
+    CK_BYTE ss2[64];
+    CK_ULONG ss1Len = sizeof(ss1);
+    CK_ULONG ss2Len = sizeof(ss2);
+    CK_ATTRIBUTE getValueTmpl[] = { { CKA_VALUE, NULL, 0 } };
+
+    mech.mechanism = CKM_ML_KEM;
+    mech.pParameter = NULL;
+    mech.ulParameterLen = 0;
+
+    ret = funcListExt->C_EncapsulateKey(session, &mech, pubKey, secretTmpl,
+                                        secretTmplCnt, NULL, &ctLen, &encapKey);
+    CHECK_CKR(ret, "ML-KEM Encapsulate size query");
+
+    if (ret == CKR_OK) {
+        ciphertext = (CK_BYTE*)malloc(ctLen);
+        if (ciphertext == NULL)
+            ret = CKR_HOST_MEMORY;
+    }
+    if (ret == CKR_OK) {
+        ret = funcListExt->C_EncapsulateKey(session, &mech, pubKey, secretTmpl,
+                                            secretTmplCnt, ciphertext, &ctLen,
+                                            &encapKey);
+        CHECK_CKR(ret, "ML-KEM Encapsulate");
+    }
+    if (ret == CKR_OK) {
+        ret = funcListExt->C_DecapsulateKey(session, &mech, privKey, secretTmpl,
+                                            secretTmplCnt, ciphertext, ctLen,
+                                            &decapKey);
+        CHECK_CKR(ret, "ML-KEM Decapsulate");
+    }
+    if (ret == CKR_OK) {
+        getValueTmpl[0].pValue = ss1;
+        getValueTmpl[0].ulValueLen = ss1Len;
+        ret = funcList->C_GetAttributeValue(session, encapKey, getValueTmpl, 1);
+        CHECK_CKR(ret, "ML-KEM Get encap shared secret");
+        if (ret == CKR_OK)
+            ss1Len = getValueTmpl[0].ulValueLen;
+    }
+    if (ret == CKR_OK) {
+        getValueTmpl[0].pValue = ss2;
+        getValueTmpl[0].ulValueLen = ss2Len;
+        ret = funcList->C_GetAttributeValue(session, decapKey, getValueTmpl, 1);
+        CHECK_CKR(ret, "ML-KEM Get decap shared secret");
+        if (ret == CKR_OK)
+            ss2Len = getValueTmpl[0].ulValueLen;
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(ss1Len == ss2Len && XMEMCMP(ss1, ss2, ss1Len) == 0,
+                   ret, "ML-KEM Shared secrets match");
+    }
+
+    if (ciphertext != NULL)
+        free(ciphertext);
+    if (encapKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, encapKey);
+    if (decapKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, decapKey);
+
+    return ret;
+}
+
 static CK_RV test_mlkem_gen_keys(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -6653,9 +6753,11 @@ static CK_RV test_mlkem_gen_keys(void* args)
     unsigned char* privId = (unsigned char*)"123mlkemmttpriv";
     int privIdLen = (int)strlen((char*)privId);
 
-    /* Generate key pair */
+    /* Generate key pair and exercise encap/decap */
     ret = gen_mlkem_keys(session, CKP_ML_KEM_512, &pub, &priv, NULL, 0,
                          NULL, 0, 0);
+    if (ret == CKR_OK)
+        ret = mlkem_encap_decap(session, pub, priv);
 
     funcList->C_DestroyObject(session, pub);
     funcList->C_DestroyObject(session, priv);
