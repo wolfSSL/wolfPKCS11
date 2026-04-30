@@ -176,7 +176,8 @@ static int init_token(const char* module_path, Pkcs11Dev* dev,
                       Pkcs11Token* token, CK_SLOT_ID* slot_id)
 {
     CK_UTF8CHAR so_pin[]   = "password123456";
-    CK_UTF8CHAR user_pin_l[] = "interop-user";
+    /* Static: token->userPin retains the pointer past init_token. */
+    static CK_UTF8CHAR user_pin_l[] = "interop-user";
     static const char token_label_text[] = "wolfPKCS11-Interop";
     CK_UTF8CHAR label[32];
     CK_RV rv;
@@ -406,6 +407,84 @@ static int test_hmac_sha256(Pkcs11Token* token, int dev_id)
 done:
     wc_HmacFree(&hmac);
     destroy_objects_by_label(token, CKO_SECRET_KEY, "hmac-sha256-interop");
+    return ret;
+}
+
+/* Multi-call HMAC must run on the same PKCS#11 session; the default
+ * token-wide session masks the bug, so clear it for this test. */
+static int test_hmac_sha256_per_call_session(Pkcs11Token* token, int dev_id)
+{
+    /* wolfPKCS11 enforces ulMinKeySize=32 for CKM_SHA256_HMAC. */
+    static const byte key[32] = {
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+        0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f
+    };
+    static const byte msg[] = "wolfPKCS11 multi-call HMAC dispatch";
+    CK_SESSION_HANDLE saved_handle = token->handle;
+    CK_UTF8CHAR_PTR   saved_userPin = token->userPin;
+    byte              saved_userPinLogin = token->userPinLogin;
+    Hmac hmac;
+    Hmac swHmac;
+    byte digest[WC_SHA256_DIGEST_SIZE];
+    byte ref[WC_SHA256_DIGEST_SIZE];
+    int hmacInited = 0;
+    int swInited = 0;
+    int ret;
+
+    ret = wc_HmacInit(&swHmac, NULL, INVALID_DEVID);
+    if (ret != 0)
+        return ret;
+    swInited = 1;
+    ret = wc_HmacSetKey(&swHmac, WC_SHA256, key, (word32)sizeof(key));
+    if (ret == 0)
+        ret = wc_HmacUpdate(&swHmac, msg, (word32)(sizeof(msg) - 1));
+    if (ret == 0)
+        ret = wc_HmacFinal(&swHmac, ref);
+    if (ret != 0)
+        goto done;
+
+    /* Force per-dispatch sessions; skip Login/Logout (slot already
+     * logged in) so subsequent tests aren't affected. */
+    token->handle = CK_INVALID_HANDLE;
+    token->userPin = NULL;
+    token->userPinLogin = 0;
+
+    ret = wc_HmacInit(&hmac, NULL, dev_id);
+    if (ret != 0)
+        goto restore;
+    hmacInited = 1;
+
+    ret = wc_HmacSetKey(&hmac, WC_SHA256, key, (word32)sizeof(key));
+    if (ret != 0)
+        goto restore;
+
+    ret = wc_HmacUpdate(&hmac, msg, (word32)(sizeof(msg) - 1));
+    if (ret != 0)
+        goto restore;
+
+    ret = wc_HmacFinal(&hmac, digest);
+    if (ret != 0)
+        goto restore;
+
+    if (compare_bytes(digest, ref, sizeof(digest)) != 0) {
+        dump_buffer("hmac", digest, sizeof(digest));
+        dump_buffer("hmac-ref", ref, sizeof(ref));
+        ret = WC_HW_E;
+    }
+
+restore:
+    /* Free Hmac before restore so cleanup runs without triggering
+     * Logout via the now-restored userPin. */
+    if (hmacInited)
+        wc_HmacFree(&hmac);
+    token->handle = saved_handle;
+    token->userPin = saved_userPin;
+    token->userPinLogin = saved_userPinLogin;
+done:
+    if (swInited)
+        wc_HmacFree(&swHmac);
     return ret;
 }
 
@@ -1115,6 +1194,15 @@ int main(int argc, char** argv)
         failures++;
     } else {
         printf("HMAC-SHA256	test_passed!\n");
+    }
+
+    ret = test_hmac_sha256_per_call_session(&token, dev_id);
+    if (ret != 0) {
+        fprintf(stderr, "HMAC-SHA256 per-call session test failed: %d (%s)\n",
+                ret, error_to_string(ret));
+        failures++;
+    } else {
+        printf("HMAC-SHA256 per-call session	test_passed!\n");
     }
 
 #ifdef WOLFSSL_SHA224
