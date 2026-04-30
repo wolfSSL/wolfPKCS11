@@ -540,6 +540,11 @@ static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
 #endif
             break;
         case CKO_SECRET_KEY:
+#ifndef WOLFPKCS11_NSS
+            if (ret == CKR_OK)
+                ret = SetIfNotFound(obj, CKA_SENSITIVE, trueVal, pTemplate,
+                                    ulCount);
+#endif
             if (ret == CKR_OK)
                 ret = SetIfNotFound(obj, CKA_EXTRACTABLE, trueVal, pTemplate,
                                     ulCount);
@@ -557,9 +562,21 @@ static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
                                     ulCount);
             break;
         case CKO_PRIVATE_KEY:
+#ifndef WOLFPKCS11_NSS
+            if (ret == CKR_OK)
+                ret = SetIfNotFound(obj, CKA_SENSITIVE, trueVal, pTemplate,
+                                    ulCount);
+            if (ret == CKR_OK)
+                ret = SetIfNotFound(obj, CKA_EXTRACTABLE, falseVal, pTemplate,
+                                    ulCount);
+#else
+            /* NSS operates as the internal crypto module and needs both
+             * non-sensitive and extractable private keys to read key material
+             * directly via C_GetAttributeValue during TLS operations. */
             if (ret == CKR_OK)
                 ret = SetIfNotFound(obj, CKA_EXTRACTABLE, trueVal, pTemplate,
                                     ulCount);
+#endif
             if (ret == CKR_OK)
                 ret = SetIfNotFound(obj, CKA_DECRYPT, encrypt, pTemplate,
                                     ulCount);
@@ -2320,10 +2337,13 @@ CK_RV C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             }
             if (!CK_ULONG_FITS_WORD32(ulDataLen))
                 return CKR_DATA_LEN_RANGE;
+            /* Ensure padded result fits in word32 */
+            if (ulDataLen > (CK_ULONG)(0xFFFFFFFF - AES_BLOCK_SIZE))
+                return CKR_DATA_LEN_RANGE;
 
-            /* PKCS#5 pad makes the output a multiple of 16 */
-            encDataLen = (word32)((ulDataLen + AES_BLOCK_SIZE - 1) /
-                        AES_BLOCK_SIZE) * AES_BLOCK_SIZE;
+            /* PKCS#7 padding always adds at least 1 byte */
+            encDataLen = (word32)((ulDataLen / AES_BLOCK_SIZE) + 1) *
+                        AES_BLOCK_SIZE;
             if (pEncryptedData == NULL) {
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
