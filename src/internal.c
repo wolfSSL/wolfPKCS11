@@ -959,7 +959,31 @@ static void wp11_Session_Final(WP11_Session* session)
     }
 #endif
 #endif
-    /* Clear any remaining active operation state not handled above. */
+#ifndef NO_HMAC
+    if ((session->init & ~WP11_INIT_DIGEST_MASK) == WP11_INIT_HMAC_SIGN ||
+        (session->init & ~WP11_INIT_DIGEST_MASK) == WP11_INIT_HMAC_VERIFY) {
+        wc_HmacFree(&session->params.hmac.hmac);
+        session->init &= WP11_INIT_DIGEST_MASK;
+    }
+#endif
+#ifdef HAVE_AESCMAC
+    if ((session->init & ~WP11_INIT_DIGEST_MASK) == WP11_INIT_AES_CMAC_SIGN ||
+        (session->init & ~WP11_INIT_DIGEST_MASK) == WP11_INIT_AES_CMAC_VERIFY) {
+#if (!defined(HAVE_FIPS) || FIPS_VERSION_GE(5, 3))
+        (void)wc_CmacFree(&session->params.cmac.cmac);
+#else
+        wc_ForceZero(&session->params.cmac.cmac,
+                      sizeof(session->params.cmac.cmac));
+#endif
+        session->init &= WP11_INIT_DIGEST_MASK;
+    }
+#endif
+    if ((session->init & ~WP11_INIT_DIGEST_MASK) == WP11_INIT_DIGEST) {
+        wc_HashFree(&session->params.digest.hash,
+                     session->params.digest.hashType);
+        session->init &= ~WP11_INIT_DIGEST_MASK;
+    }
+    /* Ensure no stale bits remain after all cleanup. */
     session->init = 0;
 }
 
@@ -7383,6 +7407,9 @@ void WP11_Slot_Logout(WP11_Slot* slot)
             ret = wp11_Object_Encode(object, 1);
             object = object->next;
         }
+        /* Zero token key only on user logout — SO logout must preserve it
+         * for subsequent object encryption (e.g., empty-PIN flow). */
+        wc_ForceZero(slot->token.key, sizeof(slot->token.key));
     }
 #endif
     slot->token.loginState = WP11_APP_STATE_RW_PUBLIC;
@@ -8626,6 +8653,9 @@ static WP11_Object* wp11_Session_FindNext(WP11_Session* session, int onToken,
         }
    #endif
 
+        /* Note: this CKA_PRIVATE check is intentionally active in NSS mode.
+         * NSS accesses private objects by handle (via WP11_Object_Find) rather
+         * than discovering them through C_FindObjects enumeration. */
         if ((ret->opFlag & WP11_FLAG_PRIVATE) == WP11_FLAG_PRIVATE) {
             if (!onToken)
                 WP11_Lock_LockRO(&session->slot->token.lock);
@@ -9767,8 +9797,26 @@ int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
         WP11_Lock_UnlockRO(&session->slot->token.lock);
     }
 
-    if (obj && (obj->handle == objHandle))
-        *object = obj;
+    if (ret == 0 && obj != NULL && (obj->handle == objHandle)) {
+#ifndef WOLFPKCS11_NSS
+        /* Enforce CKA_PRIVATE: reject private objects from public sessions.
+         * Skipped in NSS mode because NSS operates as the internal crypto
+         * module without calling C_Login. */
+        if ((obj->opFlag & WP11_FLAG_PRIVATE) == WP11_FLAG_PRIVATE) {
+            int loginState;
+            WP11_Lock_LockRO(&session->slot->lock);
+            loginState = session->slot->token.loginState;
+            if (!WP11_Slot_Has_Empty_Pin(session->slot) &&
+                (loginState == WP11_APP_STATE_RW_PUBLIC ||
+                 loginState == WP11_APP_STATE_RO_PUBLIC)) {
+                ret = BAD_FUNC_ARG;
+            }
+            WP11_Lock_UnlockRO(&session->slot->lock);
+        }
+#endif
+        if (ret == 0)
+            *object = obj;
+    }
 
     return ret;
 }
@@ -12248,7 +12296,7 @@ int WP11_Rsa_Verify_Recover(CK_MECHANISM_TYPE mechanism, unsigned char* sig,
                     }
                 }
                 if (data_out != NULL) {
-                    *outLen = (out + *outLen) - data_out;
+                    *outLen = (CK_ULONG)((out + *outLen) - data_out);
                     XMEMMOVE(out, data_out, *outLen);
                 }
             }
@@ -15224,8 +15272,13 @@ int WP11_Digest_Single(unsigned char* data, word32 dataLen,
     WP11_Digest* digest = &session->params.digest;
 
     blockLen = wc_HashGetDigestSize(digest->hashType);
+    if (blockLen < 0) {
+        wc_HashFree(&digest->hash, digest->hashType);
+        session->init = 0;
+        return CKR_FUNCTION_FAILED;
+    }
 
-    if (data == NULL) {
+    if (dataOut == NULL) {
         *dataOutLen = (word32)blockLen;
         return CKR_OK;
     }
@@ -15233,6 +15286,7 @@ int WP11_Digest_Single(unsigned char* data, word32 dataLen,
         return BUFFER_E;
     }
     ret = wc_Hash(digest->hashType, data, dataLen, dataOut, *dataOutLen);
+    *dataOutLen = (word32)blockLen;
 
     wc_HashFree(&digest->hash, digest->hashType);
 
