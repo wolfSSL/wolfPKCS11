@@ -1315,9 +1315,11 @@ static CK_RV mlkem_encap_decap(CK_SESSION_HANDLE session,
     CK_OBJECT_CLASS secretClass = CKO_SECRET_KEY;
     CK_KEY_TYPE genericKeyType = CKK_GENERIC_SECRET;
     CK_BBOOL extractable = CK_TRUE;
+    CK_BBOOL sensitive = CK_FALSE;
     CK_ATTRIBUTE secretTmpl[] = {
         { CKA_CLASS,       &secretClass,    sizeof(secretClass)    },
         { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_SENSITIVE,   &sensitive,      sizeof(sensitive)      },
         { CKA_EXTRACTABLE, &extractable,    sizeof(extractable)    },
     };
     CK_ULONG secretTmplCnt = sizeof(secretTmpl) / sizeof(*secretTmpl);
@@ -1491,9 +1493,32 @@ static CK_RV test_mlkem_fixed_keys(void* args)
     CK_ULONG pubKeyLen   = 0;
     CK_ATTRIBUTE getPriv[] = { { CKA_VALUE, NULL, 0 } };
     CK_ATTRIBUTE getPub[]  = { { CKA_VALUE, NULL, 0 } };
+    CK_ML_KEM_PARAMETER_SET_TYPE paramSet = CKP_ML_KEM_512;
+    CK_MECHANISM mech;
+    CK_BBOOL ckFalse = CK_FALSE;
+    /* This test reads CKA_VALUE from the generated private key, so it
+     * explicitly requests an extractable, non-sensitive session key. */
+    CK_ATTRIBUTE pubKeyTmpl[] = {
+        { CKA_PARAMETER_SET, &paramSet, sizeof(paramSet) },
+        { CKA_ENCAPSULATE,   &ckTrue,   sizeof(ckTrue)   },
+    };
+    CK_ATTRIBUTE privKeyTmpl[] = {
+        { CKA_DECAPSULATE,   &ckTrue,   sizeof(ckTrue)   },
+        { CKA_SENSITIVE,     &ckFalse,  sizeof(ckFalse)  },
+        { CKA_EXTRACTABLE,   &ckTrue,   sizeof(ckTrue)   },
+    };
 
-    ret = gen_mlkem_keys(session, CKP_ML_KEM_512, &pub, &priv, NULL, 0,
-                         NULL, 0, 0);
+    mech.mechanism = CKM_ML_KEM_KEY_PAIR_GEN;
+    mech.pParameter = NULL;
+    mech.ulParameterLen = 0;
+
+    ret = funcList->C_GenerateKeyPair(session, &mech,
+                                      pubKeyTmpl,
+                                      sizeof(pubKeyTmpl)/sizeof(*pubKeyTmpl),
+                                      privKeyTmpl,
+                                      sizeof(privKeyTmpl)/sizeof(*privKeyTmpl),
+                                      &pub, &priv);
+    CHECK_CKR(ret, "ML-KEM Key Generation");
 
     /* Query sizes. */
     if (ret == CKR_OK) {
@@ -1727,9 +1752,11 @@ static CK_RV test_mlkem_encap_decap_fail(void* args)
     CK_OBJECT_CLASS secretClass = CKO_SECRET_KEY;
     CK_KEY_TYPE genericKeyType = CKK_GENERIC_SECRET;
     CK_BBOOL extractable = CK_TRUE;
+    CK_BBOOL sensitive = CK_FALSE;
     CK_ATTRIBUTE secretTmpl[] = {
         { CKA_CLASS,       &secretClass,    sizeof(secretClass)    },
         { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_SENSITIVE,   &sensitive,      sizeof(sensitive)      },
         { CKA_EXTRACTABLE, &extractable,    sizeof(extractable)    },
     };
     CK_ULONG secretTmplCnt = sizeof(secretTmpl) / sizeof(*secretTmpl);
