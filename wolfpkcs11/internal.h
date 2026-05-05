@@ -473,6 +473,8 @@ WP11_LOCAL int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, 
                         CK_ULONG* len);
 WP11_LOCAL int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                         CK_ULONG len);
+WP11_LOCAL void WP11_Object_SetKeyGeneration(WP11_Object* object,
+                        CK_MECHANISM_TYPE mechanism);
 WP11_LOCAL int WP11_Object_MatchAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
                           byte* data, CK_ULONG len);
 WP11_LOCAL int WP11_Generic_SerializeKey(WP11_Object* object, byte* output, word32* poutsz);
@@ -563,7 +565,8 @@ WP11_LOCAL int WP11_MlKem_Decapsulate(WP11_Object* priv, unsigned char** sharedS
                            CK_ULONG ulCiphertextLen);
 #endif
 
-WP11_LOCAL int WP11_GenerateRandomKey(WP11_Object* secret, WP11_Slot* slot);
+WP11_LOCAL int WP11_GenerateRandomKey(WP11_Object* secret, WP11_Slot* slot,
+                            CK_MECHANISM_TYPE mechanism);
 
 WP11_LOCAL int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
                     unsigned char* key, word32* keyLen, WP11_Object* priv);

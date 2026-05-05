@@ -695,13 +695,15 @@ static CK_RV test_token(void* args)
         ret = funcList->C_InitToken(slot, soPin, soPinLen, NULL);
         CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD, "Init Token no label");
     }
+#if WP11_MIN_PIN_LEN > 3
     if (ret == CKR_OK) {
         ret = funcList->C_InitToken(slot, soPin, 3, label);
-        CHECK_CKR_FAIL(ret, CKR_PIN_INCORRECT, "Init Token too short PIN");
+        CHECK_CKR_FAIL(ret, CKR_PIN_LEN_RANGE, "Init Token too short PIN");
     }
+#endif
     if (ret == CKR_OK) {
         ret = funcList->C_InitToken(slot, soPin, 33, label);
-        CHECK_CKR_FAIL(ret, CKR_PIN_INCORRECT, "Init Token too long PIN");
+        CHECK_CKR_FAIL(ret, CKR_PIN_LEN_RANGE, "Init Token too long PIN");
     }
 
     if (ret == CKR_OK) {
@@ -831,13 +833,13 @@ static CK_RV test_pin(void* args)
 #if WP11_MIN_PIN_LEN > 3
                 if (ret == CKR_OK) {
                     ret = funcList->C_InitPIN(session, userPin, 3);
-                    CHECK_CKR_FAIL(ret, CKR_PIN_INCORRECT,
+                    CHECK_CKR_FAIL(ret, CKR_PIN_LEN_RANGE,
                                                       "Init PIN too short PIN");
                 }
 #endif
                 if (ret == CKR_OK) {
                     ret = funcList->C_InitPIN(session, userPin, 33);
-                    CHECK_CKR_FAIL(ret, CKR_PIN_INCORRECT,
+                    CHECK_CKR_FAIL(ret, CKR_PIN_LEN_RANGE,
                                                        "Init PIN too long PIN");
                 }
                 funcList->C_Logout(session);
@@ -880,14 +882,14 @@ static CK_RV test_pin(void* args)
             if (ret == CKR_OK) {
                 ret = funcList->C_SetPIN(session, userPin, userPinLen,userPin,
                                                                              3);
-                CHECK_CKR_FAIL(ret, CKR_PIN_INCORRECT,
+                CHECK_CKR_FAIL(ret, CKR_PIN_LEN_RANGE,
                                                    "Set PIN too short new pin");
             }
 #endif
             if (ret == CKR_OK) {
                 ret = funcList->C_SetPIN(session, userPin, userPinLen, userPin,
                                                                             33);
-                CHECK_CKR_FAIL(ret, CKR_PIN_INCORRECT,
+                CHECK_CKR_FAIL(ret, CKR_PIN_LEN_RANGE,
                                                     "Set PIN too long new pin");
             }
             if (ret == CKR_OK) {
@@ -7580,7 +7582,7 @@ static CK_RV rsa_x_509_sig_test(CK_SESSION_HANDLE session,
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyInit(session, &mech, pub);
-        CHECK_CKR(ret, "RSA X_509 Verify Init bad hash");
+        CHECK_CKR(ret, "RSA X_509 Verify Init before bad hash");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, badHash, sizeof(badHash), out, outSz);
@@ -7639,7 +7641,7 @@ static CK_RV rsa_pkcs15_sig_test(CK_SESSION_HANDLE session,
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyInit(session, &mech, pub);
-        CHECK_CKR(ret, "RSA PKCS#1.5 Verify Init bad hash");
+        CHECK_CKR(ret, "RSA PKCS#1.5 Verify Init before bad hash");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, badHash, sizeof(badHash), out, outSz);
@@ -7776,7 +7778,7 @@ static CK_RV sha256_rsa_pkcs15_sig_test(CK_SESSION_HANDLE session,
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyInit(session, &mech, pub);
-        CHECK_CKR(ret, "RSA PKCS#1.5 Verify Init bad hash");
+        CHECK_CKR(ret, "RSA PKCS#1.5 Verify Init before bad hash");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, badHash, sizeof(badHash), out, outSz);
@@ -7841,7 +7843,7 @@ static CK_RV rsa_pss_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE priv,
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyInit(session, &mech, pub);
-        CHECK_CKR(ret, "RSA PKCS#1 PSS Verify Init bad hash");
+        CHECK_CKR(ret, "RSA PKCS#1 PSS Verify Init before bad hash");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, badHash, hashSz, out, outSz);
@@ -7921,7 +7923,7 @@ static CK_RV sha256_rsa_pss_test(CK_SESSION_HANDLE session,
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyInit(session, &mech, pub);
-        CHECK_CKR(ret, "RSA PKCS#1 PSS Verify Init bad hash");
+        CHECK_CKR(ret, "RSA PKCS#1 PSS Verify Init before bad hash");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, badHash, hashSz, out, outSz);
@@ -9235,7 +9237,7 @@ static CK_RV ecdsa_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE privKey,
 #endif
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyInit(session, &mech, pubKey);
-        CHECK_CKR(ret, "ECDSA Verify Init bad hash");
+        CHECK_CKR(ret, "ECDSA Verify Init before bad hash");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, hash, hashSz - 1, out, outSz);
@@ -9243,7 +9245,7 @@ static CK_RV ecdsa_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE privKey,
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyInit(session, &mech, pubKey);
-        CHECK_CKR(ret, "ECDSA Verify Init bad sig");
+        CHECK_CKR(ret, "ECDSA Verify Init before bad sig");
     }
     if (ret == CKR_OK) {
         outSz = 1;
@@ -9301,7 +9303,7 @@ static CK_RV ecdsa_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE privKey,
 #endif
         if (ret == CKR_OK) {
             ret = funcList->C_VerifyInit(session, &mech, pubKey);
-            CHECK_CKR(ret, "ECDSA Verify Init bad hash");
+            CHECK_CKR(ret, "ECDSA Verify Init before bad hash");
         }
         if (ret == CKR_OK) {
             ret = funcList->C_Verify(session, data, dataSz - 1, out, outSz);
@@ -9309,7 +9311,7 @@ static CK_RV ecdsa_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE privKey,
         }
         if (ret == CKR_OK) {
             ret = funcList->C_VerifyInit(session, &mech, pubKey);
-            CHECK_CKR(ret, "ECDSA Verify Init bad sig");
+            CHECK_CKR(ret, "ECDSA Verify Init before bad sig");
         }
         if (ret == CKR_OK) {
             outSz = 1;
