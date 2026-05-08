@@ -6681,10 +6681,12 @@ static CK_RV mlkem_encap_decap(CK_SESSION_HANDLE session,
         funcListExt = (CK_FUNCTION_LIST_3_2*)interface->pFunctionList;
     CK_OBJECT_CLASS secClass = CKO_SECRET_KEY;
     CK_BBOOL extr = CK_TRUE;
+    CK_BBOOL sensitive = CK_FALSE;
     CK_ATTRIBUTE secretTmpl[] = {
         { CKA_CLASS,       &secClass,       sizeof(secClass)       },
         { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
         { CKA_EXTRACTABLE, &extr,           sizeof(extr)           },
+        { CKA_SENSITIVE,   &sensitive,      sizeof(sensitive)      },
     };
     CK_ULONG secretTmplCnt = sizeof(secretTmpl) / sizeof(*secretTmpl);
     CK_OBJECT_HANDLE encapKey = CK_INVALID_HANDLE;

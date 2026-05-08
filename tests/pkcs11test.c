@@ -5777,23 +5777,23 @@ static CK_RV test_verify_recover_op_not_supported(void* args)
     CK_BBOOL trueVal = CK_TRUE;
     CK_MECHANISM mech = { CKM_RSA_PKCS, NULL_PTR, 0 };
 
-    CK_ATTRIBUTE rsaPubNoVerify[] = {
+    CK_ATTRIBUTE rsaPubNoVerifyRecover[] = {
         { CKA_CLASS,             &pubKeyClass,      sizeof(pubKeyClass)       },
         { CKA_KEY_TYPE,          &rsaKeyType,       sizeof(rsaKeyType)        },
         { CKA_ENCRYPT,           &trueVal,          sizeof(trueVal)           },
-        { CKA_VERIFY,            &falseVal,         sizeof(falseVal)          },
+        { CKA_VERIFY_RECOVER,    &falseVal,         sizeof(falseVal)          },
         { CKA_MODULUS,           rsa_2048_modulus,   sizeof(rsa_2048_modulus)  },
         { CKA_PUBLIC_EXPONENT,   rsa_2048_pub_exp,  sizeof(rsa_2048_pub_exp)  },
     };
 
-    ret = funcList->C_CreateObject(session, rsaPubNoVerify,
-                                   sizeof(rsaPubNoVerify)/sizeof(*rsaPubNoVerify),
-                                   &pubKey);
-    CHECK_CKR(ret, "Create RSA pub key with CKA_VERIFY=FALSE");
+    ret = funcList->C_CreateObject(session, rsaPubNoVerifyRecover,
+                       sizeof(rsaPubNoVerifyRecover)/sizeof(*rsaPubNoVerifyRecover),
+                       &pubKey);
+    CHECK_CKR(ret, "Create RSA pub key with CKA_VERIFY_RECOVER=FALSE");
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyRecoverInit(session, &mech, pubKey);
         CHECK_CKR_FAIL(ret, CKR_KEY_TYPE_INCONSISTENT,
-                        "VerifyRecoverInit should fail with CKA_VERIFY=FALSE");
+                "VerifyRecoverInit should fail with CKA_VERIFY_RECOVER=FALSE");
     }
 
     return ret;

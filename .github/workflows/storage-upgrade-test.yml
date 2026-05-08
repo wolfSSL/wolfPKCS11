@@ -80,6 +80,9 @@ jobs:
         else
           echo "WOLFPKCS11_NO_STORE not found, assuming WOLFPKCS11_TOKEN_PATH is already set"
         fi
+        # Patch test_verify_recover_op_not_supported on older bases that
+        # still set CKA_VERIFY=FALSE (the op check now uses CKA_VERIFY_RECOVER).
+        sed -i '/CK_ATTRIBUTE rsaPubNoVerify/,/};/{s/CKA_VERIFY,/CKA_VERIFY_RECOVER,/;}' tests/pkcs11test.c
         echo "=== pkcs11test.c modification completed ==="
 
     - name: Build wolfPKCS11 ${{ matrix.base-ref.name }}
