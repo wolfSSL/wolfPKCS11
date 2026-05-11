@@ -2020,14 +2020,16 @@ static CK_RV test_mlkem_key_validation(void* args)
         ret = funcListExt->C_EncapsulateKey(session, &mech, mldsaPub,
                                             secretTmpl, secretTmplCnt, NULL,
                                             &ctLen, &secret);
-        CHECK_CKR_FAIL(ret, CKR_KEY_TYPE_INCONSISTENT,
+        /* ML-DSA public keys default CKA_ENCAPSULATE to CK_FALSE, so the
+         * CKA_ENCAPSULATE gate fires before the key-type/mechanism check. */
+        CHECK_CKR_FAIL(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
                        "ML-KEM Encapsulate wrong key type");
     }
     if (ret == CKR_OK) {
         ret = funcListExt->C_DecapsulateKey(session, &mech, mldsaPriv,
                                             secretTmpl, secretTmplCnt, dummyCt,
                                             sizeof(dummyCt), &secret);
-        CHECK_CKR_FAIL(ret, CKR_KEY_TYPE_INCONSISTENT,
+        CHECK_CKR_FAIL(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
                        "ML-KEM Decapsulate wrong key type");
     }
 #endif
@@ -2157,6 +2159,80 @@ static CK_RV test_mlkem_initial_states(void* args)
         funcList->C_DestroyObject(session, priv);
     if (pub != CK_INVALID_HANDLE)
         funcList->C_DestroyObject(session, pub);
+
+    return ret;
+}
+
+/* CKA_ENCAPSULATE=CK_FALSE on the public key must reject C_EncapsulateKey;
+ * CKA_DECAPSULATE=CK_FALSE on the private key must reject C_DecapsulateKey.
+ * Both return CKR_KEY_FUNCTION_NOT_PERMITTED per PKCS#11 v3.2 sec. 6.5. */
+static CK_RV test_mlkem_encap_decap_not_permitted(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_FUNCTION_LIST_3_2* funcListExt = (CK_FUNCTION_LIST_3_2*)funcList;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE secret = CK_INVALID_HANDLE;
+    CK_MECHANISM mech;
+    CK_OBJECT_CLASS secretClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE genericKeyType = CKK_GENERIC_SECRET;
+    CK_BBOOL extractable = CK_TRUE;
+    CK_BBOOL encapFlag = CK_FALSE;
+    CK_BBOOL decapFlag = CK_FALSE;
+    CK_ATTRIBUTE secretTmpl[] = {
+        { CKA_CLASS,       &secretClass,    sizeof(secretClass)    },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_EXTRACTABLE, &extractable,    sizeof(extractable)    },
+    };
+    CK_ULONG secretTmplCnt = sizeof(secretTmpl) / sizeof(*secretTmpl);
+    CK_ATTRIBUTE encapAttr[] = {
+        { CKA_ENCAPSULATE, &encapFlag, sizeof(encapFlag) },
+    };
+    CK_ATTRIBUTE decapAttr[] = {
+        { CKA_DECAPSULATE, &decapFlag, sizeof(decapFlag) },
+    };
+    CK_ULONG ctLen = 0;
+    CK_BYTE dummyCt[1] = { 0 };
+
+    ret = gen_mlkem_keys(session, CKP_ML_KEM_512, &pub, &priv, NULL, 0,
+                         NULL, 0, 0);
+
+    /* Flip CKA_ENCAPSULATE / CKA_DECAPSULATE off on the generated keys. */
+    if (ret == CKR_OK) {
+        ret = funcList->C_SetAttributeValue(session, pub, encapAttr, 1);
+        CHECK_CKR(ret, "Set CKA_ENCAPSULATE=FALSE on ML-KEM pub");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_SetAttributeValue(session, priv, decapAttr, 1);
+        CHECK_CKR(ret, "Set CKA_DECAPSULATE=FALSE on ML-KEM priv");
+    }
+
+    mech.mechanism = CKM_ML_KEM;
+    mech.pParameter = NULL;
+    mech.ulParameterLen = 0;
+
+    if (ret == CKR_OK) {
+        ret = funcListExt->C_EncapsulateKey(session, &mech, pub, secretTmpl,
+                                            secretTmplCnt, NULL, &ctLen,
+                                            &secret);
+        CHECK_CKR_FAIL(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
+                       "Encapsulate rejected when CKA_ENCAPSULATE=FALSE");
+    }
+    if (ret == CKR_OK) {
+        ret = funcListExt->C_DecapsulateKey(session, &mech, priv, secretTmpl,
+                                            secretTmplCnt, dummyCt,
+                                            sizeof(dummyCt), &secret);
+        CHECK_CKR_FAIL(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
+                       "Decapsulate rejected when CKA_DECAPSULATE=FALSE");
+    }
+
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+    if (secret != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, secret);
 
     return ret;
 }
@@ -2857,6 +2933,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_bad_mech_params),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_key_validation),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_initial_states),
+    PKCS11TEST_FUNC_SESS_DECL(test_mlkem_encap_decap_not_permitted),
     PKCS11TEST_FUNC_SESS_DECL(test_copy_object_mlkem_key),
 #endif
 #endif

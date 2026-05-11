@@ -97,6 +97,52 @@ See wolfpkcs11/store.h for prototypes of functions to implement.
 
 Sets the private key's label against the public key when generating key pairs.
 
+#### Define WOLFPKCS11_LEGACY_COPYABLE_FALSE_DEFAULT
+
+Restores the pre-fix behavior where `C_GetAttributeValue(CKA_COPYABLE)` always
+reports `CK_FALSE`, regardless of whether the attribute was explicitly set.
+The default (without this flag) reports `CK_TRUE` for new objects and reflects
+the stored value for objects whose `CKA_COPYABLE` was explicitly set, matching
+the PKCS#11 specification. Define this only if your application or stored
+tokens depend on the old read-back behavior. The `C_CopyObject` enforcement
+consults the stored copyable flag directly via `WP11_Object_IsCopyable`, so
+this macro does not change which objects can be copied; objects created with
+`CKA_COPYABLE=CK_TRUE` (the default) remain copyable, and objects created
+with `CKA_COPYABLE=CK_FALSE` are still rejected by `C_CopyObject` with
+`CKR_ACTION_PROHIBITED`.
+
+### Behavior changes for PKCS#11 spec compliance
+
+Several pre-existing gaps were closed; applications upgrading from earlier
+versions may need to update templates or error-handling:
+
+- `C_DeriveKey` now enforces `CKA_DERIVE` on the base key. Keys that do not
+  set `CKA_DERIVE=CK_TRUE` at creation are rejected with
+  `CKR_KEY_TYPE_INCONSISTENT`. RSA, EC, and ML-DSA private keys default
+  `CKA_DERIVE` to `CK_FALSE`, so applications doing ECDH or other key
+  derivation must now set `CKA_DERIVE=CK_TRUE` explicitly in the key
+  template. The check is skipped on `--enable-nss` builds because NSS
+  generates ephemeral ECDHE keys without setting `CKA_DERIVE` and relies on
+  the historic permissive behavior; non-NSS builds get the spec-compliant
+  enforcement.
+- `C_CopyObject` enforces `CKA_COPYABLE` (returns `CKR_ACTION_PROHIBITED`
+  on `CK_FALSE`).
+- `C_DestroyObject` enforces `CKA_DESTROYABLE` (returns
+  `CKR_ACTION_PROHIBITED` on `CK_FALSE`).
+- `C_EncapsulateKey`/`C_DecapsulateKey` enforce `CKA_ENCAPSULATE` /
+  `CKA_DECAPSULATE` and return `CKR_KEY_FUNCTION_NOT_PERMITTED` when the
+  flag is `CK_FALSE`.
+- `C_SetAttributeValue` rejects flipping `CKA_COPYABLE` or
+  `CKA_DESTROYABLE` from `CK_FALSE` back to `CK_TRUE`, returning
+  `CKR_ATTRIBUTE_READ_ONLY` per spec section 4.4.1.
+- `C_Login(CKU_SO, ...)` against a token whose SO PIN has not been set
+  now returns `CKR_USER_PIN_NOT_INITIALIZED` regardless of the PIN
+  length, closing an empty-PIN bypass where the zero-length constant
+  compare against the unset stored PIN returned equal. NSS builds
+  (`--enable-nss`) keep the empty-PIN probe accepted on uninitialized
+  tokens because `PK11_InitPin` bootstraps an empty-password NSS
+  database that way; non-empty PINs are still rejected.
+
 #### Analog Devices, Inc. MAXQ10xx Secure Elements ([MAXQ1065](https://www.analog.com/en/products/maxq1065.html)/MAXQ1080)
 
 Support has been added to use the MAXQ10xx hardware for cryptographic operations

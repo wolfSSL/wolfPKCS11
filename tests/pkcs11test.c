@@ -4308,6 +4308,7 @@ static CK_RV get_generic_key(CK_SESSION_HANDLE session, unsigned char* data,
         { CKA_EXTRACTABLE,       &extractable,      sizeof(CK_BBOOL)          },
         { CKA_SIGN,              &ckTrue,           sizeof(ckTrue)            },
         { CKA_VERIFY,            &ckTrue,           sizeof(ckTrue)            },
+        { CKA_DERIVE,            &ckTrue,           sizeof(ckTrue)            },
         { CKA_VALUE,             data,              len                       },
     };
     int cnt = sizeof(generic_key)/sizeof(*generic_key);
@@ -4640,6 +4641,7 @@ static CK_RV get_aes_128_key(CK_SESSION_HANDLE session, unsigned char* id,
         { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue)            },
         { CKA_SIGN,              &ckTrue,           sizeof(ckTrue)            },
         { CKA_VERIFY,            &ckTrue,           sizeof(ckTrue)            },
+        { CKA_DERIVE,            &ckTrue,           sizeof(ckTrue)            },
 #ifndef NO_AES
         { CKA_VALUE,             aes_128_key,       sizeof(aes_128_key)       },
 #endif
@@ -5272,6 +5274,18 @@ static CK_RV test_digest_fail(void* args)
         ret = funcList->C_DigestKey(CK_INVALID_HANDLE, key);
         CHECK_CKR_FAIL(ret, CKR_SESSION_HANDLE_INVALID,
                                            "Digest Key invalid session handle");
+    }
+    if (ret == CKR_OK) {
+        /* C_DigestKey must return CKR_OPERATION_NOT_INITIALIZED before any
+         * other validation when C_DigestInit has not been called. */
+        ret = funcList->C_DigestKey(session, key);
+        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
+                                        "Digest Key without DigestInit");
+    }
+    if (ret == CKR_OK) {
+        /* Now initialize and exercise the invalid-object-handle path. */
+        ret = funcList->C_DigestInit(session, &mech);
+        CHECK_CKR(ret, "Digest Init for invalid-handle case");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_DigestKey(session, CK_INVALID_HANDLE);
@@ -8798,6 +8812,7 @@ static CK_OBJECT_HANDLE get_ecc_priv_key(CK_SESSION_HANDLE session,
         { CKA_SENSITIVE,         &ckFalse,          sizeof(ckFalse)           },
         { CKA_EXTRACTABLE,       &extractable,      sizeof(CK_BBOOL)          },
         { CKA_VERIFY,            &ckTrue,           sizeof(ckTrue)            },
+        { CKA_DERIVE,            &ckTrue,           sizeof(ckTrue)            },
         { CKA_EC_PARAMS,         ecc_p256_params,   sizeof(ecc_p256_params)   },
         { CKA_VALUE,             ecc_p256_priv,     sizeof(ecc_p256_priv)     },
     };
@@ -10216,6 +10231,7 @@ static CK_RV gen_aes_key(CK_SESSION_HANDLE session, int len, unsigned char* id,
     CK_ULONG          keyLen = len;
     CK_ATTRIBUTE      keyTmpl[] = {
         { CKA_VALUE_LEN,       &keyLen,            sizeof(keyLen)             },
+        { CKA_DERIVE,          &ckTrue,            sizeof(ckTrue)             },
         { CKA_TOKEN,           &token,             sizeof(token)              },
         { CKA_ID,              id,                 idLen                      },
     };
@@ -14856,12 +14872,14 @@ static CK_RV test_hkdf_derive_extract_then_expand_salt_data(void* args)
 
     CK_MECHANISM mechanism = { CKM_HKDF_DERIVE, &params, sizeof(params) };
 
-    /* Template for the derived key (PRK) */
+    /* Template for the derived key (PRK). CKA_DERIVE=CK_TRUE so the PRK can
+     * itself serve as the base key for the subsequent Expand call. */
     CK_ATTRIBUTE template[] = {
         {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
         {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
         {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
         {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
+        {CKA_DERIVE, &ckTrue, sizeof(ckTrue)},
         {CKA_VALUE_LEN, &derived_len, sizeof(derived_len)}
     };
     CK_ULONG template_count = sizeof(template) / sizeof(template[0]);
@@ -15475,6 +15493,7 @@ static CK_RV test_hkdf_derive_expand_null_value_len(void* args)
         {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
         {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
         {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
+        {CKA_DERIVE, &ckTrue, sizeof(ckTrue)},
         {CKA_VALUE_LEN, &prk_len, sizeof(prk_len)}
     };
     CK_ULONG templateExtractCount =
@@ -17207,8 +17226,450 @@ static CK_RV test_encrypt_data_len_range(void* args)
     return CKR_SKIPPED;
 #endif
 }
+
+/* After an early-return error in C_Encrypt (e.g. CKR_DATA_LEN_RANGE) the
+ * session must be back to "no active operation" so that a fresh
+ * C_EncryptInit succeeds. Before the fix the session stayed in
+ * WP11_OP_ENCRYPT and re-init returned CKR_OPERATION_ACTIVE. */
+static CK_RV test_op_active_after_data_len_range(void* args)
+{
+#if SIZEOF_LONG > 4
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE key;
+    byte plain[16], enc[32], iv[16];
+    CK_ULONG encSz;
+    CK_MECHANISM mech;
+
+    memset(plain, 9, sizeof(plain));
+    memset(iv, 9, sizeof(iv));
+
+    mech.mechanism      = CKM_AES_CBC;
+    mech.ulParameterLen = sizeof(iv);
+    mech.pParameter     = iv;
+
+    ret = get_aes_128_key(session, NULL, 0, &key);
+    if (ret == CKR_OK) {
+        ret = funcList->C_EncryptInit(session, &mech, key);
+        CHECK_CKR(ret, "Encrypt Init for op-active recovery test");
+    }
+    if (ret == CKR_OK) {
+        CK_ULONG bigLen = ((CK_ULONG)1 << 32) + 16;
+        encSz = sizeof(enc);
+        ret = funcList->C_Encrypt(session, plain, bigLen, enc, &encSz);
+        CHECK_CKR_FAIL(ret, CKR_DATA_LEN_RANGE,
+                       "Encrypt rejects oversized data length");
+    }
+    /* Re-init must succeed: the previous error must have terminated the
+     * active operation. */
+    if (ret == CKR_OK) {
+        ret = funcList->C_EncryptInit(session, &mech, key);
+        CHECK_CKR(ret, "Encrypt Init succeeds after CKR_DATA_LEN_RANGE");
+    }
+    /* Clean up the active operation. */
+    if (ret == CKR_OK) {
+        encSz = sizeof(enc);
+        ret = funcList->C_Encrypt(session, plain, sizeof(plain), enc, &encSz);
+        CHECK_CKR(ret, "Encrypt completes normally after re-init");
+    }
+
+    return ret;
+#else
+    (void)args;
+    return CKR_SKIPPED;
+#endif
+}
+
+/* C_EncryptUpdate / C_DecryptUpdate must terminate the active op when they
+ * return CKR_DATA_LEN_RANGE so the next C_EncryptInit/C_DecryptInit succeeds.
+ * Forces the failure via the CK_ULONG_FITS_WORD32 path on AES-CBC (only
+ * meaningful on 64-bit). */
+static CK_RV test_op_active_after_update_data_len_range(void* args)
+{
+#if SIZEOF_LONG > 4
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE key;
+    byte plain[16], enc[32], iv[16];
+    CK_ULONG encSz;
+    CK_MECHANISM mech;
+    CK_ULONG bigLen = ((CK_ULONG)1 << 32) + 16;
+
+    memset(plain, 0xA5, sizeof(plain));
+    memset(iv, 0x5A, sizeof(iv));
+
+    mech.mechanism      = CKM_AES_CBC;
+    mech.ulParameterLen = sizeof(iv);
+    mech.pParameter     = iv;
+
+    ret = get_aes_128_key(session, NULL, 0, &key);
+
+    /* EncryptUpdate path */
+    if (ret == CKR_OK) {
+        ret = funcList->C_EncryptInit(session, &mech, key);
+        CHECK_CKR(ret, "EncryptInit for EncryptUpdate recovery test");
+    }
+    if (ret == CKR_OK) {
+        encSz = sizeof(enc);
+        ret = funcList->C_EncryptUpdate(session, plain, bigLen, enc, &encSz);
+        CHECK_CKR_FAIL(ret, CKR_DATA_LEN_RANGE,
+                       "EncryptUpdate rejects oversized part length");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_EncryptInit(session, &mech, key);
+        CHECK_CKR(ret, "EncryptInit succeeds after EncryptUpdate failure");
+    }
+    if (ret == CKR_OK) {
+        encSz = sizeof(enc);
+        ret = funcList->C_Encrypt(session, plain, sizeof(plain), enc, &encSz);
+        CHECK_CKR(ret, "Encrypt drains the recovered op");
+    }
+
+    /* DecryptUpdate path */
+    if (ret == CKR_OK) {
+        ret = funcList->C_DecryptInit(session, &mech, key);
+        CHECK_CKR(ret, "DecryptInit for DecryptUpdate recovery test");
+    }
+    if (ret == CKR_OK) {
+        encSz = sizeof(enc);
+        ret = funcList->C_DecryptUpdate(session, plain, bigLen, enc, &encSz);
+        CHECK_CKR_FAIL(ret, CKR_DATA_LEN_RANGE,
+                       "DecryptUpdate rejects oversized part length");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DecryptInit(session, &mech, key);
+        CHECK_CKR(ret, "DecryptInit succeeds after DecryptUpdate failure");
+    }
+    /* Drain by aborting via a fresh init pair. */
+    if (ret == CKR_OK) {
+        ret = funcList->C_EncryptInit(session, &mech, key);
+        CHECK_CKR(ret, "EncryptInit drains pending decrypt op");
+    }
+    if (ret == CKR_OK) {
+        encSz = sizeof(enc);
+        ret = funcList->C_Encrypt(session, plain, sizeof(plain), enc, &encSz);
+        CHECK_CKR(ret, "Encrypt completes drain");
+    }
+
+    return ret;
+#else
+    (void)args;
+    return CKR_SKIPPED;
+#endif
+}
 #endif /* HAVE_AES_CBC */
 #endif /* !NO_AES */
+
+#ifndef NO_HMAC
+#ifndef NO_SHA256
+/* C_SignUpdate / C_VerifyUpdate must terminate the active op when they hit
+ * the unsupported-mechanism path so a fresh SignInit/VerifyInit succeeds.
+ * Force the failure by initializing the op with an RSA mechanism (which is
+ * single-part only; SignUpdate/VerifyUpdate's switch hits the default
+ * CKR_MECHANISM_INVALID branch). */
+#if !defined(NO_RSA)
+static CK_RV test_op_active_after_sign_verify_update_failure(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hmacKey = CK_INVALID_HANDLE;
+    CK_MECHANISM rsaMech;
+    CK_MECHANISM hmacMech;
+    byte data[32];
+    byte sig[2048/8];
+    CK_ULONG sigSz = sizeof(sig);
+
+    memset(data, 0x5A, sizeof(data));
+    rsaMech.mechanism      = CKM_RSA_PKCS;
+    rsaMech.pParameter     = NULL;
+    rsaMech.ulParameterLen = 0;
+    hmacMech.mechanism     = CKM_SHA256_HMAC;
+    hmacMech.pParameter    = NULL;
+    hmacMech.ulParameterLen = 0;
+
+    ret = get_rsa_priv_key(session, NULL, 0, CK_FALSE, &priv);
+    if (ret == CKR_OK)
+        ret = get_rsa_pub_key(session, NULL, 0, &pub);
+    if (ret == CKR_OK)
+        ret = get_generic_key(session, data, sizeof(data), CK_TRUE, &hmacKey);
+
+    /* SignUpdate path: RSA-init then SignUpdate -> CKR_MECHANISM_INVALID. */
+    if (ret == CKR_OK) {
+        ret = funcList->C_SignInit(session, &rsaMech, priv);
+        CHECK_CKR(ret, "SignInit with RSA for SignUpdate recovery test");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_SignUpdate(session, data, sizeof(data));
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_INVALID,
+                       "SignUpdate rejected for single-part-only mechanism");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_SignInit(session, &hmacMech, hmacKey);
+        CHECK_CKR(ret, "SignInit succeeds after SignUpdate failure");
+    }
+    if (ret == CKR_OK) {
+        sigSz = sizeof(sig);
+        ret = funcList->C_Sign(session, data, sizeof(data), sig, &sigSz);
+        CHECK_CKR(ret, "Sign drains the recovered op");
+    }
+
+    /* VerifyUpdate path: same shape. */
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &rsaMech, pub);
+        CHECK_CKR(ret, "VerifyInit with RSA for VerifyUpdate recovery test");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyUpdate(session, data, sizeof(data));
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_INVALID,
+                       "VerifyUpdate rejected for single-part-only mechanism");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &hmacMech, hmacKey);
+        CHECK_CKR(ret, "VerifyInit succeeds after VerifyUpdate failure");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Verify(session, data, sizeof(data), sig, sigSz);
+        CHECK_CKR(ret, "Verify drains the recovered op");
+    }
+
+    return ret;
+}
+#endif /* !NO_RSA */
+
+/* C_DigestKey must terminate the digest op on Object_Find failure so a
+ * fresh C_DigestInit succeeds. */
+static CK_RV test_op_active_after_digest_key_failure(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_MECHANISM mech;
+    byte digest[32];
+    CK_ULONG digestSz;
+    byte data[16];
+
+    mech.mechanism      = CKM_SHA256;
+    mech.pParameter     = NULL;
+    mech.ulParameterLen = 0;
+    memset(data, 0xC3, sizeof(data));
+
+    ret = funcList->C_DigestInit(session, &mech);
+    CHECK_CKR(ret, "DigestInit for DigestKey recovery test");
+
+    if (ret == CKR_OK) {
+        /* Invalid object handle -> CKR_OBJECT_HANDLE_INVALID. The fix must
+         * also terminate the active digest. */
+        ret = funcList->C_DigestKey(session, CK_INVALID_HANDLE);
+        CHECK_CKR_FAIL(ret, CKR_OBJECT_HANDLE_INVALID,
+                       "DigestKey rejects invalid handle");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DigestInit(session, &mech);
+        CHECK_CKR(ret, "DigestInit succeeds after DigestKey failure");
+    }
+    if (ret == CKR_OK) {
+        digestSz = sizeof(digest);
+        ret = funcList->C_Digest(session, data, sizeof(data), digest, &digestSz);
+        CHECK_CKR(ret, "Digest drains the recovered op");
+    }
+
+    return ret;
+}
+
+#ifdef WOLFPKCS11_NO_STORE
+/* On WOLFPKCS11_NO_STORE builds, WP11_Digest_Key returns the positive
+ * CK_RV CKR_FUNCTION_NOT_SUPPORTED. C_DigestKey must propagate that code
+ * (not clobber it to CKR_FUNCTION_FAILED) and must still terminate the
+ * digest operation so a fresh DigestInit succeeds. */
+static CK_RV test_op_active_after_digest_key_no_store(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_MECHANISM mech;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_ULONG valueLen = 16;
+    byte keyData[16];
+    byte digest[32];
+    CK_ULONG digestSz;
+    byte data[16];
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,     &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,  &genericKeyType, sizeof(genericKeyType) },
+        { CKA_VALUE,     keyData,         sizeof(keyData)        },
+        { CKA_VALUE_LEN, &valueLen,       sizeof(valueLen)       },
+    };
+    CK_ULONG keyTmplCnt = sizeof(keyTmpl) / sizeof(*keyTmpl);
+
+    mech.mechanism      = CKM_SHA256;
+    mech.pParameter     = NULL;
+    mech.ulParameterLen = 0;
+    memset(data, 0xC3, sizeof(data));
+    memset(keyData, 0x5A, sizeof(keyData));
+
+    ret = funcList->C_CreateObject(session, keyTmpl, keyTmplCnt, &key);
+    CHECK_CKR(ret, "Create secret key for NO_STORE DigestKey test");
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_DigestInit(session, &mech);
+        CHECK_CKR(ret, "DigestInit for NO_STORE DigestKey test");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DigestKey(session, key);
+        CHECK_CKR_FAIL(ret, CKR_FUNCTION_NOT_SUPPORTED,
+                       "DigestKey on NO_STORE build returns "
+                       "CKR_FUNCTION_NOT_SUPPORTED");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DigestInit(session, &mech);
+        CHECK_CKR(ret, "DigestInit succeeds after NO_STORE DigestKey failure");
+    }
+    if (ret == CKR_OK) {
+        digestSz = sizeof(digest);
+        ret = funcList->C_Digest(session, data, sizeof(data), digest, &digestSz);
+        CHECK_CKR(ret, "Digest drains the recovered op");
+    }
+
+    if (key != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, key);
+    return ret;
+}
+#endif /* WOLFPKCS11_NO_STORE */
+#endif /* !NO_SHA256 */
+#endif /* !NO_HMAC */
+
+/* CKA_COPYABLE=CK_FALSE must cause C_CopyObject to return
+ * CKR_ACTION_PROHIBITED (PKCS#11 v2.40 sec. 11.7.5). */
+static CK_RV test_copy_object_not_copyable(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE src = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE copy = CK_INVALID_HANDLE;
+    CK_ULONG valueLen = 32;
+    byte keyData[32];
+    CK_BBOOL writableCopyable = CK_TRUE;
+    CK_ATTRIBUTE writableTmpl[] = {
+        { CKA_COPYABLE, &writableCopyable, sizeof(writableCopyable) },
+    };
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,      &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,   &genericKeyType, sizeof(genericKeyType) },
+        { CKA_VALUE,      keyData,         sizeof(keyData)        },
+        { CKA_VALUE_LEN,  &valueLen,       sizeof(valueLen)       },
+        { CKA_COPYABLE,   &ckFalse,        sizeof(ckFalse)        },
+    };
+    CK_ULONG tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
+
+    memset(keyData, 0xA5, sizeof(keyData));
+
+    ret = funcList->C_CreateObject(session, tmpl, tmplCnt, &src);
+    CHECK_CKR(ret, "Create non-copyable object");
+    if (ret == CKR_OK) {
+        ret = funcList->C_CopyObject(session, src, NULL, 0, &copy);
+        CHECK_CKR_FAIL(ret, CKR_ACTION_PROHIBITED,
+                       "Copy of CKA_COPYABLE=FALSE object rejected");
+        if (copy != CK_INVALID_HANDLE)
+            funcList->C_DestroyObject(session, copy);
+        /* PKCS#11 v2.40 sec 4.4.1: FALSE->TRUE flip must be rejected. */
+        ret = funcList->C_SetAttributeValue(session, src, writableTmpl, 1);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_READ_ONLY,
+                       "Flip CKA_COPYABLE FALSE->TRUE rejected");
+    }
+    if (src != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, src);
+    return ret;
+}
+
+/* CKA_DESTROYABLE=CK_FALSE must cause C_DestroyObject to return
+ * CKR_ACTION_PROHIBITED, and a subsequent attempt to flip CKA_DESTROYABLE
+ * back to CK_TRUE must be rejected per PKCS#11 v2.40 sec. 4.4.1. The
+ * object is a session object, so the harness's C_CloseSession will free
+ * it on test teardown. */
+static CK_RV test_destroy_object_not_destroyable(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_BBOOL writableDestroyable = CK_TRUE;
+    CK_ATTRIBUTE writableTmpl[] = {
+        { CKA_DESTROYABLE, &writableDestroyable, sizeof(writableDestroyable) },
+    };
+    CK_ULONG valueLen = 32;
+    byte keyData[32];
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,         &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,      &genericKeyType, sizeof(genericKeyType) },
+        { CKA_VALUE,         keyData,         sizeof(keyData)        },
+        { CKA_VALUE_LEN,     &valueLen,       sizeof(valueLen)       },
+        { CKA_DESTROYABLE,   &ckFalse,        sizeof(ckFalse)        },
+    };
+    CK_ULONG tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
+
+    memset(keyData, 0x5A, sizeof(keyData));
+
+    ret = funcList->C_CreateObject(session, tmpl, tmplCnt, &obj);
+    CHECK_CKR(ret, "Create non-destroyable object");
+    if (ret == CKR_OK) {
+        ret = funcList->C_DestroyObject(session, obj);
+        CHECK_CKR_FAIL(ret, CKR_ACTION_PROHIBITED,
+                       "Destroy of CKA_DESTROYABLE=FALSE object rejected");
+        /* Verify FALSE->TRUE flip is also rejected. */
+        ret = funcList->C_SetAttributeValue(session, obj, writableTmpl, 1);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_READ_ONLY,
+                       "Flip CKA_DESTROYABLE FALSE->TRUE rejected");
+    }
+    return ret;
+}
+
+/* CKA_DERIVE=CK_FALSE must cause C_DeriveKey to reject the base key
+ * (CKR_KEY_TYPE_INCONSISTENT via the existing CheckOpSupported pattern).
+ * The check is skipped on WOLFPKCS11_NSS builds for NSS compatibility. */
+#if !defined(NO_DH) && !defined(WOLFPKCS11_NSS)
+static CK_RV test_derive_key_not_allowed(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    byte peer[32];
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE secret = CK_INVALID_HANDLE;
+    CK_KEY_TYPE keyType = CKK_GENERIC_SECRET;
+    CK_ULONG secSz = 32;
+    CK_ATTRIBUTE outTmpl[] = {
+        { CKA_CLASS,     &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,  &keyType,        sizeof(keyType)        },
+        { CKA_VALUE_LEN, &secSz,          sizeof(secSz)          },
+    };
+    CK_ULONG outTmplCnt = sizeof(outTmpl) / sizeof(*outTmpl);
+    CK_ATTRIBUTE baseTmpl[] = {
+        { CKA_CLASS,    &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType) },
+        { CKA_VALUE,    peer,            sizeof(peer)           },
+        { CKA_DERIVE,   &ckFalse,        sizeof(ckFalse)        },
+    };
+    CK_ULONG baseTmplCnt = sizeof(baseTmpl) / sizeof(*baseTmpl);
+    CK_MECHANISM mech;
+
+    memset(peer, 9, sizeof(peer));
+    mech.mechanism      = CKM_DH_PKCS_DERIVE;
+    mech.ulParameterLen = sizeof(peer);
+    mech.pParameter     = peer;
+
+    ret = funcList->C_CreateObject(session, baseTmpl, baseTmplCnt, &base);
+    CHECK_CKR(ret, "Create base key with CKA_DERIVE=FALSE");
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mech, base, outTmpl, outTmplCnt,
+                                    &secret);
+        CHECK_CKR_FAIL(ret, CKR_KEY_TYPE_INCONSISTENT,
+                       "DeriveKey rejected when base CKA_DERIVE=FALSE");
+        if (secret != CK_INVALID_HANDLE)
+            funcList->C_DestroyObject(session, secret);
+    }
+    if (base != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, base);
+    return ret;
+}
+#endif /* !NO_DH && !WOLFPKCS11_NSS */
 
 #if !defined(NO_RSA) && !defined(WC_NO_RSA_OAEP)
 /* Calling C_EncryptInit with OAEP twice in a row without completing the first
@@ -17457,6 +17918,11 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_create_session_obj_ro_session),
 #endif
     PKCS11TEST_FUNC_SESS_DECL(test_copy_object_deep_copy),
+    PKCS11TEST_FUNC_SESS_DECL(test_copy_object_not_copyable),
+    PKCS11TEST_FUNC_SESS_DECL(test_destroy_object_not_destroyable),
+#if !defined(NO_DH) && !defined(WOLFPKCS11_NSS)
+    PKCS11TEST_FUNC_SESS_DECL(test_derive_key_not_allowed),
+#endif
 #if (!defined(NO_RSA) && !defined(WOLFPKCS11_TPM) && defined(WOLFSSL_KEY_GEN))
     PKCS11TEST_FUNC_SESS_DECL(test_copy_object_rsa_key),
 #endif
@@ -17609,6 +18075,8 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_aes_cbc_pad_gen_key),
     PKCS11TEST_FUNC_SESS_DECL(test_aes_cbc_pad_gen_key_id),
     PKCS11TEST_FUNC_SESS_DECL(test_encrypt_data_len_range),
+    PKCS11TEST_FUNC_SESS_DECL(test_op_active_after_data_len_range),
+    PKCS11TEST_FUNC_SESS_DECL(test_op_active_after_update_data_len_range),
 #endif
 #ifdef HAVE_AESCTR
     PKCS11TEST_FUNC_SESS_DECL(test_aes_ctr_fixed_key),
@@ -17670,6 +18138,13 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_hmac_sha256),
     PKCS11TEST_FUNC_SESS_DECL(test_hmac_sha256_fail),
     PKCS11TEST_FUNC_SESS_DECL(test_hmac_sha256_truncated_sig),
+#if !defined(NO_RSA)
+    PKCS11TEST_FUNC_SESS_DECL(test_op_active_after_sign_verify_update_failure),
+#endif
+    PKCS11TEST_FUNC_SESS_DECL(test_op_active_after_digest_key_failure),
+#ifdef WOLFPKCS11_NO_STORE
+    PKCS11TEST_FUNC_SESS_DECL(test_op_active_after_digest_key_no_store),
+#endif
 #endif
 #ifdef WOLFSSL_SHA384
     PKCS11TEST_FUNC_SESS_DECL(test_hmac_sha384),
