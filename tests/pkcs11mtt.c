@@ -805,6 +805,7 @@ static CK_RV get_generic_key(CK_SESSION_HANDLE session, unsigned char* data,
         { CKA_SENSITIVE,         &sensitive,         sizeof(CK_BBOOL)          },
         { CKA_SIGN,              &ckTrue,           sizeof(ckTrue)            },
         { CKA_VERIFY,            &ckTrue,           sizeof(ckTrue)            },
+        { CKA_DERIVE,            &ckTrue,           sizeof(ckTrue)            },
         { CKA_VALUE,             data,              len                       },
     };
     int cnt = sizeof(generic_key)/sizeof(*generic_key);
@@ -1257,6 +1258,18 @@ static CK_RV test_digest(void* args)
         ret = funcList->C_DigestKey(CK_INVALID_HANDLE, key);
         CHECK_CKR_FAIL(ret, CKR_SESSION_HANDLE_INVALID,
                                            "Digest Key invalid session handle");
+    }
+    if (ret == CKR_OK) {
+        /* C_DigestKey must return CKR_OPERATION_NOT_INITIALIZED before any
+         * other validation when C_DigestInit has not been called. */
+        ret = funcList->C_DigestKey(session, key);
+        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
+                                        "Digest Key without DigestInit");
+    }
+    if (ret == CKR_OK) {
+        /* Now initialize and exercise the invalid-object-handle path. */
+        ret = funcList->C_DigestInit(session, &mech);
+        CHECK_CKR(ret, "Digest Init for invalid-handle case");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_DigestKey(session, CK_INVALID_HANDLE);
@@ -3434,6 +3447,7 @@ static CK_OBJECT_HANDLE get_ecc_priv_key(CK_SESSION_HANDLE session,
         { CKA_EXTRACTABLE,       &extractable,      sizeof(CK_BBOOL)          },
         { CKA_SENSITIVE,         &sensitive,         sizeof(CK_BBOOL)          },
         { CKA_VERIFY,            &ckTrue,           sizeof(ckTrue)            },
+        { CKA_DERIVE,            &ckTrue,           sizeof(ckTrue)            },
         { CKA_EC_PARAMS,         ecc_p256_params,   sizeof(ecc_p256_params)   },
         { CKA_VALUE,             ecc_p256_priv,     sizeof(ecc_p256_priv)     },
     };

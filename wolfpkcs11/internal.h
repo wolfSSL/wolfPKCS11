@@ -218,6 +218,10 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #define WP11_FLAG_DERIVE               0x00040000
 #define WP11_FLAG_ENCAPSULATE          0x00080000
 #define WP11_FLAG_DECAPSULATE          0x00100000
+/* These two flags invert their attribute's spec default (CK_TRUE). When the
+ * flag is set, the attribute reads as CK_FALSE; clear means CK_TRUE. */
+#define WP11_FLAG_NOT_COPYABLE         0x00200000
+#define WP11_FLAG_NOT_DESTROYABLE      0x00400000
 
 /* Flags for token. */
 #define WP11_TOKEN_FLAG_USER_PIN_SET   0x00000001
@@ -460,6 +464,8 @@ WP11_LOCAL int WP11_Object_DataObject(WP11_Object* object, unsigned char** data,
 
 WP11_LOCAL int WP11_Object_SetClass(WP11_Object* object, CK_OBJECT_CLASS objClass);
 WP11_LOCAL CK_OBJECT_CLASS WP11_Object_GetClass(WP11_Object* object);
+WP11_LOCAL int WP11_Object_IsCopyable(WP11_Object* object);
+WP11_LOCAL int WP11_Object_IsDestroyable(WP11_Object* object);
 
 #ifdef WOLFPKCS11_NSS
 WP11_LOCAL int WP11_Object_SetTrust(WP11_Object* object, unsigned char** data,

@@ -7012,11 +7012,20 @@ int WP11_Slot_CheckSOPin(WP11_Slot* slot, char* pin, int pinLen)
 
     if (token->state != WP11_TOKEN_STATE_INITIALIZED)
         ret = PIN_NOT_SET_E;
-    /* NSS PK11_InitPin tries to login with an empty pin before setting the pin.
-     * This is effectively a public access, so should be OK.
+    /* When the SO PIN has not been set, reject any PIN check; otherwise an
+     * empty PIN would constant-compare equal to the unset zero-length
+     * stored PIN and grant SO authentication. NSS's PK11_InitPin bootstraps
+     * a fresh database by calling C_Login(CKU_SO, "", 0) before any SO PIN
+     * exists and relies on that probe succeeding, so for NSS builds the
+     * empty-PIN path is left intact and only non-empty PINs are rejected.
      */
+#ifdef WOLFPKCS11_NSS
     if (!(token->tokenFlags & WP11_TOKEN_FLAG_SO_PIN_SET) && pinLen > 0)
         ret = PIN_NOT_SET_E;
+#else
+    if (!(token->tokenFlags & WP11_TOKEN_FLAG_SO_PIN_SET))
+        ret = PIN_NOT_SET_E;
+#endif
 
     if (ret == 0) {
         WP11_Lock_UnlockRO(&slot->lock);
@@ -8939,6 +8948,32 @@ CK_ULONG WP11_Object_GetDevId(WP11_Object* object)
 CK_OBJECT_CLASS WP11_Object_GetClass(WP11_Object* object)
 {
     return object->objClass;
+}
+
+/**
+ * Check whether the object is copyable.
+ *
+ * Reads the underlying WP11_FLAG_NOT_COPYABLE bit directly so the result is
+ * not affected by the WOLFPKCS11_LEGACY_COPYABLE_FALSE_DEFAULT macro that
+ * controls the C_GetAttributeValue view.
+ *
+ * @param  object  [in]  Object object.
+ * @return  1 when copyable, 0 when not.
+ */
+int WP11_Object_IsCopyable(WP11_Object* object)
+{
+    return (object->opFlag & WP11_FLAG_NOT_COPYABLE) == 0;
+}
+
+/**
+ * Check whether the object is destroyable.
+ *
+ * @param  object  [in]  Object object.
+ * @return  1 when destroyable, 0 when not.
+ */
+int WP11_Object_IsDestroyable(WP11_Object* object)
+{
+    return (object->opFlag & WP11_FLAG_NOT_DESTROYABLE) == 0;
 }
 
 #if !defined(NO_RSA) || defined(HAVE_ECC)
@@ -10866,10 +10901,16 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             ret = GetOpFlagBool(object->opFlag, WP11_FLAG_TRUSTED, data, len);
             break;
         case CKA_COPYABLE:
+#ifdef WOLFPKCS11_LEGACY_COPYABLE_FALSE_DEFAULT
             ret = GetBool(CK_FALSE, data, len);
+#else
+            ret = GetBool(
+                !(object->opFlag & WP11_FLAG_NOT_COPYABLE), data, len);
+#endif
             break;
         case CKA_DESTROYABLE:
-            ret = GetBool(CK_TRUE, data, len);
+            ret = GetBool(
+                !(object->opFlag & WP11_FLAG_NOT_DESTROYABLE), data, len);
             break;
         case CKA_APPLICATION:
             if (object->objClass == CKO_DATA) {
@@ -11219,6 +11260,15 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             break;
         case CKA_DERIVE:
             WP11_Object_SetOpFlag(object, WP11_FLAG_DERIVE, *(CK_BBOOL*)data);
+            break;
+        case CKA_COPYABLE:
+            /* Stored as the inverse: flag set when value is CK_FALSE. */
+            WP11_Object_SetOpFlag(object, WP11_FLAG_NOT_COPYABLE,
+                                  !*(CK_BBOOL*)data);
+            break;
+        case CKA_DESTROYABLE:
+            WP11_Object_SetOpFlag(object, WP11_FLAG_NOT_DESTROYABLE,
+                                  !*(CK_BBOOL*)data);
             break;
         case CKA_ID:
             ret = WP11_Object_SetKeyId(object, data, (int)len);
