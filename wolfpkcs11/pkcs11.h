@@ -124,6 +124,8 @@ extern "C" {
 #define CKF_LIBRARY_CANT_CREATE_OS_THREADS    0x00000001UL
 #define CKF_OS_LOCKING_OK                     0x00000002UL
 
+#define CKF_DONT_BLOCK                        0x00000001UL
+
 #define CKF_RNG                               0x00000001UL
 #define CKF_WRITE_PROTECTED                   0x00000002UL
 #define CKF_LOGIN_REQUIRED                    0x00000004UL

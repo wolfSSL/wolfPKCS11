@@ -86,6 +86,11 @@ noinst_PROGRAMS += tests/rsa_exponent_test
 tests_rsa_exponent_test_SOURCES = tests/rsa_exponent_test.c
 tests_rsa_exponent_test_LDADD =
 
+check_PROGRAMS += tests/pkcs11_compliance_test
+noinst_PROGRAMS += tests/pkcs11_compliance_test
+tests_pkcs11_compliance_test_SOURCES = tests/pkcs11_compliance_test.c
+tests_pkcs11_compliance_test_LDADD =
+
 if BUILD_STATIC
 tests_pkcs11test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11mtt_LDADD  += src/libwolfpkcs11.la
@@ -104,6 +109,7 @@ tests_aes_keygen_attrs_test_LDADD += src/libwolfpkcs11.la
 tests_pbkdf2_keygen_attrs_test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11v3test_LDADD += src/libwolfpkcs11.la
 tests_rsa_exponent_test_LDADD += src/libwolfpkcs11.la
+tests_pkcs11_compliance_test_LDADD += src/libwolfpkcs11.la
 else
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
 tests_empty_pin_store_test_LDADD += src/libwolfpkcs11.la
@@ -114,6 +120,7 @@ tests_ecb_check_value_error_test_LDADD += src/libwolfpkcs11.la
 tests_operation_active_test_LDADD += src/libwolfpkcs11.la
 tests_aes_keygen_attrs_test_LDADD += src/libwolfpkcs11.la
 tests_pbkdf2_keygen_attrs_test_LDADD += src/libwolfpkcs11.la
+tests_pkcs11_compliance_test_LDADD += src/libwolfpkcs11.la
 endif
 
 EXTRA_DIST += tests/unit.h \

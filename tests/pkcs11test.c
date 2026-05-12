@@ -5848,8 +5848,8 @@ static CK_RV test_encdec_digest(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_DigestEncryptUpdate(session, data, dataSz, enc,
                                                                         &encSz);
-        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
-                                       "Digest Encrypt Update not initialized");
+        CHECK_CKR_FAIL(ret, CKR_FUNCTION_NOT_SUPPORTED,
+                                       "Digest Encrypt Update unsupported");
     }
 
     if (ret == CKR_OK) {
@@ -5877,8 +5877,8 @@ static CK_RV test_encdec_digest(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_DecryptDigestUpdate(session, enc, encSz, data,
                                                                        &dataSz);
-        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
-                                       "Decrypt Digest Update not initialized");
+        CHECK_CKR_FAIL(ret, CKR_FUNCTION_NOT_SUPPORTED,
+                                       "Decrypt Digest Update unsupported");
     }
 
     return ret;
@@ -5916,8 +5916,8 @@ static CK_RV test_encdec_signverify(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_SignEncryptUpdate(session, data, dataSz, enc, &encSz);
-        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
-                                         "Sign Encrypt Update not initialized");
+        CHECK_CKR_FAIL(ret, CKR_FUNCTION_NOT_SUPPORTED,
+                                         "Sign Encrypt Update unsupported");
     }
 
     if (ret == CKR_OK) {
@@ -5945,8 +5945,8 @@ static CK_RV test_encdec_signverify(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_DecryptVerifyUpdate(session, enc, encSz, data,
                                                                        &dataSz);
-        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
-                                       "Decrypt Verify Update not initialized");
+        CHECK_CKR_FAIL(ret, CKR_FUNCTION_NOT_SUPPORTED,
+                                       "Decrypt Verify Update unsupported");
     }
 
 

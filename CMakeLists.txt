@@ -721,7 +721,8 @@ if(WOLFPKCS11_TESTS)
         token_path_test
         rsa_session_persistence_test
         debug_test
-        object_id_uniqueness_test)
+        object_id_uniqueness_test
+        pkcs11_compliance_test)
 
     foreach(test_target IN LISTS WPKCS11_TEST_TARGETS)
         add_wpkcs11_test(${test_target}

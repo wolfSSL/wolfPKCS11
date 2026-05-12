@@ -26,6 +26,17 @@
 #include <wolfpkcs11/pkcs11.h>
 #include <wolfpkcs11/internal.h>
 
+/* Windows headers macro-rewrite CreateMutex (and friends) to CreateMutexA/W
+ * when UNICODE is defined, which collides with the CK_C_INITIALIZE_ARGS
+ * struct member names. Undef the four Win32 macros so direct field access
+ * compiles. */
+#ifdef _WIN32
+    #undef CreateMutex
+    #undef DestroyMutex
+    #undef LockMutex
+    #undef UnlockMutex
+#endif
+
 /* Function list table for PKCS#11 v2.40 */
 static CK_FUNCTION_LIST wolfpkcs11FunctionList = {
     /* Version: Major, Minor */
@@ -509,6 +520,19 @@ CK_RV C_Initialize(CK_VOID_PTR pInitArgs)
     WOLFPKCS11_ENTER("C_Initialize");
 
     if (args != NULL) {
+        /* PKCS#11 spec: the four mutex callbacks must be all-set or all-NULL;
+         * any partial combination is CKR_ARGUMENTS_BAD. pReserved must also
+         * be NULL. */
+        int callbacks_set =
+            (args->CreateMutex != NULL) + (args->DestroyMutex != NULL) +
+            (args->LockMutex != NULL) + (args->UnlockMutex != NULL);
+        if ((callbacks_set != 0 && callbacks_set != 4) ||
+            args->pReserved != NULL) {
+            ret = CKR_ARGUMENTS_BAD;
+            WOLFPKCS11_LEAVE("C_Initialize", ret);
+            return ret;
+        }
+
         WOLFPKCS11_MSG("Warning: C_Initialize called with arguments, but most "
                        "are ignored.");
 #if (defined(WOLFPKCS11_NSS) && !defined(WOLFPKCS11_NO_STORE))
@@ -556,9 +580,19 @@ CK_RV C_Finalize(CK_VOID_PTR pReserved)
     CK_RV ret;
     WOLFPKCS11_ENTER("C_Finalize");
 
+    if (!WP11_Library_IsInitialized()) {
+        ret = CKR_CRYPTOKI_NOT_INITIALIZED;
+        WOLFPKCS11_LEAVE("C_Finalize", ret);
+        return ret;
+    }
+    if (pReserved != NULL) {
+        ret = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_Finalize", ret);
+        return ret;
+    }
+
     WP11_Library_Final();
 
-    (void)pReserved;
     ret = CKR_OK;
     WOLFPKCS11_LEAVE("C_Finalize", ret);
     return ret;
