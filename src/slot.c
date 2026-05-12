@@ -2062,12 +2062,23 @@ CK_RV C_WaitForSlotEvent(CK_FLAGS flags, CK_SLOT_ID_PTR pSlot,
         WOLFPKCS11_LEAVE("C_WaitForSlotEvent", rv);
         return rv;
     }
+    /* PKCS#11: pSlot is an output parameter, pReserved must be NULL, and
+     * only the CKF_DONT_BLOCK bit is defined for flags. Reject malformed
+     * callers before returning the supported non-blocking result. */
+    if (pSlot == NULL || pReserved != NULL ||
+                                            (flags & ~CKF_DONT_BLOCK) != 0) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_WaitForSlotEvent", rv);
+        return rv;
+    }
 
-    (void)pSlot;
-    (void)flags;
-    (void)pReserved;
-
-    rv = CKR_FUNCTION_NOT_SUPPORTED;
+    /* wolfPKCS11 has no removable slots, so no slot event ever occurs. For a
+     * non-blocking query the spec answer is CKR_NO_EVENT; blocking calls
+     * would deadlock forever, so report unsupported. */
+    if ((flags & CKF_DONT_BLOCK) != 0)
+        rv = CKR_NO_EVENT;
+    else
+        rv = CKR_FUNCTION_NOT_SUPPORTED;
     WOLFPKCS11_LEAVE("C_WaitForSlotEvent", rv);
     return rv;
 }

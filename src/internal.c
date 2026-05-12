@@ -6728,8 +6728,13 @@ int WP11_GetSlotList(int tokenIn, CK_SLOT_ID* slotIdList, CK_ULONG* count)
 
     if (slotIdList == NULL)
         *count = slotCnt;
-    else if ((int)*count < slotCnt)
+    else if ((int)*count < slotCnt) {
+        /* PKCS#11 spec: report the required size so the caller can resize
+         * and retry. Without this, callers using the standard two-call size
+         * query pattern stall at BUFFER_TOO_SMALL. */
+        *count = slotCnt;
         ret = BUFFER_E;
+    }
     else {
         for (i = 0; i < slotCnt && i < (int)*count; i++)
             slotIdList[i] = i + 1;
@@ -8330,7 +8335,12 @@ int WP11_Session_SetGcmParams(WP11_Session* session, unsigned char* iv,
     int ret = 0;
     WP11_GcmParams* gcm = &session->params.gcm;
 
-    if (tagBits > 128 || ivSz > WP11_MAX_GCM_NONCE_SZ)
+    if (tagBits > 128 || ivSz < 0 || ivSz > WP11_MAX_GCM_NONCE_SZ)
+        ret = BAD_FUNC_ARG;
+    /* Caller-supplied IV pointer and length must agree: NULL pairs with 0
+     * and only with 0, and a non-NULL buffer must come with a positive
+     * length. Either mismatch is a contract bug. */
+    if (ret == 0 && (iv == NULL) != (ivSz == 0))
         ret = BAD_FUNC_ARG;
 
     if (ret == 0) {
@@ -8338,7 +8348,8 @@ int WP11_Session_SetGcmParams(WP11_Session* session, unsigned char* iv,
             XFREE(gcm->aad, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         }
         XMEMSET(gcm, 0, sizeof(*gcm));
-        XMEMCPY(gcm->iv, iv, ivSz);
+        if (ivSz > 0)
+            XMEMCPY(gcm->iv, iv, ivSz);
         gcm->ivSz = ivSz;
         gcm->tagBits = tagBits;
         if (aad != NULL) {
@@ -8380,7 +8391,12 @@ int WP11_Session_SetCcmParams(WP11_Session* session, int dataSz,
     int ret = 0;
     WP11_CcmParams* ccm = &session->params.ccm;
 
-    if (ivSz > WP11_MAX_GCM_NONCE_SZ)
+    if (ivSz < 0 || ivSz > WP11_MAX_GCM_NONCE_SZ)
+        ret = BAD_FUNC_ARG;
+    /* Caller-supplied IV pointer and length must agree: NULL pairs with 0
+     * and only with 0, and a non-NULL buffer must come with a positive
+     * length. Either mismatch is a contract bug. */
+    if (ret == 0 && (iv == NULL) != (ivSz == 0))
         ret = BAD_FUNC_ARG;
 
     if (ret == 0) {
@@ -8389,7 +8405,8 @@ int WP11_Session_SetCcmParams(WP11_Session* session, int dataSz,
         }
         XMEMSET(ccm, 0, sizeof(*ccm));
         ccm->dataSz = dataSz;
-        XMEMCPY(ccm->iv, iv, ivSz);
+        if (ivSz > 0)
+            XMEMCPY(ccm->iv, iv, ivSz);
         ccm->ivSz = ivSz;
         if (aad != NULL) {
             ccm->aad = (unsigned char*)XMALLOC(aadSz, NULL,

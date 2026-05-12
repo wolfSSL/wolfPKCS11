@@ -6644,7 +6644,7 @@ CK_RV C_DigestEncryptUpdate(CK_SESSION_HANDLE hSession,
 
     (void)pEncryptedPart;
 
-    rv = CKR_OPERATION_NOT_INITIALIZED;
+    rv = CKR_FUNCTION_NOT_SUPPORTED;
     WOLFPKCS11_LEAVE("C_DigestEncryptUpdate", rv);
     return rv;
 }
@@ -6700,7 +6700,7 @@ CK_RV C_DecryptDigestUpdate(CK_SESSION_HANDLE hSession,
 
     (void)pPart;
 
-    rv = CKR_OPERATION_NOT_INITIALIZED;
+    rv = CKR_FUNCTION_NOT_SUPPORTED;
     WOLFPKCS11_LEAVE("C_DecryptDigestUpdate", rv);
     return rv;
 }
@@ -6756,7 +6756,7 @@ CK_RV C_SignEncryptUpdate(CK_SESSION_HANDLE hSession,
 
     (void)pEncryptedPart;
 
-    rv = CKR_OPERATION_NOT_INITIALIZED;
+    rv = CKR_FUNCTION_NOT_SUPPORTED;
     WOLFPKCS11_LEAVE("C_SignEncryptUpdate", rv);
     return rv;
 }
@@ -6812,7 +6812,7 @@ CK_RV C_DecryptVerifyUpdate(CK_SESSION_HANDLE hSession,
 
     (void)pPart;
 
-    rv = CKR_OPERATION_NOT_INITIALIZED;
+    rv = CKR_FUNCTION_NOT_SUPPORTED;
     WOLFPKCS11_LEAVE("C_DecryptVerifyUpdate", rv);
     return rv;
 }
@@ -6869,6 +6869,24 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
         rv = CKR_ARGUMENTS_BAD;
         WOLFPKCS11_LEAVE("C_GenerateKey", rv);
         return rv;
+    }
+    /* Only require R/W session for token objects */
+    if (!WP11_Session_IsRW(session)) {
+        CK_ATTRIBUTE* tokenAttr = NULL;
+        FindAttributeType(pTemplate, ulCount, CKA_TOKEN, &tokenAttr);
+        if (tokenAttr != NULL) {
+            if (tokenAttr->pValue == NULL ||
+                tokenAttr->ulValueLen != sizeof(CK_BBOOL)) {
+                rv = CKR_ATTRIBUTE_VALUE_INVALID;
+                WOLFPKCS11_LEAVE("C_GenerateKey", rv);
+                return rv;
+            }
+            if (*(CK_BBOOL*)tokenAttr->pValue == CK_TRUE) {
+                rv = CKR_SESSION_READ_ONLY;
+                WOLFPKCS11_LEAVE("C_GenerateKey", rv);
+                return rv;
+            }
+        }
     }
 
     switch (pMechanism->mechanism) {
@@ -7286,6 +7304,32 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
         rv = CKR_ARGUMENTS_BAD;
         WOLFPKCS11_LEAVE("C_GenerateKeyPair", rv);
         return rv;
+    }
+    /* Only require R/W session for token objects. Each template must be
+     * inspected independently — a public template with CKA_TOKEN=FALSE must
+     * not mask a private template requesting CKA_TOKEN=TRUE. */
+    if (!WP11_Session_IsRW(session)) {
+        CK_ATTRIBUTE_PTR tpls[2] = { pPublicKeyTemplate, pPrivateKeyTemplate };
+        CK_ULONG counts[2] = { ulPublicKeyAttributeCount,
+                                ulPrivateKeyAttributeCount };
+        int i;
+        for (i = 0; i < 2; i++) {
+            CK_ATTRIBUTE* tokenAttr = NULL;
+            FindAttributeType(tpls[i], counts[i], CKA_TOKEN, &tokenAttr);
+            if (tokenAttr == NULL)
+                continue;
+            if (tokenAttr->pValue == NULL ||
+                tokenAttr->ulValueLen != sizeof(CK_BBOOL)) {
+                rv = CKR_ATTRIBUTE_VALUE_INVALID;
+                WOLFPKCS11_LEAVE("C_GenerateKeyPair", rv);
+                return rv;
+            }
+            if (*(CK_BBOOL*)tokenAttr->pValue == CK_TRUE) {
+                rv = CKR_SESSION_READ_ONLY;
+                WOLFPKCS11_LEAVE("C_GenerateKeyPair", rv);
+                return rv;
+            }
+        }
     }
 
     switch (pMechanism->mechanism) {
@@ -8307,6 +8351,24 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
         rv = CKR_ARGUMENTS_BAD;
         WOLFPKCS11_LEAVE("C_DeriveKey", rv);
         return rv;
+    }
+    /* Only require R/W session for token objects */
+    if (!WP11_Session_IsRW(session)) {
+        CK_ATTRIBUTE* tokenAttr = NULL;
+        FindAttributeType(pTemplate, ulAttributeCount, CKA_TOKEN, &tokenAttr);
+        if (tokenAttr != NULL) {
+            if (tokenAttr->pValue == NULL ||
+                tokenAttr->ulValueLen != sizeof(CK_BBOOL)) {
+                rv = CKR_ATTRIBUTE_VALUE_INVALID;
+                WOLFPKCS11_LEAVE("C_DeriveKey", rv);
+                return rv;
+            }
+            if (*(CK_BBOOL*)tokenAttr->pValue == CK_TRUE) {
+                rv = CKR_SESSION_READ_ONLY;
+                WOLFPKCS11_LEAVE("C_DeriveKey", rv);
+                return rv;
+            }
+        }
     }
 
     ret = WP11_Object_Find(session, hBaseKey, &obj);
