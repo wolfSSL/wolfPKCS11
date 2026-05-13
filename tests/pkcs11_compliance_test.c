@@ -428,12 +428,19 @@ static CK_RV make_aes_key(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE* key)
     static CK_OBJECT_CLASS secretKeyClass = CKO_SECRET_KEY;
     static CK_KEY_TYPE aesKeyType = CKK_AES;
     static CK_BBOOL ckTrue = CK_TRUE;
+    static CK_BBOOL ckFalse = CK_FALSE;
     CK_ATTRIBUTE tpl[] = {
         { CKA_CLASS,    &secretKeyClass, sizeof(secretKeyClass) },
         { CKA_KEY_TYPE, &aesKeyType,     sizeof(aesKeyType)     },
         { CKA_ENCRYPT,  &ckTrue,         sizeof(ckTrue)         },
         { CKA_DECRYPT,  &ckTrue,         sizeof(ckTrue)         },
         { CKA_VALUE,    aes_128_key,     16                     },
+        /* Tests open public sessions and never C_Login. Explicit
+         * CKA_PRIVATE=FALSE keeps the gate from finding 3144 from
+         * rejecting these helper keys; finding 2370 (default flip)
+         * means CKO_SECRET_KEY would otherwise default to CKA_PRIVATE=TRUE
+         * and require login. */
+        { CKA_PRIVATE,  &ckFalse,        sizeof(ckFalse)        },
     };
     return funcList->C_CreateObject(session, tpl,
                                     sizeof(tpl) / sizeof(tpl[0]), key);
@@ -689,6 +696,898 @@ out:
 #endif /* !WOLFPKCS11_NSS */
 }
 
+/* Finding 3637: SecretObject_GetAttr must return CKR_ATTRIBUTE_SENSITIVE when
+ * CKA_VALUE is requested on a CKK_GENERIC_SECRET object that has
+ * CKA_SENSITIVE=TRUE, even when CKA_EXTRACTABLE=TRUE. The existing
+ * test_attributes_secret coverage always pairs SENSITIVE=FALSE or pairs
+ * SENSITIVE=TRUE with EXTRACTABLE=FALSE, so a mutation that drops the
+ * SENSITIVE arm of the noPriv disjunction would not be caught. */
+static void test_3637_generic_secret_sensitive_attr(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = 0;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS secretKeyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE genericKeyType = CKK_GENERIC_SECRET;
+    CK_BBOOL ckTrue = CK_TRUE;
+    CK_BBOOL ckFalse = CK_FALSE;
+    CK_ATTRIBUTE createTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass,  sizeof(secretKeyClass)  },
+        { CKA_KEY_TYPE,    &genericKeyType,  sizeof(genericKeyType)  },
+        { CKA_SENSITIVE,   &ckTrue,          sizeof(ckTrue)          },
+        { CKA_EXTRACTABLE, &ckTrue,          sizeof(ckTrue)          },
+        { CKA_VALUE,       aes_128_key,      sizeof(aes_128_key)     },
+        { CKA_PRIVATE,     &ckFalse,         sizeof(ckFalse)         },
+    };
+    CK_BYTE buf[32];
+    CK_ATTRIBUTE getTmpl[] = {
+        { CKA_VALUE, buf, sizeof(buf) },
+    };
+
+    printf("\n--- 3637: generic-secret CKA_VALUE rejects when SENSITIVE ---\n");
+
+    rv = lib_init();
+    CHECK_RV(rv, "C_Initialize", CKR_OK);
+    if (rv != CKR_OK) return;
+
+    rv = open_session(CKF_SERIAL_SESSION | CKF_RW_SESSION, &session);
+    CHECK_RV(rv, "open R/W session", CKR_OK);
+    if (rv != CKR_OK) goto out;
+
+    rv = funcList->C_CreateObject(session, createTmpl,
+                                  sizeof(createTmpl) / sizeof(createTmpl[0]),
+                                  &key);
+    CHECK_RV(rv, "C_CreateObject(generic_secret, SENSITIVE=TRUE, "
+                 "EXTRACTABLE=TRUE)", CKR_OK);
+    if (rv != CKR_OK) goto out;
+
+    rv = funcList->C_GetAttributeValue(session, key, getTmpl, 1);
+    CHECK_RV(rv, "C_GetAttributeValue(CKA_VALUE) on sensitive generic secret",
+             CKR_ATTRIBUTE_SENSITIVE);
+
+out:
+    if (key != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, key);
+    if (session != 0)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+
+/* Finding 2776: The four asymmetric *Object_GetAttr functions
+ * (RsaObject_GetAttr, EcObject_GetAttr, DhObject_GetAttr,
+ * MldsaObject_GetAttr) historically only set *len = CK_UNAVAILABLE_INFORMATION
+ * when noPriv was true and returned 0, leaving C_GetAttributeValue to report
+ * CKR_OK. Per PKCS#11, asking for a sensitive attribute must return
+ * CKR_ATTRIBUTE_SENSITIVE, matching the symmetric path in
+ * SecretObject_GetAttr. The fix also closes the mutation gap noted in the
+ * finding: a mutant that drops the SENSITIVE arm of the noPriv disjunction
+ * would otherwise survive every existing asymmetric-key test. */
+static void test_2776_asymmetric_sensitive_attr(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = 0;
+#ifndef NO_RSA
+    CK_OBJECT_HANDLE rsaKey = CK_INVALID_HANDLE;
+#endif
+#ifdef HAVE_ECC
+    CK_OBJECT_HANDLE ecKey = CK_INVALID_HANDLE;
+#endif
+#ifndef NO_DH
+    CK_OBJECT_HANDLE dhKey = CK_INVALID_HANDLE;
+#endif
+    CK_OBJECT_CLASS privKeyClass = CKO_PRIVATE_KEY;
+    CK_BBOOL ckTrue = CK_TRUE;
+    CK_BBOOL ckFalse = CK_FALSE;
+    CK_BYTE buf[512];
+
+    (void)privKeyClass;
+    (void)ckTrue;
+    (void)ckFalse;
+    (void)buf;
+
+    printf("\n--- 2776: asymmetric CKA_VALUE/PRIVATE_EXPONENT sensitive ---\n");
+
+    rv = lib_init();
+    CHECK_RV(rv, "C_Initialize", CKR_OK);
+    if (rv != CKR_OK) return;
+
+    rv = open_session(CKF_SERIAL_SESSION | CKF_RW_SESSION, &session);
+    CHECK_RV(rv, "open R/W session", CKR_OK);
+    if (rv != CKR_OK) goto out;
+
+#ifndef NO_RSA
+    {
+        CK_KEY_TYPE rsaKeyType = CKK_RSA;
+        CK_ATTRIBUTE tpl[] = {
+            { CKA_CLASS,            &privKeyClass,     sizeof(privKeyClass)      },
+            { CKA_KEY_TYPE,         &rsaKeyType,       sizeof(rsaKeyType)        },
+            { CKA_SENSITIVE,        &ckTrue,           sizeof(ckTrue)            },
+            { CKA_EXTRACTABLE,      &ckTrue,           sizeof(ckTrue)            },
+            { CKA_PRIVATE,          &ckFalse,          sizeof(ckFalse)           },
+            { CKA_MODULUS,          rsa_2048_modulus,  sizeof(rsa_2048_modulus)  },
+            { CKA_PRIVATE_EXPONENT, rsa_2048_priv_exp, sizeof(rsa_2048_priv_exp) },
+            { CKA_PRIME_1,          rsa_2048_p,        sizeof(rsa_2048_p)        },
+            { CKA_PRIME_2,          rsa_2048_q,        sizeof(rsa_2048_q)        },
+            { CKA_EXPONENT_1,       rsa_2048_dP,       sizeof(rsa_2048_dP)       },
+            { CKA_EXPONENT_2,       rsa_2048_dQ,       sizeof(rsa_2048_dQ)       },
+            { CKA_COEFFICIENT,      rsa_2048_u,        sizeof(rsa_2048_u)        },
+            { CKA_PUBLIC_EXPONENT,  rsa_2048_pub_exp,  sizeof(rsa_2048_pub_exp)  },
+        };
+        CK_ATTRIBUTE getTmpl[] = {
+            { CKA_PRIVATE_EXPONENT, buf, sizeof(buf) },
+        };
+        rv = funcList->C_CreateObject(session, tpl,
+                                      sizeof(tpl) / sizeof(tpl[0]), &rsaKey);
+        CHECK_RV(rv, "C_CreateObject(RSA priv, SENSITIVE=TRUE)", CKR_OK);
+        if (rv == CKR_OK) {
+            rv = funcList->C_GetAttributeValue(session, rsaKey, getTmpl, 1);
+            CHECK_RV(rv, "C_GetAttributeValue(CKA_PRIVATE_EXPONENT) on "
+                         "sensitive RSA key", CKR_ATTRIBUTE_SENSITIVE);
+        }
+    }
+#endif
+
+#ifdef HAVE_ECC
+    {
+        CK_KEY_TYPE eccKeyType = CKK_EC;
+        CK_ATTRIBUTE tpl[] = {
+            { CKA_CLASS,       &privKeyClass,    sizeof(privKeyClass)    },
+            { CKA_KEY_TYPE,    &eccKeyType,      sizeof(eccKeyType)      },
+            { CKA_SENSITIVE,   &ckTrue,          sizeof(ckTrue)          },
+            { CKA_EXTRACTABLE, &ckTrue,          sizeof(ckTrue)          },
+            { CKA_PRIVATE,     &ckFalse,         sizeof(ckFalse)         },
+            { CKA_EC_PARAMS,   ecc_p256_params,  sizeof(ecc_p256_params) },
+            { CKA_VALUE,       ecc_p256_priv,    sizeof(ecc_p256_priv)   },
+        };
+        CK_ATTRIBUTE getTmpl[] = {
+            { CKA_VALUE, buf, sizeof(buf) },
+        };
+        rv = funcList->C_CreateObject(session, tpl,
+                                      sizeof(tpl) / sizeof(tpl[0]), &ecKey);
+        CHECK_RV(rv, "C_CreateObject(EC priv, SENSITIVE=TRUE)", CKR_OK);
+        if (rv == CKR_OK) {
+            rv = funcList->C_GetAttributeValue(session, ecKey, getTmpl, 1);
+            CHECK_RV(rv, "C_GetAttributeValue(CKA_VALUE) on sensitive EC key",
+                     CKR_ATTRIBUTE_SENSITIVE);
+        }
+    }
+#endif
+
+#ifndef NO_DH
+    {
+        CK_KEY_TYPE dhKeyType = CKK_DH;
+        CK_ATTRIBUTE tpl[] = {
+            { CKA_CLASS,       &privKeyClass,   sizeof(privKeyClass)   },
+            { CKA_KEY_TYPE,    &dhKeyType,      sizeof(dhKeyType)      },
+            { CKA_SENSITIVE,   &ckTrue,         sizeof(ckTrue)         },
+            { CKA_EXTRACTABLE, &ckTrue,         sizeof(ckTrue)         },
+            { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
+            { CKA_PRIME,       dh_ffdhe2048_p,  sizeof(dh_ffdhe2048_p) },
+            { CKA_BASE,        dh_ffdhe2048_g,  sizeof(dh_ffdhe2048_g) },
+            { CKA_VALUE,       dh_2048_priv,    sizeof(dh_2048_priv)   },
+        };
+        CK_ATTRIBUTE getTmpl[] = {
+            { CKA_VALUE, buf, sizeof(buf) },
+        };
+        rv = funcList->C_CreateObject(session, tpl,
+                                      sizeof(tpl) / sizeof(tpl[0]), &dhKey);
+        CHECK_RV(rv, "C_CreateObject(DH priv, SENSITIVE=TRUE)", CKR_OK);
+        if (rv == CKR_OK) {
+            rv = funcList->C_GetAttributeValue(session, dhKey, getTmpl, 1);
+            CHECK_RV(rv, "C_GetAttributeValue(CKA_VALUE) on sensitive DH key",
+                     CKR_ATTRIBUTE_SENSITIVE);
+        }
+    }
+#endif
+
+out:
+#ifndef NO_RSA
+    if (rsaKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, rsaKey);
+#endif
+#ifdef HAVE_ECC
+    if (ecKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, ecKey);
+#endif
+#ifndef NO_DH
+    if (dhKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, dhKey);
+#endif
+    if (session != 0)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+
+/* Finding 3407: C_GetTokenInfo must not advertise CKF_TOKEN_INITIALIZED on a
+ * fresh slot. wp11_Slot_Init used to call wp11_Token_Init which unconditionally
+ * set token state to INITIALIZED, so an application keying off
+ * CKF_TOKEN_INITIALIZED to decide whether provisioning was needed would skip
+ * C_InitToken on a token that had never been provisioned. After C_InitToken
+ * the flag must appear. */
+static void test_3407_fresh_slot_uninitialized(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot;
+    CK_SLOT_ID* slotList = NULL;
+    CK_ULONG slotCount = 0;
+    CK_TOKEN_INFO info;
+    /* PKCS#11 32-byte space-padded label, no NUL terminator. */
+    CK_UTF8CHAR label[32];
+    CK_BYTE soPin[] = "password123456";
+
+    XMEMSET(label, ' ', sizeof(label));
+    XMEMCPY(label, "compliance-3407", 15);
+
+    printf("\n--- 3407: fresh slot reports !CKF_TOKEN_INITIALIZED ---\n");
+
+    /* Wipe any persisted token from previous tests in this session so the
+     * library starts genuinely fresh. */
+    cleanup_store();
+
+    rv = lib_init();
+    CHECK_RV(rv, "C_Initialize", CKR_OK);
+    if (rv != CKR_OK) return;
+
+    rv = funcList->C_GetSlotList(CK_TRUE, NULL, &slotCount);
+    CHECK_RV(rv, "C_GetSlotList(NULL) count", CKR_OK);
+    if (rv != CKR_OK || slotCount == 0) goto out;
+
+    slotList = (CK_SLOT_ID*)XMALLOC(slotCount * sizeof(CK_SLOT_ID), NULL,
+                                    DYNAMIC_TYPE_TMP_BUFFER);
+    if (slotList == NULL) goto out;
+    rv = funcList->C_GetSlotList(CK_TRUE, slotList, &slotCount);
+    CHECK_RV(rv, "C_GetSlotList(buf)", CKR_OK);
+    if (rv != CKR_OK) goto out;
+    slot = slotList[0];
+
+    XMEMSET(&info, 0, sizeof(info));
+    rv = funcList->C_GetTokenInfo(slot, &info);
+    CHECK_RV(rv, "C_GetTokenInfo on fresh slot", CKR_OK);
+    if (rv == CKR_OK) {
+        CHECK_COND_MSG(!(info.flags & CKF_TOKEN_INITIALIZED),
+                       "CKF_TOKEN_INITIALIZED clear on fresh slot");
+    }
+
+    rv = funcList->C_InitToken(slot, soPin, sizeof(soPin) - 1, label);
+    CHECK_RV(rv, "C_InitToken", CKR_OK);
+    if (rv == CKR_OK) {
+        XMEMSET(&info, 0, sizeof(info));
+        rv = funcList->C_GetTokenInfo(slot, &info);
+        CHECK_RV(rv, "C_GetTokenInfo after C_InitToken", CKR_OK);
+        if (rv == CKR_OK) {
+            CHECK_COND_MSG(info.flags & CKF_TOKEN_INITIALIZED,
+                           "CKF_TOKEN_INITIALIZED set after C_InitToken");
+        }
+    }
+
+out:
+    if (slotList != NULL)
+        XFREE(slotList, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    funcList->C_Finalize(NULL);
+    cleanup_store();
+}
+
+/* Finding 1343: C_SetAttributeValue must consult CKA_MODIFIABLE on the
+ * target object. If CKA_MODIFIABLE=CK_FALSE, any attempt to change an
+ * attribute must return CKR_ACTION_PROHIBITED. PKCS#11 default for
+ * CKA_MODIFIABLE is CK_TRUE; the positive arm of the test confirms a key
+ * created without the flag is still modifiable. */
+static void test_1343_modifiable_enforced(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = 0;
+    CK_OBJECT_HANDLE lockedKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE plainKey = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS secretKeyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE aesKeyType = CKK_AES;
+    CK_BBOOL ckTrue = CK_TRUE;
+    CK_BBOOL ckFalse = CK_FALSE;
+    CK_ATTRIBUTE lockedTmpl[] = {
+        { CKA_CLASS,      &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,   &aesKeyType,     sizeof(aesKeyType)     },
+        { CKA_VALUE,      aes_128_key,     sizeof(aes_128_key)    },
+        { CKA_MODIFIABLE, &ckFalse,        sizeof(ckFalse)        },
+        { CKA_PRIVATE,    &ckFalse,        sizeof(ckFalse)        },
+    };
+    CK_ATTRIBUTE plainTmpl[] = {
+        { CKA_CLASS,    &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE, &aesKeyType,     sizeof(aesKeyType)     },
+        { CKA_VALUE,    aes_128_key,     sizeof(aes_128_key)    },
+        { CKA_PRIVATE,  &ckFalse,        sizeof(ckFalse)        },
+    };
+    CK_UTF8CHAR newLabel[] = "1343-relabel";
+    CK_ATTRIBUTE setLabelTmpl[] = {
+        { CKA_LABEL, newLabel, sizeof(newLabel) - 1 },
+    };
+    CK_BBOOL getMod = CK_FALSE;
+    CK_ATTRIBUTE getTmpl[] = {
+        { CKA_MODIFIABLE, &getMod, sizeof(getMod) },
+    };
+
+    printf("\n--- 1343: CKA_MODIFIABLE=FALSE blocks SetAttributeValue ---\n");
+
+    rv = lib_init();
+    CHECK_RV(rv, "C_Initialize", CKR_OK);
+    if (rv != CKR_OK) return;
+
+    rv = open_session(CKF_SERIAL_SESSION | CKF_RW_SESSION, &session);
+    CHECK_RV(rv, "open R/W session", CKR_OK);
+    if (rv != CKR_OK) goto out;
+
+    rv = funcList->C_CreateObject(session, lockedTmpl,
+                                  sizeof(lockedTmpl) / sizeof(lockedTmpl[0]),
+                                  &lockedKey);
+    CHECK_RV(rv, "C_CreateObject(MODIFIABLE=FALSE)", CKR_OK);
+    if (rv != CKR_OK) goto out;
+
+    rv = funcList->C_GetAttributeValue(session, lockedKey, getTmpl, 1);
+    CHECK_RV(rv, "C_GetAttributeValue(CKA_MODIFIABLE) reads FALSE", CKR_OK);
+    if (rv == CKR_OK) {
+        CHECK_COND_MSG(getMod == CK_FALSE,
+                       "CKA_MODIFIABLE stored as FALSE");
+    }
+
+    rv = funcList->C_SetAttributeValue(session, lockedKey, setLabelTmpl, 1);
+    CHECK_RV(rv, "C_SetAttributeValue on MODIFIABLE=FALSE object",
+             CKR_ACTION_PROHIBITED);
+
+    /* Default CKA_MODIFIABLE must be CK_TRUE so unattributed objects stay
+     * mutable per spec. */
+    rv = funcList->C_CreateObject(session, plainTmpl,
+                                  sizeof(plainTmpl) / sizeof(plainTmpl[0]),
+                                  &plainKey);
+    CHECK_RV(rv, "C_CreateObject(no CKA_MODIFIABLE)", CKR_OK);
+    if (rv == CKR_OK) {
+        getMod = CK_FALSE;
+        rv = funcList->C_GetAttributeValue(session, plainKey, getTmpl, 1);
+        CHECK_RV(rv, "C_GetAttributeValue(CKA_MODIFIABLE) default", CKR_OK);
+        if (rv == CKR_OK) {
+            CHECK_COND_MSG(getMod == CK_TRUE,
+                           "CKA_MODIFIABLE default is CK_TRUE");
+        }
+        rv = funcList->C_SetAttributeValue(session, plainKey,
+                                           setLabelTmpl, 1);
+        CHECK_RV(rv, "C_SetAttributeValue on default object", CKR_OK);
+    }
+
+    /* CKA_MODIFIABLE=FALSE may be set at creation time but must not be
+     * settable after the fact via C_SetAttributeValue - the gate is already
+     * the CKA_MODIFIABLE check, regardless of what the new value would
+     * be. */
+    {
+        CK_ATTRIBUTE relockTmpl[] = {
+            { CKA_MODIFIABLE, &ckFalse, sizeof(ckFalse) },
+        };
+        rv = funcList->C_SetAttributeValue(session, lockedKey, relockTmpl, 1);
+        CHECK_RV(rv, "C_SetAttributeValue rejects re-locking a locked object",
+                 CKR_ACTION_PROHIBITED);
+        (void)ckTrue;
+    }
+
+out:
+    if (lockedKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, lockedKey);
+    if (plainKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, plainKey);
+    if (session != 0)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+
+/* Finding 3144: PKCS#11 v3.0 sec 5.1 Table 16 requires the four object-
+ * creation entry points (C_CreateObject, C_GenerateKey, C_GenerateKeyPair,
+ * C_UnwrapKey) to return CKR_USER_NOT_LOGGED_IN when the template requests
+ * CKA_PRIVATE=TRUE on a session that is not logged in as the user. The token
+ * is initialised with a non-empty user PIN so the empty-PIN bypass does not
+ * mask the check. */
+static void test_3144_private_create_requires_login(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot;
+    CK_SLOT_ID* slotList = NULL;
+    CK_ULONG slotCount = 0;
+    CK_SESSION_HANDLE soSession = 0;
+    CK_SESSION_HANDLE session = 0;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE pubKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE privKey = CK_INVALID_HANDLE;
+    CK_UTF8CHAR label[32];
+    CK_BYTE soPin[] = "password123456";
+    CK_BYTE userPin[] = "someUserPin";
+    CK_OBJECT_CLASS secretKeyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE genericKeyType = CKK_GENERIC_SECRET;
+    CK_BBOOL ckTrue = CK_TRUE;
+    CK_ATTRIBUTE createPrivTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_PRIVATE,     &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VALUE,       aes_128_key,     sizeof(aes_128_key)    },
+    };
+    CK_ULONG aesKeyLen = 16;
+    CK_KEY_TYPE aesKeyType = CKK_AES;
+    CK_ATTRIBUTE genPrivTmpl[] = {
+        { CKA_CLASS,     &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,  &aesKeyType,     sizeof(aesKeyType)     },
+        { CKA_PRIVATE,   &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VALUE_LEN, &aesKeyLen,      sizeof(aesKeyLen)      },
+    };
+    /* aes_keygen_attrs_test style: implicit class (C_GenerateKey always
+     * creates a secret key), no explicit CKA_CLASS or CKA_PRIVATE. The
+     * implicit class + spec-default CKA_PRIVATE=CK_TRUE must still trigger
+     * the login gate. */
+    CK_ATTRIBUTE genImplicitTmpl[] = {
+        { CKA_KEY_TYPE,  &aesKeyType,     sizeof(aesKeyType)     },
+        { CKA_VALUE_LEN, &aesKeyLen,      sizeof(aesKeyLen)      },
+    };
+    CK_MECHANISM aesMech;
+    CK_MECHANISM rsaKpMech;
+    CK_ATTRIBUTE rsaPubTmpl[] = {
+        { CKA_PRIVATE, &ckTrue, sizeof(ckTrue) },
+    };
+    CK_ATTRIBUTE rsaPrivTmpl[] = {
+        { CKA_PRIVATE, &ckTrue, sizeof(ckTrue) },
+    };
+
+    XMEMSET(label, ' ', sizeof(label));
+    XMEMCPY(label, "compliance-3144", 15);
+
+    printf("\n--- 3144: private object creation needs login ---\n");
+
+    cleanup_store();
+    rv = lib_init();
+    CHECK_RV(rv, "C_Initialize", CKR_OK);
+    if (rv != CKR_OK) return;
+
+    rv = funcList->C_GetSlotList(CK_TRUE, NULL, &slotCount);
+    if (rv != CKR_OK || slotCount == 0) goto out;
+    slotList = (CK_SLOT_ID*)XMALLOC(slotCount * sizeof(CK_SLOT_ID), NULL,
+                                    DYNAMIC_TYPE_TMP_BUFFER);
+    if (slotList == NULL) goto out;
+    rv = funcList->C_GetSlotList(CK_TRUE, slotList, &slotCount);
+    if (rv != CKR_OK) goto out;
+    slot = slotList[0];
+
+    /* Provision a real (non-empty) user PIN so the empty-PIN bypass does
+     * not cover for the missing login check. */
+    rv = funcList->C_InitToken(slot, soPin, sizeof(soPin) - 1, label);
+    CHECK_RV(rv, "C_InitToken", CKR_OK);
+    if (rv != CKR_OK) goto out;
+    rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                 NULL, NULL, &soSession);
+    CHECK_RV(rv, "C_OpenSession(SO)", CKR_OK);
+    if (rv != CKR_OK) goto out;
+    rv = funcList->C_Login(soSession, CKU_SO, soPin, sizeof(soPin) - 1);
+    CHECK_RV(rv, "C_Login(SO)", CKR_OK);
+    if (rv != CKR_OK) goto out;
+    rv = funcList->C_InitPIN(soSession, userPin, sizeof(userPin) - 1);
+    CHECK_RV(rv, "C_InitPIN", CKR_OK);
+    funcList->C_Logout(soSession);
+    funcList->C_CloseSession(soSession);
+    soSession = 0;
+
+    /* Open a fresh public (not logged-in) session and try each of the four
+     * entry points with CKA_PRIVATE=TRUE. */
+    rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                 NULL, NULL, &session);
+    CHECK_RV(rv, "C_OpenSession(public)", CKR_OK);
+    if (rv != CKR_OK) goto out;
+
+    rv = funcList->C_CreateObject(session, createPrivTmpl,
+                                  sizeof(createPrivTmpl) /
+                                      sizeof(createPrivTmpl[0]),
+                                  &obj);
+    CHECK_RV(rv, "C_CreateObject(CKA_PRIVATE=TRUE) public session",
+             CKR_USER_NOT_LOGGED_IN);
+    if (rv == CKR_OK && obj != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, obj);
+
+    XMEMSET(&aesMech, 0, sizeof(aesMech));
+    aesMech.mechanism = CKM_AES_KEY_GEN;
+    obj = CK_INVALID_HANDLE;
+    rv = funcList->C_GenerateKey(session, &aesMech, genPrivTmpl,
+                                 sizeof(genPrivTmpl) / sizeof(genPrivTmpl[0]),
+                                 &obj);
+    if (rv == CKR_MECHANISM_INVALID) {
+        printf("SKIP: CKM_AES_KEY_GEN not enabled\n");
+    } else {
+        CHECK_RV(rv, "C_GenerateKey(CKA_PRIVATE=TRUE) public session",
+                 CKR_USER_NOT_LOGGED_IN);
+        if (rv == CKR_OK && obj != CK_INVALID_HANDLE)
+            funcList->C_DestroyObject(session, obj);
+
+        /* Implicit class via API: template lacks CKA_CLASS *and*
+         * CKA_PRIVATE. C_GenerateKey always creates a secret key, so the
+         * spec-default CKA_PRIVATE=CK_TRUE must still gate login. */
+        obj = CK_INVALID_HANDLE;
+        rv = funcList->C_GenerateKey(session, &aesMech, genImplicitTmpl,
+                                     sizeof(genImplicitTmpl) /
+                                         sizeof(genImplicitTmpl[0]),
+                                     &obj);
+        CHECK_RV(rv, "C_GenerateKey(no CKA_CLASS/CKA_PRIVATE) public session",
+                 CKR_USER_NOT_LOGGED_IN);
+        if (rv == CKR_OK && obj != CK_INVALID_HANDLE)
+            funcList->C_DestroyObject(session, obj);
+    }
+
+    XMEMSET(&rsaKpMech, 0, sizeof(rsaKpMech));
+    rsaKpMech.mechanism = CKM_RSA_PKCS_KEY_PAIR_GEN;
+    rv = funcList->C_GenerateKeyPair(session, &rsaKpMech,
+                                     rsaPubTmpl,
+                                     sizeof(rsaPubTmpl)/sizeof(rsaPubTmpl[0]),
+                                     rsaPrivTmpl,
+                                     sizeof(rsaPrivTmpl)/sizeof(rsaPrivTmpl[0]),
+                                     &pubKey, &privKey);
+    if (rv == CKR_MECHANISM_INVALID) {
+        printf("SKIP: CKM_RSA_PKCS_KEY_PAIR_GEN not enabled\n");
+    } else {
+        CHECK_RV(rv,
+                 "C_GenerateKeyPair(private template CKA_PRIVATE=TRUE) "
+                 "public session", CKR_USER_NOT_LOGGED_IN);
+        if (rv == CKR_OK) {
+            if (pubKey != CK_INVALID_HANDLE)
+                funcList->C_DestroyObject(session, pubKey);
+            if (privKey != CK_INVALID_HANDLE)
+                funcList->C_DestroyObject(session, privKey);
+        }
+    }
+
+    /* Sanity sibling: after C_Login as user, the same C_CreateObject must
+     * succeed. Confirms the gate is the login state, not something else. */
+    rv = funcList->C_Login(session, CKU_USER, userPin, sizeof(userPin) - 1);
+    CHECK_RV(rv, "C_Login(user)", CKR_OK);
+    if (rv == CKR_OK) {
+        obj = CK_INVALID_HANDLE;
+        rv = funcList->C_CreateObject(session, createPrivTmpl,
+                                      sizeof(createPrivTmpl) /
+                                          sizeof(createPrivTmpl[0]),
+                                      &obj);
+        CHECK_RV(rv, "C_CreateObject(CKA_PRIVATE=TRUE) after login", CKR_OK);
+        if (rv == CKR_OK && obj != CK_INVALID_HANDLE)
+            funcList->C_DestroyObject(session, obj);
+        funcList->C_Logout(session);
+    }
+
+out:
+    if (slotList != NULL)
+        XFREE(slotList, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    if (session != 0)
+        funcList->C_CloseSession(session);
+    if (soSession != 0)
+        funcList->C_CloseSession(soSession);
+    funcList->C_Finalize(NULL);
+    cleanup_store();
+}
+
+/* Finding 2370: When a template omits CKA_PRIVATE, PKCS#11 v2.40 sec 4.4.1
+ * requires the default to be CK_TRUE for private and secret keys, CK_FALSE
+ * for public keys. wolfPKCS11 used to default unconditionally to CK_FALSE
+ * because SetAttributeDefaults never set CKA_PRIVATE. The fix gates the
+ * spec-correct default behind WOLFPKCS11_LEGACY_PRIVATE_FALSE_DEFAULT;
+ * unless that macro is defined, the test asserts CK_TRUE. */
+static void test_2370_private_default(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot;
+    CK_SLOT_ID* slotList = NULL;
+    CK_ULONG slotCount = 0;
+    CK_SESSION_HANDLE soSession = 0;
+    CK_SESSION_HANDLE session = 0;
+    CK_OBJECT_HANDLE secretKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE pubKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE privKey = CK_INVALID_HANDLE;
+    CK_BYTE soPin[] = "password123456";
+    CK_BYTE userPin[] = "someUserPin";
+    CK_UTF8CHAR label[32];
+    CK_OBJECT_CLASS secretKeyClass = CKO_SECRET_KEY;
+    CK_OBJECT_CLASS pubKeyClass = CKO_PUBLIC_KEY;
+    CK_KEY_TYPE aesKeyType = CKK_AES;
+    CK_ULONG aesKeyLen = 16;
+    CK_MECHANISM aesMech;
+    CK_ATTRIBUTE secretTmpl[] = {
+        { CKA_CLASS,     &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,  &aesKeyType,     sizeof(aesKeyType)     },
+        { CKA_VALUE_LEN, &aesKeyLen,      sizeof(aesKeyLen)      },
+    };
+    CK_BBOOL gotPrivate = CK_FALSE;
+    CK_ATTRIBUTE getPrivTmpl[] = {
+        { CKA_PRIVATE, &gotPrivate, sizeof(gotPrivate) },
+    };
+    /* CKO_PUBLIC_KEY default is CKA_PRIVATE=CK_FALSE per spec. */
+    CK_KEY_TYPE genericKeyType = CKK_GENERIC_SECRET;
+    CK_BBOOL ckTrue = CK_TRUE;
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_CLASS,       &pubKeyClass,    sizeof(pubKeyClass)    },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_EXTRACTABLE, &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VALUE,       aes_128_key,     sizeof(aes_128_key)    },
+    };
+
+    (void)pubKey;
+    (void)privKey;
+
+    XMEMSET(label, ' ', sizeof(label));
+    XMEMCPY(label, "compliance-2370", 15);
+
+    printf("\n--- 2370: CKA_PRIVATE default is CK_TRUE for private/secret "
+           "keys ---\n");
+
+    cleanup_store();
+    rv = lib_init();
+    CHECK_RV(rv, "C_Initialize", CKR_OK);
+    if (rv != CKR_OK) return;
+
+    rv = funcList->C_GetSlotList(CK_TRUE, NULL, &slotCount);
+    if (rv != CKR_OK || slotCount == 0) goto out;
+    slotList = (CK_SLOT_ID*)XMALLOC(slotCount * sizeof(CK_SLOT_ID), NULL,
+                                    DYNAMIC_TYPE_TMP_BUFFER);
+    if (slotList == NULL) goto out;
+    rv = funcList->C_GetSlotList(CK_TRUE, slotList, &slotCount);
+    if (rv != CKR_OK) goto out;
+    slot = slotList[0];
+
+    /* Provision token + user PIN so we can log in as user before creating
+     * a key that would (now) default to CKA_PRIVATE=TRUE. */
+    rv = funcList->C_InitToken(slot, soPin, sizeof(soPin) - 1, label);
+    CHECK_RV(rv, "C_InitToken", CKR_OK);
+    if (rv != CKR_OK) goto out;
+    rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                 NULL, NULL, &soSession);
+    CHECK_RV(rv, "C_OpenSession(SO)", CKR_OK);
+    if (rv != CKR_OK) goto out;
+    rv = funcList->C_Login(soSession, CKU_SO, soPin, sizeof(soPin) - 1);
+    CHECK_RV(rv, "C_Login(SO)", CKR_OK);
+    if (rv != CKR_OK) goto out;
+    rv = funcList->C_InitPIN(soSession, userPin, sizeof(userPin) - 1);
+    CHECK_RV(rv, "C_InitPIN", CKR_OK);
+    funcList->C_Logout(soSession);
+    funcList->C_CloseSession(soSession);
+    soSession = 0;
+
+    rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                 NULL, NULL, &session);
+    CHECK_RV(rv, "C_OpenSession(user)", CKR_OK);
+    if (rv != CKR_OK) goto out;
+    rv = funcList->C_Login(session, CKU_USER, userPin, sizeof(userPin) - 1);
+    CHECK_RV(rv, "C_Login(USER)", CKR_OK);
+    if (rv != CKR_OK) goto out;
+
+    /* Secret key without explicit CKA_PRIVATE in template. */
+    XMEMSET(&aesMech, 0, sizeof(aesMech));
+    aesMech.mechanism = CKM_AES_KEY_GEN;
+    rv = funcList->C_GenerateKey(session, &aesMech, secretTmpl,
+                                 sizeof(secretTmpl) / sizeof(secretTmpl[0]),
+                                 &secretKey);
+    if (rv == CKR_MECHANISM_INVALID) {
+        printf("SKIP: CKM_AES_KEY_GEN not enabled\n");
+    } else {
+        CHECK_RV(rv, "C_GenerateKey(no CKA_PRIVATE) as user", CKR_OK);
+        if (rv == CKR_OK) {
+            gotPrivate = CK_FALSE;
+            rv = funcList->C_GetAttributeValue(session, secretKey,
+                                               getPrivTmpl, 1);
+            CHECK_RV(rv, "C_GetAttributeValue(CKA_PRIVATE) on secret key",
+                     CKR_OK);
+            if (rv == CKR_OK) {
+                CHECK_COND_MSG(gotPrivate == CK_TRUE,
+                               "secret-key default CKA_PRIVATE is CK_TRUE");
+            }
+        }
+    }
+
+    /* Public-key default must remain CK_FALSE so the public arm of a key
+     * pair stays accessible from public sessions. Use C_CreateObject so we
+     * don't need a key-pair-generation mechanism enabled. */
+    rv = funcList->C_CreateObject(session, pubTmpl,
+                                  sizeof(pubTmpl) / sizeof(pubTmpl[0]),
+                                  &pubKey);
+    CHECK_RV(rv, "C_CreateObject(public, no CKA_PRIVATE)", CKR_OK);
+    if (rv == CKR_OK) {
+        gotPrivate = CK_TRUE;
+        rv = funcList->C_GetAttributeValue(session, pubKey, getPrivTmpl, 1);
+        CHECK_RV(rv, "C_GetAttributeValue(CKA_PRIVATE) on public key",
+                 CKR_OK);
+        if (rv == CKR_OK) {
+            CHECK_COND_MSG(gotPrivate == CK_FALSE,
+                           "public-key default CKA_PRIVATE is CK_FALSE");
+        }
+    }
+
+out:
+    if (slotList != NULL)
+        XFREE(slotList, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    if (secretKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, secretKey);
+    if (pubKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pubKey);
+    if (session != 0) {
+        funcList->C_Logout(session);
+        funcList->C_CloseSession(session);
+    }
+    if (soSession != 0)
+        funcList->C_CloseSession(soSession);
+    funcList->C_Finalize(NULL);
+    cleanup_store();
+}
+
+/* Finding 2774: PKCS#11 v2.40 sec 4.4.1: when a template omits CKA_WRAP and
+ * CKA_UNWRAP, both default to CK_FALSE. wolfPKCS11 used to default both to
+ * CK_TRUE for AES secret keys and RSA key pairs, silently turning every
+ * key into a wrapping key. The fix is gated behind
+ * WOLFPKCS11_LEGACY_WRAP_TRUE_DEFAULT; unless that macro is defined, the
+ * test asserts CK_FALSE. */
+static void test_2774_wrap_default(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot;
+    CK_SLOT_ID* slotList = NULL;
+    CK_ULONG slotCount = 0;
+    CK_SESSION_HANDLE soSession = 0;
+    CK_SESSION_HANDLE session = 0;
+    CK_OBJECT_HANDLE aesKey = CK_INVALID_HANDLE;
+#ifndef NO_RSA
+    CK_OBJECT_HANDLE rsaPub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE rsaPriv = CK_INVALID_HANDLE;
+#endif
+    CK_BYTE soPin[] = "password123456";
+    CK_BYTE userPin[] = "someUserPin";
+    CK_UTF8CHAR label[32];
+    CK_OBJECT_CLASS secretKeyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE aesKeyType = CKK_AES;
+    CK_ULONG aesKeyLen = 16;
+    CK_MECHANISM aesMech;
+    CK_ATTRIBUTE aesTmpl[] = {
+        { CKA_CLASS,     &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,  &aesKeyType,     sizeof(aesKeyType)     },
+        { CKA_VALUE_LEN, &aesKeyLen,      sizeof(aesKeyLen)      },
+    };
+#ifndef NO_RSA
+    CK_MECHANISM rsaKpMech;
+    CK_ULONG rsaBits = 2048;
+    CK_ATTRIBUTE rsaPubTmpl[] = {
+        { CKA_MODULUS_BITS,    &rsaBits,         sizeof(rsaBits)          },
+        { CKA_PUBLIC_EXPONENT, rsa_2048_pub_exp, sizeof(rsa_2048_pub_exp) },
+    };
+    CK_ATTRIBUTE rsaPrivTmpl[] = {
+        { CKA_TOKEN, NULL, 0 },
+    };
+#endif
+    CK_BBOOL gotBool = CK_TRUE;
+    CK_ATTRIBUTE getWrapTmpl[] = {
+        { CKA_WRAP, &gotBool, sizeof(gotBool) },
+    };
+    CK_ATTRIBUTE getUnwrapTmpl[] = {
+        { CKA_UNWRAP, &gotBool, sizeof(gotBool) },
+    };
+
+    XMEMSET(label, ' ', sizeof(label));
+    XMEMCPY(label, "compliance-2774", 15);
+
+    printf("\n--- 2774: CKA_WRAP/UNWRAP default is CK_FALSE ---\n");
+
+    cleanup_store();
+    rv = lib_init();
+    CHECK_RV(rv, "C_Initialize", CKR_OK);
+    if (rv != CKR_OK) return;
+
+    rv = funcList->C_GetSlotList(CK_TRUE, NULL, &slotCount);
+    if (rv != CKR_OK || slotCount == 0) goto out;
+    slotList = (CK_SLOT_ID*)XMALLOC(slotCount * sizeof(CK_SLOT_ID), NULL,
+                                    DYNAMIC_TYPE_TMP_BUFFER);
+    if (slotList == NULL) goto out;
+    rv = funcList->C_GetSlotList(CK_TRUE, slotList, &slotCount);
+    if (rv != CKR_OK) goto out;
+    slot = slotList[0];
+
+    /* Init + login (CKA_PRIVATE default is now TRUE for these keys per
+     * finding 2370). */
+    rv = funcList->C_InitToken(slot, soPin, sizeof(soPin) - 1, label);
+    CHECK_RV(rv, "C_InitToken", CKR_OK);
+    if (rv != CKR_OK) goto out;
+    rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                 NULL, NULL, &soSession);
+    if (rv != CKR_OK) goto out;
+    rv = funcList->C_Login(soSession, CKU_SO, soPin, sizeof(soPin) - 1);
+    if (rv != CKR_OK) goto out;
+    rv = funcList->C_InitPIN(soSession, userPin, sizeof(userPin) - 1);
+    CHECK_RV(rv, "C_InitPIN", CKR_OK);
+    funcList->C_Logout(soSession);
+    funcList->C_CloseSession(soSession);
+    soSession = 0;
+
+    rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                 NULL, NULL, &session);
+    if (rv != CKR_OK) goto out;
+    rv = funcList->C_Login(session, CKU_USER, userPin, sizeof(userPin) - 1);
+    CHECK_RV(rv, "C_Login(USER)", CKR_OK);
+    if (rv != CKR_OK) goto out;
+
+    /* AES secret key: both CKA_WRAP and CKA_UNWRAP must default to FALSE. */
+    XMEMSET(&aesMech, 0, sizeof(aesMech));
+    aesMech.mechanism = CKM_AES_KEY_GEN;
+    rv = funcList->C_GenerateKey(session, &aesMech, aesTmpl,
+                                 sizeof(aesTmpl) / sizeof(aesTmpl[0]),
+                                 &aesKey);
+    if (rv == CKR_MECHANISM_INVALID) {
+        printf("SKIP: CKM_AES_KEY_GEN not enabled\n");
+    } else {
+        CHECK_RV(rv, "C_GenerateKey(AES, no CKA_WRAP)", CKR_OK);
+        if (rv == CKR_OK) {
+            gotBool = CK_TRUE;
+            rv = funcList->C_GetAttributeValue(session, aesKey, getWrapTmpl,
+                                               1);
+            CHECK_RV(rv, "C_GetAttributeValue(CKA_WRAP) on AES", CKR_OK);
+            if (rv == CKR_OK) {
+                CHECK_COND_MSG(gotBool == CK_FALSE,
+                               "AES default CKA_WRAP is CK_FALSE");
+            }
+            gotBool = CK_TRUE;
+            rv = funcList->C_GetAttributeValue(session, aesKey,
+                                               getUnwrapTmpl, 1);
+            CHECK_RV(rv, "C_GetAttributeValue(CKA_UNWRAP) on AES", CKR_OK);
+            if (rv == CKR_OK) {
+                CHECK_COND_MSG(gotBool == CK_FALSE,
+                               "AES default CKA_UNWRAP is CK_FALSE");
+            }
+        }
+    }
+
+    /* RSA key pair: public CKA_WRAP and private CKA_UNWRAP must default to
+     * FALSE. */
+#ifndef NO_RSA
+    XMEMSET(&rsaKpMech, 0, sizeof(rsaKpMech));
+    rsaKpMech.mechanism = CKM_RSA_PKCS_KEY_PAIR_GEN;
+    rv = funcList->C_GenerateKeyPair(session, &rsaKpMech,
+                                     rsaPubTmpl,
+                                     sizeof(rsaPubTmpl)/sizeof(rsaPubTmpl[0]),
+                                     rsaPrivTmpl, 0,
+                                     &rsaPub, &rsaPriv);
+    if (rv == CKR_MECHANISM_INVALID) {
+        printf("SKIP: CKM_RSA_PKCS_KEY_PAIR_GEN not enabled\n");
+    } else {
+        CHECK_RV(rv, "C_GenerateKeyPair(RSA, no CKA_WRAP)", CKR_OK);
+        if (rv == CKR_OK) {
+            gotBool = CK_TRUE;
+            rv = funcList->C_GetAttributeValue(session, rsaPub, getWrapTmpl,
+                                               1);
+            CHECK_RV(rv, "C_GetAttributeValue(CKA_WRAP) on RSA pub", CKR_OK);
+            if (rv == CKR_OK) {
+                CHECK_COND_MSG(gotBool == CK_FALSE,
+                               "RSA pub default CKA_WRAP is CK_FALSE");
+            }
+            gotBool = CK_TRUE;
+            rv = funcList->C_GetAttributeValue(session, rsaPriv,
+                                               getUnwrapTmpl, 1);
+            CHECK_RV(rv, "C_GetAttributeValue(CKA_UNWRAP) on RSA priv",
+                     CKR_OK);
+            if (rv == CKR_OK) {
+                CHECK_COND_MSG(gotBool == CK_FALSE,
+                               "RSA priv default CKA_UNWRAP is CK_FALSE");
+            }
+        }
+    }
+#endif /* !NO_RSA */
+
+out:
+    if (slotList != NULL)
+        XFREE(slotList, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    if (aesKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, aesKey);
+#ifndef NO_RSA
+    if (rsaPub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, rsaPub);
+    if (rsaPriv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, rsaPriv);
+#endif
+    if (session != 0) {
+        funcList->C_Logout(session);
+        funcList->C_CloseSession(session);
+    }
+    if (soSession != 0)
+        funcList->C_CloseSession(soSession);
+    funcList->C_Finalize(NULL);
+    cleanup_store();
+}
+
 /* Finding 1336: C_Finalize must reject a non-NULL pReserved with
  * CKR_ARGUMENTS_BAD. */
 static void test_1336_finalize_reserved_arg(void)
@@ -738,6 +1637,13 @@ int main(int argc, char* argv[])
     test_1340_wait_for_slot_event();
     test_3634_gcm_null_iv();
     test_3635_ccm_null_iv();
+    test_3637_generic_secret_sensitive_attr();
+    test_2776_asymmetric_sensitive_attr();
+    test_3407_fresh_slot_uninitialized();
+    test_1343_modifiable_enforced();
+    test_3144_private_create_requires_login();
+    test_2370_private_default();
+    test_2774_wrap_default();
 
     pkcs11_unload();
 

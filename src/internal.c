@@ -5907,7 +5907,14 @@ static int wp11_Token_Init(WP11_Token* token, const char* label)
     if (ret == 0)
         ret = Rng_New(&globalRandom, &globalLock, &token->rng);
     if (ret == 0) {
-        token->state = WP11_TOKEN_STATE_INITIALIZED;
+        /* Do not set token->state = WP11_TOKEN_STATE_INITIALIZED here.
+         * wp11_Slot_Init calls this on every fresh slot, and the state must
+         * stay UNKNOWN until either C_InitToken provisions the token
+         * (WP11_Slot_TokenReset) or wp11_Token_Load successfully reads a
+         * persisted token. Otherwise C_GetTokenInfo would advertise
+         * CKF_TOKEN_INITIALIZED on a token that was never provisioned, and
+         * applications using that flag to skip provisioning would proceed
+         * with an unconfigured token (Fenrir 3407). */
         token->loginState = WP11_APP_STATE_RW_PUBLIC;
         token->nextObjId = 1;
         XMEMCPY(token->label, label, sizeof(token->label));
@@ -6573,6 +6580,12 @@ static int wp11_Slot_Load(WP11_Slot* slot, int id)
  */
 static int wp11_Slot_Store(WP11_Slot* slot, int id)
 {
+    /* Only persist tokens that have been explicitly provisioned. Otherwise
+     * a C_Initialize / C_Finalize cycle on a never-init'd slot would write
+     * a placeholder token file, which a subsequent C_Initialize would then
+     * load and treat as INITIALIZED (Fenrir 3407 regression). */
+    if (slot->token.state != WP11_TOKEN_STATE_INITIALIZED)
+        return 0;
     return wp11_Token_Store(&slot->token, id);
 }
 #endif
@@ -6987,6 +7000,10 @@ int WP11_Slot_TokenReset(WP11_Slot* slot, char* pin, int pinLen, char* label)
     token = &slot->token;
     wp11_Token_Final(token);
     wp11_Token_Init(token, label);
+    /* C_InitToken is the canonical provisioning step. Mark the token as
+     * initialized here rather than in wp11_Token_Init so a fresh slot stays
+     * UNKNOWN until either init or load (Fenrir 3407). */
+    token->state = WP11_TOKEN_STATE_INITIALIZED;
     WP11_Lock_UnlockRW(&slot->lock);
 
     /* Locking used in setting SO PIN. */
@@ -7015,15 +7032,21 @@ int WP11_Slot_CheckSOPin(WP11_Slot* slot, char* pin, int pinLen)
     WP11_Lock_LockRO(&slot->lock);
     token = &slot->token;
 
-    if (token->state != WP11_TOKEN_STATE_INITIALIZED)
-        ret = PIN_NOT_SET_E;
     /* When the SO PIN has not been set, reject any PIN check; otherwise an
      * empty PIN would constant-compare equal to the unset zero-length
      * stored PIN and grant SO authentication. NSS's PK11_InitPin bootstraps
      * a fresh database by calling C_Login(CKU_SO, "", 0) before any SO PIN
      * exists and relies on that probe succeeding, so for NSS builds the
      * empty-PIN path is left intact and only non-empty PINs are rejected.
-     */
+     *
+     * The redundant state-vs-INITIALIZED check that used to sit above this
+     * block was harmless when wp11_Token_Init unconditionally pre-marked
+     * fresh slots INITIALIZED, but now (Fenrir 3407) a fresh slot stays
+     * UNKNOWN until provisioning - and the NSS bootstrap needs the empty-PIN
+     * probe to succeed against an UNKNOWN-state token. The SO_PIN_SET flag
+     * is the authoritative signal here: it is set during the same
+     * WP11_Slot_TokenReset call that flips state to INITIALIZED, so any
+     * scenario the old state check would have caught is also caught here. */
 #ifdef WOLFPKCS11_NSS
     if (!(token->tokenFlags & WP11_TOKEN_FLAG_SO_PIN_SET) && pinLen > 0)
         ret = PIN_NOT_SET_E;
@@ -7069,8 +7092,10 @@ int WP11_Slot_CheckUserPin(WP11_Slot* slot, char* pin, int pinLen)
 
     WP11_Lock_LockRO(&slot->lock);
     token = &slot->token;
-    if (token->state != WP11_TOKEN_STATE_INITIALIZED)
-        ret = PIN_NOT_SET_E;
+    /* USER_PIN_SET is the authoritative signal; the redundant
+     * state-vs-INITIALIZED check that used to sit above was harmless under
+     * the old eager-INITIALIZED semantics but now (Fenrir 3407) would
+     * spuriously reject probes on UNKNOWN-state fresh tokens. */
     if (!(token->tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET))
         ret = PIN_NOT_SET_E;
 
@@ -8993,6 +9018,20 @@ int WP11_Object_IsDestroyable(WP11_Object* object)
     return (object->opFlag & WP11_FLAG_NOT_DESTROYABLE) == 0;
 }
 
+/**
+ * Check whether the object is modifiable.
+ *
+ * PKCS#11 v2.40 sec 4.4.1: CKA_MODIFIABLE defaults to CK_TRUE; clear flag
+ * means modifiable.
+ *
+ * @param  object  [in]  Object object.
+ * @return  1 when modifiable, 0 when not.
+ */
+int WP11_Object_IsModifiable(WP11_Object* object)
+{
+    return (object->opFlag & WP11_FLAG_NOT_MODIFIABLE) == 0;
+}
+
 #if !defined(NO_RSA) || defined(HAVE_ECC)
 /**
  * Set the multi-precision integer from the data.
@@ -10171,38 +10210,50 @@ static int RsaObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
             ret = GetMPIData(&object->data.rsaKey->n, data, len);
             break;
         case CKA_PRIVATE_EXPONENT:
-            if (noPriv)
+            if (noPriv) {
                 *len = CK_UNAVAILABLE_INFORMATION;
+                ret = CKR_ATTRIBUTE_SENSITIVE;
+            }
             else
                 ret = GetMPIData(&object->data.rsaKey->d, data, len);
             break;
         case CKA_PRIME_1:
-            if (noPriv)
+            if (noPriv) {
                 *len = CK_UNAVAILABLE_INFORMATION;
+                ret = CKR_ATTRIBUTE_SENSITIVE;
+            }
             else
                 ret = GetMPIData(&object->data.rsaKey->p, data, len);
             break;
         case CKA_PRIME_2:
-            if (noPriv)
+            if (noPriv) {
                 *len = CK_UNAVAILABLE_INFORMATION;
+                ret = CKR_ATTRIBUTE_SENSITIVE;
+            }
             else
                 ret = GetMPIData(&object->data.rsaKey->q, data, len);
             break;
         case CKA_EXPONENT_1:
-            if (noPriv)
+            if (noPriv) {
                 *len = CK_UNAVAILABLE_INFORMATION;
+                ret = CKR_ATTRIBUTE_SENSITIVE;
+            }
             else
                 ret = GetMPIData(&object->data.rsaKey->dP, data, len);
             break;
         case CKA_EXPONENT_2:
-            if (noPriv)
+            if (noPriv) {
                 *len = CK_UNAVAILABLE_INFORMATION;
+                ret = CKR_ATTRIBUTE_SENSITIVE;
+            }
             else
                 ret = GetMPIData(&object->data.rsaKey->dQ, data, len);
             break;
         case CKA_COEFFICIENT:
-            if (noPriv)
+            if (noPriv) {
                 *len = CK_UNAVAILABLE_INFORMATION;
+                ret = CKR_ATTRIBUTE_SENSITIVE;
+            }
             else
                 ret = GetMPIData(&object->data.rsaKey->u, data, len);
             break;
@@ -10341,8 +10392,10 @@ static int EcObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
             ret = GetEcParams(object->data.ecKey, data, len);
             break;
         case CKA_VALUE:
-            if (noPriv)
+            if (noPriv) {
                 *len = CK_UNAVAILABLE_INFORMATION;
+                ret = CKR_ATTRIBUTE_SENSITIVE;
+            }
             else
 #if defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION <= 5)
                 ret = GetMPIData(&object->data.ecKey->k, data, len);
@@ -10499,8 +10552,10 @@ static int MldsaObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
             break;
         case CKA_VALUE:
             if (object->objClass == CKO_PRIVATE_KEY) {
-                if (noPriv)
+                if (noPriv) {
                     *len = CK_UNAVAILABLE_INFORMATION;
+                    ret = CKR_ATTRIBUTE_SENSITIVE;
+                }
                 else
                     ret = GetMldsaPrivateKey(object->data.mldsaKey, data, len);
             }
@@ -10555,8 +10610,10 @@ static int DhObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
                 ret = GetData(object->data.dhKey->key, object->data.dhKey->len,
                                                                      data, len);
             }
-            else
+            else {
                 *len = CK_UNAVAILABLE_INFORMATION;
+                ret = CKR_ATTRIBUTE_SENSITIVE;
+            }
             break;
         case CKA_WRAP_TEMPLATE:
         case CKA_UNWRAP_TEMPLATE:
@@ -10682,8 +10739,10 @@ static int MlKemObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
             break;
         case CKA_VALUE:
             if (object->objClass == CKO_PRIVATE_KEY) {
-                if (noPriv)
+                if (noPriv) {
                     *len = CK_UNAVAILABLE_INFORMATION;
+                    ret = CKR_ATTRIBUTE_SENSITIVE;
+                }
                 else
                     ret = GetMlKemPrivateKey(object->data.mlKemKey, data, len);
             }
@@ -10895,8 +10954,10 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                                                                            len);
             break;
         case CKA_MODIFIABLE:
-            ret = GetOpFlagBool(object->opFlag, WP11_FLAG_MODIFIABLE, data,
-                                                                           len);
+            /* PKCS#11 default is CK_TRUE; inverted flag matches the
+             * NOT_COPYABLE/NOT_DESTROYABLE pattern. */
+            ret = GetBool(
+                !(object->opFlag & WP11_FLAG_NOT_MODIFIABLE), data, len);
             break;
         case CKA_ALWAYS_SENSITIVE:
             ret = GetOpFlagBool(object->opFlag, WP11_FLAG_ALWAYS_SENSITIVE,
@@ -11309,8 +11370,10 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                                                               *(CK_BBOOL*)data);
             break;
         case CKA_MODIFIABLE:
-            WP11_Object_SetOpFlag(object, WP11_FLAG_MODIFIABLE,
-                                  *(CK_BBOOL*)data);
+            /* Inverted: store the NOT_MODIFIABLE bit when caller wants
+             * CKA_MODIFIABLE=CK_FALSE. */
+            WP11_Object_SetOpFlag(object, WP11_FLAG_NOT_MODIFIABLE,
+                                  !(*(CK_BBOOL*)data));
             break;
         case CKA_ALWAYS_SENSITIVE:
             WP11_Object_SetOpFlag(object, WP11_FLAG_ALWAYS_SENSITIVE,

@@ -324,6 +324,82 @@ static CK_RV FindValidAttributeType(CK_ATTRIBUTE* pTemplate, CK_ULONG ulCount,
     return CKR_OK;
 }
 
+/* Sentinel for CheckPrivateLogin: callers that legitimately have no implicit
+ * class (C_CreateObject, C_UnwrapKey - both require CKA_CLASS in template per
+ * spec) pass this so the helper falls back to template inspection only. */
+#define WP11_NO_IMPLICIT_CLASS ((CK_OBJECT_CLASS)~(CK_OBJECT_CLASS)0)
+
+/* Per PKCS#11 v3.0 sec 5.1 Table 16: creating, generating, or unwrapping an
+ * object whose effective CKA_PRIVATE is CK_TRUE on a session that is not
+ * logged in as the user must return CKR_USER_NOT_LOGGED_IN. Empty-PIN tokens
+ * treat public sessions as logged-in (matches the find-time filter in
+ * WP11_Session_Find) so this gate must mirror that.
+ *
+ * `implicitClass` lets callers whose object class is implied by the API
+ * itself (C_GenerateKey always creates a CKO_SECRET_KEY, C_GenerateKeyPair
+ * produces CKO_PUBLIC_KEY/CKO_PRIVATE_KEY) supply that class even when the
+ * template omits CKA_CLASS. Without this, the spec-default
+ * CKA_PRIVATE=CK_TRUE would not be inferred for templates like
+ * `{CKA_VALUE_LEN, CKA_KEY_TYPE}` and a public session could silently
+ * generate a private key. An explicit CKA_PRIVATE attribute in the template
+ * still wins over the class-derived default.
+ *
+ * Gated by WOLFPKCS11_LEGACY_PRIVATE_FALSE_DEFAULT so the class-based
+ * inference matches the legacy default in SetAttributeDefaults. */
+static CK_RV CheckPrivateLogin(WP11_Session* session,
+                               CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
+                               CK_OBJECT_CLASS implicitClass)
+{
+    CK_ATTRIBUTE* attr = NULL;
+    CK_BBOOL isPrivate = CK_FALSE;
+    WP11_Slot* slot;
+
+    if (session == NULL)
+        return CKR_OK;
+
+    if (pTemplate != NULL && ulCount > 0)
+        FindAttributeType(pTemplate, ulCount, CKA_PRIVATE, &attr);
+
+    if (attr != NULL && attr->pValue != NULL &&
+            attr->ulValueLen == sizeof(CK_BBOOL)) {
+        isPrivate = *(CK_BBOOL*)attr->pValue;
+    }
+    else {
+#ifndef WOLFPKCS11_LEGACY_PRIVATE_FALSE_DEFAULT
+        CK_OBJECT_CLASS objClass = implicitClass;
+        CK_ATTRIBUTE* classAttr = NULL;
+        if (pTemplate != NULL && ulCount > 0)
+            FindAttributeType(pTemplate, ulCount, CKA_CLASS, &classAttr);
+        if (classAttr != NULL && classAttr->pValue != NULL &&
+                classAttr->ulValueLen == sizeof(CK_OBJECT_CLASS)) {
+            objClass = *(CK_OBJECT_CLASS*)classAttr->pValue;
+        }
+        if (objClass == CKO_PRIVATE_KEY || objClass == CKO_SECRET_KEY)
+            isPrivate = CK_TRUE;
+#endif
+    }
+
+    if (!isPrivate)
+        return CKR_OK;
+
+    slot = WP11_Session_GetSlot(session);
+    if (slot == NULL)
+        return CKR_OK;
+    /* Fresh / unprovisioned tokens (no user PIN initialized) have nothing to
+     * log in as, and the existing find-time private-object filter
+     * (src/internal.c) likewise bypasses on Has_Empty_Pin. Mirror both:
+     * an unset user PIN is treated as "no protection required" so callers
+     * that pre-date C_InitToken / C_InitPIN keep working. After the token
+     * is provisioned with a non-empty user PIN, the gate engages. */
+    if (!WP11_Slot_IsTokenUserPinInitialized(slot))
+        return CKR_OK;
+    if (WP11_Slot_Has_Empty_Pin(slot))
+        return CKR_OK;
+    if (!WP11_Slot_IsLoggedIn(slot))
+        return CKR_USER_NOT_LOGGED_IN;
+    return CKR_OK;
+}
+
 /**
  * Check the value and length are valid for the data type of the attributes in
  * the template.
@@ -468,7 +544,14 @@ static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
     CK_BBOOL falseVal = CK_FALSE;
     CK_BBOOL encrypt = CK_TRUE;
     CK_BBOOL recover = CK_TRUE;
+    /* PKCS#11 v2.40 sec 4.4.1: CKA_WRAP and CKA_UNWRAP default to CK_FALSE.
+     * The pre-fix default (CK_TRUE) silently made every secret/RSA key a
+     * wrapping key, violating least-privilege (Fenrir 2774). */
+#ifdef WOLFPKCS11_LEGACY_WRAP_TRUE_DEFAULT
     CK_BBOOL wrap = CK_TRUE;
+#else
+    CK_BBOOL wrap = CK_FALSE;
+#endif
     CK_BBOOL derive = (keyType == CKO_PUBLIC_KEY ? CK_FALSE : CK_TRUE);
     CK_BBOOL verify = CK_TRUE;
     CK_BBOOL sign = CK_FALSE;
@@ -525,6 +608,15 @@ static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
     /* Defaults if not set */
     switch (keyType) {
         case CKO_PUBLIC_KEY:
+#ifndef WOLFPKCS11_LEGACY_PRIVATE_FALSE_DEFAULT
+            /* Spec default: public keys are CKA_PRIVATE=FALSE (this is also
+             * what the historical implementation produced, but make it
+             * explicit so the default is stable when the macro toggles
+             * private/secret keys below). */
+            if (ret == CKR_OK)
+                ret = SetIfNotFound(obj, CKA_PRIVATE, falseVal, pTemplate,
+                                    ulCount);
+#endif
             if (ret == CKR_OK)
                 ret = SetIfNotFound(obj, CKA_ENCRYPT, encrypt, pTemplate,
                                     ulCount);
@@ -546,6 +638,13 @@ static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
 #endif
             break;
         case CKO_SECRET_KEY:
+#ifndef WOLFPKCS11_LEGACY_PRIVATE_FALSE_DEFAULT
+            /* PKCS#11 v2.40 sec 4.4.1: secret keys default to
+             * CKA_PRIVATE=CK_TRUE (Fenrir 2370). */
+            if (ret == CKR_OK)
+                ret = SetIfNotFound(obj, CKA_PRIVATE, trueVal, pTemplate,
+                                    ulCount);
+#endif
 #ifndef WOLFPKCS11_NSS
             if (ret == CKR_OK)
                 ret = SetIfNotFound(obj, CKA_SENSITIVE, trueVal, pTemplate,
@@ -561,13 +660,22 @@ static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
                 ret = SetIfNotFound(obj, CKA_DECRYPT, trueVal, pTemplate,
                                     ulCount);
             /* CKA_SIGN / CKA_VERIFY default false */
+            /* CKA_WRAP / CKA_UNWRAP defaults follow the macro-gated `wrap'
+             * (CK_TRUE under the legacy macro, CK_FALSE per spec). */
             if (ret == CKR_OK)
-                ret = SetIfNotFound(obj, CKA_WRAP, trueVal, pTemplate, ulCount);
+                ret = SetIfNotFound(obj, CKA_WRAP, wrap, pTemplate, ulCount);
             if (ret == CKR_OK)
-                ret = SetIfNotFound(obj, CKA_UNWRAP, trueVal, pTemplate,
+                ret = SetIfNotFound(obj, CKA_UNWRAP, wrap, pTemplate,
                                     ulCount);
             break;
         case CKO_PRIVATE_KEY:
+#ifndef WOLFPKCS11_LEGACY_PRIVATE_FALSE_DEFAULT
+            /* PKCS#11 v2.40 sec 4.4.1: private keys default to
+             * CKA_PRIVATE=CK_TRUE (Fenrir 2370). */
+            if (ret == CKR_OK)
+                ret = SetIfNotFound(obj, CKA_PRIVATE, trueVal, pTemplate,
+                                    ulCount);
+#endif
 #ifndef WOLFPKCS11_NSS
             if (ret == CKR_OK)
                 ret = SetIfNotFound(obj, CKA_SENSITIVE, trueVal, pTemplate,
@@ -658,6 +766,13 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
     /* Only require R/W session for token objects */
     if (!WP11_Session_IsRW(session) && WP11_Object_OnToken(obj))
         return CKR_SESSION_READ_ONLY;
+
+    /* CKA_MODIFIABLE enforcement (Fenrir 1343) lives in C_SetAttributeValue,
+     * not this shared helper - C_CopyObject also funnels through here with
+     * newObject=FALSE after the new object has just inherited the source
+     * object's modifiable flag via WP11_Object_Copy, and copy semantics are
+     * governed by CKA_COPYABLE (already checked separately), not
+     * CKA_MODIFIABLE. */
 
     rv = CheckAttributes(pTemplate, ulCount, 1);
     if (rv != CKR_OK)
@@ -1257,6 +1372,15 @@ CK_RV C_CreateObject(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate,
         }
     }
 
+    /* C_CreateObject requires CKA_CLASS in the template; no API-implied
+     * class to fall back on. */
+    rv = CheckPrivateLogin(session, pTemplate, ulCount,
+                           WP11_NO_IMPLICIT_CLASS);
+    if (rv != CKR_OK) {
+        WOLFPKCS11_LEAVE("C_CreateObject", rv);
+        return rv;
+    }
+
     rv = CreateObject(session, pTemplate, ulCount, &object);
     if (rv != CKR_OK) {
         WOLFPKCS11_LEAVE("C_CreateObject", rv);
@@ -1732,6 +1856,16 @@ CK_RV C_SetAttributeValue(CK_SESSION_HANDLE hSession,
     /* Only require R/W session for token objects */
     if (!WP11_Session_IsRW(session) && WP11_Object_OnToken(obj)) {
         rv = CKR_SESSION_READ_ONLY;
+        WOLFPKCS11_LEAVE("C_SetAttributeValue", rv);
+        return rv;
+    }
+
+    /* PKCS#11 v2.40 sec 4.4.1: an object with CKA_MODIFIABLE=CK_FALSE must
+     * reject all attribute changes (Fenrir 1343). Gate only the public
+     * entry point - C_CopyObject also uses SetAttributeValue with
+     * newObject=FALSE but is governed by CKA_COPYABLE, not CKA_MODIFIABLE. */
+    if (!WP11_Object_IsModifiable(obj)) {
+        rv = CKR_ACTION_PROHIBITED;
         WOLFPKCS11_LEAVE("C_SetAttributeValue", rv);
         return rv;
     }
@@ -6889,6 +7023,15 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
         }
     }
 
+    /* C_GenerateKey always produces a secret key, even when the template
+     * omits CKA_CLASS - pass the implied class so the spec-default
+     * CKA_PRIVATE=CK_TRUE still gates login. */
+    rv = CheckPrivateLogin(session, pTemplate, ulCount, CKO_SECRET_KEY);
+    if (rv != CKR_OK) {
+        WOLFPKCS11_LEAVE("C_GenerateKey", rv);
+        return rv;
+    }
+
     switch (pMechanism->mechanism) {
 #ifndef NO_AES
         case CKM_AES_KEY_GEN:
@@ -7330,6 +7473,22 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
                 return rv;
             }
         }
+    }
+
+    /* Each template's API-implied class lets the helper detect the
+     * spec-default CKA_PRIVATE=CK_TRUE for the private arm even when
+     * the template omits CKA_CLASS. An explicit CKA_PRIVATE=TRUE in the
+     * public template is still flagged because the helper consults the
+     * template attribute first. */
+    rv = CheckPrivateLogin(session, pPublicKeyTemplate,
+                           ulPublicKeyAttributeCount, CKO_PUBLIC_KEY);
+    if (rv == CKR_OK) {
+        rv = CheckPrivateLogin(session, pPrivateKeyTemplate,
+                               ulPrivateKeyAttributeCount, CKO_PRIVATE_KEY);
+    }
+    if (rv != CKR_OK) {
+        WOLFPKCS11_LEAVE("C_GenerateKeyPair", rv);
+        return rv;
     }
 
     switch (pMechanism->mechanism) {
@@ -7921,6 +8080,15 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
                 return rv;
             }
         }
+    }
+
+    /* C_UnwrapKey requires CKA_CLASS in the unwrapped key template per
+     * spec; no API-implied class to fall back on. */
+    rv = CheckPrivateLogin(session, pTemplate, ulAttributeCount,
+                           WP11_NO_IMPLICIT_CLASS);
+    if (rv != CKR_OK) {
+        WOLFPKCS11_LEAVE("C_UnwrapKey", rv);
+        return rv;
     }
 
     *phKey = CK_INVALID_HANDLE;
