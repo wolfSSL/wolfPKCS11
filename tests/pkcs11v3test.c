@@ -642,7 +642,7 @@ static CK_RV mldsa_sign_verify(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE privK
         CHECK_CKR(ret, "ML-DSA Sign out size no out");
     }
     if (ret == CKR_OK) {
-        CHECK_COND(sigSz == DILITHIUM_ML_DSA_44_SIG_SIZE,
+        CHECK_COND(sigSz == WC_MLDSA_44_SIG_SIZE,
                    ret, "ML-DSA Sign out size");
     }
     if (ret == CKR_OK) {

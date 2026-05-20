@@ -56,9 +56,11 @@ insecure. Please consider using a different mode of AES.
 
 ### Optional: PQC ML-DSA Support
 
-To have ML-DSA support in wolfPKCS11, configure wolfSSL with ML-DSA (Dilithium)
-support enabled, either by adding `--enable-mldsa` to `./configure` or by
-setting `WOLFSSL_DILITHIUM` to `yes` in CMake.
+To have ML-DSA support in wolfPKCS11, configure wolfSSL with ML-DSA support
+enabled, either by adding `--enable-mldsa` to `./configure` or by setting
+`WOLFSSL_MLDSA` to `yes` in CMake. wolfPKCS11 uses the canonical
+`wc_MlDsaKey` API and `WC_MLDSA_*` sizing macros (FIPS 204 spelling) and
+therefore requires a wolfSSL build that incorporate these.
 
 As ML-DSA is a feature of PKCS#11 version 3.2, support for that is required,
 too. Hence, to enable all in wolfPKCS11, add `--enable-pkcs11v32 --enable-mldsa`

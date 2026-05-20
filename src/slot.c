@@ -629,14 +629,14 @@ static CK_MECHANISM_INFO ecdhMechInfo = {
 #ifdef WOLFPKCS11_MLDSA
 /* Info on ML-DSA key generation mechanism. */
 static CK_MECHANISM_INFO mldsaKgMechInfo = {
-    ML_DSA_LEVEL2_PUB_KEY_SIZE,
-    ML_DSA_LEVEL5_PUB_KEY_SIZE,
+    WC_MLDSA_44_PUB_KEY_SIZE,
+    WC_MLDSA_87_PUB_KEY_SIZE,
     CKF_GENERATE_KEY_PAIR
 };
 /* Info on ML-DSA mechanism (also for pre-hash variant). */
 static CK_MECHANISM_INFO mldsaMechInfo = {
-    ML_DSA_LEVEL2_PUB_KEY_SIZE,
-    ML_DSA_LEVEL5_PUB_KEY_SIZE,
+    WC_MLDSA_44_PUB_KEY_SIZE,
+    WC_MLDSA_87_PUB_KEY_SIZE,
     CKF_SIGN | CKF_VERIFY
 };
 #endif
