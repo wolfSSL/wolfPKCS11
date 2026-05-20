@@ -258,7 +258,7 @@ struct WP11_Object {
         ecc_key* ecKey;                /* EC key object                       */
     #endif
     #ifdef WOLFPKCS11_MLDSA
-        MlDsaKey* mldsaKey;            /* ML-DSA key object                   */
+        wc_MlDsaKey* mldsaKey;            /* ML-DSA key object                   */
     #endif
     #ifndef NO_DH
         WP11_DhKey* dhKey;             /* DH parameters object                */
@@ -2517,13 +2517,13 @@ int wp11_Object_AllocateTypeData(WP11_Object* object)
             #ifdef WOLFPKCS11_MLDSA
             case CKK_ML_DSA:
                 if (object->data.mldsaKey == NULL) {
-                    object->data.mldsaKey = (MlDsaKey*)XMALLOC(
-                        sizeof(MlDsaKey), NULL, DYNAMIC_TYPE_DILITHIUM);
+                    object->data.mldsaKey = (wc_MlDsaKey*)XMALLOC(
+                        sizeof(wc_MlDsaKey), NULL, DYNAMIC_TYPE_MLDSA);
                     if (object->data.mldsaKey == NULL) {
                         ret = MEMORY_E;
                     }
                     else {
-                        XMEMSET(object->data.mldsaKey, 0, sizeof(MlDsaKey));
+                        XMEMSET(object->data.mldsaKey, 0, sizeof(wc_MlDsaKey));
                     }
                 }
                 break;
@@ -4340,7 +4340,7 @@ static int wp11_Object_Store_EccKey(WP11_Object* object, int tokenId, int objId)
 #endif /* HAVE_ECC */
 
 #ifdef WOLFPKCS11_MLDSA
-static int MldsaKeyTryDecode(MlDsaKey* key, byte level, byte* data,
+static int MldsaKeyTryDecode(wc_MlDsaKey* key, byte level, byte* data,
                              word32 len, CK_OBJECT_CLASS class)
 {
     int ret = 0;
@@ -4356,11 +4356,11 @@ static int MldsaKeyTryDecode(MlDsaKey* key, byte level, byte* data,
     if (ret == 0) {
         if (class == CKO_PRIVATE_KEY) {
             /* Decode ML-DSA private key. */
-            ret = wc_Dilithium_PrivateKeyDecode(data, &idx, key, len);
+            ret = wc_MlDsaKey_PrivateKeyDecode(key, data, len, &idx);
         }
         else {
             /* Decode ML-DSA public key. */
-            ret = wc_Dilithium_PublicKeyDecode(data, &idx, key, len);
+            ret = wc_MlDsaKey_PublicKeyDecode(key, data, len, &idx);
         }
     }
 
@@ -8872,7 +8872,7 @@ void WP11_Object_Free(WP11_Object* object)
     #ifdef WOLFPKCS11_MLDSA
         if (object->type == CKK_ML_DSA && object->data.mldsaKey != NULL) {
             wc_MlDsaKey_Free(object->data.mldsaKey);
-            XFREE(object->data.mldsaKey, NULL, DYNAMIC_TYPE_DILITHIUM);
+            XFREE(object->data.mldsaKey, NULL, DYNAMIC_TYPE_MLDSA);
             object->data.mldsaKey = NULL;
         }
     #endif
@@ -9273,7 +9273,7 @@ int WP11_Object_SetEcKey(WP11_Object* object, unsigned char** data,
  *          Other -ve on failure.
  *          0 on success.
  */
-static int mldsaSetParameters(MlDsaKey* key,
+static int mldsaSetParameters(wc_MlDsaKey* key,
                               CK_ML_DSA_PARAMETER_SET_TYPE* params,
                               int len)
 {
@@ -9318,7 +9318,7 @@ int WP11_Object_SetMldsaKey(WP11_Object* object, unsigned char** data,
                             CK_ULONG* len)
 {
     int ret;
-    MlDsaKey* key;
+    wc_MlDsaKey* key;
     int seedUsed = 0;
 
     if (object->onToken)
@@ -9339,11 +9339,11 @@ int WP11_Object_SetMldsaKey(WP11_Object* object, unsigned char** data,
         if (object->objClass != CKO_PRIVATE_KEY) {
             ret = BAD_FUNC_ARG;
         }
-        else if (len[1] != DILITHIUM_SEED_SZ) {
+        else if (len[1] != MLDSA_SEED_SZ) {
             ret = BAD_FUNC_ARG;
         }
         else {
-            ret = wc_dilithium_make_key_from_seed(key, data[1]);
+            ret = wc_MlDsaKey_MakeKeyFromSeed(key, data[1]);
             seedUsed = 1;
         }
     }
@@ -9372,7 +9372,7 @@ int WP11_Object_SetMldsaKey(WP11_Object* object, unsigned char** data,
                 byte* expandedKey = NULL;
                 word32 expandedKeyLen = 0;
 
-                expandedKeyLen = wc_dilithium_size(key);
+                expandedKeyLen = wc_MlDsaKey_Size(key);
                 if (expandedKeyLen != len[2]) {
                     ret = BAD_FUNC_ARG;
                 }
@@ -10369,7 +10369,7 @@ static int EcObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
 #endif
 
 #ifdef WOLFPKCS11_MLDSA
-static int GetMldsaParams(MlDsaKey* key, byte* data, CK_ULONG* len)
+static int GetMldsaParams(wc_MlDsaKey* key, byte* data, CK_ULONG* len)
 {
     int ret = 0;
     CK_ML_DSA_PARAMETER_SET_TYPE params;
@@ -10401,7 +10401,7 @@ static int GetMldsaParams(MlDsaKey* key, byte* data, CK_ULONG* len)
     return ret;
 }
 
-static int GetMldsaPublicKey(MlDsaKey* key, byte* data, CK_ULONG* len)
+static int GetMldsaPublicKey(wc_MlDsaKey* key, byte* data, CK_ULONG* len)
 {
     int ret = 0;
     word32 dataLen = 0;
@@ -10412,11 +10412,11 @@ static int GetMldsaPublicKey(MlDsaKey* key, byte* data, CK_ULONG* len)
         return ret;
 
     if (level == WC_ML_DSA_44)
-        dataLen = ML_DSA_LEVEL2_PUB_KEY_SIZE;
+        dataLen = WC_MLDSA_44_PUB_KEY_SIZE;
     else if (level == WC_ML_DSA_65)
-        dataLen = ML_DSA_LEVEL3_PUB_KEY_SIZE;
+        dataLen = WC_MLDSA_65_PUB_KEY_SIZE;
     else if (level == WC_ML_DSA_87)
-        dataLen = ML_DSA_LEVEL5_PUB_KEY_SIZE;
+        dataLen = WC_MLDSA_87_PUB_KEY_SIZE;
     else
         return ASN_PARSE_E;
 
@@ -10433,7 +10433,7 @@ static int GetMldsaPublicKey(MlDsaKey* key, byte* data, CK_ULONG* len)
     return ret;
 }
 
-static int GetMldsaPrivateKey(MlDsaKey* key, byte* data, CK_ULONG* len)
+static int GetMldsaPrivateKey(wc_MlDsaKey* key, byte* data, CK_ULONG* len)
 {
     int ret = 0;
     word32 dataLen = 0;
@@ -10444,11 +10444,11 @@ static int GetMldsaPrivateKey(MlDsaKey* key, byte* data, CK_ULONG* len)
         return ret;
 
     if (level == WC_ML_DSA_44)
-        dataLen = ML_DSA_LEVEL2_KEY_SIZE;
+        dataLen = WC_MLDSA_44_KEY_SIZE;
     else if (level == WC_ML_DSA_65)
-        dataLen = ML_DSA_LEVEL3_KEY_SIZE;
+        dataLen = WC_MLDSA_65_KEY_SIZE;
     else if (level == WC_ML_DSA_87)
-        dataLen = ML_DSA_LEVEL5_KEY_SIZE;
+        dataLen = WC_MLDSA_87_KEY_SIZE;
     else
         return ASN_PARSE_E;
 
@@ -13098,7 +13098,7 @@ int WP11_Mldsa_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
     WC_RNG rng;
     byte level = 0;
 
-    /* Both MlDsaKey object inside the pub and priv WP11_Objects are
+    /* Both wc_MlDsaKey objects inside the pub and priv WP11_Objects are
      * already initialized. The pub key is also set to a proper level
      * within WP11_Object_SetMldsaKey() based on the given parameter
      * set. */
@@ -13203,9 +13203,10 @@ int WP11_Mldsa_Sign(unsigned char* data, word32 dataLen, unsigned char* sig,
                 /* FIPS 204: 32 zeros as seed for deterministic ML-DSA */
                 byte seed[32];
                 XMEMSET(seed, 0x00, sizeof(seed));
-                ret = wc_dilithium_sign_ctx_msg_with_seed(params->ctx, params->ctxSz,
-                                                          data, dataLen, sig, sigLen,
-                                                          priv->data.mldsaKey, seed);
+                ret = wc_MlDsaKey_SignCtxWithSeed(priv->data.mldsaKey,
+                                                  params->ctx, params->ctxSz,
+                                                  sig, sigLen, data, dataLen,
+                                                  seed);
             }
             else {
                 ret = BAD_FUNC_ARG;
@@ -13214,18 +13215,18 @@ int WP11_Mldsa_Sign(unsigned char* data, word32 dataLen, unsigned char* sig,
         else {
             if (params->hedgeType == CKH_HEDGE_PREFERRED ||
                                       params->hedgeType == CKH_HEDGE_REQUIRED) {
-                ret = wc_dilithium_sign_ctx_hash(params->ctx, params->ctxSz,
-                                                params->preHashType, data, dataLen,
-                                                sig, sigLen, priv->data.mldsaKey,
-                                                &rng);
+                ret = wc_MlDsaKey_SignCtxHash(priv->data.mldsaKey,
+                                              params->ctx, params->ctxSz,
+                                              sig, sigLen, data, dataLen,
+                                              params->preHashType, &rng);
             }
             else if (params->hedgeType == CKH_DETERMINISTIC_REQUIRED) {
                 /* FIPS 204: 32 zeros as seed for deterministic ML-DSA */
                 byte seed[32];
                 XMEMSET(seed, 0x00, sizeof(seed));
-                ret = wc_dilithium_sign_ctx_hash_with_seed(params->ctx,
-                        params->ctxSz, params->preHashType, data, dataLen, sig,
-                        sigLen, priv->data.mldsaKey, seed);
+                ret = wc_MlDsaKey_SignCtxHashWithSeed(priv->data.mldsaKey,
+                        params->ctx, params->ctxSz, sig, sigLen, data, dataLen,
+                        params->preHashType, seed);
             }
             else {
                 ret = BAD_FUNC_ARG;
@@ -13271,14 +13272,14 @@ int WP11_Mldsa_Verify(unsigned char* sig, word32 sigLen, unsigned char* data,
 
     if (ret == 0) {
         if (params->preHashType == WC_HASH_TYPE_NONE) {
-            ret = wc_dilithium_verify_ctx_msg(sig, sigLen, params->ctx,
-                                              params->ctxSz, data, dataLen,
-                                              stat, pub->data.mldsaKey);
+            ret = wc_MlDsaKey_VerifyCtx(pub->data.mldsaKey, sig, sigLen,
+                                        params->ctx, params->ctxSz, data,
+                                        dataLen, stat);
         }
         else {
-            ret = wc_dilithium_verify_ctx_hash(sig, sigLen, params->ctx,
-                    params->ctxSz, params->preHashType, data, dataLen, stat,
-                    pub->data.mldsaKey);
+            ret = wc_MlDsaKey_VerifyCtxHash(pub->data.mldsaKey, sig, sigLen,
+                    params->ctx, params->ctxSz, data, dataLen,
+                    params->preHashType, stat);
         }
     }
 

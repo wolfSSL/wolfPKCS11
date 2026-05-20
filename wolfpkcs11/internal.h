@@ -33,7 +33,7 @@
 #include <wolfssl/wolfcrypt/wc_encrypt.h>
 
 #ifdef WOLFPKCS11_MLDSA
-#include <wolfssl/wolfcrypt/dilithium.h>
+#include <wolfssl/wolfcrypt/wc_mldsa.h>
 #endif
 
 #include <wolfpkcs11/pkcs11.h>
@@ -109,7 +109,7 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
     #endif
 #endif
 
-#if defined(WOLFPKCS11_MLDSA) && !defined(HAVE_DILITHIUM)
+#if defined(WOLFPKCS11_MLDSA) && !defined(WOLFSSL_HAVE_MLDSA)
 #error Compiling with ML-DSA requires ML-DSA support in wolfSSL.
 #endif
 
