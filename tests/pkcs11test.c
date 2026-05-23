@@ -462,7 +462,11 @@ static CK_RV test_no_token_init(void* args)
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_RV ret;
     CK_TOKEN_INFO tokenInfo;
-    CK_FLAGS expFlags = CKF_RNG | CKF_CLOCK_ON_TOKEN | CKF_TOKEN_INITIALIZED;
+    /* Per Fenrir 3407: CKF_TOKEN_INITIALIZED must not be set on a slot
+     * that has never had C_InitToken called. Pre-fix wp11_Token_Init
+     * unconditionally marked the token state INITIALIZED, so the old
+     * test included CKF_TOKEN_INITIALIZED in the expected mask. */
+    CK_FLAGS expFlags = CKF_RNG | CKF_CLOCK_ON_TOKEN;
     int flags = CKF_SERIAL_SESSION | CKF_RW_SESSION;
 
     ret = funcList->C_GetTokenInfo(slot, &tokenInfo);
@@ -4309,6 +4313,10 @@ static CK_RV get_generic_key(CK_SESSION_HANDLE session, unsigned char* data,
         { CKA_SIGN,              &ckTrue,           sizeof(ckTrue)            },
         { CKA_VERIFY,            &ckTrue,           sizeof(ckTrue)            },
         { CKA_DERIVE,            &ckTrue,           sizeof(ckTrue)            },
+        /* CKA_WRAP/CKA_UNWRAP defaults flipped to CK_FALSE per Fenrir 2774;
+         * keep both TRUE so this helper still backs wrap/unwrap call sites. */
+        { CKA_WRAP,              &ckTrue,           sizeof(ckTrue)            },
+        { CKA_UNWRAP,            &ckTrue,           sizeof(ckTrue)            },
         { CKA_VALUE,             data,              len                       },
     };
     int cnt = sizeof(generic_key)/sizeof(*generic_key);
@@ -4642,6 +4650,11 @@ static CK_RV get_aes_128_key(CK_SESSION_HANDLE session, unsigned char* id,
         { CKA_SIGN,              &ckTrue,           sizeof(ckTrue)            },
         { CKA_VERIFY,            &ckTrue,           sizeof(ckTrue)            },
         { CKA_DERIVE,            &ckTrue,           sizeof(ckTrue)            },
+        /* CKA_WRAP/CKA_UNWRAP default to CK_FALSE per spec (Fenrir 2774).
+         * This helper backs the wrapping-key role in test_aes_wrap_unwrap_*,
+         * so set both explicitly. */
+        { CKA_WRAP,              &ckTrue,           sizeof(ckTrue)            },
+        { CKA_UNWRAP,            &ckTrue,           sizeof(ckTrue)            },
 #ifndef NO_AES
         { CKA_VALUE,             aes_128_key,       sizeof(aes_128_key)       },
 #endif
@@ -6689,6 +6702,10 @@ static CK_RV get_rsa_priv_key(CK_SESSION_HANDLE session, unsigned char* privId,
         { CKA_KEY_TYPE,          &rsaKeyType,       sizeof(rsaKeyType)        },
         { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue)            },
         { CKA_VERIFY,            &ckTrue,           sizeof(ckTrue)            },
+        /* CKA_UNWRAP defaults to CK_FALSE post-2774; set explicitly so the
+         * RSA wrap/unwrap path exercised by test_rsa_wrap_unwrap_key still
+         * works. */
+        { CKA_UNWRAP,            &ckTrue,           sizeof(ckTrue)            },
         { CKA_MODULUS,           rsa_2048_modulus,  sizeof(rsa_2048_modulus)  },
         { CKA_PRIVATE_EXPONENT,  rsa_2048_priv_exp, sizeof(rsa_2048_priv_exp) },
         { CKA_PRIME_1,           rsa_2048_p,        sizeof(rsa_2048_p)        },
@@ -6721,6 +6738,9 @@ static CK_RV get_rsa_pub_key(CK_SESSION_HANDLE session, unsigned char* pubId,
         { CKA_CLASS,             &pubKeyClass,      sizeof(pubKeyClass)       },
         { CKA_KEY_TYPE,          &rsaKeyType,       sizeof(rsaKeyType)        },
         { CKA_ENCRYPT,           &ckTrue,           sizeof(ckTrue)            },
+        /* CKA_WRAP defaults to CK_FALSE post-2774; set explicitly so the
+         * RSA wrap path in test_rsa_wrap_unwrap_key still works. */
+        { CKA_WRAP,              &ckTrue,           sizeof(ckTrue)            },
         { CKA_MODULUS,           rsa_2048_modulus,  sizeof(rsa_2048_modulus)  },
         { CKA_PUBLIC_EXPONENT,   rsa_2048_pub_exp,  sizeof(rsa_2048_pub_exp)  },
         { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
@@ -7236,7 +7256,12 @@ static CK_RV test_attributes_rsa(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_GetAttributeValue(session, priv, rsaPrivTmpl,
                                                                 rsaPrivTmplCnt);
-        CHECK_CKR(ret, "Get Attributes RSA private key length");
+        /* get_rsa_priv_key(extractable=FALSE) sets the noPriv flag, so per
+         * Fenrir 2776 the sensitive components now return
+         * CKR_ATTRIBUTE_SENSITIVE rather than silently CKR_OK with a
+         * sentinel length. */
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_SENSITIVE,
+                       "Get Attributes RSA private key length");
     }
     if (ret == CKR_OK) {
         CHECK_COND(rsaPrivTmpl[0].ulValueLen == sizeof(modulus), ret,
@@ -9044,7 +9069,10 @@ static CK_RV test_attributes_ecc(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_GetAttributeValue(session, priv, eccPrivTmpl,
                                                                 eccPrivTmplCnt);
-        CHECK_CKR(ret, "Get Attributes EC Private Key NULL values");
+        /* extractable=FALSE -> noPriv -> CKR_ATTRIBUTE_SENSITIVE per
+         * Fenrir 2776. */
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_SENSITIVE,
+                       "Get Attributes EC Private Key NULL values");
     }
     if (ret == CKR_OK) {
         CHECK_COND(eccPrivTmpl[0].ulValueLen == sizeof(ecc_p256_params), ret,
@@ -10074,7 +10102,10 @@ static CK_RV test_attributes_dh(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_GetAttributeValue(session, priv, dhPrivTmpl,
                                                                  dhPrivTmplCnt);
-        CHECK_CKR(ret, "Get Attributes DH Public Key");
+        /* extractable=FALSE -> noPriv -> CKR_ATTRIBUTE_SENSITIVE per
+         * Fenrir 2776. */
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_SENSITIVE,
+                       "Get Attributes DH Private Key (sensitive)");
     }
     if (ret == CKR_OK) {
         CHECK_COND(dhPrivTmpl[0].ulValueLen == sizeof(prime), ret,
@@ -10094,7 +10125,9 @@ static CK_RV test_attributes_dh(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_GetAttributeValue(session, priv, dhPrivTmpl,
                                                                  dhPrivTmplCnt);
-        CHECK_CKR(ret, "Get Attributes DH Public Key");
+        /* same priv key, still noPriv. */
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_SENSITIVE,
+                       "Get Attributes DH Private Key (sensitive, populated)");
     }
     funcList->C_DestroyObject(session, priv);
     if (ret == CKR_OK) {

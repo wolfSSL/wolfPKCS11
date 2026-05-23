@@ -806,6 +806,9 @@ static CK_RV get_generic_key(CK_SESSION_HANDLE session, unsigned char* data,
         { CKA_SIGN,              &ckTrue,           sizeof(ckTrue)            },
         { CKA_VERIFY,            &ckTrue,           sizeof(ckTrue)            },
         { CKA_DERIVE,            &ckTrue,           sizeof(ckTrue)            },
+        /* CKA_WRAP/CKA_UNWRAP default flipped to CK_FALSE per Fenrir 2774. */
+        { CKA_WRAP,              &ckTrue,           sizeof(ckTrue)            },
+        { CKA_UNWRAP,            &ckTrue,           sizeof(ckTrue)            },
         { CKA_VALUE,             data,              len                       },
     };
     int cnt = sizeof(generic_key)/sizeof(*generic_key);
@@ -995,6 +998,9 @@ static CK_RV get_aes_128_key(CK_SESSION_HANDLE session, unsigned char* id,
 #endif
         { CKA_ENCRYPT,           &ckTrue,           sizeof(ckTrue)            },
         { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue)            },
+        /* CKA_WRAP/CKA_UNWRAP default to CK_FALSE post-Fenrir 2774. */
+        { CKA_WRAP,              &ckTrue,           sizeof(ckTrue)            },
+        { CKA_UNWRAP,            &ckTrue,           sizeof(ckTrue)            },
         { CKA_VALUE,             aes_128_key,       sizeof(aes_128_key)       },
         { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
         { CKA_ID,                id,                idLen                     },
@@ -2308,7 +2314,10 @@ static CK_RV test_attributes_rsa(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_GetAttributeValue(session, priv, rsaPrivTmpl,
                                                                 rsaPrivTmplCnt);
-        CHECK_CKR(ret, "Get Attributes RSA private key length");
+        /* extractable=FALSE -> noPriv -> CKR_ATTRIBUTE_SENSITIVE per
+         * Fenrir 2776. */
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_SENSITIVE,
+                       "Get Attributes RSA private key length");
     }
     if (ret == CKR_OK) {
         CHECK_COND(rsaPrivTmpl[0].ulValueLen == sizeof(modulus), ret,
@@ -3680,7 +3689,10 @@ static CK_RV test_attributes_ecc(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_GetAttributeValue(session, priv, eccPrivTmpl,
                                                                 eccPrivTmplCnt);
-        CHECK_CKR(ret, "Get Attributes EC Private Key NULL values");
+        /* extractable=FALSE -> noPriv -> CKR_ATTRIBUTE_SENSITIVE per
+         * Fenrir 2776. */
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_SENSITIVE,
+                       "Get Attributes EC Private Key NULL values");
     }
     if (ret == CKR_OK) {
         CHECK_COND(eccPrivTmpl[0].ulValueLen == sizeof(ecc_p256_params), ret,
@@ -4408,7 +4420,10 @@ static CK_RV test_attributes_dh(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_GetAttributeValue(session, priv, dhPrivTmpl,
                                                                  dhPrivTmplCnt);
-        CHECK_CKR(ret, "Get Attributes DH Public Key");
+        /* extractable=FALSE -> noPriv -> CKR_ATTRIBUTE_SENSITIVE per
+         * Fenrir 2776. */
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_SENSITIVE,
+                       "Get Attributes DH Private Key (sensitive)");
     }
     if (ret == CKR_OK) {
         CHECK_COND(dhPrivTmpl[0].ulValueLen == sizeof(prime), ret,
@@ -4428,7 +4443,9 @@ static CK_RV test_attributes_dh(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_GetAttributeValue(session, priv, dhPrivTmpl,
                                                                  dhPrivTmplCnt);
-        CHECK_CKR(ret, "Get Attributes DH Public Key");
+        /* same priv key, still noPriv. */
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_SENSITIVE,
+                       "Get Attributes DH Private Key (sensitive, populated)");
     }
     funcList->C_DestroyObject(session, priv);
     if (ret == CKR_OK) {
