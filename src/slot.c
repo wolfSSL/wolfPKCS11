@@ -1290,11 +1290,12 @@ CK_RV C_InitToken(CK_SLOT_ID slotID, CK_UTF8CHAR_PTR pPin,
             return rv;
         }
         if (WP11_Slot_SOPin_IsSet(slot)) {
-            /* Use SOLogin (not CheckSOPin) so the soFailedLogin counter and
-             * WP11_MAX_LOGIN_FAILS_SO lockout apply on this path too. The
-             * subsequent WP11_Slot_TokenReset wipes the loginState set by a
-             * successful login. */
-            ret = WP11_Slot_SOLogin(slot, (char*)pPin, (int)ulPinLen);
+            /* Verify the SO PIN with the failed-login lockout applied, so this
+             * path cannot be used to brute-force the SO PIN (Fenrir F-4632).
+             * Use the lockout check rather than WP11_Slot_SOLogin: C_InitToken
+             * must not log in or set loginState, and it rejects open sessions
+             * earlier so the SOLogin read-only-session check is not wanted. */
+            ret = WP11_Slot_CheckSOPinLockout(slot, (char*)pPin, (int)ulPinLen);
             if (ret != 0) {
                 rv = CKR_PIN_INCORRECT;
                 WOLFPKCS11_LEAVE("C_InitToken", rv);

@@ -366,6 +366,8 @@ WP11_LOCAL void WP11_Slot_CloseSession(WP11_Slot* slot, WP11_Session* session);
 WP11_LOCAL void WP11_Slot_CloseSessions(WP11_Slot* slot);
 WP11_LOCAL int WP11_Slot_HasSession(WP11_Slot* slot);
 WP11_LOCAL int WP11_Slot_CheckSOPin(WP11_Slot* slot, char* pin, int pinLen);
+WP11_LOCAL int WP11_Slot_CheckSOPinLockout(WP11_Slot* slot, char* pin,
+                                           int pinLen);
 WP11_LOCAL int WP11_Slot_CheckUserPin(WP11_Slot* slot, char* pin, int pinLen);
 WP11_LOCAL int WP11_Slot_Has_Empty_Pin(WP11_Slot* slot);
 WP11_LOCAL int WP11_Slot_SOPin_IsSet(WP11_Slot* slot);

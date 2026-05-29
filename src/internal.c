@@ -614,14 +614,23 @@ static int libraryInitCount = 0;
 /* Lock for globals including global random. */
 static WP11_Lock globalLock;
 
-#if !defined(SINGLE_THREADED) && defined(WOLFSSL_MUTEX_INITIALIZER)
+#if !defined(SINGLE_THREADED) && defined(WOLFSSL_MUTEX_INITIALIZER) && \
+    defined(WOLFSSL_MUTEX_INITIALIZER_CLAUSE)
 /* Permanently-live mutex that serializes WP11_Library_Init,
  * WP11_Library_Final, and WP11_Library_IsInitialized. Needed because
  * globalLock above is created inside Init and destroyed inside Final, so
  * concurrent C_Initialize / C_Finalize / any-C_-call would otherwise race
  * on globalLock's lifetime (Fenrir F-4798, F-4799). Static init avoids the
- * chicken-and-egg of needing a lock to protect lock creation. */
-static wolfSSL_Mutex libraryInitLock = WOLFSSL_MUTEX_INITIALIZER(libraryInitLock);
+ * chicken-and-egg of needing a lock to protect lock creation.
+ *
+ * WOLFSSL_MUTEX_INITIALIZER_CLAUSE expands to "= WOLFSSL_MUTEX_INITIALIZER(...)"
+ * on builds that support a static mutex initializer. Older wolfSSL (e.g.
+ * v5.6.6) exposes only the object-like WOLFSSL_MUTEX_INITIALIZER with no
+ * lockname argument and lacks the _CLAUSE wrapper; gating on _CLAUSE keeps
+ * those builds on the non-static fallback path below rather than failing to
+ * compile. */
+static wolfSSL_Mutex libraryInitLock
+    WOLFSSL_MUTEX_INITIALIZER_CLAUSE(libraryInitLock);
 #define WP11_HAVE_LIBRARY_INIT_LOCK
 #endif
 
@@ -7120,6 +7129,76 @@ int WP11_Slot_CheckSOPin(WP11_Slot* slot, char* pin, int pinLen)
     WP11_Lock_UnlockRO(&slot->lock);
 
     wc_ForceZero(hash, sizeof(hash));
+
+    return ret;
+}
+
+/**
+ * Check the SO PIN with the failed-login lockout applied, but without logging
+ * in. C_InitToken must verify the SO PIN before wiping the token, and the
+ * verification needs the same WP11_MAX_LOGIN_FAILS_SO brute-force lockout that
+ * WP11_Slot_SOLogin enforces (Fenrir F-4632). Unlike WP11_Slot_SOLogin this
+ * does NOT set loginState or reject open read-only sessions: C_InitToken is not
+ * a login and re-initializes the token immediately afterwards, so those side
+ * effects would be wrong here.
+ *
+ * When WOLFPKCS11_NO_TIME is defined there is no lockout state to maintain and
+ * this collapses to a plain WP11_Slot_CheckSOPin, matching the historical
+ * behaviour exactly.
+ *
+ * @param  slot    [in]  Slot object.
+ * @param  pin     [in]  PIN to check.
+ * @param  pinLen  [in]  Length of PIN.
+ * @return  PIN_NOT_SET_E when the token is not initialized.
+ *          PIN_INVALID_E when the PIN is not correct or the SO is locked out.
+ *          Other -ve value when hashing PIN fails.
+ *          0 when PIN is correct.
+ */
+int WP11_Slot_CheckSOPinLockout(WP11_Slot* slot, char* pin, int pinLen)
+{
+    int ret;
+#ifndef WOLFPKCS11_NO_TIME
+    time_t now;
+    time_t allowed;
+
+    if (wc_GetTime(&now, sizeof(now)) != 0)
+        return PIN_INVALID_E;
+
+    /* Check for too many fails and whether the timeout has elapsed. */
+    WP11_Lock_LockRW(&slot->lock);
+    if (slot->token.soFailedLogin == WP11_MAX_LOGIN_FAILS_SO) {
+        allowed = slot->token.soLastFailedLogin +
+                                                 slot->token.soFailLoginTimeout;
+        if (allowed < now)
+            slot->token.soFailedLogin = 0;
+        else {
+            WP11_Lock_UnlockRW(&slot->lock);
+            return PIN_INVALID_E;
+        }
+    }
+    WP11_Lock_UnlockRW(&slot->lock);
+#endif
+
+    ret = WP11_Slot_CheckSOPin(slot, pin, pinLen);
+
+#ifndef WOLFPKCS11_NO_TIME
+    WP11_Lock_LockRW(&slot->lock);
+    /* PIN failed - update failure info. */
+    if (ret == PIN_INVALID_E) {
+        slot->token.soFailedLogin++;
+        if (slot->token.soFailedLogin == WP11_MAX_LOGIN_FAILS_SO) {
+            slot->token.soLastFailedLogin = now;
+            slot->token.soFailLoginTimeout += WP11_SO_LOGIN_FAIL_TIMEOUT;
+        }
+    }
+    /* Worked - clear failure info. */
+    else if (ret == 0) {
+        slot->token.soFailedLogin = 0;
+        slot->token.soLastFailedLogin = 0;
+        slot->token.soFailLoginTimeout = 0;
+    }
+    WP11_Lock_UnlockRW(&slot->lock);
+#endif
 
     return ret;
 }

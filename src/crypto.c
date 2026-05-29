@@ -9201,12 +9201,17 @@ CK_RV C_MessageVerifyFinal(CK_SESSION_HANDLE hSession)
 
 #if defined (WOLFPKCS11_PKCS11_V3_2)
 
+#ifdef WOLFPKCS11_MLKEM
 /*
  * PKCS#11 v3.0 sec 5.1: an object whose effective CKA_PRIVATE is CK_TRUE must
  * not be created on a session that is not logged in as the user. Empty-PIN
  * tokens treat public sessions as logged in (mirrors the find-time gate in
  * WP11_Object_Find). Returns CKR_USER_NOT_LOGGED_IN when the template asks for
  * a private object on a public session, otherwise CKR_OK.
+ *
+ * Only used by C_EncapsulateKey / C_DecapsulateKey, which are themselves
+ * compiled out without WOLFPKCS11_MLKEM; guard the definition the same way to
+ * avoid an unused-function error under -Werror.
  */
 static CK_RV CheckPrivateObjectLogin(WP11_Session* session,
                                      CK_ATTRIBUTE_PTR pTemplate,
@@ -9226,6 +9231,7 @@ static CK_RV CheckPrivateObjectLogin(WP11_Session* session,
 
     return CKR_OK;
 }
+#endif /* WOLFPKCS11_MLKEM */
 
 CK_RV C_EncapsulateKey(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
                        CK_OBJECT_HANDLE hPublicKey, CK_ATTRIBUTE_PTR pTemplate,
