@@ -3445,8 +3445,11 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
             ret = WP11_AesCbcPad_Decrypt(pEncryptedData,
                                                  (int)ulEncryptedDataLen, pData,
                                                  &decDataLen, session);
-            if (ret == BUFFER_E)
+            if (ret == BUFFER_E) {
+                /* Report required size; operation stays active for retry. */
+                *pulDataLen = decDataLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
             if (ret < 0)
                 break;
             *pulDataLen = decDataLen;
@@ -3756,8 +3759,11 @@ CK_RV C_DecryptUpdate(CK_SESSION_HANDLE hSession,
             ret = WP11_AesCbcPad_DecryptUpdate(pEncryptedPart,
                                                  (int)ulEncryptedPartLen, pPart,
                                                  &decPartLen, session);
-            if (ret == BUFFER_E)
+            if (ret == BUFFER_E) {
+                /* Report required size; operation stays active for retry. */
+                *pulPartLen = decPartLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
             if (ret < 0) {
                 WP11_Session_SetOpInitialized(session, 0);
                 return CKR_FUNCTION_FAILED;
@@ -3930,8 +3936,11 @@ CK_RV C_DecryptFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastPart,
                 return CKR_OK;
 
             ret = WP11_AesCbcPad_DecryptFinal(pLastPart, &decPartLen, session);
-            if (ret == BUFFER_E)
+            if (ret == BUFFER_E) {
+                /* Report required size; operation stays active for retry. */
+                *pulLastPartLen = decPartLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
             if (ret < 0) {
                 WP11_Session_SetOpInitialized(session, 0);
                 return CKR_FUNCTION_FAILED;
@@ -7065,6 +7074,19 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
             derivedKeyLen = *(CK_ULONG*)lenAttr->pValue;
             if (derivedKeyLen == 0)
                 return CKR_ATTRIBUTE_VALUE_INVALID;
+            /* WP11_PBKDF2 takes int lengths; reject caller-controlled CK_ULONG
+             * values that would silently truncate to word32 or become negative
+             * on cast to int (Fenrir F-4313 class). */
+            if (!CK_ULONG_FITS_WORD32(pwLen) ||
+                !CK_ULONG_FITS_WORD32(params->ulSaltSourceDataLen) ||
+                !CK_ULONG_FITS_WORD32(params->iterations) ||
+                !CK_ULONG_FITS_WORD32(derivedKeyLen) ||
+                pwLen > (CK_ULONG)0x7FFFFFFF ||
+                params->ulSaltSourceDataLen > (CK_ULONG)0x7FFFFFFF ||
+                params->iterations > (CK_ULONG)0x7FFFFFFF ||
+                derivedKeyLen > (CK_ULONG)0x7FFFFFFF) {
+                return CKR_MECHANISM_PARAM_INVALID;
+            }
 
             derivedKey = (CK_BYTE*)XMALLOC(derivedKeyLen, NULL,
                 DYNAMIC_TYPE_TMP_BUFFER);

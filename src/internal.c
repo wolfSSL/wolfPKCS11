@@ -14326,9 +14326,16 @@ int WP11_AesCbcPad_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
     if (ret == 0) {
         finalSz = *decSz - sz;
         ret = WP11_AesCbcPad_DecryptFinal(dec + sz, &finalSz, session);
-        if (ret == 0) {
+        if (ret == 0 || ret == BUFFER_E) {
+            /* On success this is the plaintext length; on BUFFER_E it is the
+             * total required size (data already produced plus the final
+             * block's need) for the caller to resize and retry. */
             *decSz = sz + finalSz;
         }
+    }
+    else if (ret == BUFFER_E) {
+        /* Update set sz to the size it needs. */
+        *decSz = sz;
     }
 
     return ret;
@@ -14366,9 +14373,12 @@ int WP11_AesCbcPad_DecryptUpdate(unsigned char* enc, word32 encSz,
         enc += sz;
         encSz -= sz;
         if (cbc->partialSz == AES_BLOCK_SIZE && encSz > 0) {
-            /* Refuse to overflow caller's buffer. */
-            if ((word32)(outSz + AES_BLOCK_SIZE) > bufSz)
+            /* Refuse to overflow caller's buffer; report the size needed so
+             * far and leave the operation active (CKR_BUFFER_TOO_SMALL). */
+            if ((word32)(outSz + AES_BLOCK_SIZE) > bufSz) {
+                *decSz = (word32)outSz + AES_BLOCK_SIZE;
                 return BUFFER_E;
+            }
             ret = wc_AesCbcDecrypt(&cbc->aes, dec, cbc->partial,
                                                                 AES_BLOCK_SIZE);
             dec += AES_BLOCK_SIZE;
@@ -14380,8 +14390,10 @@ int WP11_AesCbcPad_DecryptUpdate(unsigned char* enc, word32 encSz,
         sz = encSz - (encSz & (AES_BLOCK_SIZE - 1));
         if (sz == (int)encSz)
             sz -= AES_BLOCK_SIZE;
-        if ((word32)(outSz + sz) > bufSz)
+        if ((word32)(outSz + sz) > bufSz) {
+            *decSz = (word32)(outSz + sz);
             return BUFFER_E;
+        }
         ret = wc_AesCbcDecrypt(&cbc->aes, dec, enc, sz);
         outSz += sz;
         enc += sz;
@@ -14444,11 +14456,13 @@ int WP11_AesCbcPad_DecryptFinal(unsigned char* dec, word32* decSz,
     if (ret == 0) {
         outSz = AES_BLOCK_SIZE - (padCnt & (0 - (padCnt <= AES_BLOCK_SIZE)));
         /* Refuse to overflow caller's buffer. Output size is 0..15 bytes;
-         * caller passes the remaining capacity in *decSz. */
+         * caller passes the remaining capacity in *decSz. On a too-small
+         * buffer report the required size and leave the operation active, per
+         * the PKCS#11 CKR_BUFFER_TOO_SMALL contract; the AES context is
+         * released when the operation is reinitialised or the session closes.
+         * A caller that first queried the output size never reaches this. */
         if ((word32)outSz > *decSz) {
-            wc_AesFree(&cbc->aes);
-            cbc->partialSz = 0;
-            session->init = 0;
+            *decSz = outSz;
             return BUFFER_E;
         }
         for (i = 0; i < AES_BLOCK_SIZE; i++) {
