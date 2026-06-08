@@ -198,7 +198,14 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #define WP11_FLAG_PRIVATE              0x00000001
 #define WP11_FLAG_SENSITIVE            0x00000002
 #define WP11_FLAG_EXTRACTABLE          0x00000004
-#define WP11_FLAG_MODIFIABLE           0x00000008
+/* Bit 0x00000008 was the original WP11_FLAG_MODIFIABLE (non-inverted) but
+ * read incorrectly for unset objects (defaulted to CKA_MODIFIABLE=CK_FALSE
+ * in violation of the spec default of CK_TRUE). The bit is now reserved and
+ * unused; CKA_MODIFIABLE is tracked by WP11_FLAG_NOT_MODIFIABLE below using
+ * a fresh bit so existing on-disk objects (where 0x00000008 may be set or
+ * clear from older builds) all read as the spec default CKA_MODIFIABLE=TRUE
+ * under new code rather than silently flipping immutability state. */
+#define WP11_FLAG_RESERVED_MODIFIABLE  0x00000008
 #define WP11_FLAG_ALWAYS_SENSITIVE     0x00000010
 #define WP11_FLAG_NEVER_EXTRACTABLE    0x00000020
 #define WP11_FLAG_ALWAYS_AUTHENTICATE  0x00000040
@@ -218,10 +225,11 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #define WP11_FLAG_DERIVE               0x00040000
 #define WP11_FLAG_ENCAPSULATE          0x00080000
 #define WP11_FLAG_DECAPSULATE          0x00100000
-/* These two flags invert their attribute's spec default (CK_TRUE). When the
+/* These three flags invert their attribute's spec default (CK_TRUE). When the
  * flag is set, the attribute reads as CK_FALSE; clear means CK_TRUE. */
 #define WP11_FLAG_NOT_COPYABLE         0x00200000
 #define WP11_FLAG_NOT_DESTROYABLE      0x00400000
+#define WP11_FLAG_NOT_MODIFIABLE       0x00800000
 
 /* Flags for token. */
 #define WP11_TOKEN_FLAG_USER_PIN_SET   0x00000001
@@ -466,6 +474,7 @@ WP11_LOCAL int WP11_Object_SetClass(WP11_Object* object, CK_OBJECT_CLASS objClas
 WP11_LOCAL CK_OBJECT_CLASS WP11_Object_GetClass(WP11_Object* object);
 WP11_LOCAL int WP11_Object_IsCopyable(WP11_Object* object);
 WP11_LOCAL int WP11_Object_IsDestroyable(WP11_Object* object);
+WP11_LOCAL int WP11_Object_IsModifiable(WP11_Object* object);
 
 #ifdef WOLFPKCS11_NSS
 WP11_LOCAL int WP11_Object_SetTrust(WP11_Object* object, unsigned char** data,
