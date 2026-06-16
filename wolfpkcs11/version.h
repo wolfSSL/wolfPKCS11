@@ -29,7 +29,7 @@ extern "C" {
 #endif
 
 #define LIBWOLFPKCS11_VERSION_STRING "2.1.0"
-#define LIBWOLFPKCS11_VERSION_HEX 0x02001000
+#define LIBWOLFPKCS11_VERSION_HEX 0x02010000
 
 #ifdef __cplusplus
 }

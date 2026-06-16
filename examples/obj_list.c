@@ -205,7 +205,7 @@ static void pkcs11_print_key_type(CK_VOID_PTR pValue)
 static void pkcs11_print_num(const char* label, CK_VOID_PTR pValue)
 {
     CK_ULONG* val = (CK_ULONG*)pValue;
-    printf("%10s: %ld\n", label, *val);
+    printf("%10s: %lu\n", label, *val);
 }
 
 static void pkcs11_print_boolean(const char* label, CK_VOID_PTR pValue)
