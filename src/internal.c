@@ -9873,7 +9873,7 @@ int WP11_Object_DataObject(WP11_Object* object, unsigned char** data,
     if (data[0] != NULL && len[0] > 0) {
         XFREE(object->data.genericData.data, NULL, DYNAMIC_TYPE_CERT);
         object->data.genericData.data =
-            XMALLOC(len[0], NULL, DYNAMIC_TYPE_CERT);
+            (byte*)XMALLOC(len[0], NULL, DYNAMIC_TYPE_CERT);
         if (object->data.genericData.data == NULL) {
             ret = MEMORY_E;
         }
@@ -9892,7 +9892,7 @@ int WP11_Object_DataObject(WP11_Object* object, unsigned char** data,
     if (ret == 0 && data[1] != NULL && len[1] > 0) {
         XFREE(object->data.genericData.application, NULL, DYNAMIC_TYPE_CERT);
         object->data.genericData.application =
-            XMALLOC(len[1], NULL, DYNAMIC_TYPE_CERT);
+            (byte*)XMALLOC(len[1], NULL, DYNAMIC_TYPE_CERT);
         if (object->data.genericData.application == NULL) {
             ret = MEMORY_E;
         }
@@ -9911,7 +9911,7 @@ int WP11_Object_DataObject(WP11_Object* object, unsigned char** data,
     if (ret == 0 && data[2] != NULL && len[2] > 0) {
         XFREE(object->data.genericData.objectId, NULL, DYNAMIC_TYPE_CERT);
         object->data.genericData.objectId =
-            XMALLOC(len[2], NULL, DYNAMIC_TYPE_CERT);
+            (byte*)XMALLOC(len[2], NULL, DYNAMIC_TYPE_CERT);
         if (object->data.genericData.objectId == NULL) {
             ret = MEMORY_E;
         }
@@ -15543,8 +15543,8 @@ int WP11_Digest_Init(CK_MECHANISM_TYPE mechanism, WP11_Session* session)
     ret = wp11_digest_hash_type(mechanism, &hashType);
 
     if (ret == 0) {
-        digest->hashType = hashType;
-        ret = wc_HashInit(&digest->hash, hashType);
+        digest->hashType = (enum wc_HashType)hashType;
+        ret = wc_HashInit(&digest->hash, (enum wc_HashType)hashType);
     }
 
     return ret;
@@ -16230,8 +16230,9 @@ int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
     if (ret != CKR_OK)
         return ret;
 
-    session->params.digest.hashType = hashType;
-    ret = wc_HashInit(&session->params.digest.hash, hashType);
+    session->params.digest.hashType = (enum wc_HashType)hashType;
+    ret = wc_HashInit(&session->params.digest.hash,
+        (enum wc_HashType)hashType);
 
     if (ret != CKR_OK)
         return ret;

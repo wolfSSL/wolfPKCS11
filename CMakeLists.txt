@@ -32,7 +32,7 @@ if("${CMAKE_SOURCE_DIR}" STREQUAL "${CMAKE_BINARY_DIR}")
      You must delete them, or cmake will refuse to work.")
 endif()
 
-project(wolfpkcs11 VERSION 2.0.0 LANGUAGES C)
+project(wolfpkcs11 VERSION 2.1.0 LANGUAGES C)
 
 # shared library versioning
 # increment if interfaces have been removed or changed

@@ -179,7 +179,7 @@ static CK_RV pkcs11_slots_info(void)
     CHECK_CKR(ret, "Get Slot List count");
 
     if (ret == CKR_OK) {
-        slots = malloc(cnt * sizeof(CK_SLOT_ID));
+        slots = (CK_SLOT_ID*)malloc(cnt * sizeof(CK_SLOT_ID));
         if (slots == NULL) {
             ret = 1;
         }

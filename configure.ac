@@ -7,7 +7,7 @@
 #
 AC_COPYRIGHT([Copyright (C) 2014-2023 wolfSSL Inc.])
 AC_PREREQ([2.63])
-AC_INIT([wolfpkcs11],[2.0.0],[https://github.com/wolfssl/wolfpkcs11/issues],[wolfpkcs11],[http://www.wolfssl.com])
+AC_INIT([wolfpkcs11],[2.1.0],[https://github.com/wolfssl/wolfpkcs11/issues],[wolfpkcs11],[http://www.wolfssl.com])
 AC_CONFIG_AUX_DIR([build-aux])
 
 # The following sets CFLAGS to empty if unset on command line.

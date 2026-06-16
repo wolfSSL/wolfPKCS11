@@ -297,6 +297,77 @@ Set to any value to stop storage of token data.
 
 ## Release Notes
 
+### wolfPKCS11 Release 2.1 (TBD, 2026)
+
+**Summary**
+
+This release adds post-quantum cryptography support (ML-DSA and ML-KEM), CMake
+build support, and Doxygen API documentation. It also closes a large number of
+PKCS#11 specification compliance gaps and bugs found through static and
+negative analysis, and improves CI and interoperability testing.
+
+**Compatibility with 2.0 behavior**
+
+Several PKCS#11 attribute defaults were corrected to match the specification.
+These changes can affect applications and stored tokens created with 2.0. The
+following build defines restore the pre-2.1 (2.0) behavior if needed:
+
+* `WOLFPKCS11_LEGACY_COPYABLE_FALSE_DEFAULT` - restore the old behavior where an
+  unset `CKA_COPYABLE` reads back as `CK_FALSE` (the PKCS#11 default is
+  `CK_TRUE`).
+* `WOLFPKCS11_LEGACY_PRIVATE_FALSE_DEFAULT` - restore the old behavior where an
+  unset `CKA_PRIVATE` reads back as `CK_FALSE` for `CKO_PRIVATE_KEY` /
+  `CKO_SECRET_KEY` (the PKCS#11 default is `CK_TRUE`). Also disables the
+  matching login-state check on object creation.
+* `WOLFPKCS11_LEGACY_WRAP_TRUE_DEFAULT` - restore the old behavior where an
+  unset `CKA_WRAP` / `CKA_UNWRAP` defaults to `CK_TRUE` (the PKCS#11 default is
+  `CK_FALSE`).
+
+See the "Behavior changes for PKCS#11 spec compliance" section above for the
+related `C_DeriveKey`, `C_CopyObject`, `C_DestroyObject`, encapsulation and
+`C_Login` enforcement changes.
+
+**Detail**
+
+* Added ML-DSA (Dilithium) support, including `CKA_SEED` private key import.
+  (PR #161)
+* Added ML-KEM support. (PR #175)
+* Added preparation work for post-quantum cryptography support. (PR #157)
+* Renamed ML-DSA mechanisms/identifiers to the final naming. (PR #188)
+* Added CMake build support. (PR #156)
+* Added PKCS#11 Doxygen API documentation. (PR #144)
+* Added support for `CKR_OPERATION_ACTIVE`. (PR #176)
+* Use the DHUK to wrap/unwrap the seed value used for the token. (PR #159)
+* Added file storage safety to wolfPKCS11. (PR #150)
+* Fixed empty PIN handling for FIPS. (PR #143)
+* Fixed loading a token with an empty PIN. (PR #158)
+* Fixed SHA-512 truncated forms (SHA-512/224 and SHA-512/256). (PR #147)
+* Fixed `C_WrapKey` not checking `CKA_EXTRACTABLE` on the key being wrapped.
+  (PR #165)
+* Fixed `falseVal` initialized to `CK_TRUE` instead of `CK_FALSE`. (PR #162)
+* Fixed a read-only lock not being released on an early return. (PR #163)
+* Added a missing NULL check. (PR #166)
+* Fixed a typo in an `#ifndef` macro. (PR #167)
+* Fixed a typo in `configure.ac`. (PR #164)
+* Fixed resource leaks and ensured secure buffer erasing. (PR #172)
+* Fixed numerous PKCS#11 compliance and static analysis findings from Fenrir.
+  (PR #168, PR #169, PR #171, PR #173, PR #178, PR #185, PR #186, PR #187,
+  PR #189)
+* Added negative testing and validation for wolfPKCS11. (PR #179)
+* Added Fenrir findings fixes and test additions. (PR #177)
+* Added a multi-call HMAC regression test. (PR #181)
+* Added a `C_VerifyRecover` test and fixed test attributes. (PR #184)
+* Fixed ML-KEM templates in tests. (PR #183)
+* Fixed a couple of failing tests. (PR #145)
+* Added an interoperability test against wolfSSL master. (PR #148)
+* Added a wolfBoot integration test to intercept regressions. (PR #170)
+* Reduced the wolfBoot integration test flow (unstable emulator). (PR #174)
+* Removed `--enable-cryptocb` usage. (PR #149)
+* Fixed CI failures from upstream dependency drift. (PR #180)
+* Fixed CI issues. (PR #182)
+* Fixed the Firefox Dockerfile. (PR #160)
+* Fixed Debian rules for the documentation. (PR #153)
+
 ### wolfPKCS11 Release 2.0 (August 26, 2025)
 
 **Summary**
