@@ -614,6 +614,26 @@ static int libraryInitCount = 0;
 /* Lock for globals including global random. */
 static WP11_Lock globalLock;
 
+#if !defined(SINGLE_THREADED) && defined(WOLFSSL_MUTEX_INITIALIZER) && \
+    defined(WOLFSSL_MUTEX_INITIALIZER_CLAUSE)
+/* Permanently-live mutex that serializes WP11_Library_Init,
+ * WP11_Library_Final, and WP11_Library_IsInitialized. Needed because
+ * globalLock above is created inside Init and destroyed inside Final, so
+ * concurrent C_Initialize / C_Finalize / any-C_-call would otherwise race
+ * on globalLock's lifetime (Fenrir F-4798, F-4799). Static init avoids the
+ * chicken-and-egg of needing a lock to protect lock creation.
+ *
+ * WOLFSSL_MUTEX_INITIALIZER_CLAUSE expands to "= WOLFSSL_MUTEX_INITIALIZER(...)"
+ * on builds that support a static mutex initializer. Older wolfSSL (e.g.
+ * v5.6.6) exposes only the object-like WOLFSSL_MUTEX_INITIALIZER with no
+ * lockname argument and lacks the _CLAUSE wrapper; gating on _CLAUSE keeps
+ * those builds on the non-static fallback path below rather than failing to
+ * compile. */
+static wolfSSL_Mutex libraryInitLock
+    WOLFSSL_MUTEX_INITIALIZER_CLAUSE(libraryInitLock);
+#define WP11_HAVE_LIBRARY_INIT_LOCK
+#endif
+
 
 #ifndef SINGLE_THREADED
 /**
@@ -6603,6 +6623,15 @@ int WP11_Library_Init(void)
     int ret = 0;
     int i;
 
+#ifdef WP11_HAVE_LIBRARY_INIT_LOCK
+    /* Serialize the entire init sequence: both the libraryInitCount==0
+     * check and globalLock construction must happen under a permanently
+     * live mutex so two concurrent C_Initialize calls don't both enter
+     * the construction branch. */
+    if (wc_LockMutex(&libraryInitLock) != 0)
+        return BAD_MUTEX_E;
+#endif
+
     if (libraryInitCount == 0) {
         ret = WP11_Lock_Init(&globalLock);
         if (ret == 0) {
@@ -6642,6 +6671,10 @@ int WP11_Library_Init(void)
         WP11_Lock_UnlockRW(&globalLock);
     }
 
+#ifdef WP11_HAVE_LIBRARY_INIT_LOCK
+    wc_UnLockMutex(&libraryInitLock);
+#endif
+
     return ret;
 }
 
@@ -6653,6 +6686,14 @@ void WP11_Library_Final(void)
 {
     int i;
     int cnt;
+
+#ifdef WP11_HAVE_LIBRARY_INIT_LOCK
+    /* Hold the init lock across the count decrement and the conditional
+     * WP11_Lock_Free so a racing WP11_Library_IsInitialized can't observe
+     * count>0, then call WP11_Lock_LockRO on a freed globalLock. */
+    if (wc_LockMutex(&libraryInitLock) != 0)
+        return;
+#endif
 
     WP11_Lock_LockRW(&globalLock);
     cnt = --libraryInitCount;
@@ -6682,6 +6723,10 @@ void WP11_Library_Final(void)
         WP11_Lock_Free(&globalLock);
         wolfCrypt_Cleanup();
     }
+
+#ifdef WP11_HAVE_LIBRARY_INIT_LOCK
+    wc_UnLockMutex(&libraryInitLock);
+#endif
 }
 
 /**
@@ -6692,7 +6737,25 @@ void WP11_Library_Final(void)
  */
 int WP11_Library_IsInitialized(void)
 {
-    int ret, locked = 0;
+    int ret;
+#ifdef WP11_HAVE_LIBRARY_INIT_LOCK
+    /* Read libraryInitCount and lock globalLock under the init mutex so a
+     * racing WP11_Library_Final can't free globalLock between the count
+     * check and WP11_Lock_LockRO. */
+    if (wc_LockMutex(&libraryInitLock) != 0)
+        return 0;
+    if (libraryInitCount > 0) {
+        WP11_Lock_LockRO(&globalLock);
+        ret = libraryInitCount > 0;
+        WP11_Lock_UnlockRO(&globalLock);
+    }
+    else {
+        ret = 0;
+    }
+    wc_UnLockMutex(&libraryInitLock);
+    return ret;
+#else
+    int locked = 0;
     if (libraryInitCount > 0) {
         /* cannot used globalLock before init */
         WP11_Lock_LockRO(&globalLock);
@@ -6703,6 +6766,7 @@ int WP11_Library_IsInitialized(void)
         WP11_Lock_UnlockRO(&globalLock);
     }
     return ret;
+#endif
 }
 
 /**
@@ -6847,10 +6911,25 @@ int WP11_Slot_OpenSession(WP11_Slot* slot, unsigned long flags, void* app,
 void WP11_Slot_CloseSession(WP11_Slot* slot, WP11_Session* session)
 {
     int dynamic;
+    int stillLinked = 0;
     int noMore = 1;
     WP11_Session* curr;
 
     WP11_Lock_LockRW(&slot->lock);
+    /* Two threads holding the same session pointer (e.g. two C_CloseSession
+     * calls with the same handle) can both pass the lock-free WP11_Session_Get
+     * lookup. Re-validate inside the slot lock that the session is still in
+     * the list before doing anything with it. */
+    for (curr = slot->session; curr != NULL; curr = curr->next) {
+        if (curr == session) {
+            stillLinked = 1;
+            break;
+        }
+    }
+    if (!stillLinked) {
+        WP11_Lock_UnlockRW(&slot->lock);
+        return;
+    }
     /* Only free the session object if it is on top and there is more than the
      * minimum number of sessions associated with the slot.
      */
@@ -6884,12 +6963,16 @@ void WP11_Slot_CloseSessions(WP11_Slot* slot)
 {
     WP11_Session* curr;
 
+    /* Hold the slot lock across the entire walk so a concurrent
+     * C_OpenSession / C_CloseSession can't mutate slot->session between
+     * the NULL test and the free, or unlink the head we're about to free.
+     */
+    WP11_Lock_LockRW(&slot->lock);
     /* Free all sessions down to minimum. */
     while (slot->session != NULL &&
             SESS_HANDLE_SESS_ID(slot->session->handle) > WP11_SESSION_CNT_MIN) {
         wp11_Slot_FreeSession(slot, slot->session);
     }
-    WP11_Lock_LockRW(&slot->lock);
     /* Finalize the rest. */
     for (curr = slot->session; curr != NULL; curr = curr->next)
         wp11_Session_Final(curr);
@@ -7069,6 +7152,76 @@ int WP11_Slot_CheckSOPin(WP11_Slot* slot, char* pin, int pinLen)
     WP11_Lock_UnlockRO(&slot->lock);
 
     wc_ForceZero(hash, sizeof(hash));
+
+    return ret;
+}
+
+/**
+ * Check the SO PIN with the failed-login lockout applied, but without logging
+ * in. C_InitToken must verify the SO PIN before wiping the token, and the
+ * verification needs the same WP11_MAX_LOGIN_FAILS_SO brute-force lockout that
+ * WP11_Slot_SOLogin enforces (Fenrir F-4632). Unlike WP11_Slot_SOLogin this
+ * does NOT set loginState or reject open read-only sessions: C_InitToken is not
+ * a login and re-initializes the token immediately afterwards, so those side
+ * effects would be wrong here.
+ *
+ * When WOLFPKCS11_NO_TIME is defined there is no lockout state to maintain and
+ * this collapses to a plain WP11_Slot_CheckSOPin, matching the historical
+ * behaviour exactly.
+ *
+ * @param  slot    [in]  Slot object.
+ * @param  pin     [in]  PIN to check.
+ * @param  pinLen  [in]  Length of PIN.
+ * @return  PIN_NOT_SET_E when the token is not initialized.
+ *          PIN_INVALID_E when the PIN is not correct or the SO is locked out.
+ *          Other -ve value when hashing PIN fails.
+ *          0 when PIN is correct.
+ */
+int WP11_Slot_CheckSOPinLockout(WP11_Slot* slot, char* pin, int pinLen)
+{
+    int ret;
+#ifndef WOLFPKCS11_NO_TIME
+    time_t now;
+    time_t allowed;
+
+    if (wc_GetTime(&now, sizeof(now)) != 0)
+        return PIN_INVALID_E;
+
+    /* Check for too many fails and whether the timeout has elapsed. */
+    WP11_Lock_LockRW(&slot->lock);
+    if (slot->token.soFailedLogin == WP11_MAX_LOGIN_FAILS_SO) {
+        allowed = slot->token.soLastFailedLogin +
+                                                 slot->token.soFailLoginTimeout;
+        if (allowed < now)
+            slot->token.soFailedLogin = 0;
+        else {
+            WP11_Lock_UnlockRW(&slot->lock);
+            return PIN_INVALID_E;
+        }
+    }
+    WP11_Lock_UnlockRW(&slot->lock);
+#endif
+
+    ret = WP11_Slot_CheckSOPin(slot, pin, pinLen);
+
+#ifndef WOLFPKCS11_NO_TIME
+    WP11_Lock_LockRW(&slot->lock);
+    /* PIN failed - update failure info. */
+    if (ret == PIN_INVALID_E) {
+        slot->token.soFailedLogin++;
+        if (slot->token.soFailedLogin == WP11_MAX_LOGIN_FAILS_SO) {
+            slot->token.soLastFailedLogin = now;
+            slot->token.soFailLoginTimeout += WP11_SO_LOGIN_FAIL_TIMEOUT;
+        }
+    }
+    /* Worked - clear failure info. */
+    else if (ret == 0) {
+        slot->token.soFailedLogin = 0;
+        slot->token.soLastFailedLogin = 0;
+        slot->token.soFailLoginTimeout = 0;
+    }
+    WP11_Lock_UnlockRW(&slot->lock);
+#endif
 
     return ret;
 }
@@ -7729,6 +7882,11 @@ int WP11_Session_UpdateData(WP11_Session *session, byte *data, word32 dataLen)
 {
     int ret = 0;
     byte* tmp;
+
+    /* Guard the cumulative word32 sum against silent wrap that would lead to
+     * a tiny allocation followed by an oversized XMEMCPY past it. */
+    if (dataLen > (word32)0xFFFFFFFFu - session->dataSz)
+        return MEMORY_E;
 
 #ifdef XREALLOC
     tmp = (byte*)XREALLOC(session->data, session->dataSz + dataLen, NULL,
@@ -9855,6 +10013,18 @@ int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
     int onToken = OBJ_HANDLE_ON_TOKEN(objHandle);
 
     if (!onToken) {
+#ifdef WOLFPKCS11_NSS
+        /* The NSS cross-session walk below needs the slot lock so a concurrent
+         * remove-session can't reclaim a session node. Acquire it before the
+         * token lock to match the global lock order (slot then token) used by
+         * WP11_Session_RemoveObject / WP11_Slot_CloseSessions; acquiring them
+         * in the opposite order would risk an AB-BA deadlock. */
+        WP11_Lock_LockRO(&session->slot->lock);
+#endif
+        /* Hold the token lock across the session->object walk so a concurrent
+         * WP11_Session_RemoveObject (which holds the same lock around the
+         * unlink) can't free a node we're stepping through. */
+        WP11_Lock_LockRO(&session->slot->token.lock);
         obj = session->object;
         while (obj != NULL) {
             if (obj->handle == objHandle) {
@@ -9865,10 +10035,6 @@ int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
         }
 #ifdef WOLFPKCS11_NSS
         if (ret == BAD_FUNC_ARG) {
-            /* Token lock is needed in case remove object is run, slot lock is
-             * needed in case remove session is run */
-            WP11_Lock_LockRO(&session->slot->lock);
-            WP11_Lock_LockRO(&session->slot->token.lock);
             for (scan = session->slot->session; scan != NULL && ret != 0;
                  scan = scan->next) {
                 if (scan == session)
@@ -9880,9 +10046,11 @@ int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
                     }
                 }
             }
-            WP11_Lock_UnlockRO(&session->slot->token.lock);
-            WP11_Lock_UnlockRO(&session->slot->lock);
         }
+#endif
+        WP11_Lock_UnlockRO(&session->slot->token.lock);
+#ifdef WOLFPKCS11_NSS
+        WP11_Lock_UnlockRO(&session->slot->lock);
 #endif
     }
     else {
@@ -10345,8 +10513,11 @@ static int GetEcPoint(ecc_key* key, byte* data, CK_ULONG* len)
 
     if (data == NULL)
         *len = dataLen + 2 + longLen;
-    else if (*len < (CK_ULONG)dataLen)
+    else if (*len < (CK_ULONG)(dataLen + 2 + longLen)) {
+        /* Report the required size so the caller can resize and retry. */
+        *len = dataLen + 2 + longLen;
         ret = BUFFER_E;
+    }
     else {
         *len = dataLen + 2 + longLen;
         i = 0;
@@ -13822,8 +13993,16 @@ int WP11_Tls12_Master_Key_Derive(CK_SSL3_RANDOM_DATA* random,
         return BAD_FUNC_ARG;
     }
 
+    /* Reject CK_ULONG additions that wrap or that wouldn't fit word32 when
+     * later passed to wc_PRF_TLS. TLS 1.2 random length is fixed at 32 bytes
+     * per RFC 5246, but the PKCS#11 API accepts arbitrary CK_ULONG lengths
+     * from the caller, so guard explicitly. */
+    if (random->ulClientRandomLen >
+            (CK_ULONG)0xFFFFFFFF - random->ulServerRandomLen) {
+        return CKR_MECHANISM_PARAM_INVALID;
+    }
     ulSeedLen = random->ulClientRandomLen + random->ulServerRandomLen;
-    if (ulSeedLen == 0) {
+    if (ulSeedLen == 0 || ulSeedLen > (CK_ULONG)0xFFFFFFFF) {
         return CKR_MECHANISM_PARAM_INVALID;
     }
     pSeed = (byte*)XMALLOC(ulSeedLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -14210,9 +14389,16 @@ int WP11_AesCbcPad_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
     if (ret == 0) {
         finalSz = *decSz - sz;
         ret = WP11_AesCbcPad_DecryptFinal(dec + sz, &finalSz, session);
-        if (ret == 0) {
+        if (ret == 0 || ret == BUFFER_E) {
+            /* On success this is the plaintext length; on BUFFER_E it is the
+             * total required size (data already produced plus the final
+             * block's need) for the caller to resize and retry. */
             *decSz = sz + finalSz;
         }
+    }
+    else if (ret == BUFFER_E) {
+        /* Update set sz to the size it needs. */
+        *decSz = sz;
     }
 
     return ret;
@@ -14237,6 +14423,7 @@ int WP11_AesCbcPad_DecryptUpdate(unsigned char* enc, word32 encSz,
 {
     int ret = 0;
     WP11_CbcParams* cbc = &session->params.cbc;
+    word32 bufSz = *decSz;
     int sz = 0;
     int outSz = 0;
 
@@ -14249,6 +14436,12 @@ int WP11_AesCbcPad_DecryptUpdate(unsigned char* enc, word32 encSz,
         enc += sz;
         encSz -= sz;
         if (cbc->partialSz == AES_BLOCK_SIZE && encSz > 0) {
+            /* Refuse to overflow caller's buffer; report the size needed so
+             * far and leave the operation active (CKR_BUFFER_TOO_SMALL). */
+            if ((word32)(outSz + AES_BLOCK_SIZE) > bufSz) {
+                *decSz = (word32)outSz + AES_BLOCK_SIZE;
+                return BUFFER_E;
+            }
             ret = wc_AesCbcDecrypt(&cbc->aes, dec, cbc->partial,
                                                                 AES_BLOCK_SIZE);
             dec += AES_BLOCK_SIZE;
@@ -14260,6 +14453,10 @@ int WP11_AesCbcPad_DecryptUpdate(unsigned char* enc, word32 encSz,
         sz = encSz - (encSz & (AES_BLOCK_SIZE - 1));
         if (sz == (int)encSz)
             sz -= AES_BLOCK_SIZE;
+        if ((word32)(outSz + sz) > bufSz) {
+            *decSz = (word32)(outSz + sz);
+            return BUFFER_E;
+        }
         ret = wc_AesCbcDecrypt(&cbc->aes, dec, enc, sz);
         outSz += sz;
         enc += sz;
@@ -14321,6 +14518,16 @@ int WP11_AesCbcPad_DecryptFinal(unsigned char* dec, word32* decSz,
     }
     if (ret == 0) {
         outSz = AES_BLOCK_SIZE - (padCnt & (0 - (padCnt <= AES_BLOCK_SIZE)));
+        /* Refuse to overflow caller's buffer. Output size is 0..15 bytes;
+         * caller passes the remaining capacity in *decSz. On a too-small
+         * buffer report the required size and leave the operation active, per
+         * the PKCS#11 CKR_BUFFER_TOO_SMALL contract; the AES context is
+         * released when the operation is reinitialised or the session closes.
+         * A caller that first queried the output size never reaches this. */
+        if ((word32)outSz > *decSz) {
+            *decSz = outSz;
+            return BUFFER_E;
+        }
         for (i = 0; i < AES_BLOCK_SIZE; i++) {
             mask = (size_t)0 - (i != outSz);
             p = (unsigned char*)((size_t)p & mask);
