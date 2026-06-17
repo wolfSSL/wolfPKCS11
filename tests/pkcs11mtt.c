@@ -1003,7 +1003,7 @@ static CK_RV get_aes_128_key(CK_SESSION_HANDLE session, unsigned char* id,
         { CKA_UNWRAP,            &ckTrue,           sizeof(ckTrue)            },
         { CKA_VALUE,             aes_128_key,       sizeof(aes_128_key)       },
         { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
-        { CKA_ID,                id,                (CK_ULONG)idLen                     },
+        { CKA_ID,                id,                (CK_ULONG)idLen           },
     };
     int cnt = sizeof(aes_key)/sizeof(*aes_key);
 
@@ -2099,7 +2099,7 @@ static CK_RV get_rsa_priv_key(CK_SESSION_HANDLE session, unsigned char* privId,
         { CKA_EXTRACTABLE,       &extractable,      sizeof(CK_BBOOL)          },
         { CKA_SENSITIVE,         &sensitive,         sizeof(CK_BBOOL)          },
         { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
-        { CKA_ID,                privId,            (CK_ULONG)privIdLen                 },
+        { CKA_ID,                privId,            (CK_ULONG)privIdLen       },
     };
     int cnt = sizeof(rsa_2048_priv_key)/sizeof(*rsa_2048_priv_key);
 
@@ -2123,7 +2123,7 @@ static CK_RV get_rsa_pub_key(CK_SESSION_HANDLE session, unsigned char* pubId,
         { CKA_MODULUS,           rsa_2048_modulus,  sizeof(rsa_2048_modulus)  },
         { CKA_PUBLIC_EXPONENT,   rsa_2048_pub_exp,  sizeof(rsa_2048_pub_exp)  },
         { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
-        { CKA_ID,                pubId,             (CK_ULONG)pubIdLen                  },
+        { CKA_ID,                pubId,             (CK_ULONG)pubIdLen        },
     };
     int cnt = sizeof(rsa_2048_pub_key)/sizeof(*rsa_2048_pub_key);
 
@@ -2154,7 +2154,7 @@ static CK_RV gen_rsa_key(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE* pubKey,
     CK_ATTRIBUTE      privKeyTmpl[] = {
         {CKA_DECRYPT,  &ckTrue, sizeof(ckTrue) },
         {CKA_SIGN,     &ckTrue, sizeof(ckTrue) },
-        {CKA_ID,       id,      (CK_ULONG)idLen          }
+        {CKA_ID,       id,      (CK_ULONG)idLen }
     };
     int               privTmplCnt = 2;
 
@@ -2200,7 +2200,7 @@ static CK_RV find_rsa_pub_key(CK_SESSION_HANDLE session,
     CK_ATTRIBUTE      pubKeyTmpl[] = {
         { CKA_CLASS,     &pubKeyClass,   sizeof(pubKeyClass)  },
         { CKA_KEY_TYPE,  &rsaKeyType,    sizeof(rsaKeyType)   },
-        { CKA_ID,        id,             (CK_ULONG)idLen                }
+        { CKA_ID,        id,             (CK_ULONG)idLen      }
     };
     CK_ULONG pubKeyTmplCnt = sizeof(pubKeyTmpl) / sizeof(*pubKeyTmpl);
     CK_ULONG count;
@@ -2231,7 +2231,7 @@ static CK_RV find_rsa_priv_key(CK_SESSION_HANDLE session,
     CK_ATTRIBUTE      privKeyTmpl[] = {
         { CKA_CLASS,     &privKeyClass,  sizeof(privKeyClass) },
         { CKA_KEY_TYPE,  &rsaKeyType,    sizeof(rsaKeyType)   },
-        { CKA_ID,        id,             (CK_ULONG)idLen                }
+        { CKA_ID,        id,             (CK_ULONG)idLen      }
     };
     CK_ULONG privKeyTmplCnt = sizeof(privKeyTmpl) / sizeof(*privKeyTmpl);
     CK_ULONG count;
@@ -3503,17 +3503,17 @@ static CK_RV gen_ec_keys(CK_SESSION_HANDLE session, byte* params, int paramSz,
     CK_MECHANISM      mech;
     CK_BBOOL          token;
     CK_ATTRIBUTE      pubKeyTmpl[] = {
-        { CKA_EC_PARAMS,       params,             (CK_ULONG)paramSz                    },
+        { CKA_EC_PARAMS,       params,             (CK_ULONG)paramSz          },
         { CKA_VERIFY,          &ckTrue,            sizeof(ckTrue)             },
         { CKA_TOKEN,           &token,             sizeof(token)              },
-        { CKA_ID,              pubId,              (CK_ULONG)pubIdLen                   },
+        { CKA_ID,              pubId,              (CK_ULONG)pubIdLen         },
     };
     int               pubTmplCnt = sizeof(pubKeyTmpl)/sizeof(*pubKeyTmpl);
     CK_ATTRIBUTE      privKeyTmpl[] = {
         { CKA_SIGN,            &ckTrue,            sizeof(ckTrue)             },
         { CKA_DERIVE,          &ckTrue,            sizeof(ckTrue)             },
         { CKA_TOKEN,           &token,             sizeof(token)              },
-        { CKA_ID,              privId,             (CK_ULONG)privIdLen                  },
+        { CKA_ID,              privId,             (CK_ULONG)privIdLen        },
     };
     int               privTmplCnt = sizeof(privKeyTmpl)/sizeof(*privKeyTmpl);
 
@@ -3564,7 +3564,7 @@ static CK_RV find_ecc_priv_key(CK_SESSION_HANDLE session,
     CK_ATTRIBUTE      privKeyTmpl[] = {
         { CKA_CLASS,     &privKeyClass,  sizeof(privKeyClass) },
         { CKA_KEY_TYPE,  &eccKeyType,    sizeof(eccKeyType)   },
-        { CKA_ID,        id,             (CK_ULONG)idLen                }
+        { CKA_ID,        id,             (CK_ULONG)idLen      }
     };
     CK_ULONG privKeyTmplCnt = sizeof(privKeyTmpl) / sizeof(*privKeyTmpl);
     CK_ULONG count;
@@ -3595,7 +3595,7 @@ static CK_RV find_ecc_pub_key(CK_SESSION_HANDLE session,
     CK_ATTRIBUTE      pubKeyTmpl[] = {
         { CKA_CLASS,     &pubKeyClass, sizeof(pubKeyClass) },
         { CKA_KEY_TYPE,  &eccKeyType,   sizeof(eccKeyType)  },
-        { CKA_ID,        id,            (CK_ULONG)idLen               }
+        { CKA_ID,        id,            (CK_ULONG)idLen     }
     };
     CK_ULONG pubKeyTmplCnt = sizeof(pubKeyTmpl) / sizeof(*pubKeyTmpl);
     CK_ULONG count;
@@ -4307,16 +4307,16 @@ static CK_RV gen_dh_keys(CK_SESSION_HANDLE session, byte* prime, int primeSz,
     CK_MECHANISM      mech;
     CK_BBOOL          token;
     CK_ATTRIBUTE      pubKeyTmpl[] = {
-        { CKA_PRIME,           prime,              (CK_ULONG)primeSz                    },
-        { CKA_BASE,            generator,          (CK_ULONG)generatorSz                },
+        { CKA_PRIME,           prime,              (CK_ULONG)primeSz          },
+        { CKA_BASE,            generator,          (CK_ULONG)generatorSz      },
         { CKA_TOKEN,           &token,             sizeof(token)              },
-        { CKA_ID,              pubId,              (CK_ULONG)pubIdLen                   },
+        { CKA_ID,              pubId,              (CK_ULONG)pubIdLen         },
     };
     int               pubTmplCnt = sizeof(pubKeyTmpl)/sizeof(*pubKeyTmpl);
     CK_ATTRIBUTE      privKeyTmpl[] = {
         { CKA_DERIVE,          &ckTrue,            sizeof(ckTrue)             },
         { CKA_TOKEN,           &token,             sizeof(token)              },
-        { CKA_ID,              privId,             (CK_ULONG)privIdLen                  },
+        { CKA_ID,              privId,             (CK_ULONG)privIdLen        },
     };
     int               privTmplCnt = sizeof(privKeyTmpl)/sizeof(*privKeyTmpl);
 
@@ -4591,7 +4591,7 @@ static CK_RV gen_aes_key(CK_SESSION_HANDLE session, int len, unsigned char* id,
     CK_ATTRIBUTE      keyTmpl[] = {
         { CKA_VALUE_LEN,       &keyLen,            sizeof(keyLen)             },
         { CKA_TOKEN,           &token,             sizeof(token)              },
-        { CKA_ID,              id,                 (CK_ULONG)idLen                      },
+        { CKA_ID,              id,                 (CK_ULONG)idLen            },
     };
     int               keyTmplCnt = sizeof(keyTmpl)/sizeof(*keyTmpl);
 
@@ -4637,7 +4637,7 @@ static CK_RV find_aes_key(CK_SESSION_HANDLE session, unsigned char* id,
     CK_ATTRIBUTE      keyTmpl[] = {
         { CKA_CLASS,     &secretKeyClass,  sizeof(secretKeyClass) },
         { CKA_KEY_TYPE,  &aesKeyType,      sizeof(aesKeyType)     },
-        { CKA_ID,        id,               (CK_ULONG)idLen                  }
+        { CKA_ID,        id,               (CK_ULONG)idLen        }
     };
     CK_ULONG keyTmplCnt = sizeof(keyTmpl) / sizeof(*keyTmpl);
     CK_ULONG count;
@@ -6471,13 +6471,13 @@ static CK_RV gen_mldsa_keys(CK_SESSION_HANDLE session,
         { CKA_PARAMETER_SET,  &paramSet,   sizeof(paramSet) },
         { CKA_VERIFY,         &ckTrue,     sizeof(ckTrue)   },
         { CKA_TOKEN,          &token,      sizeof(token)    },
-        { CKA_ID,             pubId,       (CK_ULONG)pubIdLen         },
+        { CKA_ID,             pubId,       (CK_ULONG)pubIdLen },
     };
     int pubTmplCnt = sizeof(pubKeyTmpl) / sizeof(*pubKeyTmpl);
     CK_ATTRIBUTE privKeyTmpl[] = {
         { CKA_SIGN,           &ckTrue,     sizeof(ckTrue)   },
         { CKA_TOKEN,          &token,      sizeof(token)    },
-        { CKA_ID,             privId,      (CK_ULONG)privIdLen        },
+        { CKA_ID,             privId,      (CK_ULONG)privIdLen },
     };
     int privTmplCnt = sizeof(privKeyTmpl) / sizeof(*privKeyTmpl);
 
@@ -6508,7 +6508,7 @@ static CK_RV find_mldsa_priv_key(CK_SESSION_HANDLE session,
     CK_ATTRIBUTE tmpl[] = {
         { CKA_CLASS,    &privKeyClass,  sizeof(privKeyClass) },
         { CKA_KEY_TYPE, &mldsaKeyType,  sizeof(mldsaKeyType) },
-        { CKA_ID,       id,             (CK_ULONG)idLen                },
+        { CKA_ID,       id,             (CK_ULONG)idLen      },
     };
     CK_ULONG count;
 
@@ -6624,13 +6624,13 @@ static CK_RV gen_mlkem_keys(CK_SESSION_HANDLE session,
         { CKA_PARAMETER_SET, &paramSet,  sizeof(paramSet) },
         { CKA_ENCAPSULATE,   &ckTrue,    sizeof(ckTrue)   },
         { CKA_TOKEN,         &token,     sizeof(token)    },
-        { CKA_ID,            pubId,      (CK_ULONG)pubIdLen         },
+        { CKA_ID,            pubId,      (CK_ULONG)pubIdLen },
     };
     int pubTmplCnt = sizeof(pubKeyTmpl) / sizeof(*pubKeyTmpl);
     CK_ATTRIBUTE privKeyTmpl[] = {
         { CKA_DECAPSULATE,   &ckTrue,    sizeof(ckTrue)   },
         { CKA_TOKEN,         &token,     sizeof(token)    },
-        { CKA_ID,            privId,     (CK_ULONG)privIdLen        },
+        { CKA_ID,            privId,     (CK_ULONG)privIdLen },
     };
     int privTmplCnt = sizeof(privKeyTmpl) / sizeof(*privKeyTmpl);
 
@@ -6661,7 +6661,7 @@ static CK_RV find_mlkem_priv_key(CK_SESSION_HANDLE session,
     CK_ATTRIBUTE tmpl[] = {
         { CKA_CLASS,    &privKeyClass,  sizeof(privKeyClass) },
         { CKA_KEY_TYPE, &mlkemKeyType,  sizeof(mlkemKeyType) },
-        { CKA_ID,       id,             (CK_ULONG)idLen                },
+        { CKA_ID,       id,             (CK_ULONG)idLen      },
     };
     CK_ULONG count;
 
