@@ -1376,8 +1376,20 @@ CK_RV C_CreateObject(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate,
         }
     }
 
-    /* C_CreateObject requires CKA_CLASS in the template; no API-implied
-     * class to fall back on. */
+    /* C_CreateObject requires CKA_CLASS in the template; there is no
+     * API-implied object class as there is for derive/unwrap. Reject an
+     * incomplete template rather than creating an object whose class is the
+     * uninitialized sentinel value. */
+    {
+        CK_ATTRIBUTE* classAttr = NULL;
+        FindAttributeType(pTemplate, ulCount, CKA_CLASS, &classAttr);
+        if (classAttr == NULL) {
+            rv = CKR_TEMPLATE_INCOMPLETE;
+            WOLFPKCS11_LEAVE("C_CreateObject", rv);
+            return rv;
+        }
+    }
+
     rv = CheckPrivateLogin(session, pTemplate, ulCount,
                            WP11_NO_IMPLICIT_CLASS);
     if (rv != CKR_OK) {

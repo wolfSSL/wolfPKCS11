@@ -121,6 +121,11 @@ noinst_PROGRAMS += tests/decrypt_final_bufsize_test
 tests_decrypt_final_bufsize_test_SOURCES = tests/decrypt_final_bufsize_test.c
 tests_decrypt_final_bufsize_test_LDADD =
 
+check_PROGRAMS += tests/create_object_class_test
+noinst_PROGRAMS += tests/create_object_class_test
+tests_create_object_class_test_SOURCES = tests/create_object_class_test.c
+tests_create_object_class_test_LDADD =
+
 if BUILD_STATIC
 tests_pkcs11test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11mtt_LDADD  += src/libwolfpkcs11.la
@@ -146,6 +151,7 @@ tests_verify_recover_class_test_LDADD += src/libwolfpkcs11.la
 tests_login_another_user_test_LDADD += src/libwolfpkcs11.la
 tests_key_function_not_permitted_test_LDADD += src/libwolfpkcs11.la
 tests_decrypt_final_bufsize_test_LDADD += src/libwolfpkcs11.la
+tests_create_object_class_test_LDADD += src/libwolfpkcs11.la
 else
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
 tests_empty_pin_store_test_LDADD += src/libwolfpkcs11.la
@@ -163,6 +169,7 @@ tests_verify_recover_class_test_LDADD += src/libwolfpkcs11.la
 tests_login_another_user_test_LDADD += src/libwolfpkcs11.la
 tests_key_function_not_permitted_test_LDADD += src/libwolfpkcs11.la
 tests_decrypt_final_bufsize_test_LDADD += src/libwolfpkcs11.la
+tests_create_object_class_test_LDADD += src/libwolfpkcs11.la
 endif
 
 EXTRA_DIST += tests/unit.h \
