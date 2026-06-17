@@ -6632,8 +6632,11 @@ CK_RV C_VerifyRecoverInit(CK_SESSION_HANDLE hSession,
     }
 
     ret = WP11_Object_Find(session, hKey, &obj);
-    if (ret != CKR_OK)
-        return ret;
+    if (ret != 0) {
+        rv = CKR_OBJECT_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_VerifyRecoverInit", rv);
+        return rv;
+    }
 
     if (WP11_Object_GetClass(obj) != CKO_PUBLIC_KEY) {
         return CKR_KEY_HANDLE_INVALID;
