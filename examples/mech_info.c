@@ -303,7 +303,7 @@ static CK_RV pkcs11_mechs_info(CK_SLOT_ID slotId)
     CHECK_CKR(ret, "Get Mechanism List count");
 
     if (ret == CKR_OK) {
-        mechTypes = malloc(cnt * sizeof(CK_MECHANISM_TYPE));
+        mechTypes = (CK_MECHANISM_TYPE*)malloc(cnt * sizeof(CK_MECHANISM_TYPE));
         if (mechTypes == NULL) {
             ret = 1;
         }

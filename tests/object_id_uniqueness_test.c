@@ -312,7 +312,7 @@ static CK_RV create_token_cert_object(CK_SESSION_HANDLE session,
                                       CK_OBJECT_HANDLE* objHandle)
 {
     CK_RV ret;
-    CK_ATTRIBUTE template[] = {
+    CK_ATTRIBUTE tmpl[] = {
         { CKA_CLASS,             &certClass,      sizeof(certClass) },
         { CKA_CERTIFICATE_TYPE,  &certType,       sizeof(certType) },
         { CKA_TOKEN,             &ckTrue,         sizeof(ckTrue) },
@@ -321,9 +321,9 @@ static CK_RV create_token_cert_object(CK_SESSION_HANDLE session,
         { CKA_LABEL,             (char*)label,    strlen(label) },
         { CKA_VALUE,             (char*)certData, certLen }
     };
-    CK_ULONG templateCount = sizeof(template) / sizeof(template[0]);
+    CK_ULONG templateCount = sizeof(tmpl) / sizeof(tmpl[0]);
 
-    ret = funcList->C_CreateObject(session, template, templateCount, objHandle);
+    ret = funcList->C_CreateObject(session, tmpl, templateCount, objHandle);
     CHECK_CKR(ret, "Create Token Certificate Object");
 
     return ret;

@@ -53,13 +53,17 @@ RESULT=$?
 RESULT=$?
 [ $RESULT -ne 0 ] && echo "\n\nAdding an RSA key to the token failed" && exit 1
 
+# Locate the RSA DER file. It is a distributed source file, so for VPATH
+# builds (e.g. "make distcheck") it lives in $srcdir, not the build tree.
+RSA_DER="${srcdir:-.}/examples/rsa-2048.der"
+
 # Add an RSA key from file to the session
-./examples/add_rsa_key_file -rsa ./examples/rsa-2048.der
+./examples/add_rsa_key_file -rsa "$RSA_DER"
 RESULT=$?
 [ $RESULT -ne 0 ] && echo "\n\nAdding an RSA key from file failed" && exit 1
 
 # Add an RSA key to the token
-./examples/add_rsa_key_file -privId "rsa-2048.der" -rsa ./examples/rsa-2048.der
+./examples/add_rsa_key_file -privId "rsa-2048.der" -rsa "$RSA_DER"
 RESULT=$?
 [ $RESULT -ne 0 ] && echo "\n\nAdding an RSA key from file to the token failed" && exit 1
 

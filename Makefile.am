@@ -51,6 +51,13 @@ EXTRA_DIST+= cmake/wolfpkcs11ConfigVersion.cmake.in
 TEST_EXTENSIONS=.test
 TESTS += $(check_PROGRAMS)
 
+# Tests set WOLFPKCS11_TOKEN_PATH to a two-level relative path (./store/<name>)
+# and the storage layer only creates a single directory level. Ensure the
+# parent "store" directory exists in the build tree before any test runs, so
+# tests pass from a fresh build dir (e.g. under "make distcheck"). Also export
+# srcdir so scripts can find distributed data files in VPATH builds.
+AM_TESTS_ENVIRONMENT = mkdir -p store; srcdir='$(srcdir)'; export srcdir;
+
 check_SCRIPTS+= $(dist_noinst_SCRIPTS)
 TESTS += $(check_SCRIPTS)
 

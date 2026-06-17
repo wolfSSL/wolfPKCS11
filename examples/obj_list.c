@@ -150,8 +150,9 @@ static void pkcs11_final(CK_SESSION_HANDLE session)
 }
 
 
-static void pkcs11_print_class(CK_ULONG* objClass)
+static void pkcs11_print_class(CK_VOID_PTR pValue)
 {
+    CK_ULONG* objClass = (CK_ULONG*)pValue;
     const char* name = "Unknown";
 
     switch (*objClass) {
@@ -175,8 +176,9 @@ static void pkcs11_print_class(CK_ULONG* objClass)
     printf("     Class: %s\n", name);
 }
 
-static void pkcs11_print_key_type(CK_ULONG* keyType)
+static void pkcs11_print_key_type(CK_VOID_PTR pValue)
 {
+    CK_ULONG* keyType = (CK_ULONG*)pValue;
     const char* name = "Unknown";
 
     switch (*keyType) {
@@ -200,26 +202,31 @@ static void pkcs11_print_key_type(CK_ULONG* keyType)
     printf("  Key Type: %s\n", name);
 }
 
-static void pkcs11_print_num(const char* label, CK_ULONG* val)
+static void pkcs11_print_num(const char* label, CK_VOID_PTR pValue)
 {
-    printf("%10s: %ld\n", label, *val);
+    CK_ULONG* val = (CK_ULONG*)pValue;
+    printf("%10s: %lu\n", label, *val);
 }
 
-static void pkcs11_print_boolean(const char* label, CK_BBOOL* val)
+static void pkcs11_print_boolean(const char* label, CK_VOID_PTR pValue)
 {
+    CK_BBOOL* val = (CK_BBOOL*)pValue;
     printf("%10s: %s\n", label, (*val == CK_TRUE) ? "TRUE" : "FALSE");
 }
 
 static void pkcs11_print_boolean_on_true(const char* label, const char* name,
-    CK_BBOOL* val)
+    CK_VOID_PTR pValue)
 {
+    CK_BBOOL* val = (CK_BBOOL*)pValue;
     if (*val == CK_TRUE) {
         printf("%10s: %s\n", label, name);
     }
 }
 
-static void pkcs11_print_data(const char* label, byte* val, CK_ULONG len)
+static void pkcs11_print_data(const char* label, CK_VOID_PTR pValue,
+    CK_ULONG len)
 {
+    byte* val = (byte*)pValue;
     CK_ULONG i;
 
     printf("%10s: ", label);
@@ -229,8 +236,10 @@ static void pkcs11_print_data(const char* label, byte* val, CK_ULONG len)
     printf("\n");
 }
 
-static void pkcs11_print_string(const char* label, byte* val, CK_ULONG len)
+static void pkcs11_print_string(const char* label, CK_VOID_PTR pValue,
+    CK_ULONG len)
 {
+    char* val = (char*)pValue;
     printf("%10s: %.*s\n", label, (int)len, val);
 }
 

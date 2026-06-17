@@ -115,6 +115,16 @@ jobs:
     with:
       config: --enable-debug
 
+  # Build the library, examples and tests as C++ to catch regressions in
+  # C++ compatibility (e.g. missing void* casts, enum-from-int conversions,
+  # use of the "template" keyword, C99 compound literals). -Werror=narrowing
+  # promotes the int->CK_ULONG narrowing warning to an error so it is caught
+  # under GCC as well (clang already treats it as an error).
+  cpp_build:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: CC=g++ C_EXTRA_FLAGS="-Werror=narrowing"
+
   wolfssl_v5_6_6:
     uses: ./.github/workflows/wolfssl-v5.6.6-build-workflow.yml
 

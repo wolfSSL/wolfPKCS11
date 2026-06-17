@@ -1169,7 +1169,7 @@ static CK_RV test_op_state_success(void* args)
         ret = CKR_OK;
     }
     if (ret == CKR_OK) {
-        data = XMALLOC(len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        data = (byte*)XMALLOC(len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         ret = funcList->C_GetOperationState(session, data, &len);
         CHECK_CKR(ret, "Could not get operation state");
     }
@@ -1838,9 +1838,9 @@ static CK_RV test_pkcs5_pbkdf2_key_gen(void* args)
         if (ret == CKR_OK && key != CK_INVALID_HANDLE) {
             CK_KEY_TYPE retrievedKeyType;
             CK_ULONG retrievedLen = sizeof(retrievedKeyType);
-            ret = funcList->C_GetAttributeValue(session, key,
-                                               &(CK_ATTRIBUTE){CKA_KEY_TYPE, &retrievedKeyType, retrievedLen},
-                                               1);
+            CK_ATTRIBUTE keyTypeTmpl = {CKA_KEY_TYPE, &retrievedKeyType,
+                retrievedLen};
+            ret = funcList->C_GetAttributeValue(session, key, &keyTypeTmpl, 1);
             CHECK_CKR(ret, "Get attribute value");
             if (ret == CKR_OK && retrievedKeyType != CKK_AES) {
                 ret = CKR_GENERAL_ERROR;
@@ -3230,7 +3230,7 @@ static CK_RV test_attribute(void* args)
         { CKA_TOKEN,             &ckTrue,           0                         }
     };
     CK_ATTRIBUTE badAttrType[] = {
-        { -1,                    &ckTrue,           sizeof(ckTrue)            }
+        { (CK_ATTRIBUTE_TYPE)-1, &ckTrue,           sizeof(ckTrue)            }
     };
     CK_ATTRIBUTE badAttrLen[] = {
         { CKA_VALUE,             retKeyData,        0                         }
@@ -4659,7 +4659,7 @@ static CK_RV get_aes_128_key(CK_SESSION_HANDLE session, unsigned char* id,
         { CKA_VALUE,             aes_128_key,       sizeof(aes_128_key)       },
 #endif
         { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
-        { CKA_ID,                id,                idLen                     },
+        { CKA_ID,                id,                (CK_ULONG)idLen           },
     };
     int cnt = sizeof(aes_key)/sizeof(*aes_key);
 
@@ -6717,7 +6717,7 @@ static CK_RV get_rsa_priv_key(CK_SESSION_HANDLE session, unsigned char* privId,
         { CKA_SENSITIVE,         &ckFalse,          sizeof(ckFalse)           },
         { CKA_EXTRACTABLE,       &extractable,      sizeof(CK_BBOOL)          },
         { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
-        { CKA_ID,                privId,            privIdLen                 },
+        { CKA_ID,                privId,            (CK_ULONG)privIdLen       },
     };
     int cnt = sizeof(rsa_2048_priv_key)/sizeof(*rsa_2048_priv_key);
 
@@ -6744,7 +6744,7 @@ static CK_RV get_rsa_pub_key(CK_SESSION_HANDLE session, unsigned char* pubId,
         { CKA_MODULUS,           rsa_2048_modulus,  sizeof(rsa_2048_modulus)  },
         { CKA_PUBLIC_EXPONENT,   rsa_2048_pub_exp,  sizeof(rsa_2048_pub_exp)  },
         { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
-        { CKA_ID,                pubId,             pubIdLen                  },
+        { CKA_ID,                pubId,             (CK_ULONG)pubIdLen        },
     };
     int cnt = sizeof(rsa_2048_pub_key)/sizeof(*rsa_2048_pub_key);
 
@@ -6777,7 +6777,7 @@ static CK_RV gen_rsa_key(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE* pubKey,
         { CKA_DECRYPT,  &ckTrue, sizeof(ckTrue) },
         { CKA_SIGN,     &ckTrue, sizeof(ckTrue) },
         { CKA_LABEL,    (unsigned char*)"priv_label", 10 },
-        { CKA_ID,       id,      idLen          }
+        { CKA_ID,       id,      (CK_ULONG)idLen }
     };
     int               privTmplCnt = 3;
 
@@ -6823,7 +6823,7 @@ static CK_RV find_rsa_pub_key(CK_SESSION_HANDLE session,
     CK_ATTRIBUTE      pubKeyTmpl[] = {
         { CKA_CLASS,     &pubKeyClass,   sizeof(pubKeyClass)  },
         { CKA_KEY_TYPE,  &rsaKeyType,    sizeof(rsaKeyType)   },
-        { CKA_ID,        id,             idLen                }
+        { CKA_ID,        id,             (CK_ULONG)idLen      }
     };
     CK_ULONG pubKeyTmplCnt = sizeof(pubKeyTmpl) / sizeof(*pubKeyTmpl);
     CK_ULONG count;
@@ -6854,7 +6854,7 @@ static CK_RV find_rsa_priv_key(CK_SESSION_HANDLE session,
     CK_ATTRIBUTE      privKeyTmpl[] = {
         { CKA_CLASS,     &privKeyClass,  sizeof(privKeyClass) },
         { CKA_KEY_TYPE,  &rsaKeyType,    sizeof(rsaKeyType)   },
-        { CKA_ID,        id,             idLen                }
+        { CKA_ID,        id,             (CK_ULONG)idLen      }
     };
     CK_ULONG privKeyTmplCnt = sizeof(privKeyTmpl) / sizeof(*privKeyTmpl);
     CK_ULONG count;
@@ -8884,17 +8884,17 @@ static CK_RV gen_ec_keys(CK_SESSION_HANDLE session, byte* params, int paramSz,
     CK_MECHANISM      mech;
     CK_BBOOL          token;
     CK_ATTRIBUTE      pubKeyTmpl[] = {
-        { CKA_EC_PARAMS,       params,             paramSz                    },
+        { CKA_EC_PARAMS,       params,             (CK_ULONG)paramSz          },
         { CKA_VERIFY,          &ckTrue,            sizeof(ckTrue)             },
         { CKA_TOKEN,           &token,             sizeof(token)              },
-        { CKA_ID,              pubId,              pubIdLen                   },
+        { CKA_ID,              pubId,              (CK_ULONG)pubIdLen         },
     };
     int               pubTmplCnt = sizeof(pubKeyTmpl)/sizeof(*pubKeyTmpl);
     CK_ATTRIBUTE      privKeyTmpl[] = {
         { CKA_SIGN,            &ckTrue,            sizeof(ckTrue)             },
         { CKA_DERIVE,          &ckTrue,            sizeof(ckTrue)             },
         { CKA_TOKEN,           &token,             sizeof(token)              },
-        { CKA_ID,              privId,             privIdLen                  },
+        { CKA_ID,              privId,             (CK_ULONG)privIdLen        },
     };
     int               privTmplCnt = sizeof(privKeyTmpl)/sizeof(*privKeyTmpl);
 
@@ -8945,7 +8945,7 @@ static CK_RV find_ecc_priv_key(CK_SESSION_HANDLE session,
     CK_ATTRIBUTE      privKeyTmpl[] = {
         { CKA_CLASS,     &privKeyClass,  sizeof(privKeyClass) },
         { CKA_KEY_TYPE,  &eccKeyType,    sizeof(eccKeyType)   },
-        { CKA_ID,        id,             idLen                }
+        { CKA_ID,        id,             (CK_ULONG)idLen      }
     };
     CK_ULONG privKeyTmplCnt = sizeof(privKeyTmpl) / sizeof(*privKeyTmpl);
     CK_ULONG count;
@@ -8976,7 +8976,7 @@ static CK_RV find_ecc_pub_key(CK_SESSION_HANDLE session,
     CK_ATTRIBUTE      pubKeyTmpl[] = {
         { CKA_CLASS,     &pubKeyClass, sizeof(pubKeyClass) },
         { CKA_KEY_TYPE,  &eccKeyType,   sizeof(eccKeyType)  },
-        { CKA_ID,        id,            idLen               }
+        { CKA_ID,        id,            (CK_ULONG)idLen     }
     };
     CK_ULONG pubKeyTmplCnt = sizeof(pubKeyTmpl) / sizeof(*pubKeyTmpl);
     CK_ULONG count;
@@ -9990,16 +9990,16 @@ static CK_RV gen_dh_keys(CK_SESSION_HANDLE session, byte* prime, int primeSz,
     CK_MECHANISM      mech;
     CK_BBOOL          token;
     CK_ATTRIBUTE      pubKeyTmpl[] = {
-        { CKA_PRIME,           prime,              primeSz                    },
-        { CKA_BASE,            generator,          generatorSz                },
+        { CKA_PRIME,           prime,              (CK_ULONG)primeSz          },
+        { CKA_BASE,            generator,          (CK_ULONG)generatorSz      },
         { CKA_TOKEN,           &token,             sizeof(token)              },
-        { CKA_ID,              pubId,              pubIdLen                   },
+        { CKA_ID,              pubId,              (CK_ULONG)pubIdLen         },
     };
     int               pubTmplCnt = sizeof(pubKeyTmpl)/sizeof(*pubKeyTmpl);
     CK_ATTRIBUTE      privKeyTmpl[] = {
         { CKA_DERIVE,          &ckTrue,            sizeof(ckTrue)             },
         { CKA_TOKEN,           &token,             sizeof(token)              },
-        { CKA_ID,              privId,             privIdLen                  },
+        { CKA_ID,              privId,             (CK_ULONG)privIdLen        },
     };
     int               privTmplCnt = sizeof(privKeyTmpl)/sizeof(*privKeyTmpl);
 
@@ -10266,7 +10266,7 @@ static CK_RV gen_aes_key(CK_SESSION_HANDLE session, int len, unsigned char* id,
         { CKA_VALUE_LEN,       &keyLen,            sizeof(keyLen)             },
         { CKA_DERIVE,          &ckTrue,            sizeof(ckTrue)             },
         { CKA_TOKEN,           &token,             sizeof(token)              },
-        { CKA_ID,              id,                 idLen                      },
+        { CKA_ID,              id,                 (CK_ULONG)idLen            },
     };
     int               keyTmplCnt = sizeof(keyTmpl)/sizeof(*keyTmpl);
 
@@ -10312,7 +10312,7 @@ static CK_RV find_aes_key(CK_SESSION_HANDLE session, unsigned char* id,
     CK_ATTRIBUTE      keyTmpl[] = {
         { CKA_CLASS,     &secretKeyClass,  sizeof(secretKeyClass) },
         { CKA_KEY_TYPE,  &aesKeyType,      sizeof(aesKeyType)     },
-        { CKA_ID,        id,               idLen                  }
+        { CKA_ID,        id,               (CK_ULONG)idLen        }
     };
     CK_ULONG keyTmplCnt = sizeof(keyTmpl) / sizeof(*keyTmpl);
     CK_ULONG count;
@@ -14907,7 +14907,7 @@ static CK_RV test_hkdf_derive_extract_then_expand_salt_data(void* args)
 
     /* Template for the derived key (PRK). CKA_DERIVE=CK_TRUE so the PRK can
      * itself serve as the base key for the subsequent Expand call. */
-    CK_ATTRIBUTE template[] = {
+    CK_ATTRIBUTE tmpl[] = {
         {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
         {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
         {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
@@ -14915,7 +14915,7 @@ static CK_RV test_hkdf_derive_extract_then_expand_salt_data(void* args)
         {CKA_DERIVE, &ckTrue, sizeof(ckTrue)},
         {CKA_VALUE_LEN, &derived_len, sizeof(derived_len)}
     };
-    CK_ULONG template_count = sizeof(template) / sizeof(template[0]);
+    CK_ULONG template_count = sizeof(tmpl) / sizeof(tmpl[0]);
 
     CK_ATTRIBUTE templateExpand[] = {
         {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
@@ -14961,7 +14961,7 @@ static CK_RV test_hkdf_derive_extract_then_expand_salt_data(void* args)
     CHECK_CKR(ret, "Create object failed");
 
     if (ret == CKR_OK) {
-        ret = funcList->C_DeriveKey(session, &mechanism, hBaseKey1, template,
+        ret = funcList->C_DeriveKey(session, &mechanism, hBaseKey1, tmpl,
             template_count, &hDerivedKey);
         CHECK_CKR(ret, "C_DeriveKey failed");
     }
@@ -15097,14 +15097,14 @@ static CK_RV test_hkdf_derive_extract_with_expand_salt_data(void* args)
     CK_MECHANISM mechanism = { CKM_HKDF_DERIVE, &params, sizeof(params) };
 
     // Template for the derived key (OKM)
-    CK_ATTRIBUTE template[] = {
+    CK_ATTRIBUTE tmpl[] = {
         {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
         {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
         {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
         {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
         {CKA_VALUE_LEN, &derived_len, sizeof(derived_len)} // Expecting 42 bytes OKM
     };
-    CK_ULONG template_count = sizeof(template) / sizeof(template[0]);
+    CK_ULONG template_count = sizeof(tmpl) / sizeof(tmpl[0]);
 
     CK_ATTRIBUTE templateSecret[] = {
         {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
@@ -15128,7 +15128,7 @@ static CK_RV test_hkdf_derive_extract_with_expand_salt_data(void* args)
     CHECK_CKR(ret, "Create object failed");
 
     if (ret == CKR_OK) {
-        ret = funcList->C_DeriveKey(session, &mechanism, hBaseKey1, template,
+        ret = funcList->C_DeriveKey(session, &mechanism, hBaseKey1, tmpl,
             template_count, &hDerivedKey);
         CHECK_CKR(ret, "Derive key");
     }
@@ -15212,14 +15212,14 @@ static CK_RV test_hkdf_derive_expand_with_extract_null_salt(void* args)
 
     CK_MECHANISM mechanism = { CKM_HKDF_DERIVE, &params, sizeof(params) };
 
-    CK_ATTRIBUTE template[] = {
+    CK_ATTRIBUTE tmpl[] = {
         {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
         {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
         {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
         {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
         {CKA_VALUE_LEN, &derived_len, sizeof(derived_len)}
     };
-    CK_ULONG template_count = sizeof(template) / sizeof(template[0]);
+    CK_ULONG template_count = sizeof(tmpl) / sizeof(tmpl[0]);
 
     CK_ATTRIBUTE templateSecret[] = {
         {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
@@ -15242,7 +15242,7 @@ static CK_RV test_hkdf_derive_expand_with_extract_null_salt(void* args)
     CHECK_CKR(ret, "Create object failed");
 
     if (ret == CKR_OK) {
-        ret= funcList->C_DeriveKey(session, &mechanism, hBaseKey1, template,
+        ret= funcList->C_DeriveKey(session, &mechanism, hBaseKey1, tmpl,
             template_count, &hDerivedKey);
         CHECK_CKR(ret, "Derive key");
     }
@@ -15323,14 +15323,14 @@ static CK_RV test_hkdf_derive_extract_with_expand_salt_key(void* args)
     CK_ULONG derived_len = sizeof(derived_value);
 
     // Template for the derived key (OKM)
-    CK_ATTRIBUTE template[] = {
+    CK_ATTRIBUTE tmpl[] = {
         {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
         {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
         {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
         {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
         {CKA_VALUE_LEN, &derived_len, sizeof(derived_len)} // Expecting 42 bytes OKM
     };
-    CK_ULONG template_count = sizeof(template) / sizeof(template[0]);
+    CK_ULONG template_count = sizeof(tmpl) / sizeof(tmpl[0]);
 
     CK_ATTRIBUTE templateSecret[] = {
         {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
@@ -15387,7 +15387,7 @@ static CK_RV test_hkdf_derive_extract_with_expand_salt_key(void* args)
         };
 
         CK_MECHANISM mechanism = { CKM_HKDF_DERIVE, &params, sizeof(params) };
-        ret = funcList->C_DeriveKey(session, &mechanism, hBaseKey1, template,
+        ret = funcList->C_DeriveKey(session, &mechanism, hBaseKey1, tmpl,
             template_count, &hDerivedKey);
         CHECK_CKR(ret, "Derive key");
     }
