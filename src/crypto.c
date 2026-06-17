@@ -6639,7 +6639,7 @@ CK_RV C_VerifyRecoverInit(CK_SESSION_HANDLE hSession,
     }
 
     if (WP11_Object_GetClass(obj) != CKO_PUBLIC_KEY) {
-        return CKR_KEY_HANDLE_INVALID;
+        return CKR_KEY_TYPE_INCONSISTENT;
     }
 
     if (WP11_Object_GetType(obj) != CKK_RSA) {

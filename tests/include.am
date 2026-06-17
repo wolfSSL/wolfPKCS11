@@ -101,6 +101,11 @@ noinst_PROGRAMS += tests/login_pin_len_range_test
 tests_login_pin_len_range_test_SOURCES = tests/login_pin_len_range_test.c
 tests_login_pin_len_range_test_LDADD =
 
+check_PROGRAMS += tests/verify_recover_class_test
+noinst_PROGRAMS += tests/verify_recover_class_test
+tests_verify_recover_class_test_SOURCES = tests/verify_recover_class_test.c
+tests_verify_recover_class_test_LDADD =
+
 if BUILD_STATIC
 tests_pkcs11test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11mtt_LDADD  += src/libwolfpkcs11.la
@@ -122,6 +127,7 @@ tests_rsa_exponent_test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11_compliance_test_LDADD += src/libwolfpkcs11.la
 tests_verify_recover_badkey_test_LDADD += src/libwolfpkcs11.la
 tests_login_pin_len_range_test_LDADD += src/libwolfpkcs11.la
+tests_verify_recover_class_test_LDADD += src/libwolfpkcs11.la
 else
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
 tests_empty_pin_store_test_LDADD += src/libwolfpkcs11.la
@@ -135,6 +141,7 @@ tests_pbkdf2_keygen_attrs_test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11_compliance_test_LDADD += src/libwolfpkcs11.la
 tests_verify_recover_badkey_test_LDADD += src/libwolfpkcs11.la
 tests_login_pin_len_range_test_LDADD += src/libwolfpkcs11.la
+tests_verify_recover_class_test_LDADD += src/libwolfpkcs11.la
 endif
 
 EXTRA_DIST += tests/unit.h \
