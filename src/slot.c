@@ -1862,8 +1862,8 @@ CK_RV C_Login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
         return rv;
     }
 
-    if (checkPinLen(ulPinLen) != CKR_OK) {
-        rv = CKR_PIN_INCORRECT;
+    rv = checkPinLen(ulPinLen);
+    if (rv != CKR_OK) {
         WOLFPKCS11_LEAVE("C_Login", rv);
         return rv;
     }
