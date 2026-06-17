@@ -969,6 +969,30 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
                     *(CK_BBOOL*)attr->pValue == CK_TRUE)
                 return CKR_ATTRIBUTE_READ_ONLY;
         }
+        /* PKCS#11 marks these class/identity and generated-state attributes
+         * read-only once the object exists. Reject an attempt to change them
+         * (via C_SetAttributeValue or C_CopyObject); setting the current value
+         * is a harmless no-op. Not applied during object creation. */
+        if (!newObject) {
+            static const CK_ATTRIBUTE_TYPE readOnlyAttrs[] = {
+                CKA_CLASS, CKA_KEY_TYPE, CKA_LOCAL, CKA_KEY_GEN_MECHANISM,
+                CKA_ALWAYS_SENSITIVE, CKA_NEVER_EXTRACTABLE
+            };
+            unsigned int k;
+            for (k = 0; k < sizeof(readOnlyAttrs) / sizeof(readOnlyAttrs[0]);
+                 k++) {
+                byte cur[sizeof(CK_ULONG)];
+                CK_ULONG curLen = sizeof(cur);
+                if (attr->type != readOnlyAttrs[k])
+                    continue;
+                if (WP11_Object_GetAttr(obj, attr->type, cur, &curLen) == 0 &&
+                    (attr->pValue == NULL || attr->ulValueLen != curLen ||
+                     XMEMCMP(attr->pValue, cur, curLen) != 0)) {
+                    return CKR_ATTRIBUTE_READ_ONLY;
+                }
+                break;
+            }
+        }
         ret = WP11_Object_SetAttr(obj, attr->type, (byte*)attr->pValue,
                                                               attr->ulValueLen);
         if (ret == MEMORY_E)
