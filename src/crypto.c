@@ -8703,6 +8703,8 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
         case CKM_ECDH1_DERIVE: {
             CK_ECDH1_DERIVE_PARAMS* params;
 
+            if (WP11_Object_GetType(obj) != CKK_EC)
+                return CKR_KEY_TYPE_INCONSISTENT;
             if (pMechanism->pParameter == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
             if (pMechanism->ulParameterLen != sizeof(CK_ECDH1_DERIVE_PARAMS))
@@ -8735,6 +8737,9 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
             CK_HKDF_PARAMS_PTR kdfParams;
             CK_ATTRIBUTE *lenAttr = NULL;
 
+            if (WP11_Object_GetType(obj) != CKK_HKDF &&
+                WP11_Object_GetType(obj) != CKK_GENERIC_SECRET)
+                return CKR_KEY_TYPE_INCONSISTENT;
             if (pMechanism->pParameter == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
             if (pMechanism->ulParameterLen != sizeof(CK_HKDF_PARAMS))
@@ -8777,6 +8782,8 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
 #endif
 #ifndef NO_DH
         case CKM_DH_PKCS_DERIVE:
+            if (WP11_Object_GetType(obj) != CKK_DH)
+                return CKR_KEY_TYPE_INCONSISTENT;
             if (pMechanism->pParameter == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
             if (pMechanism->ulParameterLen == 0)
@@ -8799,6 +8806,8 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
 #ifdef HAVE_AES_CBC
         case CKM_AES_CBC_ENCRYPT_DATA: {
             CK_AES_CBC_ENCRYPT_DATA_PARAMS* params;
+            if (WP11_Object_GetType(obj) != CKK_AES)
+                return CKR_KEY_TYPE_INCONSISTENT;
             if (pMechanism->pParameter == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
             if (pMechanism->ulParameterLen !=
@@ -8826,6 +8835,8 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
         case CKM_TLS12_KEY_AND_MAC_DERIVE:
         {
             CK_TLS12_KEY_MAT_PARAMS* tlsParams = NULL;
+            if (WP11_Object_GetType(obj) != CKK_GENERIC_SECRET)
+                return CKR_KEY_TYPE_INCONSISTENT;
             if (pMechanism->pParameter == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
             if (pMechanism->ulParameterLen !=
@@ -8891,6 +8902,8 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
         case CKM_TLS12_MASTER_KEY_DERIVE_DH:
         {
             CK_TLS12_MASTER_KEY_DERIVE_PARAMS* prfParams;
+            if (WP11_Object_GetType(obj) != CKK_GENERIC_SECRET)
+                return CKR_KEY_TYPE_INCONSISTENT;
             if (pMechanism->pParameter == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
             if (pMechanism->ulParameterLen !=

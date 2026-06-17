@@ -141,6 +141,11 @@ noinst_PROGRAMS += tests/set_attr_readonly_test
 tests_set_attr_readonly_test_SOURCES = tests/set_attr_readonly_test.c
 tests_set_attr_readonly_test_LDADD =
 
+check_PROGRAMS += tests/derive_key_type_test
+noinst_PROGRAMS += tests/derive_key_type_test
+tests_derive_key_type_test_SOURCES = tests/derive_key_type_test.c
+tests_derive_key_type_test_LDADD =
+
 if BUILD_STATIC
 tests_pkcs11test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11mtt_LDADD  += src/libwolfpkcs11.la
@@ -170,6 +175,7 @@ tests_create_object_class_test_LDADD += src/libwolfpkcs11.la
 tests_aead_null_aad_test_LDADD += src/libwolfpkcs11.la
 tests_gen_keypair_incomplete_test_LDADD += src/libwolfpkcs11.la
 tests_set_attr_readonly_test_LDADD += src/libwolfpkcs11.la
+tests_derive_key_type_test_LDADD += src/libwolfpkcs11.la
 else
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
 tests_empty_pin_store_test_LDADD += src/libwolfpkcs11.la
@@ -191,6 +197,7 @@ tests_create_object_class_test_LDADD += src/libwolfpkcs11.la
 tests_aead_null_aad_test_LDADD += src/libwolfpkcs11.la
 tests_gen_keypair_incomplete_test_LDADD += src/libwolfpkcs11.la
 tests_set_attr_readonly_test_LDADD += src/libwolfpkcs11.la
+tests_derive_key_type_test_LDADD += src/libwolfpkcs11.la
 endif
 
 EXTRA_DIST += tests/unit.h \
