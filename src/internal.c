@@ -10325,30 +10325,24 @@ static int GetTrustAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
             if (data != NULL)
                 XMEMCPY(data, &object->data.trust.md5Hash, WC_MD5_DIGEST_SIZE);
             break;
+        /* GetULong/GetBool handle the size query (data == NULL) and the
+         * buffer-too-small case themselves. Do not pre-set *len, which would
+         * defeat their *len < dataLen check and overflow an undersized
+         * caller buffer. */
         case CKA_TRUST_SERVER_AUTH:
-            *len = sizeof(CK_ULONG);
-            if (data != NULL)
-                ret = GetULong(object->data.trust.serverAuth, data, len);
+            ret = GetULong(object->data.trust.serverAuth, data, len);
             break;
         case CKA_TRUST_CLIENT_AUTH:
-            *len = sizeof(CK_ULONG);
-            if (data != NULL)
-                ret = GetULong(object->data.trust.clientAuth, data, len);
+            ret = GetULong(object->data.trust.clientAuth, data, len);
             break;
         case CKA_TRUST_CODE_SIGNING:
-            *len = sizeof(CK_ULONG);
-            if (data != NULL)
-                ret = GetULong(object->data.trust.codeSigning, data, len);
+            ret = GetULong(object->data.trust.codeSigning, data, len);
             break;
         case CKA_TRUST_EMAIL_PROTECTION:
-            *len = sizeof(CK_ULONG);
-            if (data != NULL)
-                ret = GetULong(object->data.trust.emailProtection, data, len);
+            ret = GetULong(object->data.trust.emailProtection, data, len);
             break;
         case CKA_TRUST_STEP_UP_APPROVED:
-            *len = sizeof(CK_BBOOL);
-            if (data != NULL)
-                ret = GetBool(object->data.trust.stepUpApproved, data, len);
+            ret = GetBool(object->data.trust.stepUpApproved, data, len);
             break;
         case CKA_ISSUER:
             ret = GetData(object->issuer, object->issuerLen, data, len);
