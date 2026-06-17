@@ -8533,6 +8533,11 @@ int WP11_Session_SetGcmParams(WP11_Session* session, unsigned char* iv,
      * length. Either mismatch is a contract bug. */
     if (ret == 0 && (iv == NULL) != (ivSz == 0))
         ret = BAD_FUNC_ARG;
+    /* The AAD pointer and length must agree by the same rule, so a NULL AAD
+     * with a non-zero length is rejected rather than silently treated as
+     * empty AAD. */
+    if (ret == 0 && (aad == NULL) != (aadLen == 0))
+        ret = BAD_FUNC_ARG;
 
     if (ret == 0) {
         if (session->mechanism == CKM_AES_GCM && gcm->aad != NULL) {
@@ -8588,6 +8593,11 @@ int WP11_Session_SetCcmParams(WP11_Session* session, int dataSz,
      * and only with 0, and a non-NULL buffer must come with a positive
      * length. Either mismatch is a contract bug. */
     if (ret == 0 && (iv == NULL) != (ivSz == 0))
+        ret = BAD_FUNC_ARG;
+    /* The AAD pointer and length must agree by the same rule, so a NULL AAD
+     * with a non-zero length is rejected rather than silently treated as
+     * empty AAD. */
+    if (ret == 0 && (aad == NULL) != (aadSz == 0))
         ret = BAD_FUNC_ARG;
 
     if (ret == 0) {
