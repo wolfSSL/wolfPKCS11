@@ -7585,6 +7585,16 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
                 return CKR_MECHANISM_PARAM_INVALID;
             }
 
+            /* CKA_MODULUS_BITS is required to size the RSA key. */
+            {
+                CK_ATTRIBUTE* reqAttr = NULL;
+                FindAttributeType(pPublicKeyTemplate,
+                                  ulPublicKeyAttributeCount, CKA_MODULUS_BITS,
+                                  &reqAttr);
+                if (reqAttr == NULL)
+                    return CKR_TEMPLATE_INCOMPLETE;
+            }
+
             *phPublicKey = *phPrivateKey = CK_INVALID_HANDLE;
 
             rv = NewObject(session, CKK_RSA, CKO_PUBLIC_KEY, pPublicKeyTemplate,
@@ -7607,6 +7617,17 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
             if (pMechanism->pParameter != NULL ||
                                               pMechanism->ulParameterLen != 0) {
                 return CKR_MECHANISM_PARAM_INVALID;
+            }
+
+            /* CKA_EC_PARAMS carries the curve; without it there are no domain
+             * parameters to generate against. */
+            {
+                CK_ATTRIBUTE* reqAttr = NULL;
+                FindAttributeType(pPublicKeyTemplate,
+                                  ulPublicKeyAttributeCount, CKA_EC_PARAMS,
+                                  &reqAttr);
+                if (reqAttr == NULL)
+                    return CKR_TEMPLATE_INCOMPLETE;
             }
 
             *phPublicKey = *phPrivateKey = CK_INVALID_HANDLE;
@@ -7744,6 +7765,20 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
             if (pMechanism->pParameter != NULL ||
                                               pMechanism->ulParameterLen != 0) {
                 return CKR_MECHANISM_PARAM_INVALID;
+            }
+
+            /* DH needs the domain parameters CKA_PRIME and CKA_BASE. */
+            {
+                CK_ATTRIBUTE* primeAttr = NULL;
+                CK_ATTRIBUTE* baseAttr = NULL;
+                FindAttributeType(pPublicKeyTemplate,
+                                  ulPublicKeyAttributeCount, CKA_PRIME,
+                                  &primeAttr);
+                FindAttributeType(pPublicKeyTemplate,
+                                  ulPublicKeyAttributeCount, CKA_BASE,
+                                  &baseAttr);
+                if (primeAttr == NULL || baseAttr == NULL)
+                    return CKR_TEMPLATE_INCOMPLETE;
             }
 
             *phPublicKey = *phPrivateKey = CK_INVALID_HANDLE;
