@@ -4069,10 +4069,20 @@ CK_RV C_DecryptFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastPart,
                 WP11_Session_SetOpInitialized(session, 0);
                 return CKR_DATA_LEN_RANGE;
             }
-            *pulLastPartLen = 15;
-            if (pLastPart == NULL)
+            if (pLastPart == NULL) {
+                /* Size query: report the maximum possible unpadded size. */
+                *pulLastPartLen = AES_BLOCK_SIZE - 1;
                 return CKR_OK;
+            }
 
+            /* Pass the caller's buffer capacity (not the buffered block
+             * length, which is always 16) so WP11_AesCbcPad_DecryptFinal
+             * validates the write against it and returns BUFFER_E rather than
+             * overflowing a too-small buffer, mirroring the single-shot
+             * C_Decrypt path. Cap to the block size, which already exceeds the
+             * 0..15 byte output, to avoid truncating a large CK_ULONG. */
+            decPartLen = (*pulLastPartLen < (CK_ULONG)AES_BLOCK_SIZE) ?
+                         (word32)*pulLastPartLen : (word32)AES_BLOCK_SIZE;
             ret = WP11_AesCbcPad_DecryptFinal(pLastPart, &decPartLen, session);
             if (ret == BUFFER_E) {
                 /* Report required size; operation stays active for retry. */
