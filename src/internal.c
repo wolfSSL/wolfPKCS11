@@ -7299,11 +7299,15 @@ int WP11_Slot_SOLogin(WP11_Slot* slot, char* pin, int pinLen)
 
     WP11_Lock_LockRO(&slot->lock);
     if (ret == 0) {
-        /* Have we already logged in? */
+        /* Have we already logged in? Distinguish the same user type (SO)
+         * from a different one (USER) for the caller's return code. */
         state = slot->token.loginState;
-        if (state == WP11_APP_STATE_RW_SO || state == WP11_APP_STATE_RO_USER ||
-                                              state == WP11_APP_STATE_RW_USER) {
+        if (state == WP11_APP_STATE_RW_SO) {
             ret = LOGGED_IN_E;
+        }
+        else if (state == WP11_APP_STATE_RO_USER ||
+                 state == WP11_APP_STATE_RW_USER) {
+            ret = LOGGED_IN_ANOTHER_E;
         }
     }
 #ifndef WOLFPKCS11_NO_TIME
@@ -7397,11 +7401,15 @@ int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen)
     WP11_Lock_LockRW(&slot->lock);
     /* Have we already logged in? */
     if (ret == 0) {
-        /* Have we already logged in? */
+        /* Have we already logged in? Distinguish the same user type (USER)
+         * from a different one (SO) for the caller's return code. */
         state = token->loginState;
-        if (state == WP11_APP_STATE_RW_SO || state == WP11_APP_STATE_RO_USER ||
-                                              state == WP11_APP_STATE_RW_USER) {
+        if (state == WP11_APP_STATE_RO_USER ||
+            state == WP11_APP_STATE_RW_USER) {
             ret = LOGGED_IN_E;
+        }
+        else if (state == WP11_APP_STATE_RW_SO) {
+            ret = LOGGED_IN_ANOTHER_E;
         }
     }
 #ifndef WOLFPKCS11_NO_TIME

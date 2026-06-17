@@ -1890,6 +1890,9 @@ CK_RV C_Login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
         case LOGGED_IN_E:
             rv = CKR_USER_ALREADY_LOGGED_IN;
             break;
+        case LOGGED_IN_ANOTHER_E:
+            rv = CKR_USER_ANOTHER_ALREADY_LOGGED_IN;
+            break;
         case PIN_NOT_SET_E:
             rv = CKR_USER_PIN_NOT_INITIALIZED;
             break;
