@@ -4893,7 +4893,7 @@ static CK_RV test_encrypt_decrypt_op_not_supported(void* args)
     CHECK_CKR(ret, "Create AES key with CKA_ENCRYPT=FALSE");
     if (ret == CKR_OK) {
         ret = funcList->C_EncryptInit(session, &mech, key);
-        CHECK_CKR_FAIL(ret, CKR_KEY_TYPE_INCONSISTENT,
+        CHECK_CKR_FAIL(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
                         "EncryptInit should fail with CKA_ENCRYPT=FALSE");
     }
 
@@ -4905,7 +4905,7 @@ static CK_RV test_encrypt_decrypt_op_not_supported(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_DecryptInit(session, &mech, key);
-        CHECK_CKR_FAIL(ret, CKR_KEY_TYPE_INCONSISTENT,
+        CHECK_CKR_FAIL(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
                         "DecryptInit should fail with CKA_DECRYPT=FALSE");
     }
 
@@ -5555,7 +5555,7 @@ static CK_RV test_sign_verify_op_not_supported(void* args)
     CHECK_CKR(ret, "Create generic key with CKA_SIGN=FALSE");
     if (ret == CKR_OK) {
         ret = funcList->C_SignInit(session, &mech, key);
-        CHECK_CKR_FAIL(ret, CKR_KEY_TYPE_INCONSISTENT,
+        CHECK_CKR_FAIL(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
                         "SignInit should fail with CKA_SIGN=FALSE");
     }
 
@@ -5568,7 +5568,7 @@ static CK_RV test_sign_verify_op_not_supported(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyInit(session, &mech, key);
-        CHECK_CKR_FAIL(ret, CKR_KEY_TYPE_INCONSISTENT,
+        CHECK_CKR_FAIL(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
                         "VerifyInit should fail with CKA_VERIFY=FALSE");
     }
 
@@ -5819,7 +5819,7 @@ static CK_RV test_verify_recover_op_not_supported(void* args)
     CHECK_CKR(ret, "Create RSA pub key with CKA_VERIFY_RECOVER=FALSE");
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyRecoverInit(session, &mech, pubKey);
-        CHECK_CKR_FAIL(ret, CKR_KEY_TYPE_INCONSISTENT,
+        CHECK_CKR_FAIL(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
                 "VerifyRecoverInit should fail with CKA_VERIFY_RECOVER=FALSE");
     }
 
@@ -6447,7 +6447,7 @@ static CK_RV test_wrap_unwrap_op_not_supported(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_WrapKey(session, &mech, noWrapKey, key,
                                   wrappedKey, &wrappedKeyLen);
-        CHECK_CKR_FAIL(ret, CKR_KEY_TYPE_INCONSISTENT,
+        CHECK_CKR_FAIL(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
                         "WrapKey should fail with CKA_WRAP=FALSE");
     }
     funcList->C_DestroyObject(session, noWrapKey);
@@ -6491,7 +6491,7 @@ static CK_RV test_wrap_unwrap_op_not_supported(void* args)
             ret = funcList->C_UnwrapKey(session, &mech, noWrapKey, wrappedKey,
                                         wrappedKeyLen, unwrapResultTmpl,
                                         unwrapResultCnt, &unwrapped);
-            CHECK_CKR_FAIL(ret, CKR_KEY_TYPE_INCONSISTENT,
+            CHECK_CKR_FAIL(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
                             "UnwrapKey should fail with CKA_UNWRAP=FALSE");
         }
         funcList->C_DestroyObject(session, noWrapKey);
@@ -17656,7 +17656,7 @@ static CK_RV test_destroy_object_not_destroyable(void* args)
 }
 
 /* CKA_DERIVE=CK_FALSE must cause C_DeriveKey to reject the base key
- * (CKR_KEY_TYPE_INCONSISTENT via the existing CheckOpSupported pattern).
+ * (CKR_KEY_FUNCTION_NOT_PERMITTED via the CheckOpSupported pattern).
  * The check is skipped on WOLFPKCS11_NSS builds for NSS compatibility. */
 #if !defined(NO_DH) && !defined(WOLFPKCS11_NSS)
 static CK_RV test_derive_key_not_allowed(void* args)
@@ -17693,7 +17693,7 @@ static CK_RV test_derive_key_not_allowed(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_DeriveKey(session, &mech, base, outTmpl, outTmplCnt,
                                     &secret);
-        CHECK_CKR_FAIL(ret, CKR_KEY_TYPE_INCONSISTENT,
+        CHECK_CKR_FAIL(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
                        "DeriveKey rejected when base CKA_DERIVE=FALSE");
         if (secret != CK_INVALID_HANDLE)
             funcList->C_DestroyObject(session, secret);

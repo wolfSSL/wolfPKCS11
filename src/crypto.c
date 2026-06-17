@@ -480,7 +480,11 @@ static int CheckOpSupportedRv(WP11_Object* obj, CK_ATTRIBUTE_TYPE op,
 
 static int CheckOpSupported(WP11_Object* obj, CK_ATTRIBUTE_TYPE op)
 {
-    return CheckOpSupportedRv(obj, op, CKR_KEY_TYPE_INCONSISTENT);
+    /* A key whose CKA_<op> usage attribute does not allow the operation is
+     * reported as CKR_KEY_FUNCTION_NOT_PERMITTED. CKR_KEY_TYPE_INCONSISTENT
+     * is reserved for a key type that does not match the mechanism, which the
+     * per-mechanism checks handle. */
+    return CheckOpSupportedRv(obj, op, CKR_KEY_FUNCTION_NOT_PERMITTED);
 }
 
 static CK_RV SetInitialStates(WP11_Object* key)
