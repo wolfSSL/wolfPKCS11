@@ -8532,8 +8532,9 @@ int WP11_Session_SetGcmParams(WP11_Session* session, unsigned char* iv,
      * length. Either mismatch is a contract bug. */
     if (ret == 0 && (iv == NULL) != (ivSz == 0))
         ret = BAD_FUNC_ARG;
-    /* The AAD pointer and length must agree by the same rule. */
-    if (ret == 0 && (aad == NULL) != (aadLen == 0))
+    /* A NULL AAD pointer must not carry a non-zero length. A non-NULL pointer
+     * with zero length is a valid no-AAD encoding. */
+    if (ret == 0 && aad == NULL && aadLen != 0)
         ret = BAD_FUNC_ARG;
 
     if (ret == 0) {
@@ -8545,7 +8546,7 @@ int WP11_Session_SetGcmParams(WP11_Session* session, unsigned char* iv,
             XMEMCPY(gcm->iv, iv, ivSz);
         gcm->ivSz = ivSz;
         gcm->tagBits = tagBits;
-        if (aad != NULL) {
+        if (aadLen > 0) {
             gcm->aad = (unsigned char*)XMALLOC(aadLen, NULL,
                 DYNAMIC_TYPE_TMP_BUFFER);
             if (gcm->aad == NULL)
@@ -8591,8 +8592,9 @@ int WP11_Session_SetCcmParams(WP11_Session* session, int dataSz,
      * length. Either mismatch is a contract bug. */
     if (ret == 0 && (iv == NULL) != (ivSz == 0))
         ret = BAD_FUNC_ARG;
-    /* The AAD pointer and length must agree by the same rule. */
-    if (ret == 0 && (aad == NULL) != (aadSz == 0))
+    /* A NULL AAD pointer must not carry a non-zero length. A non-NULL pointer
+     * with zero length is a valid no-AAD encoding. */
+    if (ret == 0 && aad == NULL && aadSz != 0)
         ret = BAD_FUNC_ARG;
 
     if (ret == 0) {
@@ -8604,7 +8606,7 @@ int WP11_Session_SetCcmParams(WP11_Session* session, int dataSz,
         if (ivSz > 0)
             XMEMCPY(ccm->iv, iv, ivSz);
         ccm->ivSz = ivSz;
-        if (aad != NULL) {
+        if (aadSz > 0) {
             ccm->aad = (unsigned char*)XMALLOC(aadSz, NULL,
                 DYNAMIC_TYPE_TMP_BUFFER);
             if (ccm->aad == NULL) {

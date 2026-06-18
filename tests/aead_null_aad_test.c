@@ -132,6 +132,27 @@ static int run_test(void)
                                      &encSz);
             CHECK_RV(rv, "C_Encrypt GCM (no AAD) completes", CKR_OK);
         }
+
+        /* A non-NULL AAD pointer with zero length is also a valid no-AAD
+         * encoding and must be accepted. */
+        XMEMSET(&gcm, 0, sizeof(gcm));
+        gcm.pIv = iv;
+        gcm.ulIvLen = sizeof(iv);
+        gcm.pAAD = aad;
+        gcm.ulAADLen = 0;
+        gcm.ulTagBits = 128;
+        mech.mechanism = CKM_AES_GCM;
+        mech.pParameter = &gcm;
+        mech.ulParameterLen = sizeof(gcm);
+        rv = funcList->C_EncryptInit(session, &mech, aesKey);
+        CHECK_RV(rv, "C_EncryptInit GCM (non-NULL AAD, len 0)", CKR_OK);
+        if (rv == CKR_OK) {
+            encSz = sizeof(enc);
+            rv = funcList->C_Encrypt(session, plain, sizeof(plain), enc,
+                                     &encSz);
+            CHECK_RV(rv, "C_Encrypt GCM (non-NULL AAD, len 0) completes",
+                     CKR_OK);
+        }
     }
 
     /* CCM: same mismatch; skip if AES-CCM is not built in. */
