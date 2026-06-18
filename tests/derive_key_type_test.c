@@ -81,8 +81,10 @@ static void check_wrong_type(CK_SESSION_HANDLE session, CK_MECHANISM* mech,
 }
 
 #ifdef WOLFPKCS11_NSS
-/* CKM_HKDF_DATA derives from a CKO_DATA object (the TLS 1.3 key schedule NSS
- * drives). That base object must be accepted, not rejected as a key-type
+/* NSS drives the TLS 1.3 key schedule by deriving from a CKO_DATA object. The
+ * value it sends for that mechanism (PKCS#11 standard 0x402A) is the constant
+ * wolfPKCS11 names CKM_HKDF_DERIVE, so the CKO_DATA base object reaches the
+ * key-based derive case and must be accepted, not rejected as a key-type
  * mismatch. The CKA_DERIVE usage gate is skipped only in NSS builds, so this
  * path is reachable there. */
 static void check_hkdf_data_object(CK_SESSION_HANDLE session)
@@ -126,17 +128,17 @@ static void check_hkdf_data_object(CK_SESSION_HANDLE session)
     hkdf.ulSaltType = CKF_HKDF_SALT_NULL;
     hkdf.pInfo = value;
     hkdf.ulInfoLen = 8;
-    mech.mechanism = CKM_HKDF_DATA;
+    mech.mechanism = CKM_HKDF_DERIVE;
     mech.pParameter = &hkdf;
     mech.ulParameterLen = sizeof(hkdf);
     rv = funcList->C_DeriveKey(session, &mech, dataObj, outTmpl,
                               sizeof(outTmpl) / sizeof(*outTmpl), &out);
     if (rv == CKR_MECHANISM_INVALID) {
-        printf("SKIP: CKM_HKDF_DATA not supported in this build\n");
+        printf("SKIP: CKM_HKDF_DERIVE not supported in this build\n");
         test_passed++;
         return;
     }
-    CHECK_RV(rv, "C_DeriveKey(CKM_HKDF_DATA, CKO_DATA base)", CKR_OK);
+    CHECK_RV(rv, "C_DeriveKey(CKM_HKDF_DERIVE, CKO_DATA base)", CKR_OK);
     if (rv == CKR_OK)
         funcList->C_DestroyObject(session, out);
 }

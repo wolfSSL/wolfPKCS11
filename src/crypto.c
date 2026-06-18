@@ -8711,9 +8711,9 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
             CK_HKDF_PARAMS_PTR kdfParams;
             CK_ATTRIBUTE *lenAttr = NULL;
 
-            /* CKM_HKDF_DATA derives from a CKO_DATA object, so only the
-             * key-based CKM_HKDF_DERIVE has a base key type to check. */
-            if (pMechanism->mechanism == CKM_HKDF_DERIVE &&
+            /* Data-derive feeds a CKO_DATA object, which has no key type.
+             * Only a key base object is checked for an HKDF-compatible type. */
+            if (WP11_Object_GetClass(obj) != CKO_DATA &&
                 WP11_Object_GetType(obj) != CKK_HKDF &&
                 WP11_Object_GetType(obj) != CKK_GENERIC_SECRET)
                 return CKR_KEY_TYPE_INCONSISTENT;
