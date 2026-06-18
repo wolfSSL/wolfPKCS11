@@ -2010,7 +2010,7 @@ static CK_RV test_object(void* args)
     CK_ULONG badKeyType = -1;
     CK_ATTRIBUTE keyTypeBadValue[] = {
         { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
-        { CKA_KEY_TYPE,          &badKeyType,       sizeof(&badKeyType)       }
+        { CKA_KEY_TYPE,          &badKeyType,       sizeof(badKeyType)        }
     };
     CK_ATTRIBUTE keyDataNull[] = {
         { CKA_CLASS,             &privKeyClass,     sizeof(privKeyClass)      },

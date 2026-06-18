@@ -79,7 +79,9 @@ static int run_test(void)
     };
     CK_ULONG tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
     CK_ATTRIBUTE getAttr;
-    byte buffer[sizeof(CK_ULONG)];
+    /* Larger than a CK_ULONG so a canary region exists past the claimed
+     * length on both 32- and 64-bit builds. */
+    byte buffer[2 * sizeof(CK_ULONG)];
     int i;
 #endif
 
@@ -112,15 +114,16 @@ static int run_test(void)
     CHECK_TRUE(getAttr.ulValueLen == sizeof(CK_ULONG),
                "size query reports sizeof(CK_ULONG)");
 
-    /* Undersized buffer: claim 4 bytes, guard the rest with a canary. Must
-     * report CKR_BUFFER_TOO_SMALL without writing past the 4 bytes. */
+    /* Undersized buffer: claim fewer bytes than a CK_ULONG and guard the rest
+     * with a canary. Must report CKR_BUFFER_TOO_SMALL without writing past the
+     * claimed length. */
     XMEMSET(buffer, 0xAB, sizeof(buffer));
     getAttr.type = CKA_TRUST_SERVER_AUTH;
     getAttr.pValue = buffer;
-    getAttr.ulValueLen = 4;
+    getAttr.ulValueLen = sizeof(CK_ULONG) - 1;
     rv = funcList->C_GetAttributeValue(session, obj, &getAttr, 1);
     CHECK_RV(rv, "undersized CKA_TRUST_SERVER_AUTH", CKR_BUFFER_TOO_SMALL);
-    for (i = 4; i < (int)sizeof(buffer); i++) {
+    for (i = (int)(sizeof(CK_ULONG) - 1); i < (int)sizeof(buffer); i++) {
         if (buffer[i] != 0xAB)
             break;
     }
