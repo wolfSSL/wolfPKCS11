@@ -1,3 +1,4 @@
 usr/include/
 usr/lib/*/libwolfpkcs11.so
+usr/lib/*/cmake/wolfpkcs11/*.cmake
 usr/bin/wolfpkcs11-config
