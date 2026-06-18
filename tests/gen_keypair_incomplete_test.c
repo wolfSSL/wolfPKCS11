@@ -18,11 +18,10 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  *
- * Regression test for issue F-5518. C_GenerateKeyPair built the key objects
- * and ran the mechanism generator without first checking the mechanism's
- * required public-key template attributes, so a missing CKA_MODULUS_BITS
- * (RSA), CKA_EC_PARAMS (EC) or CKA_PRIME/CKA_BASE (DH) surfaced as
- * CKR_FUNCTION_FAILED instead of CKR_TEMPLATE_INCOMPLETE.
+ * Regression test for issue F-5518: C_GenerateKeyPair must reject a public
+ * template missing a mechanism-required attribute (CKA_MODULUS_BITS for RSA,
+ * CKA_EC_PARAMS for EC, CKA_PRIME/CKA_BASE for DH) with
+ * CKR_TEMPLATE_INCOMPLETE.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -48,74 +47,13 @@
 #endif
 
 #include "testdata.h"
+#include "pkcs11_test_util.h"
 
 #define TEST_DIR "./store/gen_keypair_incomplete_test"
 
-static int test_passed = 0;
-static int test_failed = 0;
-
-#define CHECK_RV(rv, op, expected) do {                                       \
-    if ((rv) != (expected)) {                                                 \
-        fprintf(stderr, "FAIL: %s: expected 0x%lx, got 0x%lx\n", op,          \
-                (unsigned long)(expected), (unsigned long)(rv));              \
-        test_failed++;                                                        \
-    } else {                                                                  \
-        printf("PASS: %s\n", op);                                             \
-        test_passed++;                                                        \
-    }                                                                         \
-} while (0)
-
-#ifndef HAVE_PKCS11_STATIC
-static void* dlib;
-#endif
-static CK_FUNCTION_LIST* funcList;
-
-static CK_RV pkcs11_load(void)
-{
-    CK_RV ret;
-#ifndef HAVE_PKCS11_STATIC
-    CK_C_GetFunctionList func;
-
-    dlib = dlopen(WOLFPKCS11_DLL_FILENAME, RTLD_NOW | RTLD_LOCAL);
-    if (dlib == NULL) {
-        fprintf(stderr, "dlopen error: %s\n", dlerror());
-        return CKR_GENERAL_ERROR;
-    }
-    func = (CK_C_GetFunctionList)dlsym(dlib, "C_GetFunctionList");
-    if (func == NULL) {
-        fprintf(stderr, "Failed to get function list function\n");
-        dlclose(dlib);
-        return CKR_GENERAL_ERROR;
-    }
-    ret = func(&funcList);
-    if (ret != CKR_OK) {
-        dlclose(dlib);
-        return ret;
-    }
-#else
-    ret = C_GetFunctionList(&funcList);
-    if (ret != CKR_OK)
-        return ret;
-#endif
-    return CKR_OK;
-}
-
-static void pkcs11_unload(void)
-{
-#ifndef HAVE_PKCS11_STATIC
-    if (dlib != NULL) {
-        dlclose(dlib);
-        dlib = NULL;
-    }
-#endif
-    funcList = NULL;
-}
-
-/* Generate a key pair with the supplied public template and report the rv.
- * A CK_FALSE CKA_PRIVATE on the private template keeps the objects public so
- * the call does not require C_Login. The result must be CKR_TEMPLATE_INCOMPLETE
- * when the public template is missing a mechanism-required attribute, or
- * CKR_MECHANISM_INVALID if the mechanism is not built in (treated as skip). */
+/* Generate a key pair with the given public template. CKA_PRIVATE=FALSE on
+ * the private template keeps the keys public so no C_Login is needed. The
+ * mechanism is skipped if it is not built in. */
 static void check_incomplete(CK_SESSION_HANDLE session, CK_MECHANISM_TYPE mech,
                              CK_ATTRIBUTE* pubTmpl, CK_ULONG pubCnt,
                              const char* op)
@@ -151,24 +89,16 @@ static void check_incomplete(CK_SESSION_HANDLE session, CK_MECHANISM_TYPE mech,
 static int run_test(void)
 {
     CK_RV rv;
-    CK_C_INITIALIZE_ARGS args;
-    CK_SLOT_ID slotList[16];
-    CK_ULONG slotCount = sizeof(slotList) / sizeof(slotList[0]);
-    CK_SLOT_ID slot = 0;
     CK_SESSION_HANDLE session = 0;
-    int sessFlags = CKF_SERIAL_SESSION | CKF_RW_SESSION;
     CK_BBOOL ckTrue = CK_TRUE;
-    /* RSA public template missing CKA_MODULUS_BITS. */
-    CK_ATTRIBUTE rsaPub[] = {
+    CK_ATTRIBUTE rsaPub[] = {        /* missing CKA_MODULUS_BITS */
         { CKA_ENCRYPT, &ckTrue, sizeof(ckTrue) },
         { CKA_VERIFY,  &ckTrue, sizeof(ckTrue) },
     };
-    /* EC public template missing CKA_EC_PARAMS. */
-    CK_ATTRIBUTE ecPub[] = {
+    CK_ATTRIBUTE ecPub[] = {         /* missing CKA_EC_PARAMS */
         { CKA_VERIFY,  &ckTrue, sizeof(ckTrue) },
     };
-    /* DH public template missing CKA_PRIME and CKA_BASE. */
-    CK_ATTRIBUTE dhPub[] = {
+    CK_ATTRIBUTE dhPub[] = {         /* missing CKA_PRIME and CKA_BASE */
         { CKA_DERIVE,  &ckTrue, sizeof(ckTrue) },
     };
 
@@ -177,21 +107,8 @@ static int run_test(void)
     if (rv != CKR_OK)
         return -1;
 
-    XMEMSET(&args, 0, sizeof(args));
-    args.flags = CKF_OS_LOCKING_OK;
-    rv = funcList->C_Initialize(&args);
-    CHECK_RV(rv, "C_Initialize", CKR_OK);
-    if (rv != CKR_OK)
-        goto out;
-
-    rv = funcList->C_GetSlotList(CK_TRUE, slotList, &slotCount);
-    CHECK_RV(rv, "C_GetSlotList", CKR_OK);
-    if (rv != CKR_OK || slotCount == 0)
-        goto out;
-    slot = slotList[0];
-
-    rv = funcList->C_OpenSession(slot, sessFlags, NULL, NULL, &session);
-    CHECK_RV(rv, "C_OpenSession", CKR_OK);
+    rv = pkcs11_open_session(&session);
+    CHECK_RV(rv, "open session", CKR_OK);
     if (rv != CKR_OK)
         goto out;
 
@@ -224,14 +141,5 @@ int main(int argc, char* argv[])
 
     printf("=== wolfPKCS11 C_GenerateKeyPair incomplete-template test ===\n");
     run_test();
-
-    printf("\n=== Test Results ===\n");
-    printf("Tests passed: %d\n", test_passed);
-    printf("Tests failed: %d\n", test_failed);
-    if (test_failed == 0)
-        printf("ALL TESTS PASSED!\n");
-    else
-        printf("SOME TESTS FAILED!\n");
-
-    return (test_failed == 0) ? 0 : 1;
+    return pkcs11_test_summary();
 }

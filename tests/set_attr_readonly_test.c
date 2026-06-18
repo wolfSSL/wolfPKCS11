@@ -18,11 +18,9 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  *
- * Regression test for issue F-5517. SetAttributeValue forwarded every
- * template attribute to WP11_Object_SetAttr, which accepted updates to
- * read-only class/identity and generated-state attributes (CKA_CLASS,
- * CKA_KEY_TYPE, CKA_ALWAYS_SENSITIVE, CKA_NEVER_EXTRACTABLE, ...). Changing
- * those via C_SetAttributeValue must fail with CKR_ATTRIBUTE_READ_ONLY.
+ * Regression test for issue F-5517: C_SetAttributeValue must reject a change
+ * to a read-only class/identity or generated-state attribute with
+ * CKR_ATTRIBUTE_READ_ONLY.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -48,78 +46,14 @@
 #endif
 
 #include "testdata.h"
+#include "pkcs11_test_util.h"
 
 #define TEST_DIR "./store/set_attr_readonly_test"
-
-static int test_passed = 0;
-static int test_failed = 0;
-
-#define CHECK_RV(rv, op, expected) do {                                       \
-    if ((rv) != (expected)) {                                                 \
-        fprintf(stderr, "FAIL: %s: expected 0x%lx, got 0x%lx\n", op,          \
-                (unsigned long)(expected), (unsigned long)(rv));              \
-        test_failed++;                                                        \
-    } else {                                                                  \
-        printf("PASS: %s\n", op);                                             \
-        test_passed++;                                                        \
-    }                                                                         \
-} while (0)
-
-#ifndef HAVE_PKCS11_STATIC
-static void* dlib;
-#endif
-static CK_FUNCTION_LIST* funcList;
-
-static CK_RV pkcs11_load(void)
-{
-    CK_RV ret;
-#ifndef HAVE_PKCS11_STATIC
-    CK_C_GetFunctionList func;
-
-    dlib = dlopen(WOLFPKCS11_DLL_FILENAME, RTLD_NOW | RTLD_LOCAL);
-    if (dlib == NULL) {
-        fprintf(stderr, "dlopen error: %s\n", dlerror());
-        return CKR_GENERAL_ERROR;
-    }
-    func = (CK_C_GetFunctionList)dlsym(dlib, "C_GetFunctionList");
-    if (func == NULL) {
-        fprintf(stderr, "Failed to get function list function\n");
-        dlclose(dlib);
-        return CKR_GENERAL_ERROR;
-    }
-    ret = func(&funcList);
-    if (ret != CKR_OK) {
-        dlclose(dlib);
-        return ret;
-    }
-#else
-    ret = C_GetFunctionList(&funcList);
-    if (ret != CKR_OK)
-        return ret;
-#endif
-    return CKR_OK;
-}
-
-static void pkcs11_unload(void)
-{
-#ifndef HAVE_PKCS11_STATIC
-    if (dlib != NULL) {
-        dlclose(dlib);
-        dlib = NULL;
-    }
-#endif
-    funcList = NULL;
-}
 
 static int run_test(void)
 {
     CK_RV rv;
-    CK_C_INITIALIZE_ARGS args;
-    CK_SLOT_ID slotList[16];
-    CK_ULONG slotCount = sizeof(slotList) / sizeof(slotList[0]);
-    CK_SLOT_ID slot = 0;
     CK_SESSION_HANDLE session = 0;
-    int sessFlags = CKF_SERIAL_SESSION | CKF_RW_SESSION;
     CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
     CK_OBJECT_CLASS secretClass = CKO_SECRET_KEY;
     CK_OBJECT_CLASS dataClass = CKO_DATA;
@@ -134,7 +68,7 @@ static int run_test(void)
         { CKA_KEY_TYPE,    &genericType, sizeof(genericType) },
         { CKA_VALUE,       keyData,      sizeof(keyData)     },
         { CKA_PRIVATE,     &ckFalse,     sizeof(ckFalse)     },
-        /* Non-sensitive, extractable: CKA_ALWAYS_SENSITIVE and
+        /* Non-sensitive and extractable, so CKA_ALWAYS_SENSITIVE and
          * CKA_NEVER_EXTRACTABLE are both CK_FALSE after creation. */
         { CKA_SENSITIVE,   &ckFalse,     sizeof(ckFalse)     },
         { CKA_EXTRACTABLE, &ckTrue,      sizeof(ckTrue)      },
@@ -157,21 +91,8 @@ static int run_test(void)
     if (rv != CKR_OK)
         return -1;
 
-    XMEMSET(&args, 0, sizeof(args));
-    args.flags = CKF_OS_LOCKING_OK;
-    rv = funcList->C_Initialize(&args);
-    CHECK_RV(rv, "C_Initialize", CKR_OK);
-    if (rv != CKR_OK)
-        goto out;
-
-    rv = funcList->C_GetSlotList(CK_TRUE, slotList, &slotCount);
-    CHECK_RV(rv, "C_GetSlotList", CKR_OK);
-    if (rv != CKR_OK || slotCount == 0)
-        goto out;
-    slot = slotList[0];
-
-    rv = funcList->C_OpenSession(slot, sessFlags, NULL, NULL, &session);
-    CHECK_RV(rv, "C_OpenSession", CKR_OK);
+    rv = pkcs11_open_session(&session);
+    CHECK_RV(rv, "open session", CKR_OK);
     if (rv != CKR_OK)
         goto out;
 
@@ -180,7 +101,7 @@ static int run_test(void)
     if (rv != CKR_OK)
         goto out;
 
-    /* Changing class/identity attributes must be rejected. */
+    /* Class/identity attributes are read-only after creation. */
     rv = funcList->C_SetAttributeValue(session, key, setClass, 1);
     CHECK_RV(rv, "C_SetAttributeValue(CKA_CLASS)", CKR_ATTRIBUTE_READ_ONLY);
 
@@ -188,7 +109,7 @@ static int run_test(void)
     CHECK_RV(rv, "C_SetAttributeValue(CKA_KEY_TYPE)",
              CKR_ATTRIBUTE_READ_ONLY);
 
-    /* Changing generated-state attributes must be rejected. */
+    /* Generated-state attributes are read-only. */
     rv = funcList->C_SetAttributeValue(session, key, setAlwaysSensitive, 1);
     CHECK_RV(rv, "C_SetAttributeValue(CKA_ALWAYS_SENSITIVE)",
              CKR_ATTRIBUTE_READ_ONLY);
@@ -201,8 +122,7 @@ static int run_test(void)
     rv = funcList->C_SetAttributeValue(session, key, setLabel, 1);
     CHECK_RV(rv, "C_SetAttributeValue(CKA_LABEL)", CKR_OK);
 
-    /* Setting a read-only attribute to its current value is a no-op, not a
-     * change, so it is allowed (this is what C_CopyObject relies on). */
+    /* Setting a read-only attribute to its current value is a no-op. */
     rv = funcList->C_SetAttributeValue(session, key, setSameClass, 1);
     CHECK_RV(rv, "C_SetAttributeValue(CKA_CLASS unchanged)", CKR_OK);
 
@@ -225,14 +145,5 @@ int main(int argc, char* argv[])
 
     printf("=== wolfPKCS11 C_SetAttributeValue read-only test ===\n");
     run_test();
-
-    printf("\n=== Test Results ===\n");
-    printf("Tests passed: %d\n", test_passed);
-    printf("Tests failed: %d\n", test_failed);
-    if (test_failed == 0)
-        printf("ALL TESTS PASSED!\n");
-    else
-        printf("SOME TESTS FAILED!\n");
-
-    return (test_failed == 0) ? 0 : 1;
+    return pkcs11_test_summary();
 }

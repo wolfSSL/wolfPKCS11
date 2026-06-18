@@ -18,11 +18,9 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  *
- * Regression test for issue F-3833. C_VerifyRecoverInit used to forward the
- * raw wolfCrypt error (BAD_FUNC_ARG) returned by WP11_Object_Find when the
- * supplied key handle did not match any object, casting a negative int to
- * CK_RV. The spec-defined code for a non-resolvable handle is
- * CKR_OBJECT_HANDLE_INVALID, matching every other C_*Init function.
+ * Regression test for issue F-3833: C_VerifyRecoverInit must report
+ * CKR_OBJECT_HANDLE_INVALID for a key handle that does not resolve to an
+ * object, matching the other C_*Init functions.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -48,78 +46,14 @@
 #endif
 
 #include "testdata.h"
+#include "pkcs11_test_util.h"
 
 #define TEST_DIR "./store/verify_recover_badkey_test"
-
-static int test_passed = 0;
-static int test_failed = 0;
-
-#define CHECK_RV(rv, op, expected) do {                                       \
-    if ((rv) != (expected)) {                                                 \
-        fprintf(stderr, "FAIL: %s: expected 0x%lx, got 0x%lx\n", op,          \
-                (unsigned long)(expected), (unsigned long)(rv));              \
-        test_failed++;                                                        \
-    } else {                                                                  \
-        printf("PASS: %s\n", op);                                             \
-        test_passed++;                                                        \
-    }                                                                         \
-} while (0)
-
-#ifndef HAVE_PKCS11_STATIC
-static void* dlib;
-#endif
-static CK_FUNCTION_LIST* funcList;
-
-static CK_RV pkcs11_load(void)
-{
-    CK_RV ret;
-#ifndef HAVE_PKCS11_STATIC
-    CK_C_GetFunctionList func;
-
-    dlib = dlopen(WOLFPKCS11_DLL_FILENAME, RTLD_NOW | RTLD_LOCAL);
-    if (dlib == NULL) {
-        fprintf(stderr, "dlopen error: %s\n", dlerror());
-        return CKR_GENERAL_ERROR;
-    }
-    func = (CK_C_GetFunctionList)dlsym(dlib, "C_GetFunctionList");
-    if (func == NULL) {
-        fprintf(stderr, "Failed to get function list function\n");
-        dlclose(dlib);
-        return CKR_GENERAL_ERROR;
-    }
-    ret = func(&funcList);
-    if (ret != CKR_OK) {
-        dlclose(dlib);
-        return ret;
-    }
-#else
-    ret = C_GetFunctionList(&funcList);
-    if (ret != CKR_OK)
-        return ret;
-#endif
-    return CKR_OK;
-}
-
-static void pkcs11_unload(void)
-{
-#ifndef HAVE_PKCS11_STATIC
-    if (dlib != NULL) {
-        dlclose(dlib);
-        dlib = NULL;
-    }
-#endif
-    funcList = NULL;
-}
 
 static int run_test(void)
 {
     CK_RV rv;
-    CK_C_INITIALIZE_ARGS args;
-    CK_SLOT_ID slotList[16];
-    CK_ULONG slotCount = sizeof(slotList) / sizeof(slotList[0]);
-    CK_SLOT_ID slot = 0;
     CK_SESSION_HANDLE session = 0;
-    int sessFlags = CKF_SERIAL_SESSION | CKF_RW_SESSION;
     CK_MECHANISM mech;
 
     rv = pkcs11_load();
@@ -127,21 +61,8 @@ static int run_test(void)
     if (rv != CKR_OK)
         return -1;
 
-    XMEMSET(&args, 0, sizeof(args));
-    args.flags = CKF_OS_LOCKING_OK;
-    rv = funcList->C_Initialize(&args);
-    CHECK_RV(rv, "C_Initialize", CKR_OK);
-    if (rv != CKR_OK)
-        goto out;
-
-    rv = funcList->C_GetSlotList(CK_TRUE, slotList, &slotCount);
-    CHECK_RV(rv, "C_GetSlotList", CKR_OK);
-    if (rv != CKR_OK || slotCount == 0)
-        goto out;
-    slot = slotList[0];
-
-    rv = funcList->C_OpenSession(slot, sessFlags, NULL, NULL, &session);
-    CHECK_RV(rv, "C_OpenSession", CKR_OK);
+    rv = pkcs11_open_session(&session);
+    CHECK_RV(rv, "open session", CKR_OK);
     if (rv != CKR_OK)
         goto out;
 
@@ -150,13 +71,11 @@ static int run_test(void)
     mech.pParameter = NULL;
     mech.ulParameterLen = 0;
 
-    /* Non-zero handle that does not resolve to any object. Must report
-     * CKR_OBJECT_HANDLE_INVALID rather than a raw negative wolfCrypt code. */
+    /* Non-zero handle that does not resolve to any object. */
     rv = funcList->C_VerifyRecoverInit(session, &mech,
                                        (CK_OBJECT_HANDLE)0x7fffffffUL);
     CHECK_RV(rv, "C_VerifyRecoverInit(bad handle)", CKR_OBJECT_HANDLE_INVALID);
 
-    /* Sanity: the zero handle path already reports the same code. */
     rv = funcList->C_VerifyRecoverInit(session, &mech, (CK_OBJECT_HANDLE)0);
     CHECK_RV(rv, "C_VerifyRecoverInit(zero handle)", CKR_OBJECT_HANDLE_INVALID);
 
@@ -179,14 +98,5 @@ int main(int argc, char* argv[])
 
     printf("=== wolfPKCS11 C_VerifyRecoverInit bad-handle test ===\n");
     run_test();
-
-    printf("\n=== Test Results ===\n");
-    printf("Tests passed: %d\n", test_passed);
-    printf("Tests failed: %d\n", test_failed);
-    if (test_failed == 0)
-        printf("ALL TESTS PASSED!\n");
-    else
-        printf("SOME TESTS FAILED!\n");
-
-    return (test_failed == 0) ? 0 : 1;
+    return pkcs11_test_summary();
 }

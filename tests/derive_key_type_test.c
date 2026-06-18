@@ -18,10 +18,8 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  *
- * Regression test for issue F-4065. C_DeriveKey passed the base key to the
- * mechanism-specific derive routine without checking that its key type
- * matched the mechanism, so a wrong base key type failed deep in the crypto
- * with CKR_FUNCTION_FAILED instead of the spec-mandated
+ * Regression test for issue F-4065: C_DeriveKey must reject a base key whose
+ * type does not match the derivation mechanism with
  * CKR_KEY_TYPE_INCONSISTENT.
  */
 
@@ -48,71 +46,12 @@
 #endif
 
 #include "testdata.h"
+#include "pkcs11_test_util.h"
 
 #define TEST_DIR "./store/derive_key_type_test"
 
-static int test_passed = 0;
-static int test_failed = 0;
-
-#define CHECK_RV(rv, op, expected) do {                                       \
-    if ((rv) != (expected)) {                                                 \
-        fprintf(stderr, "FAIL: %s: expected 0x%lx, got 0x%lx\n", op,          \
-                (unsigned long)(expected), (unsigned long)(rv));              \
-        test_failed++;                                                        \
-    } else {                                                                  \
-        printf("PASS: %s\n", op);                                             \
-        test_passed++;                                                        \
-    }                                                                         \
-} while (0)
-
-#ifndef HAVE_PKCS11_STATIC
-static void* dlib;
-#endif
-static CK_FUNCTION_LIST* funcList;
-
-static CK_RV pkcs11_load(void)
-{
-    CK_RV ret;
-#ifndef HAVE_PKCS11_STATIC
-    CK_C_GetFunctionList func;
-
-    dlib = dlopen(WOLFPKCS11_DLL_FILENAME, RTLD_NOW | RTLD_LOCAL);
-    if (dlib == NULL) {
-        fprintf(stderr, "dlopen error: %s\n", dlerror());
-        return CKR_GENERAL_ERROR;
-    }
-    func = (CK_C_GetFunctionList)dlsym(dlib, "C_GetFunctionList");
-    if (func == NULL) {
-        fprintf(stderr, "Failed to get function list function\n");
-        dlclose(dlib);
-        return CKR_GENERAL_ERROR;
-    }
-    ret = func(&funcList);
-    if (ret != CKR_OK) {
-        dlclose(dlib);
-        return ret;
-    }
-#else
-    ret = C_GetFunctionList(&funcList);
-    if (ret != CKR_OK)
-        return ret;
-#endif
-    return CKR_OK;
-}
-
-static void pkcs11_unload(void)
-{
-#ifndef HAVE_PKCS11_STATIC
-    if (dlib != NULL) {
-        dlclose(dlib);
-        dlib = NULL;
-    }
-#endif
-    funcList = NULL;
-}
-
-/* Derive with the given mechanism using the wrong-typed base key and assert
- * CKR_KEY_TYPE_INCONSISTENT, or skip if the mechanism is not built in. */
+/* Derive with the given mechanism and wrong-typed base key, asserting
+ * CKR_KEY_TYPE_INCONSISTENT, or skipping if the mechanism is not built in. */
 static void check_wrong_type(CK_SESSION_HANDLE session, CK_MECHANISM* mech,
                              CK_OBJECT_HANDLE base, const char* op)
 {
@@ -144,12 +83,7 @@ static void check_wrong_type(CK_SESSION_HANDLE session, CK_MECHANISM* mech,
 static int run_test(void)
 {
     CK_RV rv;
-    CK_C_INITIALIZE_ARGS args;
-    CK_SLOT_ID slotList[16];
-    CK_ULONG slotCount = sizeof(slotList) / sizeof(slotList[0]);
-    CK_SLOT_ID slot = 0;
     CK_SESSION_HANDLE session = 0;
-    int sessFlags = CKF_SERIAL_SESSION | CKF_RW_SESSION;
     CK_OBJECT_HANDLE aesKey = CK_INVALID_HANDLE;
     CK_OBJECT_CLASS secretClass = CKO_SECRET_KEY;
     CK_KEY_TYPE aesType = CKK_AES;
@@ -159,9 +93,8 @@ static int run_test(void)
     byte pub[65];
     byte param[32];
     CK_ECDH1_DERIVE_PARAMS ecdh;
-    /* An AES key is the wrong base-key type for every asymmetric/KDF derive
-     * mechanism below. CKA_DERIVE=TRUE so the usage gate is passed and the
-     * per-mechanism type check is the thing under test. */
+    /* AES is the wrong base-key type for these mechanisms; CKA_DERIVE=TRUE so
+     * the usage gate passes and the per-mechanism type check is exercised. */
     CK_ATTRIBUTE aesTmpl[] = {
         { CKA_CLASS,    &secretClass, sizeof(secretClass) },
         { CKA_KEY_TYPE, &aesType,     sizeof(aesType)     },
@@ -179,21 +112,8 @@ static int run_test(void)
     if (rv != CKR_OK)
         return -1;
 
-    XMEMSET(&args, 0, sizeof(args));
-    args.flags = CKF_OS_LOCKING_OK;
-    rv = funcList->C_Initialize(&args);
-    CHECK_RV(rv, "C_Initialize", CKR_OK);
-    if (rv != CKR_OK)
-        goto out;
-
-    rv = funcList->C_GetSlotList(CK_TRUE, slotList, &slotCount);
-    CHECK_RV(rv, "C_GetSlotList", CKR_OK);
-    if (rv != CKR_OK || slotCount == 0)
-        goto out;
-    slot = slotList[0];
-
-    rv = funcList->C_OpenSession(slot, sessFlags, NULL, NULL, &session);
-    CHECK_RV(rv, "C_OpenSession", CKR_OK);
+    rv = pkcs11_open_session(&session);
+    CHECK_RV(rv, "open session", CKR_OK);
     if (rv != CKR_OK)
         goto out;
 
@@ -237,14 +157,5 @@ int main(int argc, char* argv[])
 
     printf("=== wolfPKCS11 C_DeriveKey base-key-type test ===\n");
     run_test();
-
-    printf("\n=== Test Results ===\n");
-    printf("Tests passed: %d\n", test_passed);
-    printf("Tests failed: %d\n", test_failed);
-    if (test_failed == 0)
-        printf("ALL TESTS PASSED!\n");
-    else
-        printf("SOME TESTS FAILED!\n");
-
-    return (test_failed == 0) ? 0 : 1;
+    return pkcs11_test_summary();
 }
