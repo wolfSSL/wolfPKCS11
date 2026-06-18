@@ -7299,8 +7299,8 @@ int WP11_Slot_SOLogin(WP11_Slot* slot, char* pin, int pinLen)
 
     WP11_Lock_LockRO(&slot->lock);
     if (ret == 0) {
-        /* Have we already logged in? Distinguish the same user type (SO)
-         * from a different one (USER) for the caller's return code. */
+        /* SO already logged in is the same user type; a logged-in USER is a
+         * different one. */
         state = slot->token.loginState;
         if (state == WP11_APP_STATE_RW_SO) {
             ret = LOGGED_IN_E;
@@ -7399,10 +7399,9 @@ int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen)
 #endif
 
     WP11_Lock_LockRW(&slot->lock);
-    /* Have we already logged in? */
     if (ret == 0) {
-        /* Have we already logged in? Distinguish the same user type (USER)
-         * from a different one (SO) for the caller's return code. */
+        /* USER already logged in is the same user type; a logged-in SO is a
+         * different one. */
         state = token->loginState;
         if (state == WP11_APP_STATE_RO_USER ||
             state == WP11_APP_STATE_RW_USER) {
@@ -8533,9 +8532,7 @@ int WP11_Session_SetGcmParams(WP11_Session* session, unsigned char* iv,
      * length. Either mismatch is a contract bug. */
     if (ret == 0 && (iv == NULL) != (ivSz == 0))
         ret = BAD_FUNC_ARG;
-    /* The AAD pointer and length must agree by the same rule, so a NULL AAD
-     * with a non-zero length is rejected rather than silently treated as
-     * empty AAD. */
+    /* The AAD pointer and length must agree by the same rule. */
     if (ret == 0 && (aad == NULL) != (aadLen == 0))
         ret = BAD_FUNC_ARG;
 
@@ -8594,9 +8591,7 @@ int WP11_Session_SetCcmParams(WP11_Session* session, int dataSz,
      * length. Either mismatch is a contract bug. */
     if (ret == 0 && (iv == NULL) != (ivSz == 0))
         ret = BAD_FUNC_ARG;
-    /* The AAD pointer and length must agree by the same rule, so a NULL AAD
-     * with a non-zero length is rejected rather than silently treated as
-     * empty AAD. */
+    /* The AAD pointer and length must agree by the same rule. */
     if (ret == 0 && (aad == NULL) != (aadSz == 0))
         ret = BAD_FUNC_ARG;
 
@@ -10325,10 +10320,8 @@ static int GetTrustAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
             if (data != NULL)
                 XMEMCPY(data, &object->data.trust.md5Hash, WC_MD5_DIGEST_SIZE);
             break;
-        /* GetULong/GetBool handle the size query (data == NULL) and the
-         * buffer-too-small case themselves. Do not pre-set *len, which would
-         * defeat their *len < dataLen check and overflow an undersized
-         * caller buffer. */
+        /* GetULong/GetBool handle the size query and buffer-too-small case;
+         * do not pre-set *len. */
         case CKA_TRUST_SERVER_AUTH:
             ret = GetULong(object->data.trust.serverAuth, data, len);
             break;

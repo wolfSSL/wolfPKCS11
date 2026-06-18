@@ -480,10 +480,8 @@ static int CheckOpSupportedRv(WP11_Object* obj, CK_ATTRIBUTE_TYPE op,
 
 static int CheckOpSupported(WP11_Object* obj, CK_ATTRIBUTE_TYPE op)
 {
-    /* A key whose CKA_<op> usage attribute does not allow the operation is
-     * reported as CKR_KEY_FUNCTION_NOT_PERMITTED. CKR_KEY_TYPE_INCONSISTENT
-     * is reserved for a key type that does not match the mechanism, which the
-     * per-mechanism checks handle. */
+    /* Usage-attribute denial is CKR_KEY_FUNCTION_NOT_PERMITTED; a key-type
+     * mismatch is handled separately by the per-mechanism checks. */
     return CheckOpSupportedRv(obj, op, CKR_KEY_FUNCTION_NOT_PERMITTED);
 }
 
@@ -764,6 +762,8 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
     CK_OBJECT_CLASS objClass;
     CK_BBOOL getVar;
     CK_ULONG getVarLen = 1;
+    byte roCur[sizeof(CK_ULONG)];
+    CK_ULONG roCurLen;
 
     if (pTemplate == NULL)
         return CKR_ARGUMENTS_BAD;
@@ -969,28 +969,20 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
                     *(CK_BBOOL*)attr->pValue == CK_TRUE)
                 return CKR_ATTRIBUTE_READ_ONLY;
         }
-        /* PKCS#11 marks these class/identity and generated-state attributes
-         * read-only once the object exists. Reject an attempt to change them
-         * (via C_SetAttributeValue or C_CopyObject); setting the current value
-         * is a harmless no-op. Not applied during object creation. */
-        if (!newObject) {
-            static const CK_ATTRIBUTE_TYPE readOnlyAttrs[] = {
-                CKA_CLASS, CKA_KEY_TYPE, CKA_LOCAL, CKA_KEY_GEN_MECHANISM,
-                CKA_ALWAYS_SENSITIVE, CKA_NEVER_EXTRACTABLE
-            };
-            unsigned int k;
-            for (k = 0; k < sizeof(readOnlyAttrs) / sizeof(readOnlyAttrs[0]);
-                 k++) {
-                byte cur[sizeof(CK_ULONG)];
-                CK_ULONG curLen = sizeof(cur);
-                if (attr->type != readOnlyAttrs[k])
-                    continue;
-                if (WP11_Object_GetAttr(obj, attr->type, cur, &curLen) == 0 &&
-                    (attr->pValue == NULL || attr->ulValueLen != curLen ||
-                     XMEMCMP(attr->pValue, cur, curLen) != 0)) {
-                    return CKR_ATTRIBUTE_READ_ONLY;
-                }
-                break;
+        /* These class/identity and generated-state attributes are read-only
+         * once the object exists; reject a change. Setting the current value
+         * is a no-op. */
+        if (!newObject && (attr->type == CKA_CLASS ||
+                           attr->type == CKA_KEY_TYPE ||
+                           attr->type == CKA_LOCAL ||
+                           attr->type == CKA_KEY_GEN_MECHANISM ||
+                           attr->type == CKA_ALWAYS_SENSITIVE ||
+                           attr->type == CKA_NEVER_EXTRACTABLE)) {
+            roCurLen = sizeof(roCur);
+            if (WP11_Object_GetAttr(obj, attr->type, roCur, &roCurLen) == 0 &&
+                (attr->pValue == NULL || attr->ulValueLen != roCurLen ||
+                 XMEMCMP(attr->pValue, roCur, roCurLen) != 0)) {
+                return CKR_ATTRIBUTE_READ_ONLY;
             }
         }
         ret = WP11_Object_SetAttr(obj, attr->type, (byte*)attr->pValue,
@@ -1358,6 +1350,7 @@ CK_RV C_CreateObject(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate,
     CK_RV rv;
     WP11_Session* session;
     WP11_Object* object;
+    CK_ATTRIBUTE* classAttr = NULL;
 
     WOLFPKCS11_ENTER("C_CreateObject");
     #ifdef DEBUG_WOLFPKCS11
@@ -1400,18 +1393,13 @@ CK_RV C_CreateObject(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate,
         }
     }
 
-    /* C_CreateObject requires CKA_CLASS in the template; there is no
-     * API-implied object class as there is for derive/unwrap. Reject an
-     * incomplete template rather than creating an object whose class is the
-     * uninitialized sentinel value. */
-    {
-        CK_ATTRIBUTE* classAttr = NULL;
-        FindAttributeType(pTemplate, ulCount, CKA_CLASS, &classAttr);
-        if (classAttr == NULL) {
-            rv = CKR_TEMPLATE_INCOMPLETE;
-            WOLFPKCS11_LEAVE("C_CreateObject", rv);
-            return rv;
-        }
+    /* C_CreateObject requires CKA_CLASS; there is no API-implied object class
+     * as there is for derive/unwrap. */
+    FindAttributeType(pTemplate, ulCount, CKA_CLASS, &classAttr);
+    if (classAttr == NULL) {
+        rv = CKR_TEMPLATE_INCOMPLETE;
+        WOLFPKCS11_LEAVE("C_CreateObject", rv);
+        return rv;
     }
 
     rv = CheckPrivateLogin(session, pTemplate, ulCount,
@@ -4111,12 +4099,10 @@ CK_RV C_DecryptFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastPart,
                 return CKR_OK;
             }
 
-            /* Pass the caller's buffer capacity (not the buffered block
-             * length, which is always 16) so WP11_AesCbcPad_DecryptFinal
-             * validates the write against it and returns BUFFER_E rather than
-             * overflowing a too-small buffer, mirroring the single-shot
-             * C_Decrypt path. Cap to the block size, which already exceeds the
-             * 0..15 byte output, to avoid truncating a large CK_ULONG. */
+            /* Pass the caller's buffer capacity so WP11_AesCbcPad_DecryptFinal
+             * can enforce it. Cap to the block size, which already exceeds the
+             * 0..15 byte unpadded output, to avoid truncating a large
+             * CK_ULONG. */
             decPartLen = (*pulLastPartLen < (CK_ULONG)AES_BLOCK_SIZE) ?
                          (word32)*pulLastPartLen : (word32)AES_BLOCK_SIZE;
             ret = WP11_AesCbcPad_DecryptFinal(pLastPart, &decPartLen, session);
@@ -7533,6 +7519,7 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
     WP11_Session* session = NULL;
     WP11_Object* pub = NULL;
     WP11_Object* priv = NULL;
+    CK_ATTRIBUTE* reqAttr = NULL;
 
     WOLFPKCS11_ENTER("C_GenerateKeyPair");
     #ifdef DEBUG_WOLFPKCS11
@@ -7610,14 +7597,10 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
             }
 
             /* CKA_MODULUS_BITS is required to size the RSA key. */
-            {
-                CK_ATTRIBUTE* reqAttr = NULL;
-                FindAttributeType(pPublicKeyTemplate,
-                                  ulPublicKeyAttributeCount, CKA_MODULUS_BITS,
-                                  &reqAttr);
-                if (reqAttr == NULL)
-                    return CKR_TEMPLATE_INCOMPLETE;
-            }
+            FindAttributeType(pPublicKeyTemplate, ulPublicKeyAttributeCount,
+                              CKA_MODULUS_BITS, &reqAttr);
+            if (reqAttr == NULL)
+                return CKR_TEMPLATE_INCOMPLETE;
 
             *phPublicKey = *phPrivateKey = CK_INVALID_HANDLE;
 
@@ -7643,16 +7626,11 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
                 return CKR_MECHANISM_PARAM_INVALID;
             }
 
-            /* CKA_EC_PARAMS carries the curve; without it there are no domain
-             * parameters to generate against. */
-            {
-                CK_ATTRIBUTE* reqAttr = NULL;
-                FindAttributeType(pPublicKeyTemplate,
-                                  ulPublicKeyAttributeCount, CKA_EC_PARAMS,
-                                  &reqAttr);
-                if (reqAttr == NULL)
-                    return CKR_TEMPLATE_INCOMPLETE;
-            }
+            /* CKA_EC_PARAMS carries the curve domain parameters. */
+            FindAttributeType(pPublicKeyTemplate, ulPublicKeyAttributeCount,
+                              CKA_EC_PARAMS, &reqAttr);
+            if (reqAttr == NULL)
+                return CKR_TEMPLATE_INCOMPLETE;
 
             *phPublicKey = *phPrivateKey = CK_INVALID_HANDLE;
 
@@ -7792,18 +7770,14 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
             }
 
             /* DH needs the domain parameters CKA_PRIME and CKA_BASE. */
-            {
-                CK_ATTRIBUTE* primeAttr = NULL;
-                CK_ATTRIBUTE* baseAttr = NULL;
-                FindAttributeType(pPublicKeyTemplate,
-                                  ulPublicKeyAttributeCount, CKA_PRIME,
-                                  &primeAttr);
-                FindAttributeType(pPublicKeyTemplate,
-                                  ulPublicKeyAttributeCount, CKA_BASE,
-                                  &baseAttr);
-                if (primeAttr == NULL || baseAttr == NULL)
-                    return CKR_TEMPLATE_INCOMPLETE;
-            }
+            FindAttributeType(pPublicKeyTemplate, ulPublicKeyAttributeCount,
+                              CKA_PRIME, &reqAttr);
+            if (reqAttr == NULL)
+                return CKR_TEMPLATE_INCOMPLETE;
+            FindAttributeType(pPublicKeyTemplate, ulPublicKeyAttributeCount,
+                              CKA_BASE, &reqAttr);
+            if (reqAttr == NULL)
+                return CKR_TEMPLATE_INCOMPLETE;
 
             *phPublicKey = *phPrivateKey = CK_INVALID_HANDLE;
 
