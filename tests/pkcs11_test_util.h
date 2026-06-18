@@ -30,6 +30,8 @@
 #ifndef PKCS11_TEST_UTIL_H
 #define PKCS11_TEST_UTIL_H
 
+#include <stdio.h>
+
 #if defined(_MSC_VER)
     #pragma warning(push)
     #pragma warning(disable: 4101 4189 4505)

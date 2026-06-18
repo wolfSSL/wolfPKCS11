@@ -10322,8 +10322,9 @@ static int GetTrustAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
             if (data != NULL)
                 XMEMCPY(data, &object->data.trust.md5Hash, WC_MD5_DIGEST_SIZE);
             break;
-        /* GetULong/GetBool handle the size query and buffer-too-small case;
-         * do not pre-set *len. */
+        /* GetULong/GetBool size-query and bounds-check *len themselves: they
+         * set it on a size query or success, and return BUFFER_E (leaving
+         * *len unchanged) when the buffer is too small. */
         case CKA_TRUST_SERVER_AUTH:
             ret = GetULong(object->data.trust.serverAuth, data, len);
             break;
