@@ -1093,7 +1093,7 @@ static void test_3144_private_create_requires_login(void)
     CK_OBJECT_HANDLE privKey = CK_INVALID_HANDLE;
     CK_UTF8CHAR label[32];
     CK_BYTE soPin[] = "password123456";
-    CK_BYTE userPin[] = "someUserPin";
+    CK_BYTE userPin[] = "wolfpkcs11-test";
     CK_OBJECT_CLASS secretKeyClass = CKO_SECRET_KEY;
     CK_KEY_TYPE genericKeyType = CKK_GENERIC_SECRET;
     CK_BBOOL ckTrue = CK_TRUE;
@@ -1276,7 +1276,7 @@ static void test_2370_private_default(void)
     CK_OBJECT_HANDLE pubKey = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE privKey = CK_INVALID_HANDLE;
     CK_BYTE soPin[] = "password123456";
-    CK_BYTE userPin[] = "someUserPin";
+    CK_BYTE userPin[] = "wolfpkcs11-test";
     CK_UTF8CHAR label[32];
     CK_OBJECT_CLASS secretKeyClass = CKO_SECRET_KEY;
     CK_OBJECT_CLASS pubKeyClass = CKO_PUBLIC_KEY;
@@ -1429,7 +1429,7 @@ static void test_2774_wrap_default(void)
     CK_OBJECT_HANDLE rsaPriv = CK_INVALID_HANDLE;
 #endif
     CK_BYTE soPin[] = "password123456";
-    CK_BYTE userPin[] = "someUserPin";
+    CK_BYTE userPin[] = "wolfpkcs11-test";
     CK_UTF8CHAR label[32];
     CK_OBJECT_CLASS secretKeyClass = CKO_SECRET_KEY;
     CK_KEY_TYPE aesKeyType = CKK_AES;

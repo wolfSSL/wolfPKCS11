@@ -76,8 +76,8 @@ static CK_SLOT_ID slot = 0;
 static const char* tokenName = "wolfpkcs11";
 static byte* soPin = (byte*)"password123456";
 static int soPinLen = 14;
-static byte* userPin = (byte*)"someUserPin";
-static int userPinLen = 11;
+static byte* userPin = (byte*)"wolfpkcs11-test";
+static int userPinLen = 15;
 
 static CK_OBJECT_CLASS secretKeyClass = CKO_SECRET_KEY;
 static CK_BBOOL ckTrue = CK_TRUE;
