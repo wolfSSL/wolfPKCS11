@@ -94,7 +94,8 @@ static int run_test(void)
     if (rv != CKR_OK)
         goto out;
 
-    /* GCM: NULL AAD pointer with a non-zero AAD length must be rejected. */
+    /* GCM: NULL AAD pointer with a non-zero AAD length must be rejected.
+     * Skip if AES-GCM is not built in. */
     XMEMSET(&gcm, 0, sizeof(gcm));
     gcm.pIv = iv;
     gcm.ulIvLen = sizeof(iv);
@@ -105,8 +106,33 @@ static int run_test(void)
     mech.pParameter = &gcm;
     mech.ulParameterLen = sizeof(gcm);
     rv = funcList->C_EncryptInit(session, &mech, aesKey);
-    CHECK_RV(rv, "C_EncryptInit GCM (NULL AAD, len 16)",
-             CKR_MECHANISM_PARAM_INVALID);
+    if (rv == CKR_MECHANISM_INVALID) {
+        printf("SKIP: AES-GCM not supported in this build\n");
+        test_passed++;
+    }
+    else {
+        CHECK_RV(rv, "C_EncryptInit GCM (NULL AAD, len 16)",
+                 CKR_MECHANISM_PARAM_INVALID);
+
+        /* The canonical no-AAD form (NULL pointer, zero length) is valid. */
+        XMEMSET(&gcm, 0, sizeof(gcm));
+        gcm.pIv = iv;
+        gcm.ulIvLen = sizeof(iv);
+        gcm.pAAD = NULL;
+        gcm.ulAADLen = 0;
+        gcm.ulTagBits = 128;
+        mech.mechanism = CKM_AES_GCM;
+        mech.pParameter = &gcm;
+        mech.ulParameterLen = sizeof(gcm);
+        rv = funcList->C_EncryptInit(session, &mech, aesKey);
+        CHECK_RV(rv, "C_EncryptInit GCM (NULL AAD, len 0)", CKR_OK);
+        if (rv == CKR_OK) {
+            encSz = sizeof(enc);
+            rv = funcList->C_Encrypt(session, plain, sizeof(plain), enc,
+                                     &encSz);
+            CHECK_RV(rv, "C_Encrypt GCM (no AAD) completes", CKR_OK);
+        }
+    }
 
     /* CCM: same mismatch; skip if AES-CCM is not built in. */
     XMEMSET(&ccm, 0, sizeof(ccm));
@@ -127,24 +153,6 @@ static int run_test(void)
     else {
         CHECK_RV(rv, "C_EncryptInit CCM (NULL AAD, len 16)",
                  CKR_MECHANISM_PARAM_INVALID);
-    }
-
-    /* The canonical no-AAD form (NULL pointer, zero length) is still valid. */
-    XMEMSET(&gcm, 0, sizeof(gcm));
-    gcm.pIv = iv;
-    gcm.ulIvLen = sizeof(iv);
-    gcm.pAAD = NULL;
-    gcm.ulAADLen = 0;
-    gcm.ulTagBits = 128;
-    mech.mechanism = CKM_AES_GCM;
-    mech.pParameter = &gcm;
-    mech.ulParameterLen = sizeof(gcm);
-    rv = funcList->C_EncryptInit(session, &mech, aesKey);
-    CHECK_RV(rv, "C_EncryptInit GCM (NULL AAD, len 0)", CKR_OK);
-    if (rv == CKR_OK) {
-        encSz = sizeof(enc);
-        rv = funcList->C_Encrypt(session, plain, sizeof(plain), enc, &encSz);
-        CHECK_RV(rv, "C_Encrypt GCM (no AAD) completes", CKR_OK);
     }
 
 out:

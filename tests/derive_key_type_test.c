@@ -80,6 +80,68 @@ static void check_wrong_type(CK_SESSION_HANDLE session, CK_MECHANISM* mech,
         funcList->C_DestroyObject(session, out);
 }
 
+#ifdef WOLFPKCS11_NSS
+/* CKM_HKDF_DATA derives from a CKO_DATA object (the TLS 1.3 key schedule NSS
+ * drives). That base object must be accepted, not rejected as a key-type
+ * mismatch. The CKA_DERIVE usage gate is skipped only in NSS builds, so this
+ * path is reachable there. */
+static void check_hkdf_data_object(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    CK_OBJECT_CLASS secretClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE hkdfType = CKK_HKDF;
+    CK_BBOOL ckTrue = CK_TRUE;
+    CK_BBOOL ckFalse = CK_FALSE;
+    byte value[32];
+    CK_ULONG valueLen = sizeof(value);
+    CK_OBJECT_HANDLE dataObj = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE out = CK_INVALID_HANDLE;
+    CK_HKDF_PARAMS hkdf;
+    CK_MECHANISM mech;
+    CK_ATTRIBUTE dataTmpl[] = {
+        { CKA_CLASS,   &dataClass, sizeof(dataClass) },
+        { CKA_VALUE,   value,      sizeof(value)     },
+        { CKA_PRIVATE, &ckFalse,   sizeof(ckFalse)   },
+    };
+    CK_ATTRIBUTE outTmpl[] = {
+        { CKA_CLASS,     &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE,  &hkdfType,    sizeof(hkdfType)    },
+        { CKA_VALUE_LEN, &valueLen,    sizeof(valueLen)    },
+        { CKA_DERIVE,    &ckTrue,      sizeof(ckTrue)      },
+    };
+
+    XMEMSET(value, 7, sizeof(value));
+    rv = funcList->C_CreateObject(session, dataTmpl,
+                                  sizeof(dataTmpl) / sizeof(*dataTmpl),
+                                  &dataObj);
+    CHECK_RV(rv, "C_CreateObject(CKO_DATA)", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    XMEMSET(&hkdf, 0, sizeof(hkdf));
+    hkdf.bExtract = CK_TRUE;
+    hkdf.bExpand = CK_TRUE;
+    hkdf.prfHashMechanism = CKM_SHA256;
+    hkdf.ulSaltType = CKF_HKDF_SALT_NULL;
+    hkdf.pInfo = value;
+    hkdf.ulInfoLen = 8;
+    mech.mechanism = CKM_HKDF_DATA;
+    mech.pParameter = &hkdf;
+    mech.ulParameterLen = sizeof(hkdf);
+    rv = funcList->C_DeriveKey(session, &mech, dataObj, outTmpl,
+                              sizeof(outTmpl) / sizeof(*outTmpl), &out);
+    if (rv == CKR_MECHANISM_INVALID) {
+        printf("SKIP: CKM_HKDF_DATA not supported in this build\n");
+        test_passed++;
+        return;
+    }
+    CHECK_RV(rv, "C_DeriveKey(CKM_HKDF_DATA, CKO_DATA base)", CKR_OK);
+    if (rv == CKR_OK)
+        funcList->C_DestroyObject(session, out);
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -137,6 +199,10 @@ static int run_test(void)
     mech.pParameter = param;
     mech.ulParameterLen = sizeof(param);
     check_wrong_type(session, &mech, aesKey, "DH derive with AES base key");
+
+#ifdef WOLFPKCS11_NSS
+    check_hkdf_data_object(session);
+#endif
 
 out:
     if (session != 0)
