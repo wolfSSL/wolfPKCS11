@@ -664,9 +664,14 @@ static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
                 ret = SetIfNotFound(obj, CKA_SENSITIVE, trueVal, pTemplate,
                                     ulCount);
 #endif
+            /* F-5519: default secret keys to CKA_EXTRACTABLE=CK_FALSE so they
+             * are not wrap-exportable unless the template opts in. */
+#if defined(WOLFPKCS11_LEGACY_EXTRACTABLE_TRUE_DEFAULT) || \
+    defined(WP11_NSS_PERMISSIVE_KEY_DEFAULTS)
             if (ret == CKR_OK)
                 ret = SetIfNotFound(obj, CKA_EXTRACTABLE, trueVal, pTemplate,
                                     ulCount);
+#endif
             if (ret == CKR_OK)
                 ret = SetIfNotFound(obj, CKA_ENCRYPT, trueVal, pTemplate,
                                     ulCount);
