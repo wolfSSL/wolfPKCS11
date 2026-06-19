@@ -76,6 +76,11 @@ noinst_PROGRAMS += tests/pbkdf2_keygen_attrs_test
 tests_pbkdf2_keygen_attrs_test_SOURCES = tests/pbkdf2_keygen_attrs_test.c
 tests_pbkdf2_keygen_attrs_test_LDADD =
 
+check_PROGRAMS += tests/aes_gcm_decrypt_len_test
+noinst_PROGRAMS += tests/aes_gcm_decrypt_len_test
+tests_aes_gcm_decrypt_len_test_SOURCES = tests/aes_gcm_decrypt_len_test.c
+tests_aes_gcm_decrypt_len_test_LDADD =
+
 check_PROGRAMS += tests/pkcs11v3test
 noinst_PROGRAMS += tests/pkcs11v3test
 tests_pkcs11v3test_SOURCES = tests/pkcs11v3test.c
@@ -167,6 +172,7 @@ tests_ecb_check_value_error_test_LDADD += src/libwolfpkcs11.la
 tests_operation_active_test_LDADD += src/libwolfpkcs11.la
 tests_aes_keygen_attrs_test_LDADD += src/libwolfpkcs11.la
 tests_pbkdf2_keygen_attrs_test_LDADD += src/libwolfpkcs11.la
+tests_aes_gcm_decrypt_len_test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11v3test_LDADD += src/libwolfpkcs11.la
 tests_rsa_exponent_test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11_compliance_test_LDADD += src/libwolfpkcs11.la
@@ -192,6 +198,7 @@ tests_ecb_check_value_error_test_LDADD += src/libwolfpkcs11.la
 tests_operation_active_test_LDADD += src/libwolfpkcs11.la
 tests_aes_keygen_attrs_test_LDADD += src/libwolfpkcs11.la
 tests_pbkdf2_keygen_attrs_test_LDADD += src/libwolfpkcs11.la
+tests_aes_gcm_decrypt_len_test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11_compliance_test_LDADD += src/libwolfpkcs11.la
 tests_verify_recover_badkey_test_LDADD += src/libwolfpkcs11.la
 tests_login_pin_len_range_test_LDADD += src/libwolfpkcs11.la
