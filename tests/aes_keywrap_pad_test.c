@@ -414,6 +414,66 @@ cleanup:
     return result;
 }
 
+/*
+ * Corrupted or wrong-length wrapped blobs must be rejected, exercising the
+ * AIV/length validation paths in the unwrap (single-semiblock and multi-block).
+ */
+static int test_unwrap_rejects(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE kek = CK_INVALID_HANDLE;
+    byte wrapped[64];
+    byte out[64];
+    CK_ULONG wrappedLen, outLen;
+    int result = 0;
+
+    ret = create_kek(session, rfc5649_kek, sizeof(rfc5649_kek), &kek);
+    CHECK_CKR(ret, "Reject: create AES-192 KEK", CKR_OK);
+
+    /* Multi-block blob: tampering a byte must fail the AIV/integrity check. */
+    wrappedLen = sizeof(wrapped);
+    ret = kwp_wrap(session, kek, rfc5649_pt1, sizeof(rfc5649_pt1), wrapped,
+                   &wrappedLen);
+    CHECK_CKR(ret, "Reject: wrap multi-block", CKR_OK);
+    wrapped[0] ^= 0x80;
+    outLen = sizeof(out);
+    ret = kwp_unwrap(session, kek, wrapped, wrappedLen, out, &outLen);
+    CHECK_CKR(ret, "Reject: tampered multi-block unwrap",
+              CKR_ENCRYPTED_DATA_INVALID);
+
+    /* Single-semiblock blob: tampering a byte must fail. */
+    wrappedLen = sizeof(wrapped);
+    ret = kwp_wrap(session, kek, rfc5649_pt2, sizeof(rfc5649_pt2), wrapped,
+                   &wrappedLen);
+    CHECK_CKR(ret, "Reject: wrap single-block", CKR_OK);
+    wrapped[wrappedLen - 1] ^= 0x01;
+    outLen = sizeof(out);
+    ret = kwp_unwrap(session, kek, wrapped, wrappedLen, out, &outLen);
+    CHECK_CKR(ret, "Reject: tampered single-block unwrap",
+              CKR_ENCRYPTED_DATA_INVALID);
+
+    /* Ciphertext length not a multiple of 8 must be rejected. */
+    wrappedLen = sizeof(wrapped);
+    ret = kwp_wrap(session, kek, rfc5649_pt1, sizeof(rfc5649_pt1), wrapped,
+                   &wrappedLen);
+    CHECK_CKR(ret, "Reject: wrap for length checks", CKR_OK);
+    outLen = sizeof(out);
+    ret = kwp_unwrap(session, kek, wrapped, wrappedLen - 1, out, &outLen);
+    CHECK_CKR(ret, "Reject: non-block-aligned ciphertext",
+              CKR_ENCRYPTED_DATA_LEN_RANGE);
+
+    /* Ciphertext shorter than two semiblocks must be rejected. */
+    outLen = sizeof(out);
+    ret = kwp_unwrap(session, kek, wrapped, 8, out, &outLen);
+    CHECK_CKR(ret, "Reject: too-short ciphertext",
+              CKR_ENCRYPTED_DATA_LEN_RANGE);
+
+cleanup:
+    if (kek != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, kek);
+    return result;
+}
+
 static int aes_keywrap_pad_test(void)
 {
     CK_RV ret;
@@ -456,6 +516,8 @@ static int aes_keywrap_pad_test(void)
     if (test_rfc_vectors(session) != 0)
         result = -1;
     if (test_roundtrip_lengths(session) != 0)
+        result = -1;
+    if (test_unwrap_rejects(session) != 0)
         result = -1;
 
     pkcs11_close_session(session);
