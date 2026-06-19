@@ -230,6 +230,7 @@ static void gcm_mech_init(CK_MECHANISM* mech, CK_GCM_PARAMS* gcmParams,
     XMEMSET(iv, 9, ivLen);
     gcmParams->pIv       = iv;
     gcmParams->ulIvLen   = ivLen;
+    gcmParams->ulIvBits  = 0;
     gcmParams->pAAD      = NULL;
     gcmParams->ulAADLen  = 0;
     gcmParams->ulTagBits = GCM_TAG_BITS;
