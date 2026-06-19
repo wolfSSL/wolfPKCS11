@@ -7626,6 +7626,34 @@ void WP11_Slot_Logout(WP11_Slot* slot)
     WP11_Lock_UnlockRW(&slot->lock);
 }
 
+#ifdef DEBUG_WOLFPKCS11
+/**
+ * Test hook: report whether a slot's token object-encryption key is zeroized.
+ * Exposed only in debug builds so a white-box test can observe the logout
+ * scrub that has no PKCS#11-visible effect.
+ *
+ * @param  slotId  [in]  Slot id (1-based, as used by the PKCS#11 API).
+ * @return  1 when the key buffer is all zero, 0 when any byte is set,
+ *          -1 on a bad slot id.
+ */
+WP11_API int WP11_Slot_TokenKeyIsZero(CK_SLOT_ID slotId)
+{
+    WP11_Slot* slot = NULL;
+    size_t i;
+    byte acc = 0;
+
+    if (WP11_Slot_Get(slotId, &slot) != 0 || slot == NULL)
+        return -1;
+
+    WP11_Lock_LockRO(&slot->lock);
+    for (i = 0; i < sizeof(slot->token.key); i++)
+        acc |= slot->token.key[i];
+    WP11_Lock_UnlockRO(&slot->lock);
+
+    return acc == 0 ? 1 : 0;
+}
+#endif /* DEBUG_WOLFPKCS11 */
+
 /**
  * Retrieve the token's label.
  * A token's label is 32 bytes long.
