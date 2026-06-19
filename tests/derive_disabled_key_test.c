@@ -49,9 +49,9 @@
 
 #include "testdata.h"
 
-/* The permissive NSS legacy behavior (gate compiled out) is only expected
- * when explicitly requested at build time. */
-#if defined(WOLFPKCS11_NSS) && defined(WOLFPKCS11_LEGACY_NSS_KEY_DEFAULTS)
+/* NSS builds keep the historical permissive behavior (derive gate compiled
+ * out). */
+#ifdef WOLFPKCS11_NSS
     #define EXPECT_DERIVE_GATE_DISABLED
 #endif
 

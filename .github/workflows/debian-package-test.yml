@@ -52,7 +52,7 @@ jobs:
     - name: wolfpkcs11 autogen
       run: ./autogen.sh
     - name: wolfpkcs11 configure
-      run: ./configure --enable-nss --enable-aesecb --enable-aesctr --enable-aesccm --enable-aescmac CFLAGS="-DWOLFPKCS11_LEGACY_NSS_KEY_DEFAULTS"
+      run: ./configure --enable-nss --enable-aesecb --enable-aesctr --enable-aesccm --enable-aescmac
 
     # Test local debian package build
     - name: Test make deb

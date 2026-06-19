@@ -31,8 +31,7 @@ jobs:
           --enable-aeskeywrap --enable-aescbc --enable-aesgcm --enable-aesctr \
           --enable-aesccm --enable-aesecb --enable-aescmac --enable-hmac \
           --enable-md5 --enable-sha --enable-sha1 --enable-sha224 --enable-sha256 \
-          --enable-sha384 --enable-sha512 \
-          CFLAGS="-DWOLFPKCS11_LEGACY_NSS_KEY_DEFAULTS"
+          --enable-sha384 --enable-sha512
         make -j
         make install
 

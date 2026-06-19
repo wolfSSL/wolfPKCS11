@@ -156,7 +156,7 @@ jobs:
           --enable-aesccm --enable-aesecb --enable-aescmac --enable-hmac
           --enable-md5 --enable-sha --enable-sha1 --enable-sha224 --enable-sha256
           --enable-sha384 --enable-sha512
-          CFLAGS="-I$GITHUB_WORKSPACE/build-dir/include -L$GITHUB_WORKSPACE/build-dir/lib -DWOLFPKCS11_LEGACY_NSS_KEY_DEFAULTS"
+          CFLAGS="-I$GITHUB_WORKSPACE/build-dir/include -L$GITHUB_WORKSPACE/build-dir/lib"
         install: true
 
     - name: Run NSS tests

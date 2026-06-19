@@ -48,9 +48,9 @@
 
 #include "testdata.h"
 
-/* The legacy non-inheriting behavior is only expected when explicitly
- * requested at build time. */
-#ifdef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
+/* The non-inheriting behavior is expected under the legacy macro or in an NSS
+ * build (which keeps the historical permissive behavior). */
+#if defined(WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT) || defined(WOLFPKCS11_NSS)
     #define EXPECT_NO_INHERIT
 #endif
 

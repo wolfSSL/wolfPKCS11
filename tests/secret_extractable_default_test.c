@@ -47,10 +47,10 @@
 
 #include "testdata.h"
 
-/* Extractable-by-default is only expected under the legacy macro or in an
- * NSS build that opted into the permissive key defaults. */
+/* Extractable-by-default is expected under the legacy macro or in an NSS
+ * build (which keeps the historical permissive key defaults). */
 #if defined(WOLFPKCS11_LEGACY_EXTRACTABLE_TRUE_DEFAULT) || \
-    (defined(WOLFPKCS11_NSS) && defined(WOLFPKCS11_LEGACY_NSS_KEY_DEFAULTS))
+    defined(WOLFPKCS11_NSS)
     #define EXPECT_EXTRACTABLE_DEFAULT
 #endif
 

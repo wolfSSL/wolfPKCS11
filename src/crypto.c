@@ -537,15 +537,27 @@ static CK_RV SetIfNotFound(WP11_Object* obj, CK_ATTRIBUTE_TYPE type,
     return ret;
 }
 
-/* F-4063: NSS builds historically created secret and private keys without
- * CKA_SENSITIVE and with CKA_EXTRACTABLE=CK_TRUE so NSS could read key
- * material directly via C_GetAttributeValue. That silently weakens the
- * key-confidentiality defaults for every caller of an NSS-linked build.
- * Secure defaults (CKA_SENSITIVE=CK_TRUE, private CKA_EXTRACTABLE=CK_FALSE)
- * now apply universally. Define WOLFPKCS11_LEGACY_NSS_KEY_DEFAULTS in an NSS
- * build to restore the permissive defaults for direct key-material reads. */
-#if defined(WOLFPKCS11_NSS) && defined(WOLFPKCS11_LEGACY_NSS_KEY_DEFAULTS)
-    #define WP11_NSS_PERMISSIVE_KEY_DEFAULTS
+/* NSS uses wolfPKCS11 as its internal crypto module and relies on the
+ * historical permissive behavior: it reads key material directly via
+ * C_GetAttributeValue, derives from ephemeral keys without CKA_DERIVE, and
+ * uses multi-purpose RSA keys. Selecting NSS support therefore enables all of
+ * the "reverting" macros below, so the secure-default and enforcement
+ * hardening (F-4063, F-4064, F-4533, F-5519, F-5520) applies only to non-NSS
+ * builds. The hardening can still be toggled independently in non-NSS builds
+ * via the individual WOLFPKCS11_LEGACY_* macros. */
+#ifdef WOLFPKCS11_NSS
+    #ifndef WP11_NSS_PERMISSIVE_KEY_DEFAULTS
+        #define WP11_NSS_PERMISSIVE_KEY_DEFAULTS        /* F-4063, F-4064 */
+    #endif
+    #ifndef WOLFPKCS11_LEGACY_EXTRACTABLE_TRUE_DEFAULT
+        #define WOLFPKCS11_LEGACY_EXTRACTABLE_TRUE_DEFAULT  /* F-5519 */
+    #endif
+    #ifndef WOLFPKCS11_LEGACY_RSA_USAGE_DEFAULT
+        #define WOLFPKCS11_LEGACY_RSA_USAGE_DEFAULT     /* F-5520 */
+    #endif
+    #ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
+        #define WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT     /* F-4533 */
+    #endif
 #endif
 
 static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
@@ -666,8 +678,7 @@ static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
 #endif
             /* F-5519: default secret keys to CKA_EXTRACTABLE=CK_FALSE so they
              * are not wrap-exportable unless the template opts in. */
-#if defined(WOLFPKCS11_LEGACY_EXTRACTABLE_TRUE_DEFAULT) || \
-    defined(WP11_NSS_PERMISSIVE_KEY_DEFAULTS)
+#ifdef WOLFPKCS11_LEGACY_EXTRACTABLE_TRUE_DEFAULT
             if (ret == CKR_OK)
                 ret = SetIfNotFound(obj, CKA_EXTRACTABLE, trueVal, pTemplate,
                                     ulCount);
@@ -716,8 +727,7 @@ static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
              * otherwise grants CKA_DECRYPT, CKA_SIGN and CKA_SIGN_RECOVER all
              * at once, so a key intended for one purpose is silently accepted
              * for several. Require each use to be requested explicitly. */
-#if !defined(WOLFPKCS11_LEGACY_RSA_USAGE_DEFAULT) && \
-    !defined(WP11_NSS_PERMISSIVE_KEY_DEFAULTS)
+#ifndef WOLFPKCS11_LEGACY_RSA_USAGE_DEFAULT
             if (type == CKK_RSA) {
                 encrypt = CK_FALSE;  /* CKA_DECRYPT */
                 sign    = CK_FALSE;  /* CKA_SIGN */
@@ -8700,10 +8710,9 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
         return CKR_OBJECT_HANDLE_INVALID;
 
     /* F-4064: spec-compliance gate - reject keys whose CKA_DERIVE is CK_FALSE.
-     * This is now enforced for NSS builds too. NSS generates ephemeral EC keys
-     * for TLS ECDHE without explicitly setting CKA_DERIVE=CK_TRUE and relies on
-     * the historic permissive behavior; that path is restored only under the
-     * legacy WOLFPKCS11_LEGACY_NSS_KEY_DEFAULTS macro. */
+     * Skipped for NSS, which generates ephemeral EC keys for TLS ECDHE without
+     * setting CKA_DERIVE=CK_TRUE and relies on the historic permissive
+     * behavior (WP11_NSS_PERMISSIVE_KEY_DEFAULTS is auto-enabled for NSS). */
 #ifndef WP11_NSS_PERMISSIVE_KEY_DEFAULTS
     ret = CheckOpSupported(obj, CKA_DERIVE);
     if (ret != CKR_OK)

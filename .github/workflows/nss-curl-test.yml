@@ -179,7 +179,7 @@ jobs:
         run: |
           cd wolfpkcs11
           ./autogen.sh
-          ./configure --enable-debug --enable-nss --enable-aesecb --enable-aesctr --enable-aesccm --enable-aescmac --enable-aeskeywrap CFLAGS="-D_GNU_SOURCE -DWOLFPKCS11_LEGACY_NSS_KEY_DEFAULTS"
+          ./configure --enable-debug --enable-nss --enable-aesecb --enable-aesctr --enable-aesccm --enable-aescmac --enable-aeskeywrap CFLAGS="-D_GNU_SOURCE"
           make
           sudo make install
           sudo ldconfig

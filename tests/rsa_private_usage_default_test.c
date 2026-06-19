@@ -47,10 +47,10 @@
 
 #include "testdata.h"
 
-/* The permissive multi-use defaults are only expected under the legacy macro
- * or in an NSS build that opted into the permissive key defaults. */
+/* The permissive multi-use defaults are expected under the legacy macro or in
+ * an NSS build (which keeps the historical permissive key defaults). */
 #if defined(WOLFPKCS11_LEGACY_RSA_USAGE_DEFAULT) || \
-    (defined(WOLFPKCS11_NSS) && defined(WOLFPKCS11_LEGACY_NSS_KEY_DEFAULTS))
+    defined(WOLFPKCS11_NSS)
     #define EXPECT_PERMISSIVE_USAGE
 #endif
 

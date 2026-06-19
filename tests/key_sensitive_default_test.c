@@ -48,9 +48,8 @@
 
 #include "testdata.h"
 
-/* The permissive NSS legacy defaults are only expected when explicitly
- * requested at build time. */
-#if defined(WOLFPKCS11_NSS) && defined(WOLFPKCS11_LEGACY_NSS_KEY_DEFAULTS)
+/* NSS builds keep the historical permissive key defaults. */
+#ifdef WOLFPKCS11_NSS
     #define EXPECT_PERMISSIVE_DEFAULTS
 #endif
 
