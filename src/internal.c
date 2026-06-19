@@ -3620,31 +3620,48 @@ static int WP11_Object_DecodeTpmKey(WP11_Object* object)
 {
     int ret = 0;
     word32 idx = 0;
+    word32 keyDataLen;
     UINT16 pubAreaSize = 0;
     byte pubAreaBuffer[sizeof(TPM2B_PUBLIC)];
 
     if (object == NULL || object->keyData == NULL || object->slot == NULL) {
         return BAD_FUNC_ARG;
     }
+    /* keyData is loaded from on-disk storage and is not covered by the token
+     * master key, so treat keyDataLen as untrusted and bounds-check every
+     * read against it. Layout: pubAreaSize | public(2+pubAreaSize) |
+     * priv.size | priv.buffer(priv.size). */
+    if (object->keyDataLen < 0)
+        return BUFFER_E;
+    keyDataLen = (word32)object->keyDataLen;
 
     /* Extract public size */
+    if (keyDataLen < idx + (word32)sizeof(pubAreaSize))
+        return BUFFER_E;
     XMEMCPY(&pubAreaSize, object->keyData, sizeof(pubAreaSize));
     idx += sizeof(pubAreaSize);
     if (pubAreaSize <= (UINT16)sizeof(pubAreaBuffer)) {
-        /* Parse public */
-        /* TODO: pass: sizeof(UINT16) + pubAreaSize (see wolfTPM PR 419) */
+        /* Parse public. The public blob is sizeof(UINT16) + pubAreaSize bytes;
+         * pass the remaining keyData length so the parser cannot read past the
+         * blob. */
         int parsedPubSize = pubAreaSize;
+        if (keyDataLen < idx + (word32)sizeof(UINT16) + (word32)pubAreaSize)
+            return BUFFER_E;
         ret = TPM2_ParsePublic(&object->tpmKey->pub, object->keyData + idx,
-            sizeof(object->tpmKey->pub), &parsedPubSize);
+            keyDataLen - idx, &parsedPubSize);
         if (ret == 0) {
             idx += sizeof(UINT16) + pubAreaSize;
 
+            if (keyDataLen < idx + (word32)sizeof(object->tpmKey->priv.size))
+                return BUFFER_E;
             XMEMCPY(&object->tpmKey->priv.size, object->keyData + idx,
                 sizeof(object->tpmKey->priv.size));
             if (object->tpmKey->priv.size <
                                     (int)sizeof(object->tpmKey->priv.buffer)) {
                 idx += sizeof(object->tpmKey->priv.size);
                 /* Extract private size and private */
+                if (keyDataLen < idx + (word32)object->tpmKey->priv.size)
+                    return BUFFER_E;
                 XMEMCPY(object->tpmKey->priv.buffer, object->keyData + idx,
                     object->tpmKey->priv.size);
             }
@@ -3683,6 +3700,38 @@ static int WP11_Object_DecodeTpmKey(WP11_Object* object)
 
     return ret;
 }
+
+#ifdef DEBUG_WOLFPKCS11
+/**
+ * Test hook: run WP11_Object_DecodeTpmKey against a caller-supplied keyData
+ * blob to exercise the storage-blob bounds checks without a live TPM. A
+ * truncated blob must return BUFFER_E rather than read past the buffer.
+ *
+ * @param  slotId      [in]  Slot id (1-based).
+ * @param  keyData     [in]  Encoded TPM key blob (possibly truncated).
+ * @param  keyDataLen  [in]  Length of keyData in bytes.
+ * @return  decode status; BUFFER_E for a short/truncated blob.
+ */
+WP11_API int WP11_Test_DecodeTpmKey(CK_SLOT_ID slotId, unsigned char* keyData,
+    int keyDataLen)
+{
+    WP11_Slot* slot = NULL;
+    WP11_Object object;
+    WOLFTPM2_KEYBLOB blob;
+
+    if (WP11_Slot_Get(slotId, &slot) != 0 || slot == NULL)
+        return BAD_FUNC_ARG;
+
+    XMEMSET(&object, 0, sizeof(object));
+    XMEMSET(&blob, 0, sizeof(blob));
+    object.slot = slot;
+    object.tpmKey = &blob;
+    object.keyData = keyData;
+    object.keyDataLen = keyDataLen;
+
+    return WP11_Object_DecodeTpmKey(&object);
+}
+#endif /* DEBUG_WOLFPKCS11 */
 
 static int WP11_Object_WrapTpmKey(WP11_Object* object); /* forward declaration */
 

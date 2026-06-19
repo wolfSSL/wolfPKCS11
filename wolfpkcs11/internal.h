@@ -386,6 +386,10 @@ WP11_LOCAL int WP11_Slot_IsLoggedIn(WP11_Slot* slot);
 WP11_LOCAL void WP11_Slot_Logout(WP11_Slot* slot);
 #ifdef DEBUG_WOLFPKCS11
 WP11_API int WP11_Slot_TokenKeyIsZero(CK_SLOT_ID slotId);
+#if defined(WOLFPKCS11_TPM) && (!defined(NO_RSA) || defined(HAVE_ECC))
+WP11_API int WP11_Test_DecodeTpmKey(CK_SLOT_ID slotId, unsigned char* keyData,
+    int keyDataLen);
+#endif
 #endif
 WP11_LOCAL int WP11_Slot_SetSOPin(WP11_Slot* slot, char* pin, int pinLen);
 WP11_LOCAL int WP11_Slot_SetUserPin(WP11_Slot* slot, char* pin, int pinLen);
