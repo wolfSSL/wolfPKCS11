@@ -468,6 +468,11 @@ static int test_unwrap_rejects(CK_SESSION_HANDLE session)
     CHECK_CKR(ret, "Reject: too-short ciphertext",
               CKR_ENCRYPTED_DATA_LEN_RANGE);
 
+    /* Empty input cannot be wrapped (RFC 5649 requires at least one octet). */
+    wrappedLen = sizeof(wrapped);
+    ret = kwp_wrap(session, kek, rfc5649_pt1, 0, wrapped, &wrappedLen);
+    CHECK_CKR(ret, "Reject: empty input wrap", CKR_DATA_LEN_RANGE);
+
 cleanup:
     if (kek != CK_INVALID_HANDLE)
         funcList->C_DestroyObject(session, kek);
