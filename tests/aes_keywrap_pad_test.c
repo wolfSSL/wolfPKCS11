@@ -479,6 +479,51 @@ cleanup:
     return result;
 }
 
+/* Buffer-size handling: the recovered plaintext is shorter than the
+ * ciphertext - 8 upper bound, so a buffer smaller than the recovered length
+ * must be rejected with CKR_BUFFER_TOO_SMALL and the exact required length
+ * reported, while a buffer at least the recovered length (but below the upper
+ * bound) must succeed. */
+static int test_unwrap_buffer_size(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE kek = CK_INVALID_HANDLE;
+    byte wrapped[64];
+    byte out[64];
+    CK_ULONG wrappedLen, outLen;
+    int result = 0;
+
+    ret = create_kek(session, rfc5649_kek, sizeof(rfc5649_kek), &kek);
+    CHECK_CKR(ret, "Bufsize: create AES-192 KEK", CKR_OK);
+
+    /* 20-byte plaintext wraps to 32 bytes: upper bound 24, exact length 20. */
+    wrappedLen = sizeof(wrapped);
+    ret = kwp_wrap(session, kek, rfc5649_pt1, sizeof(rfc5649_pt1), wrapped,
+                   &wrappedLen);
+    CHECK_CKR(ret, "Bufsize: wrap", CKR_OK);
+    CHECK_COND(wrappedLen == sizeof(rfc5649_ct1), "Bufsize: wrapped length");
+
+    /* Buffer smaller than the recovered plaintext: reject and report size. */
+    outLen = sizeof(rfc5649_pt1) - 4;
+    ret = kwp_unwrap(session, kek, wrapped, wrappedLen, out, &outLen);
+    CHECK_CKR(ret, "Bufsize: too-small buffer", CKR_BUFFER_TOO_SMALL);
+    CHECK_COND(outLen == sizeof(rfc5649_pt1),
+               "Bufsize: required length reported");
+
+    /* Buffer equal to the recovered length but below the upper bound: succeed. */
+    outLen = sizeof(rfc5649_pt1);
+    ret = kwp_unwrap(session, kek, wrapped, wrappedLen, out, &outLen);
+    CHECK_CKR(ret, "Bufsize: exact-size buffer", CKR_OK);
+    CHECK_COND(outLen == sizeof(rfc5649_pt1) &&
+               XMEMCMP(out, rfc5649_pt1, sizeof(rfc5649_pt1)) == 0,
+               "Bufsize: exact-size buffer recovers plaintext");
+
+cleanup:
+    if (kek != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, kek);
+    return result;
+}
+
 static int aes_keywrap_pad_test(void)
 {
     CK_RV ret;
@@ -523,6 +568,8 @@ static int aes_keywrap_pad_test(void)
     if (test_roundtrip_lengths(session) != 0)
         result = -1;
     if (test_unwrap_rejects(session) != 0)
+        result = -1;
+    if (test_unwrap_buffer_size(session) != 0)
         result = -1;
 
     pkcs11_close_session(session);

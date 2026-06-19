@@ -15639,8 +15639,11 @@ int WP11_AesKeyWrapPad_Decrypt(unsigned char* enc, word32 encSz,
         }
         if (bad)
             ret = BAD_KEYWRAP_IV_E;
-        else if (mli > *decSz)
+        else if (mli > *decSz) {
+            /* Report the required plaintext length to the caller. */
+            *decSz = mli;
             ret = BUFFER_E;
+        }
         else {
             XMEMCPY(dec, padBuf, mli);
             *decSz = mli;

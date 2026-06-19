@@ -3811,15 +3811,24 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
             }
             decDataLen = (word32)(ulEncryptedDataLen - KEYWRAP_BLOCK_SIZE);
             if (pData == NULL) {
+                /* Exact length is known only after unwrapping; report the
+                 * ciphertext - 8 upper bound for the length query. */
                 *pulDataLen = decDataLen;
                 return CKR_OK;
             }
-            if (decDataLen > (word32)*pulDataLen)
-                return CKR_BUFFER_TOO_SMALL;
 
+            /* The recovered length is not known until the AIV is decoded, so
+             * do not pre-reject against the upper bound. Unwrap into the caller
+             * buffer; if it does not fit, the unwrap reports the exact required
+             * size via decDataLen. */
             decDataLen = (word32)*pulDataLen;
             ret = WP11_AesKeyWrapPad_Decrypt(pEncryptedData,
                     (word32)ulEncryptedDataLen, pData, &decDataLen, session);
+            if (ret == BUFFER_E) {
+                *pulDataLen = decDataLen;
+                WP11_Session_SetOpInitialized(session, 0);
+                return CKR_BUFFER_TOO_SMALL;
+            }
             if (ret != 0)
                 break;
             *pulDataLen = decDataLen;
