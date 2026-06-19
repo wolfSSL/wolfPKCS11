@@ -388,8 +388,10 @@ typedef struct WP11_GcmParams {
     int tagBits;                       /* Authentication tag size in bits     */
     unsigned char authTag[WP11_MAX_GCM_TAG_SZ];
                                        /* Authentication tag calculated       */
-    unsigned char* enc;                /* Encrypted data - cached for decrypt */
-    int encSz;                         /* Size of encrypted data in bytes     */
+    unsigned char* enc;                /* Cached data for multi-part: buffered */
+                                       /* ciphertext (decrypt) or plaintext    */
+                                       /* (encrypt)                            */
+    int encSz;                         /* Size of cached data in bytes         */
 } WP11_GcmParams;
 #endif
 
@@ -14726,6 +14728,45 @@ int WP11_AesGcm_Encrypt(unsigned char* plain, word32 plainSz,
  * @return  -ve on encryption failure.
  *          0 on success.
  */
+/**
+ * Append data to the GCM accumulation buffer (gcm->enc). Used to buffer
+ * plaintext for multi-part encrypt and ciphertext for multi-part decrypt.
+ *
+ * @param  gcm     [in]  GCM parameters holding the buffer.
+ * @param  data    [in]  Data to append.
+ * @param  dataSz  [in]  Length of data in bytes.
+ * @return  MEMORY_E on allocation failure.
+ *          0 on success.
+ */
+static int wp11_AesGcm_BufferAppend(WP11_GcmParams* gcm, unsigned char* data,
+                                    word32 dataSz)
+{
+    unsigned char* newBuf;
+
+#ifdef XREALLOC
+    newBuf = (unsigned char*)XREALLOC(gcm->enc, gcm->encSz + dataSz, NULL,
+                                      DYNAMIC_TYPE_TMP_BUFFER);
+    if (newBuf == NULL)
+        return MEMORY_E;
+    gcm->enc = newBuf;
+    XMEMCPY(gcm->enc + gcm->encSz, data, dataSz);
+    gcm->encSz += dataSz;
+#else
+    newBuf = (unsigned char*)XMALLOC(gcm->encSz + dataSz, NULL,
+                                     DYNAMIC_TYPE_TMP_BUFFER);
+    if (newBuf == NULL)
+        return MEMORY_E;
+    if (gcm->enc != NULL)
+        XMEMCPY(newBuf, gcm->enc, gcm->encSz);
+    XFREE(gcm->enc, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    gcm->enc = newBuf;
+    XMEMCPY(gcm->enc + gcm->encSz, data, dataSz);
+    gcm->encSz += dataSz;
+#endif
+
+    return 0;
+}
+
 int WP11_AesGcm_EncryptUpdate(unsigned char* plain, word32 plainSz,
                               unsigned char* enc, word32* encSz,
                               WP11_Object* secret, WP11_Session* session)
@@ -14735,7 +14776,25 @@ int WP11_AesGcm_EncryptUpdate(unsigned char* plain, word32 plainSz,
     WP11_Data* key;
     WP11_GcmParams* gcm = &session->params.gcm;
     word32 authTagSz = gcm->tagBits / 8;
-    unsigned char* authTag = gcm->authTag;
+    word32 oldSz = (word32)gcm->encSz;
+    unsigned char* fullEnc = NULL;
+
+    /* Buffer the plaintext and encrypt the whole accumulated message under the
+     * single IV. GCM is a stream cipher, so this segment's ciphertext is the
+     * tail of the accumulated ciphertext. Re-encrypting each update keeps the
+     * tag over the full message and the AAD authenticated until
+     * C_EncryptFinal, matching the single-shot result. */
+    ret = wp11_AesGcm_BufferAppend(gcm, plain, plainSz);
+    if (ret != 0)
+        return ret;
+    if (gcm->encSz == 0) {
+        *encSz = 0;
+        return 0;
+    }
+
+    fullEnc = (unsigned char*)XMALLOC(gcm->encSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    if (fullEnc == NULL)
+        return MEMORY_E;
 
     ret = wc_AesInit(&aes, NULL, secret->devId);
     if (ret == 0) {
@@ -14747,19 +14806,18 @@ int WP11_AesGcm_EncryptUpdate(unsigned char* plain, word32 plainSz,
             WP11_Lock_UnlockRO(secret->lock);
 
         if (ret == 0)
-            ret = wc_AesGcmEncrypt(&aes, enc, plain, plainSz, gcm->iv,
-                                        gcm->ivSz, authTag, authTagSz, gcm->aad,
-                                        gcm->aadSz);
-        if (ret == 0)
+            ret = wc_AesGcmEncrypt(&aes, fullEnc, gcm->enc, (word32)gcm->encSz,
+                                        gcm->iv, gcm->ivSz, gcm->authTag,
+                                        authTagSz, gcm->aad, gcm->aadSz);
+        if (ret == 0) {
+            XMEMCPY(enc, fullEnc + oldSz, plainSz);
             *encSz = plainSz;
-
-        if (gcm->aad != NULL) {
-            XFREE(gcm->aad, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-            gcm->aad = NULL;
         }
 
         wc_AesFree(&aes);
     }
+
+    XFREE(fullEnc, NULL, DYNAMIC_TYPE_TMP_BUFFER);
 
     return ret;
 }
@@ -14776,18 +14834,55 @@ int WP11_AesGcm_EncryptUpdate(unsigned char* plain, word32 plainSz,
  *          0 on success.
  */
 int WP11_AesGcm_EncryptFinal(unsigned char* enc, word32* encSz,
-                             WP11_Session* session)
+                             WP11_Object* secret, WP11_Session* session)
 {
     int ret = 0;
     WP11_GcmParams* gcm = &session->params.gcm;
     word32 authTagSz = gcm->tagBits / 8;
 
     if (*encSz < authTagSz)
-        ret = BUFFER_E;
-    if (ret == 0) {
+        return BUFFER_E;
+
+    if (gcm->encSz > 0) {
+        /* The final EncryptUpdate computed the tag over the whole message. */
         XMEMCPY(enc, gcm->authTag, authTagSz);
         *encSz = authTagSz;
     }
+    else {
+        /* No data buffered: the tag is over the empty message and the AAD. */
+        Aes aes;
+        WP11_Data* key;
+
+        ret = wc_AesInit(&aes, NULL, secret->devId);
+        if (ret == 0) {
+            if (secret->onToken)
+                WP11_Lock_LockRO(secret->lock);
+            key = secret->data.symmKey;
+            ret = wc_AesGcmSetKey(&aes, key->data, key->len);
+            if (secret->onToken)
+                WP11_Lock_UnlockRO(secret->lock);
+
+            if (ret == 0)
+                ret = wc_AesGcmEncrypt(&aes, enc, NULL, 0, gcm->iv, gcm->ivSz,
+                                            enc, authTagSz, gcm->aad,
+                                            gcm->aadSz);
+            if (ret == 0)
+                *encSz = authTagSz;
+
+            wc_AesFree(&aes);
+        }
+    }
+
+    if (gcm->enc != NULL) {
+        XFREE(gcm->enc, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        gcm->enc = NULL;
+    }
+    gcm->encSz = 0;
+    if (gcm->aad != NULL) {
+        XFREE(gcm->aad, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        gcm->aad = NULL;
+    }
+    gcm->aadSz = 0;
 
     return ret;
 }

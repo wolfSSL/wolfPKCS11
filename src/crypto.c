@@ -3145,7 +3145,7 @@ CK_RV C_EncryptFinal(CK_SESSION_HANDLE hSession,
                 return CKR_BUFFER_TOO_SMALL;
 
             ret = WP11_AesGcm_EncryptFinal(pLastEncryptedPart, &encPartLen,
-                                                                       session);
+                                                                  obj, session);
             if (ret < 0) {
                 WP11_Session_SetOpInitialized(session, 0);
                 return CKR_FUNCTION_FAILED;

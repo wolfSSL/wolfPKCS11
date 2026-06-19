@@ -652,7 +652,7 @@ WP11_LOCAL int WP11_AesGcm_EncryptUpdate(unsigned char* plain, word32 plainSz,
                               unsigned char* enc, word32* encSz,
                               WP11_Object* secret, WP11_Session* session);
 WP11_LOCAL int WP11_AesGcm_EncryptFinal(unsigned char* enc, word32* encSz,
-                             WP11_Session* session);
+                             WP11_Object* secret, WP11_Session* session);
 WP11_LOCAL int WP11_AesGcm_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
                         word32* decSz, WP11_Object* secret,
                         WP11_Session* session);
