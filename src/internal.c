@@ -7299,11 +7299,15 @@ int WP11_Slot_SOLogin(WP11_Slot* slot, char* pin, int pinLen)
 
     WP11_Lock_LockRO(&slot->lock);
     if (ret == 0) {
-        /* Have we already logged in? */
+        /* SO already logged in is the same user type; a logged-in USER is a
+         * different one. */
         state = slot->token.loginState;
-        if (state == WP11_APP_STATE_RW_SO || state == WP11_APP_STATE_RO_USER ||
-                                              state == WP11_APP_STATE_RW_USER) {
+        if (state == WP11_APP_STATE_RW_SO) {
             ret = LOGGED_IN_E;
+        }
+        else if (state == WP11_APP_STATE_RO_USER ||
+                 state == WP11_APP_STATE_RW_USER) {
+            ret = LOGGED_IN_ANOTHER_E;
         }
     }
 #ifndef WOLFPKCS11_NO_TIME
@@ -7395,13 +7399,16 @@ int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen)
 #endif
 
     WP11_Lock_LockRW(&slot->lock);
-    /* Have we already logged in? */
     if (ret == 0) {
-        /* Have we already logged in? */
+        /* USER already logged in is the same user type; a logged-in SO is a
+         * different one. */
         state = token->loginState;
-        if (state == WP11_APP_STATE_RW_SO || state == WP11_APP_STATE_RO_USER ||
-                                              state == WP11_APP_STATE_RW_USER) {
+        if (state == WP11_APP_STATE_RO_USER ||
+            state == WP11_APP_STATE_RW_USER) {
             ret = LOGGED_IN_E;
+        }
+        else if (state == WP11_APP_STATE_RW_SO) {
+            ret = LOGGED_IN_ANOTHER_E;
         }
     }
 #ifndef WOLFPKCS11_NO_TIME
@@ -8525,6 +8532,10 @@ int WP11_Session_SetGcmParams(WP11_Session* session, unsigned char* iv,
      * length. Either mismatch is a contract bug. */
     if (ret == 0 && (iv == NULL) != (ivSz == 0))
         ret = BAD_FUNC_ARG;
+    /* A NULL AAD pointer must not carry a non-zero length. A non-NULL pointer
+     * with zero length is a valid no-AAD encoding. */
+    if (ret == 0 && aad == NULL && aadLen != 0)
+        ret = BAD_FUNC_ARG;
 
     if (ret == 0) {
         if (session->mechanism == CKM_AES_GCM && gcm->aad != NULL) {
@@ -8535,7 +8546,7 @@ int WP11_Session_SetGcmParams(WP11_Session* session, unsigned char* iv,
             XMEMCPY(gcm->iv, iv, ivSz);
         gcm->ivSz = ivSz;
         gcm->tagBits = tagBits;
-        if (aad != NULL) {
+        if (aadLen > 0) {
             gcm->aad = (unsigned char*)XMALLOC(aadLen, NULL,
                 DYNAMIC_TYPE_TMP_BUFFER);
             if (gcm->aad == NULL)
@@ -8581,6 +8592,10 @@ int WP11_Session_SetCcmParams(WP11_Session* session, int dataSz,
      * length. Either mismatch is a contract bug. */
     if (ret == 0 && (iv == NULL) != (ivSz == 0))
         ret = BAD_FUNC_ARG;
+    /* A NULL AAD pointer must not carry a non-zero length. A non-NULL pointer
+     * with zero length is a valid no-AAD encoding. */
+    if (ret == 0 && aad == NULL && aadSz != 0)
+        ret = BAD_FUNC_ARG;
 
     if (ret == 0) {
         if (session->mechanism == CKM_AES_CCM && ccm->aad != NULL) {
@@ -8591,7 +8606,7 @@ int WP11_Session_SetCcmParams(WP11_Session* session, int dataSz,
         if (ivSz > 0)
             XMEMCPY(ccm->iv, iv, ivSz);
         ccm->ivSz = ivSz;
-        if (aad != NULL) {
+        if (aadSz > 0) {
             ccm->aad = (unsigned char*)XMALLOC(aadSz, NULL,
                 DYNAMIC_TYPE_TMP_BUFFER);
             if (ccm->aad == NULL) {
@@ -10307,30 +10322,23 @@ static int GetTrustAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
             if (data != NULL)
                 XMEMCPY(data, &object->data.trust.md5Hash, WC_MD5_DIGEST_SIZE);
             break;
+        /* GetULong/GetBool size-query and bounds-check *len themselves: they
+         * set it on a size query or success, and return BUFFER_E (leaving
+         * *len unchanged) when the buffer is too small. */
         case CKA_TRUST_SERVER_AUTH:
-            *len = sizeof(CK_ULONG);
-            if (data != NULL)
-                ret = GetULong(object->data.trust.serverAuth, data, len);
+            ret = GetULong(object->data.trust.serverAuth, data, len);
             break;
         case CKA_TRUST_CLIENT_AUTH:
-            *len = sizeof(CK_ULONG);
-            if (data != NULL)
-                ret = GetULong(object->data.trust.clientAuth, data, len);
+            ret = GetULong(object->data.trust.clientAuth, data, len);
             break;
         case CKA_TRUST_CODE_SIGNING:
-            *len = sizeof(CK_ULONG);
-            if (data != NULL)
-                ret = GetULong(object->data.trust.codeSigning, data, len);
+            ret = GetULong(object->data.trust.codeSigning, data, len);
             break;
         case CKA_TRUST_EMAIL_PROTECTION:
-            *len = sizeof(CK_ULONG);
-            if (data != NULL)
-                ret = GetULong(object->data.trust.emailProtection, data, len);
+            ret = GetULong(object->data.trust.emailProtection, data, len);
             break;
         case CKA_TRUST_STEP_UP_APPROVED:
-            *len = sizeof(CK_BBOOL);
-            if (data != NULL)
-                ret = GetBool(object->data.trust.stepUpApproved, data, len);
+            ret = GetBool(object->data.trust.stepUpApproved, data, len);
             break;
         case CKA_ISSUER:
             ret = GetData(object->issuer, object->issuerLen, data, len);

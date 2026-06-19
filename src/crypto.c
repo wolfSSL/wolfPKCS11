@@ -480,7 +480,9 @@ static int CheckOpSupportedRv(WP11_Object* obj, CK_ATTRIBUTE_TYPE op,
 
 static int CheckOpSupported(WP11_Object* obj, CK_ATTRIBUTE_TYPE op)
 {
-    return CheckOpSupportedRv(obj, op, CKR_KEY_TYPE_INCONSISTENT);
+    /* Usage-attribute denial is CKR_KEY_FUNCTION_NOT_PERMITTED; a key-type
+     * mismatch is handled separately by the per-mechanism checks. */
+    return CheckOpSupportedRv(obj, op, CKR_KEY_FUNCTION_NOT_PERMITTED);
 }
 
 static CK_RV SetInitialStates(WP11_Object* key)
@@ -760,6 +762,8 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
     CK_OBJECT_CLASS objClass;
     CK_BBOOL getVar;
     CK_ULONG getVarLen = 1;
+    byte roCur[sizeof(CK_ULONG)];
+    CK_ULONG roCurLen;
 
     if (pTemplate == NULL)
         return CKR_ARGUMENTS_BAD;
@@ -964,6 +968,22 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
             if (!WP11_Object_IsDestroyable(obj) &&
                     *(CK_BBOOL*)attr->pValue == CK_TRUE)
                 return CKR_ATTRIBUTE_READ_ONLY;
+        }
+        /* These class/identity and generated-state attributes are read-only
+         * once the object exists; reject a change. Setting the current value
+         * is a no-op. */
+        if (!newObject && (attr->type == CKA_CLASS ||
+                           attr->type == CKA_KEY_TYPE ||
+                           attr->type == CKA_LOCAL ||
+                           attr->type == CKA_KEY_GEN_MECHANISM ||
+                           attr->type == CKA_ALWAYS_SENSITIVE ||
+                           attr->type == CKA_NEVER_EXTRACTABLE)) {
+            roCurLen = sizeof(roCur);
+            if (WP11_Object_GetAttr(obj, attr->type, roCur, &roCurLen) == 0 &&
+                (attr->pValue == NULL || attr->ulValueLen != roCurLen ||
+                 XMEMCMP(attr->pValue, roCur, roCurLen) != 0)) {
+                return CKR_ATTRIBUTE_READ_ONLY;
+            }
         }
         ret = WP11_Object_SetAttr(obj, attr->type, (byte*)attr->pValue,
                                                               attr->ulValueLen);
@@ -1330,6 +1350,7 @@ CK_RV C_CreateObject(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate,
     CK_RV rv;
     WP11_Session* session;
     WP11_Object* object;
+    CK_ATTRIBUTE* classAttr = NULL;
 
     WOLFPKCS11_ENTER("C_CreateObject");
     #ifdef DEBUG_WOLFPKCS11
@@ -1372,8 +1393,15 @@ CK_RV C_CreateObject(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate,
         }
     }
 
-    /* C_CreateObject requires CKA_CLASS in the template; no API-implied
-     * class to fall back on. */
+    /* C_CreateObject requires CKA_CLASS; there is no API-implied object class
+     * as there is for derive/unwrap. */
+    FindAttributeType(pTemplate, ulCount, CKA_CLASS, &classAttr);
+    if (classAttr == NULL) {
+        rv = CKR_TEMPLATE_INCOMPLETE;
+        WOLFPKCS11_LEAVE("C_CreateObject", rv);
+        return rv;
+    }
+
     rv = CheckPrivateLogin(session, pTemplate, ulCount,
                            WP11_NO_IMPLICIT_CLASS);
     if (rv != CKR_OK) {
@@ -4065,10 +4093,18 @@ CK_RV C_DecryptFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastPart,
                 WP11_Session_SetOpInitialized(session, 0);
                 return CKR_DATA_LEN_RANGE;
             }
-            *pulLastPartLen = 15;
-            if (pLastPart == NULL)
+            if (pLastPart == NULL) {
+                /* Size query: report the maximum possible unpadded size. */
+                *pulLastPartLen = AES_BLOCK_SIZE - 1;
                 return CKR_OK;
+            }
 
+            /* Pass the caller's buffer capacity so WP11_AesCbcPad_DecryptFinal
+             * can enforce it. Cap to the block size, which already exceeds the
+             * 0..15 byte unpadded output, to avoid truncating a large
+             * CK_ULONG. */
+            decPartLen = (*pulLastPartLen < (CK_ULONG)AES_BLOCK_SIZE) ?
+                         (word32)*pulLastPartLen : (word32)AES_BLOCK_SIZE;
             ret = WP11_AesCbcPad_DecryptFinal(pLastPart, &decPartLen, session);
             if (ret == BUFFER_E) {
                 /* Report required size; operation stays active for retry. */
@@ -6632,11 +6668,14 @@ CK_RV C_VerifyRecoverInit(CK_SESSION_HANDLE hSession,
     }
 
     ret = WP11_Object_Find(session, hKey, &obj);
-    if (ret != CKR_OK)
-        return ret;
+    if (ret != 0) {
+        rv = CKR_OBJECT_HANDLE_INVALID;
+        WOLFPKCS11_LEAVE("C_VerifyRecoverInit", rv);
+        return rv;
+    }
 
     if (WP11_Object_GetClass(obj) != CKO_PUBLIC_KEY) {
-        return CKR_KEY_HANDLE_INVALID;
+        return CKR_KEY_TYPE_INCONSISTENT;
     }
 
     if (WP11_Object_GetType(obj) != CKK_RSA) {
@@ -7480,6 +7519,7 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
     WP11_Session* session = NULL;
     WP11_Object* pub = NULL;
     WP11_Object* priv = NULL;
+    CK_ATTRIBUTE* reqAttr = NULL;
 
     WOLFPKCS11_ENTER("C_GenerateKeyPair");
     #ifdef DEBUG_WOLFPKCS11
@@ -7556,6 +7596,12 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
                 return CKR_MECHANISM_PARAM_INVALID;
             }
 
+            /* CKA_MODULUS_BITS is required to size the RSA key. */
+            FindAttributeType(pPublicKeyTemplate, ulPublicKeyAttributeCount,
+                              CKA_MODULUS_BITS, &reqAttr);
+            if (reqAttr == NULL)
+                return CKR_TEMPLATE_INCOMPLETE;
+
             *phPublicKey = *phPrivateKey = CK_INVALID_HANDLE;
 
             rv = NewObject(session, CKK_RSA, CKO_PUBLIC_KEY, pPublicKeyTemplate,
@@ -7579,6 +7625,12 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
                                               pMechanism->ulParameterLen != 0) {
                 return CKR_MECHANISM_PARAM_INVALID;
             }
+
+            /* CKA_EC_PARAMS carries the curve domain parameters. */
+            FindAttributeType(pPublicKeyTemplate, ulPublicKeyAttributeCount,
+                              CKA_EC_PARAMS, &reqAttr);
+            if (reqAttr == NULL)
+                return CKR_TEMPLATE_INCOMPLETE;
 
             *phPublicKey = *phPrivateKey = CK_INVALID_HANDLE;
 
@@ -7716,6 +7768,16 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
                                               pMechanism->ulParameterLen != 0) {
                 return CKR_MECHANISM_PARAM_INVALID;
             }
+
+            /* DH needs the domain parameters CKA_PRIME and CKA_BASE. */
+            FindAttributeType(pPublicKeyTemplate, ulPublicKeyAttributeCount,
+                              CKA_PRIME, &reqAttr);
+            if (reqAttr == NULL)
+                return CKR_TEMPLATE_INCOMPLETE;
+            FindAttributeType(pPublicKeyTemplate, ulPublicKeyAttributeCount,
+                              CKA_BASE, &reqAttr);
+            if (reqAttr == NULL)
+                return CKR_TEMPLATE_INCOMPLETE;
 
             *phPublicKey = *phPrivateKey = CK_INVALID_HANDLE;
 
@@ -8615,6 +8677,8 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
         case CKM_ECDH1_DERIVE: {
             CK_ECDH1_DERIVE_PARAMS* params;
 
+            if (WP11_Object_GetType(obj) != CKK_EC)
+                return CKR_KEY_TYPE_INCONSISTENT;
             if (pMechanism->pParameter == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
             if (pMechanism->ulParameterLen != sizeof(CK_ECDH1_DERIVE_PARAMS))
@@ -8647,6 +8711,12 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
             CK_HKDF_PARAMS_PTR kdfParams;
             CK_ATTRIBUTE *lenAttr = NULL;
 
+            /* Data-derive feeds a CKO_DATA object, which has no key type.
+             * Only a key base object is checked for an HKDF-compatible type. */
+            if (WP11_Object_GetClass(obj) != CKO_DATA &&
+                WP11_Object_GetType(obj) != CKK_HKDF &&
+                WP11_Object_GetType(obj) != CKK_GENERIC_SECRET)
+                return CKR_KEY_TYPE_INCONSISTENT;
             if (pMechanism->pParameter == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
             if (pMechanism->ulParameterLen != sizeof(CK_HKDF_PARAMS))
@@ -8689,6 +8759,8 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
 #endif
 #ifndef NO_DH
         case CKM_DH_PKCS_DERIVE:
+            if (WP11_Object_GetType(obj) != CKK_DH)
+                return CKR_KEY_TYPE_INCONSISTENT;
             if (pMechanism->pParameter == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
             if (pMechanism->ulParameterLen == 0)
@@ -8711,6 +8783,8 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
 #ifdef HAVE_AES_CBC
         case CKM_AES_CBC_ENCRYPT_DATA: {
             CK_AES_CBC_ENCRYPT_DATA_PARAMS* params;
+            if (WP11_Object_GetType(obj) != CKK_AES)
+                return CKR_KEY_TYPE_INCONSISTENT;
             if (pMechanism->pParameter == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
             if (pMechanism->ulParameterLen !=
@@ -8738,6 +8812,8 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
         case CKM_TLS12_KEY_AND_MAC_DERIVE:
         {
             CK_TLS12_KEY_MAT_PARAMS* tlsParams = NULL;
+            if (WP11_Object_GetType(obj) != CKK_GENERIC_SECRET)
+                return CKR_KEY_TYPE_INCONSISTENT;
             if (pMechanism->pParameter == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
             if (pMechanism->ulParameterLen !=
@@ -8803,6 +8879,8 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
         case CKM_TLS12_MASTER_KEY_DERIVE_DH:
         {
             CK_TLS12_MASTER_KEY_DERIVE_PARAMS* prfParams;
+            if (WP11_Object_GetType(obj) != CKK_GENERIC_SECRET)
+                return CKR_KEY_TYPE_INCONSISTENT;
             if (pMechanism->pParameter == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
             if (pMechanism->ulParameterLen !=

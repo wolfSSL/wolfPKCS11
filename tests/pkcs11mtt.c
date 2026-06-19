@@ -247,14 +247,17 @@ static CK_RV test_object(void* args)
     CK_ATTRIBUTE empty[] = { };
 #endif
     CK_ATTRIBUTE keyTypeNull[] = {
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
         { CKA_KEY_TYPE,          NULL,              sizeof(CK_KEY_TYPE)       }
     };
     CK_ATTRIBUTE keyTypeZeroLen[] = {
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
         { CKA_KEY_TYPE,          &genericKeyType,   0,                        }
     };
     CK_ULONG badKeyType = -1;
     CK_ATTRIBUTE keyTypeBadValue[] = {
-        { CKA_KEY_TYPE,          &badKeyType,       sizeof(&badKeyType)       }
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
+        { CKA_KEY_TYPE,          &badKeyType,       sizeof(badKeyType)        }
     };
     CK_ATTRIBUTE keyDataNull[] = {
         { CKA_CLASS,             &privKeyClass,     sizeof(privKeyClass)      },
@@ -270,10 +273,12 @@ static CK_RV test_object(void* args)
         { CKA_CLASS,             &secretKeyClass,   0,                        }
     };
     CK_ATTRIBUTE tokenNull[] = {
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
         { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
         { CKA_TOKEN,             NULL,              sizeof(CK_BBOOL)          },
     };
     CK_ATTRIBUTE tokenBadLen[] = {
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
         { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
         { CKA_TOKEN,             &ckTrue,           0                         },
     };

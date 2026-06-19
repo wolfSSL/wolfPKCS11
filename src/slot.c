@@ -1824,7 +1824,10 @@ CK_RV C_SetOperationState(CK_SESSION_HANDLE hSession,
  *          and a read-only session is open.
  *          CKR_USER_PIN_NOT_INITIALIZED when PIN is not initialized for user
  *          type.
- *          CKR_PIN_INCORRECT when PIN is wrong length or does not verify.
+ *          CKR_USER_ANOTHER_ALREADY_LOGGED_IN when a different user type is
+ *          already logged in.
+ *          CKR_PIN_LEN_RANGE when the PIN length is out of range.
+ *          CKR_PIN_INCORRECT when the PIN does not verify.
  *          CKR_OPERATION_NOT_INITIALIZED when using user type
  *          CKU_CONTEXT_SPECIFIC - user type not supported.
  *          CKR_USER_TYPE_INVALID when other user type is specified.
@@ -1862,8 +1865,8 @@ CK_RV C_Login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
         return rv;
     }
 
-    if (checkPinLen(ulPinLen) != CKR_OK) {
-        rv = CKR_PIN_INCORRECT;
+    rv = checkPinLen(ulPinLen);
+    if (rv != CKR_OK) {
         WOLFPKCS11_LEAVE("C_Login", rv);
         return rv;
     }
@@ -1889,6 +1892,9 @@ CK_RV C_Login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
     switch (ret) {
         case LOGGED_IN_E:
             rv = CKR_USER_ALREADY_LOGGED_IN;
+            break;
+        case LOGGED_IN_ANOTHER_E:
+            rv = CKR_USER_ANOTHER_ALREADY_LOGGED_IN;
             break;
         case PIN_NOT_SET_E:
             rv = CKR_USER_PIN_NOT_INITIALIZED;

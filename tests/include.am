@@ -91,6 +91,66 @@ noinst_PROGRAMS += tests/pkcs11_compliance_test
 tests_pkcs11_compliance_test_SOURCES = tests/pkcs11_compliance_test.c
 tests_pkcs11_compliance_test_LDADD =
 
+check_PROGRAMS += tests/verify_recover_badkey_test
+noinst_PROGRAMS += tests/verify_recover_badkey_test
+tests_verify_recover_badkey_test_SOURCES = tests/verify_recover_badkey_test.c
+tests_verify_recover_badkey_test_LDADD =
+
+check_PROGRAMS += tests/login_pin_len_range_test
+noinst_PROGRAMS += tests/login_pin_len_range_test
+tests_login_pin_len_range_test_SOURCES = tests/login_pin_len_range_test.c
+tests_login_pin_len_range_test_LDADD =
+
+check_PROGRAMS += tests/verify_recover_class_test
+noinst_PROGRAMS += tests/verify_recover_class_test
+tests_verify_recover_class_test_SOURCES = tests/verify_recover_class_test.c
+tests_verify_recover_class_test_LDADD =
+
+check_PROGRAMS += tests/login_another_user_test
+noinst_PROGRAMS += tests/login_another_user_test
+tests_login_another_user_test_SOURCES = tests/login_another_user_test.c
+tests_login_another_user_test_LDADD =
+
+check_PROGRAMS += tests/key_function_not_permitted_test
+noinst_PROGRAMS += tests/key_function_not_permitted_test
+tests_key_function_not_permitted_test_SOURCES = tests/key_function_not_permitted_test.c
+tests_key_function_not_permitted_test_LDADD =
+
+check_PROGRAMS += tests/decrypt_final_bufsize_test
+noinst_PROGRAMS += tests/decrypt_final_bufsize_test
+tests_decrypt_final_bufsize_test_SOURCES = tests/decrypt_final_bufsize_test.c
+tests_decrypt_final_bufsize_test_LDADD =
+
+check_PROGRAMS += tests/create_object_class_test
+noinst_PROGRAMS += tests/create_object_class_test
+tests_create_object_class_test_SOURCES = tests/create_object_class_test.c
+tests_create_object_class_test_LDADD =
+
+check_PROGRAMS += tests/aead_null_aad_test
+noinst_PROGRAMS += tests/aead_null_aad_test
+tests_aead_null_aad_test_SOURCES = tests/aead_null_aad_test.c
+tests_aead_null_aad_test_LDADD =
+
+check_PROGRAMS += tests/gen_keypair_incomplete_test
+noinst_PROGRAMS += tests/gen_keypair_incomplete_test
+tests_gen_keypair_incomplete_test_SOURCES = tests/gen_keypair_incomplete_test.c
+tests_gen_keypair_incomplete_test_LDADD =
+
+check_PROGRAMS += tests/set_attr_readonly_test
+noinst_PROGRAMS += tests/set_attr_readonly_test
+tests_set_attr_readonly_test_SOURCES = tests/set_attr_readonly_test.c
+tests_set_attr_readonly_test_LDADD =
+
+check_PROGRAMS += tests/derive_key_type_test
+noinst_PROGRAMS += tests/derive_key_type_test
+tests_derive_key_type_test_SOURCES = tests/derive_key_type_test.c
+tests_derive_key_type_test_LDADD =
+
+check_PROGRAMS += tests/trust_attr_bufsize_test
+noinst_PROGRAMS += tests/trust_attr_bufsize_test
+tests_trust_attr_bufsize_test_SOURCES = tests/trust_attr_bufsize_test.c
+tests_trust_attr_bufsize_test_LDADD =
+
 if BUILD_STATIC
 tests_pkcs11test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11mtt_LDADD  += src/libwolfpkcs11.la
@@ -110,6 +170,18 @@ tests_pbkdf2_keygen_attrs_test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11v3test_LDADD += src/libwolfpkcs11.la
 tests_rsa_exponent_test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11_compliance_test_LDADD += src/libwolfpkcs11.la
+tests_verify_recover_badkey_test_LDADD += src/libwolfpkcs11.la
+tests_login_pin_len_range_test_LDADD += src/libwolfpkcs11.la
+tests_verify_recover_class_test_LDADD += src/libwolfpkcs11.la
+tests_login_another_user_test_LDADD += src/libwolfpkcs11.la
+tests_key_function_not_permitted_test_LDADD += src/libwolfpkcs11.la
+tests_decrypt_final_bufsize_test_LDADD += src/libwolfpkcs11.la
+tests_create_object_class_test_LDADD += src/libwolfpkcs11.la
+tests_aead_null_aad_test_LDADD += src/libwolfpkcs11.la
+tests_gen_keypair_incomplete_test_LDADD += src/libwolfpkcs11.la
+tests_set_attr_readonly_test_LDADD += src/libwolfpkcs11.la
+tests_derive_key_type_test_LDADD += src/libwolfpkcs11.la
+tests_trust_attr_bufsize_test_LDADD += src/libwolfpkcs11.la
 else
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
 tests_empty_pin_store_test_LDADD += src/libwolfpkcs11.la
@@ -121,8 +193,21 @@ tests_operation_active_test_LDADD += src/libwolfpkcs11.la
 tests_aes_keygen_attrs_test_LDADD += src/libwolfpkcs11.la
 tests_pbkdf2_keygen_attrs_test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11_compliance_test_LDADD += src/libwolfpkcs11.la
+tests_verify_recover_badkey_test_LDADD += src/libwolfpkcs11.la
+tests_login_pin_len_range_test_LDADD += src/libwolfpkcs11.la
+tests_verify_recover_class_test_LDADD += src/libwolfpkcs11.la
+tests_login_another_user_test_LDADD += src/libwolfpkcs11.la
+tests_key_function_not_permitted_test_LDADD += src/libwolfpkcs11.la
+tests_decrypt_final_bufsize_test_LDADD += src/libwolfpkcs11.la
+tests_create_object_class_test_LDADD += src/libwolfpkcs11.la
+tests_aead_null_aad_test_LDADD += src/libwolfpkcs11.la
+tests_gen_keypair_incomplete_test_LDADD += src/libwolfpkcs11.la
+tests_set_attr_readonly_test_LDADD += src/libwolfpkcs11.la
+tests_derive_key_type_test_LDADD += src/libwolfpkcs11.la
+tests_trust_attr_bufsize_test_LDADD += src/libwolfpkcs11.la
 endif
 
 EXTRA_DIST += tests/unit.h \
               tests/testdata.h \
+              tests/pkcs11_test_util.h \
               tests/README.md
