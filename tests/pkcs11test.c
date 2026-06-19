@@ -38,6 +38,8 @@
 #include <dlfcn.h>
 #endif
 
+#include <limits.h>
+
 #include "unit.h"
 #include "testdata.h"
 #include <wolfpkcs11/internal.h>
@@ -15876,6 +15878,13 @@ static CK_RV test_random(void* args)
         CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD, "Seed Random no seed");
     }
     if (ret == CKR_OK) {
+        /* A seed length that cannot fit in the int taken by the lower layer
+         * must be rejected, not silently truncated to a small value. INT_MAX
+         * + 1 is the smallest such length on any int width. */
+        ret = funcList->C_SeedRandom(session, seed, ((CK_ULONG)INT_MAX + 1));
+        CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD, "Seed Random oversized length");
+    }
+    if (ret == CKR_OK) {
         ret = funcList->C_GenerateRandom(CK_INVALID_HANDLE, data1,
                                                                  sizeof(data1));
         CHECK_CKR_FAIL(ret, CKR_SESSION_HANDLE_INVALID,
@@ -15884,6 +15893,32 @@ static CK_RV test_random(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_GenerateRandom(session, NULL, sizeof(data1));
         CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD, "Generate Random no data");
+    }
+    if (ret == CKR_OK) {
+        /* Regression: a request larger than WOLFPKCS11_RNG_MAX_GEN must fill
+         * the whole buffer, not just the first chunk. Truncating the CK_ULONG
+         * length to int would leave the tail untouched while still returning
+         * CKR_OK. Verify the tail past the first chunk is written. */
+        CK_ULONG bigLen = (1024 * 1024) + 4096;
+        unsigned char* big = (unsigned char*)XMALLOC(bigLen, NULL,
+                                                     DYNAMIC_TYPE_TMP_BUFFER);
+        if (big == NULL) {
+            ret = CKR_HOST_MEMORY;
+            CHECK_CKR(ret, "Allocate large random buffer");
+        }
+        if (ret == CKR_OK) {
+            XMEMSET(big, 0xAA, bigLen);
+            ret = funcList->C_GenerateRandom(session, big, bigLen);
+            CHECK_CKR(ret, "Generate Random large");
+        }
+        if (ret == CKR_OK) {
+            b = 0;
+            for (i = 0; i < 32; i++)
+                b |= (unsigned char)(big[bigLen - 32 + i] ^ 0xAA);
+            CHECK_COND(b != 0, ret, "Large generate filled tail of buffer");
+        }
+        if (big != NULL)
+            XFREE(big, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     }
 
     return ret;
