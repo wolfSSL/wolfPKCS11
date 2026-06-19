@@ -389,9 +389,14 @@ typedef struct WP11_GcmParams {
     unsigned char authTag[WP11_MAX_GCM_TAG_SZ];
                                        /* Authentication tag calculated       */
     unsigned char* enc;                /* Cached data for multi-part: buffered */
-                                       /* ciphertext (decrypt) or plaintext    */
-                                       /* (encrypt)                            */
+                                       /* ciphertext (decrypt) or, without     */
+                                       /* streaming GCM, plaintext (encrypt)   */
     int encSz;                         /* Size of cached data in bytes         */
+#ifdef WOLFSSL_AESGCM_STREAM
+    Aes aes;                           /* Streaming context for multi-part    */
+                                       /* encrypt                             */
+    int streamInit;                    /* Streaming context is initialized    */
+#endif
 } WP11_GcmParams;
 #endif
 
@@ -957,6 +962,12 @@ static void wp11_Session_Final(WP11_Session* session)
             XFREE(session->params.gcm.enc, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             session->params.gcm.enc = NULL;
         }
+#ifdef WOLFSSL_AESGCM_STREAM
+        if (session->params.gcm.streamInit) {
+            wc_AesFree(&session->params.gcm.aes);
+            session->params.gcm.streamInit = 0;
+        }
+#endif
     }
 #endif
 #ifdef HAVE_AESCTS
@@ -14815,6 +14826,7 @@ int WP11_AesGcm_Encrypt(unsigned char* plain, word32 plainSz,
  * @return  MEMORY_E on allocation failure.
  *          0 on success.
  */
+#ifndef WOLFSSL_AESGCM_STREAM
 static int wp11_AesGcm_BufferAppend(WP11_GcmParams* gcm, unsigned char* data,
                                     word32 dataSz)
 {
@@ -14843,24 +14855,63 @@ static int wp11_AesGcm_BufferAppend(WP11_GcmParams* gcm, unsigned char* data,
 
     return 0;
 }
+#endif /* !WOLFSSL_AESGCM_STREAM */
 
 int WP11_AesGcm_EncryptUpdate(unsigned char* plain, word32 plainSz,
                               unsigned char* enc, word32* encSz,
                               WP11_Object* secret, WP11_Session* session)
 {
+    WP11_GcmParams* gcm = &session->params.gcm;
+#ifdef WOLFSSL_AESGCM_STREAM
+    int ret;
+    WP11_Data* key;
+
+    /* Stream the segment with wolfCrypt's GCM streaming API so the whole
+     * message need not be buffered. Each update emits its own ciphertext; the
+     * tag is produced at C_EncryptFinal. */
+    if (!gcm->streamInit) {
+        ret = wc_AesInit(&gcm->aes, NULL, secret->devId);
+        if (ret == 0) {
+            if (secret->onToken)
+                WP11_Lock_LockRO(secret->lock);
+            key = secret->data.symmKey;
+            ret = wc_AesGcmInit(&gcm->aes, key->data, key->len, gcm->iv,
+                                                                    gcm->ivSz);
+            if (secret->onToken)
+                WP11_Lock_UnlockRO(secret->lock);
+        }
+        if (ret != 0)
+            return ret;
+        gcm->streamInit = 1;
+    }
+
+    /* AAD is authenticated once, on the first update. */
+    ret = wc_AesGcmEncryptUpdate(&gcm->aes, enc, plain, plainSz, gcm->aad,
+                                                                   gcm->aadSz);
+    if (ret == 0) {
+        *encSz = plainSz;
+        if (gcm->aad != NULL) {
+            XFREE(gcm->aad, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            gcm->aad = NULL;
+            gcm->aadSz = 0;
+        }
+    }
+
+    return ret;
+#else
     int ret;
     Aes aes;
     WP11_Data* key;
-    WP11_GcmParams* gcm = &session->params.gcm;
     word32 authTagSz = gcm->tagBits / 8;
     word32 oldSz = (word32)gcm->encSz;
     unsigned char* fullEnc = NULL;
 
-    /* Buffer the plaintext and encrypt the whole accumulated message under the
-     * single IV. GCM is a stream cipher, so this segment's ciphertext is the
-     * tail of the accumulated ciphertext. Re-encrypting each update keeps the
-     * tag over the full message and the AAD authenticated until
-     * C_EncryptFinal, matching the single-shot result. */
+    /* No streaming API available: buffer the plaintext and encrypt the whole
+     * accumulated message under the single IV. GCM is a stream cipher, so this
+     * segment's ciphertext is the tail of the accumulated ciphertext.
+     * Re-encrypting each update keeps the tag over the full message and the
+     * AAD authenticated until C_EncryptFinal, matching the single-shot
+     * result. */
     ret = wp11_AesGcm_BufferAppend(gcm, plain, plainSz);
     if (ret != 0)
         return ret;
@@ -14897,6 +14948,7 @@ int WP11_AesGcm_EncryptUpdate(unsigned char* plain, word32 plainSz,
     XFREE(fullEnc, NULL, DYNAMIC_TYPE_TMP_BUFFER);
 
     return ret;
+#endif /* WOLFSSL_AESGCM_STREAM */
 }
 
 /**
@@ -14920,6 +14972,39 @@ int WP11_AesGcm_EncryptFinal(unsigned char* enc, word32* encSz,
     if (*encSz < authTagSz)
         return BUFFER_E;
 
+#ifdef WOLFSSL_AESGCM_STREAM
+    {
+        WP11_Data* key;
+
+        if (!gcm->streamInit) {
+            /* No update was issued: produce the tag over the empty message. */
+            ret = wc_AesInit(&gcm->aes, NULL, secret->devId);
+            if (ret == 0) {
+                if (secret->onToken)
+                    WP11_Lock_LockRO(secret->lock);
+                key = secret->data.symmKey;
+                ret = wc_AesGcmInit(&gcm->aes, key->data, key->len, gcm->iv,
+                                                                    gcm->ivSz);
+                if (secret->onToken)
+                    WP11_Lock_UnlockRO(secret->lock);
+            }
+            if (ret == 0) {
+                gcm->streamInit = 1;
+                ret = wc_AesGcmEncryptUpdate(&gcm->aes, NULL, NULL, 0, gcm->aad,
+                                                                   gcm->aadSz);
+            }
+        }
+        if (ret == 0)
+            ret = wc_AesGcmEncryptFinal(&gcm->aes, enc, authTagSz);
+        if (ret == 0)
+            *encSz = authTagSz;
+
+        if (gcm->streamInit) {
+            wc_AesFree(&gcm->aes);
+            gcm->streamInit = 0;
+        }
+    }
+#else
     if (gcm->encSz > 0) {
         /* The final EncryptUpdate computed the tag over the whole message. */
         XMEMCPY(enc, gcm->authTag, authTagSz);
@@ -14955,6 +15040,8 @@ int WP11_AesGcm_EncryptFinal(unsigned char* enc, word32* encSz,
         gcm->enc = NULL;
     }
     gcm->encSz = 0;
+#endif /* WOLFSSL_AESGCM_STREAM */
+
     if (gcm->aad != NULL) {
         XFREE(gcm->aad, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         gcm->aad = NULL;
