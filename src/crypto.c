@@ -8643,6 +8643,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
     /* F-4533: protection attributes inherited from the base key. */
     CK_BBOOL baseSensitive = CK_FALSE;
     CK_BBOOL baseExtractable = CK_TRUE;
+    CK_ULONG bLen;
 #endif
 #endif
 
@@ -8996,16 +8997,13 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
     !defined(WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT)
         /* F-4533: read the base key's protection bits while `obj' still
          * refers to it, before CreateObject reuses `obj' for the new key. */
-        {
-            CK_ULONG bLen = sizeof(CK_BBOOL);
-            if (WP11_Object_GetAttr(obj, CKA_SENSITIVE, &baseSensitive,
-                                    &bLen) != 0)
-                baseSensitive = CK_FALSE;
-            bLen = sizeof(CK_BBOOL);
-            if (WP11_Object_GetAttr(obj, CKA_EXTRACTABLE, &baseExtractable,
-                                    &bLen) != 0)
-                baseExtractable = CK_TRUE;
-        }
+        bLen = sizeof(CK_BBOOL);
+        if (WP11_Object_GetAttr(obj, CKA_SENSITIVE, &baseSensitive, &bLen) != 0)
+            baseSensitive = CK_FALSE;
+        bLen = sizeof(CK_BBOOL);
+        if (WP11_Object_GetAttr(obj, CKA_EXTRACTABLE, &baseExtractable,
+                                &bLen) != 0)
+            baseExtractable = CK_TRUE;
 #endif
         rv = CreateObject(session, pTemplate, ulAttributeCount, &obj);
         if (rv == CKR_OK) {
