@@ -176,6 +176,11 @@ noinst_PROGRAMS += tests/secret_extractable_default_test
 tests_secret_extractable_default_test_SOURCES = tests/secret_extractable_default_test.c
 tests_secret_extractable_default_test_LDADD =
 
+check_PROGRAMS += tests/rsa_private_usage_default_test
+noinst_PROGRAMS += tests/rsa_private_usage_default_test
+tests_rsa_private_usage_default_test_SOURCES = tests/rsa_private_usage_default_test.c
+tests_rsa_private_usage_default_test_LDADD =
+
 if BUILD_STATIC
 tests_pkcs11test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11mtt_LDADD  += src/libwolfpkcs11.la
@@ -212,6 +217,7 @@ tests_key_sensitive_default_test_LDADD += src/libwolfpkcs11.la
 tests_derive_disabled_key_test_LDADD += src/libwolfpkcs11.la
 tests_derive_inherit_protection_test_LDADD += src/libwolfpkcs11.la
 tests_secret_extractable_default_test_LDADD += src/libwolfpkcs11.la
+tests_rsa_private_usage_default_test_LDADD += src/libwolfpkcs11.la
 else
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
 tests_empty_pin_store_test_LDADD += src/libwolfpkcs11.la
@@ -240,6 +246,7 @@ tests_key_sensitive_default_test_LDADD += src/libwolfpkcs11.la
 tests_derive_disabled_key_test_LDADD += src/libwolfpkcs11.la
 tests_derive_inherit_protection_test_LDADD += src/libwolfpkcs11.la
 tests_secret_extractable_default_test_LDADD += src/libwolfpkcs11.la
+tests_rsa_private_usage_default_test_LDADD += src/libwolfpkcs11.la
 endif
 
 EXTRA_DIST += tests/unit.h \

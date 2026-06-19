@@ -712,6 +712,18 @@ static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
                 ret = SetIfNotFound(obj, CKA_EXTRACTABLE, trueVal, pTemplate,
                                     ulCount);
 #endif
+            /* F-5520: RSA private-key usage is opt-in. A minimal template
+             * otherwise grants CKA_DECRYPT, CKA_SIGN and CKA_SIGN_RECOVER all
+             * at once, so a key intended for one purpose is silently accepted
+             * for several. Require each use to be requested explicitly. */
+#if !defined(WOLFPKCS11_LEGACY_RSA_USAGE_DEFAULT) && \
+    !defined(WP11_NSS_PERMISSIVE_KEY_DEFAULTS)
+            if (type == CKK_RSA) {
+                encrypt = CK_FALSE;  /* CKA_DECRYPT */
+                sign    = CK_FALSE;  /* CKA_SIGN */
+                recover = CK_FALSE;  /* CKA_SIGN_RECOVER */
+            }
+#endif
             if (ret == CKR_OK)
                 ret = SetIfNotFound(obj, CKA_DECRYPT, encrypt, pTemplate,
                                     ulCount);

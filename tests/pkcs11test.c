@@ -5709,6 +5709,10 @@ static CK_RV rsa_verify_recover(CK_SESSION_HANDLE session,
         { CKA_CLASS,             &privKeyClass,     sizeof(privKeyClass)      },
         { CKA_KEY_TYPE,          &rsaKeyType,       sizeof(rsaKeyType)        },
         { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue)            },
+        /* CKA_SIGN / CKA_SIGN_RECOVER are opt-in for RSA private keys
+         * (F-5520); this key is used for sign-recover. */
+        { CKA_SIGN,              &ckTrue,           sizeof(ckTrue)            },
+        { CKA_SIGN_RECOVER,      &ckTrue,           sizeof(ckTrue)            },
         { CKA_MODULUS,           rsa_2048_modulus,  sizeof(rsa_2048_modulus)  },
         { CKA_PRIVATE_EXPONENT,  rsa_2048_priv_exp, sizeof(rsa_2048_priv_exp) },
         { CKA_PRIME_1,           rsa_2048_p,        sizeof(rsa_2048_p)        },
@@ -6709,6 +6713,10 @@ static CK_RV get_rsa_priv_key(CK_SESSION_HANDLE session, unsigned char* privId,
         { CKA_CLASS,             &privKeyClass,     sizeof(privKeyClass)      },
         { CKA_KEY_TYPE,          &rsaKeyType,       sizeof(rsaKeyType)        },
         { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue)            },
+        /* CKA_SIGN / CKA_SIGN_RECOVER are opt-in for RSA private keys
+         * (F-5520); this helper backs sign and sign-recover tests. */
+        { CKA_SIGN,              &ckTrue,           sizeof(ckTrue)            },
+        { CKA_SIGN_RECOVER,      &ckTrue,           sizeof(ckTrue)            },
         { CKA_VERIFY,            &ckTrue,           sizeof(ckTrue)            },
         /* CKA_UNWRAP defaults to CK_FALSE post-2774; set explicitly so the
          * RSA wrap/unwrap path exercised by test_rsa_wrap_unwrap_key still
@@ -7738,6 +7746,8 @@ static CK_RV test_sha256_rsa_pkcs15(void* args)
         { CKA_CLASS,             &privKeyClass,     sizeof(privKeyClass)      },
         { CKA_KEY_TYPE,          &rsaKeyType,       sizeof(rsaKeyType)        },
         { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue)            },
+        /* CKA_SIGN is opt-in for RSA private keys (F-5520). */
+        { CKA_SIGN,              &ckTrue,           sizeof(ckTrue)            },
         { CKA_MODULUS,           rsa_2048_modulus,  sizeof(rsa_2048_modulus)  },
         { CKA_PRIVATE_EXPONENT,  rsa_2048_priv_exp, sizeof(rsa_2048_priv_exp) },
         { CKA_PRIME_1,           rsa_2048_p,        sizeof(rsa_2048_p)        },
