@@ -156,6 +156,11 @@ noinst_PROGRAMS += tests/private_object_empty_pin_test
 tests_private_object_empty_pin_test_SOURCES = tests/private_object_empty_pin_test.c
 tests_private_object_empty_pin_test_LDADD =
 
+check_PROGRAMS += tests/key_sensitive_default_test
+noinst_PROGRAMS += tests/key_sensitive_default_test
+tests_key_sensitive_default_test_SOURCES = tests/key_sensitive_default_test.c
+tests_key_sensitive_default_test_LDADD =
+
 if BUILD_STATIC
 tests_pkcs11test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11mtt_LDADD  += src/libwolfpkcs11.la
@@ -188,6 +193,7 @@ tests_set_attr_readonly_test_LDADD += src/libwolfpkcs11.la
 tests_derive_key_type_test_LDADD += src/libwolfpkcs11.la
 tests_trust_attr_bufsize_test_LDADD += src/libwolfpkcs11.la
 tests_private_object_empty_pin_test_LDADD += src/libwolfpkcs11.la
+tests_key_sensitive_default_test_LDADD += src/libwolfpkcs11.la
 else
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
 tests_empty_pin_store_test_LDADD += src/libwolfpkcs11.la
@@ -212,6 +218,7 @@ tests_set_attr_readonly_test_LDADD += src/libwolfpkcs11.la
 tests_derive_key_type_test_LDADD += src/libwolfpkcs11.la
 tests_trust_attr_bufsize_test_LDADD += src/libwolfpkcs11.la
 tests_private_object_empty_pin_test_LDADD += src/libwolfpkcs11.la
+tests_key_sensitive_default_test_LDADD += src/libwolfpkcs11.la
 endif
 
 EXTRA_DIST += tests/unit.h \

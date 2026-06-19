@@ -537,6 +537,17 @@ static CK_RV SetIfNotFound(WP11_Object* obj, CK_ATTRIBUTE_TYPE type,
     return ret;
 }
 
+/* F-4063: NSS builds historically created secret and private keys without
+ * CKA_SENSITIVE and with CKA_EXTRACTABLE=CK_TRUE so NSS could read key
+ * material directly via C_GetAttributeValue. That silently weakens the
+ * key-confidentiality defaults for every caller of an NSS-linked build.
+ * Secure defaults (CKA_SENSITIVE=CK_TRUE, private CKA_EXTRACTABLE=CK_FALSE)
+ * now apply universally. Define WOLFPKCS11_LEGACY_NSS_KEY_DEFAULTS in an NSS
+ * build to restore the permissive defaults for direct key-material reads. */
+#if defined(WOLFPKCS11_NSS) && defined(WOLFPKCS11_LEGACY_NSS_KEY_DEFAULTS)
+    #define WP11_NSS_PERMISSIVE_KEY_DEFAULTS
+#endif
+
 static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
                                   CK_ATTRIBUTE_PTR pTemplate,
                                   CK_ULONG ulCount)
@@ -647,7 +658,8 @@ static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
                 ret = SetIfNotFound(obj, CKA_PRIVATE, trueVal, pTemplate,
                                     ulCount);
 #endif
-#ifndef WOLFPKCS11_NSS
+            /* F-4063: default secret keys to CKA_SENSITIVE=CK_TRUE. */
+#ifndef WP11_NSS_PERMISSIVE_KEY_DEFAULTS
             if (ret == CKR_OK)
                 ret = SetIfNotFound(obj, CKA_SENSITIVE, trueVal, pTemplate,
                                     ulCount);
@@ -678,7 +690,9 @@ static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
                 ret = SetIfNotFound(obj, CKA_PRIVATE, trueVal, pTemplate,
                                     ulCount);
 #endif
-#ifndef WOLFPKCS11_NSS
+            /* F-4063: default private keys to CKA_SENSITIVE=CK_TRUE and
+             * CKA_EXTRACTABLE=CK_FALSE. */
+#ifndef WP11_NSS_PERMISSIVE_KEY_DEFAULTS
             if (ret == CKR_OK)
                 ret = SetIfNotFound(obj, CKA_SENSITIVE, trueVal, pTemplate,
                                     ulCount);
