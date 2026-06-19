@@ -19,15 +19,20 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  *
  * Test for issue F-3835: an empty user PIN must not silently disable
- * CKA_PRIVATE access control. A public (un-logged-in) session must not be
- * able to discover (C_FindObjects) or resolve by handle
+ * CKA_PRIVATE access control. In a non-NSS build a public (un-logged-in)
+ * session must not be able to discover (C_FindObjects) or resolve by handle
  * (C_GetAttributeValue) an object marked CKA_PRIVATE=TRUE, even when the
  * token has a zero-length user PIN. Logging in - which is still possible
  * with an empty PIN - grants access.
  *
+ * WOLFPKCS11_NSS builds keep the historical permissive behavior: NSS operates
+ * as the internal crypto module and accesses private objects from a public
+ * session without C_Login, so the public-session checks expect access there.
+ *
  * The empty-PIN scenario requires a build with WP11_MIN_PIN_LEN=0 (the
- * default for WOLFPKCS11_NSS builds). When the token enforces a minimum PIN
- * length the empty PIN cannot be set and the test reports itself skipped.
+ * default for WOLFPKCS11_NSS builds; non-NSS builds must set it explicitly).
+ * When the token enforces a minimum PIN length the empty PIN cannot be set
+ * and the test reports itself skipped.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -310,9 +315,13 @@ static int private_object_empty_pin_test(void)
     CHECK_CKR(ret, "C_CreateObject (CKA_PRIVATE=TRUE)", CKR_OK);
 
     /* Security check 1 (discovery): C_FindObjects must not reveal the
-     * CKA_PRIVATE object to a public session, even with an empty PIN. */
+     * CKA_PRIVATE object to a public session, even with an empty PIN.
+     * (Skipped under WOLFPKCS11_NSS, which enumerates private objects from a
+     * public session as the internal crypto module - see
+     * wp11_Session_FindNext.) */
     ret = count_private_key(session, &count);
     CHECK_CKR(ret, "C_FindObjects (public session)", CKR_OK);
+#ifndef WOLFPKCS11_NSS
     if (count != 0) {
         fprintf(stderr, "FAIL: public session discovered %lu CKA_PRIVATE "
                 "object(s) under empty PIN (expected 0)\n",
@@ -323,6 +332,18 @@ static int private_object_empty_pin_test(void)
     }
     printf("PASS: public session cannot discover the private key\n");
     test_passed++;
+#else
+    if (count != 1) {
+        fprintf(stderr, "FAIL: NSS public session should enumerate the "
+                "CKA_PRIVATE object (permissive), found %lu\n",
+                (unsigned long)count);
+        test_failed++;
+        result = -1;
+        goto cleanup;
+    }
+    printf("PASS: NSS public session enumerates the private key (permissive)\n");
+    test_passed++;
+#endif
 
 #ifndef WOLFPKCS11_NSS
     /* Security check 2 (lookup by handle): resolving the object by handle

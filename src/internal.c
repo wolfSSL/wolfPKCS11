@@ -8885,15 +8885,16 @@ static WP11_Object* wp11_Session_FindNext(WP11_Session* session, int onToken,
         }
    #endif
 
-        /* Note: this CKA_PRIVATE check is intentionally active in NSS mode.
-         * NSS accesses private objects by handle (via WP11_Object_Find) rather
-         * than discovering them through C_FindObjects enumeration. */
+#ifndef WOLFPKCS11_NSS
+        /* F-3835: a public session must not discover CKA_PRIVATE objects.
+         * An empty user PIN does not waive this - the caller can still
+         * authenticate with C_Login (empty PIN included). Skipped in NSS
+         * mode, which operates as the internal crypto module without calling
+         * C_Login and enumerates private keys (e.g. certutil) from a public
+         * session - matching the by-handle WP11_Object_Find check below. */
         if ((ret->opFlag & WP11_FLAG_PRIVATE) == WP11_FLAG_PRIVATE) {
             if (!onToken)
                 WP11_Lock_LockRO(&session->slot->token.lock);
-            /* F-3835: a public session must not discover CKA_PRIVATE objects.
-             * An empty user PIN does not waive this - the caller can still
-             * authenticate with C_Login (empty PIN included). */
             if (session->slot->token.loginState == WP11_APP_STATE_RW_PUBLIC ||
                 session->slot->token.loginState == WP11_APP_STATE_RO_PUBLIC) {
                 object = ret;
@@ -8902,6 +8903,7 @@ static WP11_Object* wp11_Session_FindNext(WP11_Session* session, int onToken,
             if (!onToken)
                 WP11_Lock_UnlockRO(&session->slot->token.lock);
         }
+#endif
     }
 
     return ret;
