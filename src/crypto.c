@@ -1569,6 +1569,9 @@ CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
 
     keyType = WP11_Object_GetType(obj);
 
+    /* The copy inherits the source's CKA_TOKEN (PKCS#11 v2.40 4.6.2) unless
+     * the template overrides it below. */
+    onToken = WP11_Object_OnToken(obj);
     FindAttributeType(pTemplate, ulCount, CKA_TOKEN, &attr);
     if (attr != NULL) {
         if (attr->pValue == NULL)
