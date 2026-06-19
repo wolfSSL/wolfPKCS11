@@ -15293,6 +15293,202 @@ int WP11_AesKeyWrap_Decrypt(unsigned char* enc, word32 encSz,
     *decSz = ret;
     return 0;
 }
+
+/**
+ * RFC 3394 key unwrap core that returns the recovered integrity register A
+ * instead of verifying it, so RFC 5649 can inspect the AIV (which encodes the
+ * length being recovered). Mirrors wc_AesKeyUnWrap_ex. The padded plaintext
+ * (inSz - 8 bytes) is written to out and the recovered A to aOut.
+ */
+static int wp11_AesKeyUnwrapRaw(Aes* aes, const unsigned char* in, word32 inSz,
+        unsigned char* out, unsigned char* aOut)
+{
+    unsigned char a[KEYWRAP_BLOCK_SIZE];
+    unsigned char t[KEYWRAP_BLOCK_SIZE];
+    unsigned char tmp[2 * KEYWRAP_BLOCK_SIZE];
+    unsigned char* r;
+    word32 n = (inSz / KEYWRAP_BLOCK_SIZE) - 1;
+    word32 i;
+    word32 cnt = 6 * n;
+    int j, k;
+    int ret = 0;
+
+    XMEMCPY(a, in, KEYWRAP_BLOCK_SIZE);
+    XMEMCPY(out, in + KEYWRAP_BLOCK_SIZE, inSz - KEYWRAP_BLOCK_SIZE);
+
+    /* t = 6n as a big-endian 64-bit counter. */
+    XMEMSET(t, 0, sizeof(t));
+    t[7] = (unsigned char)(cnt);
+    t[6] = (unsigned char)(cnt >> 8);
+    t[5] = (unsigned char)(cnt >> 16);
+    t[4] = (unsigned char)(cnt >> 24);
+
+    for (j = 5; j >= 0; j--) {
+        for (i = n; i >= 1; i--) {
+            /* A ^= t */
+            for (k = 0; k < KEYWRAP_BLOCK_SIZE; k++)
+                a[k] ^= t[k];
+            /* t-- */
+            for (k = KEYWRAP_BLOCK_SIZE - 1; k >= 0; k--) {
+                t[k]--;
+                if (t[k] != 0xFF)
+                    break;
+            }
+            r = out + (i - 1) * KEYWRAP_BLOCK_SIZE;
+            XMEMCPY(tmp, a, KEYWRAP_BLOCK_SIZE);
+            XMEMCPY(tmp + KEYWRAP_BLOCK_SIZE, r, KEYWRAP_BLOCK_SIZE);
+            ret = wc_AesDecryptDirect(aes, tmp, tmp);
+            if (ret != 0)
+                break;
+            XMEMCPY(a, tmp, KEYWRAP_BLOCK_SIZE);
+            XMEMCPY(r, tmp + KEYWRAP_BLOCK_SIZE, KEYWRAP_BLOCK_SIZE);
+        }
+        if (ret != 0)
+            break;
+    }
+
+    XMEMCPY(aOut, a, KEYWRAP_BLOCK_SIZE);
+    wc_ForceZero(tmp, sizeof(tmp));
+    return ret;
+}
+
+/* RFC 5649 AIV fixed prefix. */
+static const unsigned char wp11_kwp_aiv[4] = { 0xA6, 0x59, 0x59, 0xA6 };
+
+/**
+ * AES Key Wrap with Padding (RFC 5649) - wrap direction.
+ * Wraps plainSz (>= 1) bytes from plain into enc. On success *encSz is set to
+ * the wrapped length, roundup8(plainSz) + 8 bytes.
+ */
+int WP11_AesKeyWrapPad_Encrypt(unsigned char* plain, word32 plainSz,
+        unsigned char* enc, word32* encSz, WP11_Session* session)
+{
+    int ret = 0;
+    WP11_KeyWrapParams *wrap = &session->params.kw;
+    word32 padded = (plainSz + KEYWRAP_BLOCK_SIZE - 1) &
+                    ~(word32)(KEYWRAP_BLOCK_SIZE - 1);
+    word32 outLen = padded + KEYWRAP_BLOCK_SIZE;
+    unsigned char aiv[KEYWRAP_BLOCK_SIZE];
+    unsigned char* buf = NULL;
+
+    if (plainSz == 0)
+        ret = BAD_FUNC_ARG;
+    if (ret == 0 && *encSz < outLen)
+        ret = BUFFER_E;
+    if (ret == 0) {
+        buf = (unsigned char*)XMALLOC(padded, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (buf == NULL)
+            ret = MEMORY_E;
+    }
+    if (ret == 0) {
+        /* AIV = A65959A6 || MLI (big-endian 32-bit plaintext length). */
+        XMEMCPY(aiv, wp11_kwp_aiv, sizeof(wp11_kwp_aiv));
+        aiv[4] = (unsigned char)(plainSz >> 24);
+        aiv[5] = (unsigned char)(plainSz >> 16);
+        aiv[6] = (unsigned char)(plainSz >> 8);
+        aiv[7] = (unsigned char)(plainSz);
+
+        XMEMCPY(buf, plain, plainSz);
+        XMEMSET(buf + plainSz, 0, padded - plainSz);
+
+        if (padded == KEYWRAP_BLOCK_SIZE) {
+            /* Single semiblock: ECB-encrypt AIV || padded plaintext. */
+            unsigned char block[2 * KEYWRAP_BLOCK_SIZE];
+            XMEMCPY(block, aiv, KEYWRAP_BLOCK_SIZE);
+            XMEMCPY(block + KEYWRAP_BLOCK_SIZE, buf, KEYWRAP_BLOCK_SIZE);
+            ret = wc_AesEncryptDirect(&wrap->aes, enc, block);
+            wc_ForceZero(block, sizeof(block));
+        }
+        else {
+            /* Multi-block: RFC 3394 wrap with the AIV as the initial value. */
+            ret = wc_AesKeyWrap_ex(&wrap->aes, buf, padded, enc, *encSz, aiv);
+            if (ret >= 0)
+                ret = 0;
+        }
+        if (ret == 0)
+            *encSz = outLen;
+    }
+
+    if (buf != NULL) {
+        wc_ForceZero(buf, padded);
+        XFREE(buf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    }
+    wc_AesFree(&wrap->aes);
+    session->init = 0;
+    return ret;
+}
+
+/**
+ * AES Key Wrap with Padding (RFC 5649) - unwrap direction.
+ * Recovers the original plaintext from enc into dec. On success *decSz is set to
+ * the recovered plaintext length.
+ */
+int WP11_AesKeyWrapPad_Decrypt(unsigned char* enc, word32 encSz,
+        unsigned char* dec, word32* decSz, WP11_Session* session)
+{
+    int ret = 0;
+    WP11_KeyWrapParams *wrap = &session->params.kw;
+    unsigned char aiv[KEYWRAP_BLOCK_SIZE];
+    unsigned char* padBuf = NULL;
+    word32 paddedSz = encSz - KEYWRAP_BLOCK_SIZE;
+    word32 mli = 0;
+    word32 i;
+    int bad = 0;
+
+    if (encSz < 2 * KEYWRAP_BLOCK_SIZE || (encSz % KEYWRAP_BLOCK_SIZE) != 0)
+        return BUFFER_E;
+
+    padBuf = (unsigned char*)XMALLOC(paddedSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    if (padBuf == NULL)
+        return MEMORY_E;
+
+    if (encSz == 2 * KEYWRAP_BLOCK_SIZE) {
+        /* Single semiblock: ECB-decrypt to AIV || padded plaintext. */
+        unsigned char block[2 * KEYWRAP_BLOCK_SIZE];
+        ret = wc_AesDecryptDirect(&wrap->aes, block, enc);
+        if (ret == 0) {
+            XMEMCPY(aiv, block, KEYWRAP_BLOCK_SIZE);
+            XMEMCPY(padBuf, block + KEYWRAP_BLOCK_SIZE, KEYWRAP_BLOCK_SIZE);
+        }
+        wc_ForceZero(block, sizeof(block));
+    }
+    else {
+        /* Multi-block: RFC 3394 unwrap recovering the AIV. */
+        ret = wp11_AesKeyUnwrapRaw(&wrap->aes, enc, encSz, padBuf, aiv);
+    }
+
+    if (ret == 0) {
+        /* Verify the AIV prefix and recover the message length indicator. */
+        if (XMEMCMP(aiv, wp11_kwp_aiv, sizeof(wp11_kwp_aiv)) != 0)
+            bad = 1;
+        mli = ((word32)aiv[4] << 24) | ((word32)aiv[5] << 16) |
+              ((word32)aiv[6] << 8) | (word32)aiv[7];
+        /* roundup8(mli) must equal paddedSz: paddedSz-8 < mli <= paddedSz. */
+        if (mli > paddedSz || mli + KEYWRAP_BLOCK_SIZE <= paddedSz)
+            bad = 1;
+        if (!bad) {
+            /* Padding octets must be zero. */
+            for (i = mli; i < paddedSz; i++) {
+                if (padBuf[i] != 0)
+                    bad = 1;
+            }
+        }
+        if (bad)
+            ret = BAD_KEYWRAP_IV_E;
+        else if (mli > *decSz)
+            ret = BUFFER_E;
+        else {
+            XMEMCPY(dec, padBuf, mli);
+            *decSz = mli;
+        }
+    }
+
+    wc_ForceZero(padBuf, paddedSz);
+    XFREE(padBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    wc_AesFree(&wrap->aes);
+    session->init = 0;
+    return ret;
+}
 #endif /* HAVE_AES_KEYWRAP */
 
 #ifdef HAVE_AESCTS

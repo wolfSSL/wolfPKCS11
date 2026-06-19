@@ -220,6 +220,11 @@ noinst_PROGRAMS += tests/aes_gcm_multipart_test
 tests_aes_gcm_multipart_test_SOURCES = tests/aes_gcm_multipart_test.c
 tests_aes_gcm_multipart_test_LDADD =
 
+check_PROGRAMS += tests/aes_keywrap_pad_test
+noinst_PROGRAMS += tests/aes_keywrap_pad_test
+tests_aes_keywrap_pad_test_SOURCES = tests/aes_keywrap_pad_test.c
+tests_aes_keywrap_pad_test_LDADD =
+
 if BUILD_STATIC
 tests_pkcs11test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11mtt_LDADD  += src/libwolfpkcs11.la
@@ -265,6 +270,7 @@ tests_secret_extractable_default_test_LDADD += src/libwolfpkcs11.la
 tests_rsa_private_usage_default_test_LDADD += src/libwolfpkcs11.la
 tests_copyobject_token_test_LDADD += src/libwolfpkcs11.la
 tests_aes_gcm_multipart_test_LDADD += src/libwolfpkcs11.la
+tests_aes_keywrap_pad_test_LDADD += src/libwolfpkcs11.la
 else
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
 tests_empty_pin_store_test_LDADD += src/libwolfpkcs11.la
@@ -302,6 +308,7 @@ tests_secret_extractable_default_test_LDADD += src/libwolfpkcs11.la
 tests_rsa_private_usage_default_test_LDADD += src/libwolfpkcs11.la
 tests_copyobject_token_test_LDADD += src/libwolfpkcs11.la
 tests_aes_gcm_multipart_test_LDADD += src/libwolfpkcs11.la
+tests_aes_keywrap_pad_test_LDADD += src/libwolfpkcs11.la
 endif
 
 EXTRA_DIST += tests/unit.h \
