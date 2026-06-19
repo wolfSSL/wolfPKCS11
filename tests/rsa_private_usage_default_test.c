@@ -84,6 +84,7 @@ static int userPinLen = 11;
     }                                                       \
 } while(0)
 
+#if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN)
 static int check_bool_attr(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE obj,
                            CK_ATTRIBUTE_TYPE type, CK_BBOOL expected,
                            const char* name)
@@ -109,7 +110,6 @@ static int check_bool_attr(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE obj,
     return 0;
 }
 
-#ifndef NO_RSA
 static CK_RV gen_rsa(CK_SESSION_HANDLE session, CK_ATTRIBUTE* privTmpl,
                      CK_ULONG privCnt, CK_OBJECT_HANDLE* pub,
                      CK_OBJECT_HANDLE* priv)
@@ -304,11 +304,11 @@ static int rsa_private_usage_default_test(void)
     ret = funcList->C_Login(session, CKU_USER, userPin, userPinLen);
     CHECK_CKR(ret, "C_Login");
 
-#ifndef NO_RSA
+#if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN)
     if (test_rsa_private_usage_default(session) != 0)
         result = -1;
 #else
-    printf("RSA not available, skipping\n");
+    printf("RSA key generation not available, skipping\n");
     test_skipped = 1;
 #endif
 

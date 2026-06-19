@@ -149,7 +149,7 @@ cleanup:
 }
 #endif /* !NO_AES */
 
-#ifndef NO_RSA
+#if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN)
 static int test_private_key_sensitive_default(CK_SESSION_HANDLE session)
 {
     CK_RV ret;
@@ -315,7 +315,7 @@ static int key_sensitive_default_test(void)
     if (test_secret_key_sensitive_default(session) != 0)
         result = -1;
 #endif
-#ifndef NO_RSA
+#if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN)
     if (test_private_key_sensitive_default(session) != 0)
         result = -1;
 #endif

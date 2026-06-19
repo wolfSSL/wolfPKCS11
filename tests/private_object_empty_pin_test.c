@@ -62,7 +62,8 @@ static int test_skipped = 0;
 
 #define CHECK_CKR(rv, op, expected) do {                    \
     if (rv != expected) {                                   \
-        fprintf(stderr, "FAIL: %s: expected %ld, got %ld\n", op, (long)expected, (long)rv); \
+        fprintf(stderr, "FAIL: %s: expected 0x%lx, got 0x%lx\n", op, \
+                (unsigned long)(expected), (unsigned long)(rv)); \
         test_failed++;                                      \
         result = -1;                                        \
         goto cleanup;                                       \
