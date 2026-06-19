@@ -19,6 +19,7 @@ env:
 jobs:
   nss-pk12util-debian-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     container:
       image: debian:bookworm
 
