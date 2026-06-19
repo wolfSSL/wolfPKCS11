@@ -3517,6 +3517,9 @@ static CK_RV gen_ec_keys(CK_SESSION_HANDLE session, byte* params, int paramSz,
     CK_ATTRIBUTE      privKeyTmpl[] = {
         { CKA_SIGN,            &ckTrue,            sizeof(ckTrue)             },
         { CKA_DERIVE,          &ckTrue,            sizeof(ckTrue)             },
+        /* Readable base so the derived secret can be checked (F-4533). */
+        { CKA_SENSITIVE,       &ckFalse,           sizeof(ckFalse)           },
+        { CKA_EXTRACTABLE,     &ckTrue,            sizeof(ckTrue)            },
         { CKA_TOKEN,           &token,             sizeof(token)              },
         { CKA_ID,              privId,             (CK_ULONG)privIdLen        },
     };
@@ -4083,7 +4086,8 @@ static CK_RV test_ecc_fixed_keys_ecdh(void* args)
     CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
 
-    ret = get_ecc_priv_key(session, CK_FALSE, &priv);
+    /* Extractable base so the derived ECDH secret can be read (F-4533). */
+    ret = get_ecc_priv_key(session, CK_TRUE, &priv);
     if (ret == CKR_OK)
         ret = get_ecc_pub_key(session, &pub);
     if (ret == CKR_OK) {
@@ -4320,6 +4324,9 @@ static CK_RV gen_dh_keys(CK_SESSION_HANDLE session, byte* prime, int primeSz,
     int               pubTmplCnt = sizeof(pubKeyTmpl)/sizeof(*pubKeyTmpl);
     CK_ATTRIBUTE      privKeyTmpl[] = {
         { CKA_DERIVE,          &ckTrue,            sizeof(ckTrue)             },
+        /* Readable base so the derived secret can be checked (F-4533). */
+        { CKA_SENSITIVE,       &ckFalse,           sizeof(ckFalse)           },
+        { CKA_EXTRACTABLE,     &ckTrue,            sizeof(ckTrue)            },
         { CKA_TOKEN,           &token,             sizeof(token)              },
         { CKA_ID,              privId,             (CK_ULONG)privIdLen        },
     };
@@ -4551,7 +4558,8 @@ static CK_RV test_dh_fixed_keys(void* args)
     CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
 
-    ret = get_dh_priv_key(session, CK_FALSE, &priv);
+    /* Extractable base so the derived DH secret can be read (F-4533). */
+    ret = get_dh_priv_key(session, CK_TRUE, &priv);
     if (ret == CKR_OK)
         ret = get_dh_pub_key(session, &pub);
     if (ret == CKR_OK) {

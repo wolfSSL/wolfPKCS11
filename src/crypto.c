@@ -8622,6 +8622,11 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
     CK_ULONG symmKeyLen;
     unsigned char* secretKeyData[2] = { NULL, NULL };
     CK_ULONG secretKeyLen[2] = { 0, 0 };
+#ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
+    /* F-4533: protection attributes inherited from the base key. */
+    CK_BBOOL baseSensitive = CK_FALSE;
+    CK_BBOOL baseExtractable = CK_TRUE;
+#endif
 #endif
 
     WOLFPKCS11_ENTER("C_DeriveKey");
@@ -8970,7 +8975,46 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
 #if defined(HAVE_ECC) || !defined(NO_DH) || defined(WOLFPKCS11_HKDF) || \
     (!defined(NO_AES) && defined(HAVE_AES_CBC))
     if ((ret == 0) && (derivedKey != NULL)) {
+#if (defined(HAVE_ECC) || !defined(NO_DH) || defined(WOLFPKCS11_HKDF)) && \
+    !defined(WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT)
+        /* F-4533: read the base key's protection bits while `obj' still
+         * refers to it, before CreateObject reuses `obj' for the new key. */
+        {
+            CK_ULONG bLen = sizeof(CK_BBOOL);
+            if (WP11_Object_GetAttr(obj, CKA_SENSITIVE, &baseSensitive,
+                                    &bLen) != 0)
+                baseSensitive = CK_FALSE;
+            bLen = sizeof(CK_BBOOL);
+            if (WP11_Object_GetAttr(obj, CKA_EXTRACTABLE, &baseExtractable,
+                                    &bLen) != 0)
+                baseExtractable = CK_TRUE;
+        }
+#endif
         rv = CreateObject(session, pTemplate, ulAttributeCount, &obj);
+        if (rv == CKR_OK) {
+            /* obj now refers to the newly created derived key. */
+#if (defined(HAVE_ECC) || !defined(NO_DH) || defined(WOLFPKCS11_HKDF)) && \
+    !defined(WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT)
+            /* F-4533: PKCS#11 v3.0 5.5.5 - a derived key must be at least as
+             * protected as its base key. Force the inherited attributes after
+             * the caller template has been applied so a weaker template
+             * cannot win. */
+            if (baseSensitive == CK_TRUE) {
+                CK_BBOOL bbTrue = CK_TRUE;
+                if (WP11_Object_SetAttr(obj, CKA_SENSITIVE, &bbTrue,
+                                        sizeof(bbTrue)) != 0)
+                    rv = CKR_FUNCTION_FAILED;
+            }
+            if (rv == CKR_OK && baseExtractable == CK_FALSE) {
+                CK_BBOOL bbFalse = CK_FALSE;
+                if (WP11_Object_SetAttr(obj, CKA_EXTRACTABLE, &bbFalse,
+                                        sizeof(bbFalse)) != 0)
+                    rv = CKR_FUNCTION_FAILED;
+            }
+            if (rv != CKR_OK)
+                WP11_Object_Free(obj);
+#endif
+        }
         if (rv == CKR_OK) {
             ret = SymmKeyLen(obj, keyLen, &symmKeyLen);
             if (ret == 0) {

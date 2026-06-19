@@ -166,6 +166,11 @@ noinst_PROGRAMS += tests/derive_disabled_key_test
 tests_derive_disabled_key_test_SOURCES = tests/derive_disabled_key_test.c
 tests_derive_disabled_key_test_LDADD =
 
+check_PROGRAMS += tests/derive_inherit_protection_test
+noinst_PROGRAMS += tests/derive_inherit_protection_test
+tests_derive_inherit_protection_test_SOURCES = tests/derive_inherit_protection_test.c
+tests_derive_inherit_protection_test_LDADD =
+
 if BUILD_STATIC
 tests_pkcs11test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11mtt_LDADD  += src/libwolfpkcs11.la
@@ -200,6 +205,7 @@ tests_trust_attr_bufsize_test_LDADD += src/libwolfpkcs11.la
 tests_private_object_empty_pin_test_LDADD += src/libwolfpkcs11.la
 tests_key_sensitive_default_test_LDADD += src/libwolfpkcs11.la
 tests_derive_disabled_key_test_LDADD += src/libwolfpkcs11.la
+tests_derive_inherit_protection_test_LDADD += src/libwolfpkcs11.la
 else
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
 tests_empty_pin_store_test_LDADD += src/libwolfpkcs11.la
@@ -226,6 +232,7 @@ tests_trust_attr_bufsize_test_LDADD += src/libwolfpkcs11.la
 tests_private_object_empty_pin_test_LDADD += src/libwolfpkcs11.la
 tests_key_sensitive_default_test_LDADD += src/libwolfpkcs11.la
 tests_derive_disabled_key_test_LDADD += src/libwolfpkcs11.la
+tests_derive_inherit_protection_test_LDADD += src/libwolfpkcs11.la
 endif
 
 EXTRA_DIST += tests/unit.h \
