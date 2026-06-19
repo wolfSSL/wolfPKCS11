@@ -8676,11 +8676,12 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
     if (ret != 0)
         return CKR_OBJECT_HANDLE_INVALID;
 
-#ifndef WOLFPKCS11_NSS
-    /* Spec-compliance gate: reject keys whose CKA_DERIVE is CK_FALSE. NSS
-     * generates ephemeral EC keys for TLS ECDHE without explicitly setting
-     * CKA_DERIVE=CK_TRUE and relies on the historic permissive behavior, so
-     * skip this check in NSS builds. */
+    /* F-4064: spec-compliance gate - reject keys whose CKA_DERIVE is CK_FALSE.
+     * This is now enforced for NSS builds too. NSS generates ephemeral EC keys
+     * for TLS ECDHE without explicitly setting CKA_DERIVE=CK_TRUE and relies on
+     * the historic permissive behavior; that path is restored only under the
+     * legacy WOLFPKCS11_LEGACY_NSS_KEY_DEFAULTS macro. */
+#ifndef WP11_NSS_PERMISSIVE_KEY_DEFAULTS
     ret = CheckOpSupported(obj, CKA_DERIVE);
     if (ret != CKR_OK)
         return ret;
