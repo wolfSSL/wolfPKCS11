@@ -46,8 +46,10 @@ examples/add_hmac_key
 examples/add_rsa_key
 examples/add_rsa_key_file
 examples/add_cert
+examples/add_cert_file
 examples/init_token
 examples/mech_info
+examples/nss_pkcs12_pbe_example
 examples/obj_list
 examples/slot_info
 examples/token_info
