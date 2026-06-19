@@ -3633,7 +3633,10 @@ static int WP11_Object_DecodeTpmKey(WP11_Object* object)
     word32 idx = 0;
     word32 keyDataLen;
     UINT16 pubAreaSize = 0;
-    byte pubAreaBuffer[sizeof(TPM2B_PUBLIC)];
+    /* Largest valid marshalled public area: the TPM2B_PUBLIC payload, i.e. the
+     * structure without its UINT16 size prefix. */
+    const word32 maxPubAreaSize = (word32)sizeof(TPM2B_PUBLIC) -
+                                  (word32)sizeof(UINT16);
 
     if (object == NULL || object->keyData == NULL || object->slot == NULL) {
         return BAD_FUNC_ARG;
@@ -3651,7 +3654,7 @@ static int WP11_Object_DecodeTpmKey(WP11_Object* object)
         return BUFFER_E;
     XMEMCPY(&pubAreaSize, object->keyData, sizeof(pubAreaSize));
     idx += sizeof(pubAreaSize);
-    if (pubAreaSize <= (UINT16)sizeof(pubAreaBuffer)) {
+    if ((word32)pubAreaSize <= maxPubAreaSize) {
         /* Parse public. The public blob is sizeof(UINT16) + pubAreaSize bytes;
          * pass the remaining keyData length so the parser cannot read past the
          * blob. */
