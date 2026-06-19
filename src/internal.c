@@ -8889,20 +8889,13 @@ static WP11_Object* wp11_Session_FindNext(WP11_Session* session, int onToken,
          * NSS accesses private objects by handle (via WP11_Object_Find) rather
          * than discovering them through C_FindObjects enumeration. */
         if ((ret->opFlag & WP11_FLAG_PRIVATE) == WP11_FLAG_PRIVATE) {
-            int isPublic;
             if (!onToken)
                 WP11_Lock_LockRO(&session->slot->token.lock);
-            isPublic =
-                (session->slot->token.loginState == WP11_APP_STATE_RW_PUBLIC ||
-                 session->slot->token.loginState == WP11_APP_STATE_RO_PUBLIC);
             /* F-3835: a public session must not discover CKA_PRIVATE objects.
              * An empty user PIN does not waive this - the caller can still
              * authenticate with C_Login (empty PIN included). */
-#ifdef WOLFPKCS11_LEGACY_EMPTY_PIN_PRIVATE_ACCESS
-            if (WP11_Slot_Has_Empty_Pin(session->slot))
-                isPublic = 0;
-#endif
-            if (isPublic) {
+            if (session->slot->token.loginState == WP11_APP_STATE_RW_PUBLIC ||
+                session->slot->token.loginState == WP11_APP_STATE_RO_PUBLIC) {
                 object = ret;
                 ret = NULL;
             }
@@ -10097,18 +10090,12 @@ int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
          * module without calling C_Login. */
         if ((obj->opFlag & WP11_FLAG_PRIVATE) == WP11_FLAG_PRIVATE) {
             int loginState;
-            int isPublic;
             WP11_Lock_LockRO(&session->slot->lock);
             loginState = session->slot->token.loginState;
-            isPublic = (loginState == WP11_APP_STATE_RW_PUBLIC ||
-                        loginState == WP11_APP_STATE_RO_PUBLIC);
             /* F-3835: resolving a CKA_PRIVATE object by handle from a public
              * session must be denied even when the user PIN is empty. */
-#ifdef WOLFPKCS11_LEGACY_EMPTY_PIN_PRIVATE_ACCESS
-            if (WP11_Slot_Has_Empty_Pin(session->slot))
-                isPublic = 0;
-#endif
-            if (isPublic) {
+            if (loginState == WP11_APP_STATE_RW_PUBLIC ||
+                loginState == WP11_APP_STATE_RO_PUBLIC) {
                 ret = BAD_FUNC_ARG;
             }
             WP11_Lock_UnlockRO(&session->slot->lock);
