@@ -160,13 +160,17 @@ static void test_free(void* p)
 static void* test_realloc(void* p, size_t n)
 {
     void* np;
-    if (g_armed && p != NULL) {
-        int idx = track_find(p);
+    int idx = -1;
+    /* Locate the tracking entry while p is still valid. */
+    if (g_armed && p != NULL)
+        idx = track_find(p);
+    np = realloc(p, n);
+    /* Only update tracking on success; on failure p is still live and tracked. */
+    if (np != NULL) {
         if (idx >= 0)
             track_remove(idx);
+        track_add(np, n);
     }
-    np = realloc(p, n);
-    track_add(np, n);
     return np;
 }
 
