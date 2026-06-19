@@ -102,6 +102,11 @@ noinst_PROGRAMS += tests/unwrapkey_ro_token_test
 tests_unwrapkey_ro_token_test_SOURCES = tests/unwrapkey_ro_token_test.c
 tests_unwrapkey_ro_token_test_LDADD =
 
+check_PROGRAMS += tests/aes_ctr_counterbits_test
+noinst_PROGRAMS += tests/aes_ctr_counterbits_test
+tests_aes_ctr_counterbits_test_SOURCES = tests/aes_ctr_counterbits_test.c
+tests_aes_ctr_counterbits_test_LDADD =
+
 check_PROGRAMS += tests/pkcs11v3test
 noinst_PROGRAMS += tests/pkcs11v3test
 tests_pkcs11v3test_SOURCES = tests/pkcs11v3test.c
@@ -198,6 +203,7 @@ tests_aes_ccm_decrypt_len_test_LDADD += src/libwolfpkcs11.la
 tests_aes_keywrap_decrypt_len_test_LDADD += src/libwolfpkcs11.la
 tests_mlkem_sensitive_attr_test_LDADD += src/libwolfpkcs11.la
 tests_unwrapkey_ro_token_test_LDADD += src/libwolfpkcs11.la
+tests_aes_ctr_counterbits_test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11v3test_LDADD += src/libwolfpkcs11.la
 tests_rsa_exponent_test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11_compliance_test_LDADD += src/libwolfpkcs11.la
@@ -228,6 +234,7 @@ tests_aes_ccm_decrypt_len_test_LDADD += src/libwolfpkcs11.la
 tests_aes_keywrap_decrypt_len_test_LDADD += src/libwolfpkcs11.la
 tests_mlkem_sensitive_attr_test_LDADD += src/libwolfpkcs11.la
 tests_unwrapkey_ro_token_test_LDADD += src/libwolfpkcs11.la
+tests_aes_ctr_counterbits_test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11_compliance_test_LDADD += src/libwolfpkcs11.la
 tests_verify_recover_badkey_test_LDADD += src/libwolfpkcs11.la
 tests_login_pin_len_range_test_LDADD += src/libwolfpkcs11.la
