@@ -62,7 +62,7 @@ jobs:
         make
 
     - name: Create test store directory
-      run: mkdir -p store/empty_pin_test
+      run: mkdir -p store/empty_pin_test store/private_object_empty_pin_test
 
     - name: Run empty PIN store test
       run: |
@@ -71,6 +71,16 @@ jobs:
         echo "loaded correctly when using an empty user PIN."
         echo ""
         ./tests/empty_pin_store_test
+        echo ""
+        echo "=== Test completed ==="
+
+    - name: Run private object empty PIN test
+      run: |
+        echo "=== Running CKA_PRIVATE Empty PIN Test ==="
+        echo "This test verifies that CKA_PRIVATE access control is enforced"
+        echo "for public sessions even when the user PIN is empty (F-3835)."
+        echo ""
+        ./tests/private_object_empty_pin_test
         echo ""
         echo "=== Test completed ==="
 
