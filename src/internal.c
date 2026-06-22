@@ -8896,6 +8896,61 @@ int WP11_Session_RemoveObject(WP11_Session* session, WP11_Object* object)
 }
 
 /**
+ * Drop any session reference to an object that is about to be freed.
+ *
+ * The active object pointer (session->curr) is a raw pointer cached when an
+ * operation is initialized. A token object can be the active object of more
+ * than one session.
+ *
+ * Symmetric operations (AES, HMAC/generic-secret, HKDF) copy the key into the
+ * operation context during their *Init and run to completion without referring
+ * to the object again, so a caller may legitimately destroy the key before
+ * finishing the operation (wolfCrypt's PKCS#11 layer does exactly this for
+ * multi-part HMAC). Those operations are left untouched.
+ *
+ * Asymmetric operations dereference the key object while running, so for those
+ * key types drop the active reference in every session that holds it and reset
+ * the operation state, ensuring a later step cannot use freed memory.
+ *
+ * @param  slot    [in]  Slot whose sessions are scanned.
+ * @param  object  [in]  Object being destroyed.
+ */
+void WP11_Slot_ClearActiveObject(WP11_Slot* slot, WP11_Object* object)
+{
+    WP11_Session* curr;
+    CK_KEY_TYPE keyType;
+
+    if (slot == NULL || object == NULL)
+        return;
+
+    keyType = WP11_Object_GetType(object);
+    if (keyType == CKK_AES || keyType == CKK_GENERIC_SECRET ||
+            keyType == CKK_HKDF)
+        return;
+
+    WP11_Lock_LockRW(&slot->lock);
+    for (curr = slot->session; curr != NULL; curr = curr->next) {
+        if (curr->curr == object) {
+#if !defined(NO_RSA) && !defined(WC_NO_RSA_OAEP)
+            /* Release the operation-owned RSA-OAEP label before dropping the
+             * operation state. Otherwise a later init for a different mechanism
+             * overwrites the params union and the label can no longer be
+             * freed. */
+            if (curr->mechanism == CKM_RSA_PKCS_OAEP &&
+                    curr->params.oaep.label != NULL) {
+                XFREE(curr->params.oaep.label, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                curr->params.oaep.label = NULL;
+                curr->params.oaep.labelSz = 0;
+            }
+#endif
+            curr->curr = NULL;
+            curr->init = 0;
+        }
+    }
+    WP11_Lock_UnlockRW(&slot->lock);
+}
+
+/**
  * Get the current object of the session - key for operation.
  *
  * @param  session  [in]   Session object.

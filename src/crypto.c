@@ -1692,6 +1692,9 @@ CK_RV C_DestroyObject(CK_SESSION_HANDLE hSession,
     }
 
     rv = WP11_Session_RemoveObject(session, obj);
+    /* Drop any active-operation reference to this object before freeing it so a
+     * pending operation cannot use freed memory. */
+    WP11_Slot_ClearActiveObject(WP11_Session_GetSlot(session), obj);
     WP11_Object_Free(obj);
 
     WOLFPKCS11_LEAVE("C_DestroyObject", rv);
