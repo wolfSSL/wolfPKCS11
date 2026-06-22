@@ -9228,8 +9228,13 @@ void WP11_Object_Free(WP11_Object* object)
     #endif
     #ifndef NO_DH
         if (object->type == CKK_DH && object->data.dhKey != NULL) {
+            word32 zeroLen = object->data.dhKey->len;
             wc_FreeDhKey(&object->data.dhKey->params);
-            wc_ForceZero(object->data.dhKey->key, object->data.dhKey->len);
+            /* Clamp to the fixed buffer as a backstop against a length
+             * recorded larger than the buffer. */
+            if (zeroLen > sizeof(object->data.dhKey->key))
+                zeroLen = (word32)sizeof(object->data.dhKey->key);
+            wc_ForceZero(object->data.dhKey->key, zeroLen);
             XFREE(object->data.dhKey, NULL, DYNAMIC_TYPE_DH);
             object->data.dhKey = NULL;
         }
@@ -9244,7 +9249,12 @@ void WP11_Object_Free(WP11_Object* object)
     #endif
         if ((object->type == CKK_AES || object->type == CKK_GENERIC_SECRET ||
              object->type == CKK_HKDF) && object->data.symmKey != NULL) {
-            wc_ForceZero(object->data.symmKey->data, object->data.symmKey->len);
+            word32 zeroLen = object->data.symmKey->len;
+            /* Clamp to the fixed buffer as a backstop against a length
+             * recorded larger than the buffer. */
+            if (zeroLen > sizeof(object->data.symmKey->data))
+                zeroLen = (word32)sizeof(object->data.symmKey->data);
+            wc_ForceZero(object->data.symmKey->data, zeroLen);
             XFREE(object->data.symmKey, NULL, DYNAMIC_TYPE_AES);
             object->data.symmKey = NULL;
         }
