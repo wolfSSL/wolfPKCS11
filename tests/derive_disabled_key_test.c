@@ -99,7 +99,9 @@ static int test_derive_rejects_non_derive_key(CK_SESSION_HANDLE session)
     int result = 0;
 
     byte ikm[22];
-    byte salt[13];
+    /* >= FIPS HMAC min key (14) so HKDF-Extract works in a FIPS+NSS build,
+     * where the derive gate is compiled out and the HKDF actually runs. */
+    byte salt[16];
 
     /* Base key explicitly NOT permitted for derivation. */
     CK_ATTRIBUTE baseTmpl[] = {

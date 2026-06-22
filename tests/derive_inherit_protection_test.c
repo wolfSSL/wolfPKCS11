@@ -110,7 +110,8 @@ static CK_RV hkdf_derive(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE base,
                          CK_OBJECT_HANDLE* derived)
 {
     CK_ULONG derivedLen = 32;
-    byte salt[13];
+    /* >= FIPS HMAC min key (14) so HKDF-Extract works under FIPS. */
+    byte salt[16];
     CK_HKDF_PARAMS params;
     CK_MECHANISM mech;
     CK_ATTRIBUTE derivedTmpl[] = {
