@@ -9,6 +9,7 @@ on:
 jobs:
   get_current_wolfssl_versions:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     outputs:
       wolfssl_versions: ${{ steps.json.outputs.wolfssl_versions }}
     steps:
@@ -22,6 +23,7 @@ jobs:
 
   get_current_wolftpm_versions:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     outputs:
       wolftpm_versions: ${{ steps.json.outputs.wolftpm_versions }}
     steps:
@@ -118,6 +120,7 @@ jobs:
 
   tpm2-store-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: [build_wolfssl, build_wolftpm, get_current_wolfssl_versions, get_current_wolftpm_versions]
     strategy:
       matrix:

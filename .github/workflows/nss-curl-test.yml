@@ -21,6 +21,7 @@ env:
 jobs:
   test-nss-curl:
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - name: Checkout wolfPKCS11 repository
         uses: actions/checkout@v4
