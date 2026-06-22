@@ -6806,14 +6806,10 @@ CK_RV C_VerifyRecover(CK_SESSION_HANDLE hSession,
         return CKR_OPERATION_NOT_INITIALIZED;
     }
 
-    decDataLen = WP11_Rsa_KeyLen(obj);
-    if (pData == NULL) {
-        *pulDataLen = decDataLen;
-        return CKR_OK;
-    }
-    if (decDataLen > (word32)*pulDataLen)
-        return CKR_BUFFER_TOO_SMALL;
-
+    /* Validate the mechanism and that a verify-recover operation has been
+     * initialized before treating the active object as an RSA key. The active
+     * object pointer is also set by other *Init functions, so these checks must
+     * happen before WP11_Rsa_KeyLen dereferences obj as an RSA key. */
     switch (mechanism) {
         case CKM_RSA_PKCS:
             if (!WP11_Session_IsOpInitialized(session,
@@ -6827,6 +6823,23 @@ CK_RV C_VerifyRecover(CK_SESSION_HANDLE hSession,
             break;
         default:
             return CKR_MECHANISM_INVALID;
+    }
+    if (WP11_Object_GetType(obj) != CKK_RSA)
+        return CKR_KEY_TYPE_INCONSISTENT;
+    if (!CK_ULONG_FITS_WORD32(ulSignatureLen))
+        return CKR_ARGUMENTS_BAD;
+
+    decDataLen = WP11_Rsa_KeyLen(obj);
+    if (pData == NULL) {
+        *pulDataLen = decDataLen;
+        return CKR_OK;
+    }
+    if (!CK_ULONG_FITS_WORD32(*pulDataLen))
+        return CKR_ARGUMENTS_BAD;
+    if (decDataLen > (word32)*pulDataLen) {
+        /* Report the required size as mandated by PKCS#11. */
+        *pulDataLen = decDataLen;
+        return CKR_BUFFER_TOO_SMALL;
     }
 
     ret = WP11_Rsa_Verify_Recover(mechanism, pSignature, (word32)ulSignatureLen,
