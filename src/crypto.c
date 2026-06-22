@@ -1569,6 +1569,9 @@ CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
 
     keyType = WP11_Object_GetType(obj);
 
+    /* The copy inherits the source's CKA_TOKEN (PKCS#11 v2.40 4.6.2) unless
+     * the template overrides it below. */
+    onToken = WP11_Object_OnToken(obj);
     FindAttributeType(pTemplate, ulCount, CKA_TOKEN, &attr);
     if (attr != NULL) {
         if (attr->pValue == NULL)
@@ -2752,34 +2755,29 @@ CK_RV C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             *pulEncryptedDataLen = encDataLen;
             break;
         case CKM_AES_KEY_WRAP_PAD: {
-            byte* paddedData = NULL;
-            byte padding = KEYWRAP_BLOCK_SIZE - (ulDataLen % KEYWRAP_BLOCK_SIZE);
+            word32 padded;
 
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_KEYWRAP_ENC))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            if (!CK_ULONG_FITS_WORD32(ulDataLen) || ulDataLen == 0) {
+                WP11_Session_SetOpInitialized(session, 0);
+                return CKR_DATA_LEN_RANGE;
+            }
 
-            /* AES Key Wrap Pad adds up to 16 bytes for the integrity check
-             * value and padding */
-            encDataLen = (word32)(ulDataLen + KEYWRAP_BLOCK_SIZE + padding);
+            /* RFC 5649: round the input up to a multiple of 8 then add the
+             * 8-byte AIV. Aligned inputs are not over-padded. */
+            padded = ((word32)ulDataLen + KEYWRAP_BLOCK_SIZE - 1) &
+                     ~(word32)(KEYWRAP_BLOCK_SIZE - 1);
+            encDataLen = padded + KEYWRAP_BLOCK_SIZE;
             if (pEncryptedData == NULL) {
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
             }
             if (encDataLen > (word32)*pulEncryptedDataLen)
                 return CKR_BUFFER_TOO_SMALL;
-            paddedData = (byte*)XMALLOC(ulDataLen + padding, NULL,
-                                        DYNAMIC_TYPE_TMP_BUFFER);
-            if (paddedData == NULL) {
-                WP11_Session_SetOpInitialized(session, 0);
-                return CKR_DEVICE_MEMORY;
-            }
-            XMEMCPY(paddedData, pData, ulDataLen);
-            XMEMSET(paddedData + ulDataLen, padding, padding);
 
-            ret = WP11_AesKeyWrap_Encrypt(paddedData, (word32)ulDataLen + padding,
+            ret = WP11_AesKeyWrapPad_Encrypt(pData, (word32)ulDataLen,
                                           pEncryptedData, &encDataLen, session);
-            wc_ForceZero(paddedData, ulDataLen + padding);
-            XFREE(paddedData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             if (ret != 0)
                 break;
             *pulEncryptedDataLen = encDataLen;
@@ -3142,7 +3140,7 @@ CK_RV C_EncryptFinal(CK_SESSION_HANDLE hSession,
                 return CKR_BUFFER_TOO_SMALL;
 
             ret = WP11_AesGcm_EncryptFinal(pLastEncryptedPart, &encPartLen,
-                                                                       session);
+                                                                  obj, session);
             if (ret < 0) {
                 WP11_Session_SetOpInitialized(session, 0);
                 return CKR_FUNCTION_FAILED;
@@ -3776,7 +3774,6 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
     #endif
     #ifdef HAVE_AES_KEYWRAP
         case CKM_AES_KEY_WRAP:
-        case CKM_AES_KEY_WRAP_PAD:
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_KEYWRAP_DEC))
                 return CKR_OPERATION_NOT_INITIALIZED;
 
@@ -3798,38 +3795,42 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
                     (word32)ulEncryptedDataLen, pData, &decDataLen, session);
             if (ret != 0)
                 break;
-            if (mechanism == CKM_AES_KEY_WRAP_PAD) {
-                int i;
-                byte padValue = pData[decDataLen - 1];
-                unsigned int badPad = 0;
-                unsigned int inPad;
+            *pulDataLen = decDataLen;
+            break;
+        case CKM_AES_KEY_WRAP_PAD:
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_KEYWRAP_DEC))
+                return CKR_OPERATION_NOT_INITIALIZED;
 
-                /* Constant-time range check: padValue must be 1..KEYWRAP_BLOCK_SIZE
-                 * and must not exceed decDataLen. */
-                badPad |= ((unsigned int)padValue - 1) >> 31;
-                badPad |= ((unsigned int)KEYWRAP_BLOCK_SIZE -
-                           (unsigned int)padValue) >> 31;
-                badPad |= ((unsigned int)decDataLen -
-                           (unsigned int)padValue) >> 31;
-
-                /* Constant-time padding byte verification.
-                 * Always iterate KEYWRAP_BLOCK_SIZE times to avoid leaking
-                 * padValue through iteration count. */
-                for (i = 0; i < KEYWRAP_BLOCK_SIZE; i++) {
-                    /* Full mask: all-ones when i < padValue, else 0 */
-                    inPad = 0 - (((unsigned int)i -
-                                   (unsigned int)padValue) >> 31);
-                    badPad |= inPad &
-                              ((unsigned int)pData[decDataLen - 1 - i] ^
-                               (unsigned int)padValue);
-                }
-
-                if (badPad != 0) {
-                    ret = -1;
-                    break;
-                }
-                decDataLen -= padValue;
+            /* RFC 5649 ciphertext is at least two semiblocks and a multiple of
+             * 8. The recovered length is encoded in the AIV and is known only
+             * after unwrapping; the upper bound is ciphertext - 8. */
+            if (ulEncryptedDataLen < 2 * KEYWRAP_BLOCK_SIZE ||
+                (ulEncryptedDataLen % KEYWRAP_BLOCK_SIZE) != 0) {
+                WP11_Session_SetOpInitialized(session, 0);
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
             }
+            decDataLen = (word32)(ulEncryptedDataLen - KEYWRAP_BLOCK_SIZE);
+            if (pData == NULL) {
+                /* Exact length is known only after unwrapping; report the
+                 * ciphertext - 8 upper bound for the length query. */
+                *pulDataLen = decDataLen;
+                return CKR_OK;
+            }
+
+            /* The recovered length is not known until the AIV is decoded, so
+             * do not pre-reject against the upper bound. Unwrap into the caller
+             * buffer; if it does not fit, the unwrap reports the exact required
+             * size via decDataLen. */
+            decDataLen = (word32)*pulDataLen;
+            ret = WP11_AesKeyWrapPad_Decrypt(pEncryptedData,
+                    (word32)ulEncryptedDataLen, pData, &decDataLen, session);
+            if (ret == BUFFER_E) {
+                *pulDataLen = decDataLen;
+                WP11_Session_SetOpInitialized(session, 0);
+                return CKR_BUFFER_TOO_SMALL;
+            }
+            if (ret != 0)
+                break;
             *pulDataLen = decDataLen;
             break;
     #endif

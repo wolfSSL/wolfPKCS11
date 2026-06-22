@@ -388,8 +388,15 @@ typedef struct WP11_GcmParams {
     int tagBits;                       /* Authentication tag size in bits     */
     unsigned char authTag[WP11_MAX_GCM_TAG_SZ];
                                        /* Authentication tag calculated       */
-    unsigned char* enc;                /* Encrypted data - cached for decrypt */
-    int encSz;                         /* Size of encrypted data in bytes     */
+    unsigned char* enc;                /* Cached data for multi-part: buffered */
+                                       /* ciphertext (decrypt) or, without     */
+                                       /* streaming GCM, plaintext (encrypt)   */
+    int encSz;                         /* Size of cached data in bytes         */
+#ifdef WOLFSSL_AESGCM_STREAM
+    Aes aes;                           /* Streaming context for multi-part    */
+                                       /* encrypt                             */
+    int streamInit;                    /* Streaming context is initialized    */
+#endif
 } WP11_GcmParams;
 #endif
 
@@ -955,6 +962,12 @@ static void wp11_Session_Final(WP11_Session* session)
             XFREE(session->params.gcm.enc, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             session->params.gcm.enc = NULL;
         }
+#ifdef WOLFSSL_AESGCM_STREAM
+        if (session->params.gcm.streamInit) {
+            wc_AesFree(&session->params.gcm.aes);
+            session->params.gcm.streamInit = 0;
+        }
+#endif
     }
 #endif
 #ifdef HAVE_AESCTS
@@ -3618,31 +3631,51 @@ static int WP11_Object_DecodeTpmKey(WP11_Object* object)
 {
     int ret = 0;
     word32 idx = 0;
+    word32 keyDataLen;
     UINT16 pubAreaSize = 0;
-    byte pubAreaBuffer[sizeof(TPM2B_PUBLIC)];
+    /* Largest valid marshalled public area: the TPM2B_PUBLIC payload, i.e. the
+     * structure without its UINT16 size prefix. */
+    const word32 maxPubAreaSize = (word32)sizeof(TPM2B_PUBLIC) -
+                                  (word32)sizeof(UINT16);
 
     if (object == NULL || object->keyData == NULL || object->slot == NULL) {
         return BAD_FUNC_ARG;
     }
+    /* keyData is loaded from on-disk storage and is not covered by the token
+     * master key, so treat keyDataLen as untrusted and bounds-check every
+     * read against it. Layout: pubAreaSize | public(2+pubAreaSize) |
+     * priv.size | priv.buffer(priv.size). */
+    if (object->keyDataLen < 0)
+        return BUFFER_E;
+    keyDataLen = (word32)object->keyDataLen;
 
     /* Extract public size */
+    if (keyDataLen < idx + (word32)sizeof(pubAreaSize))
+        return BUFFER_E;
     XMEMCPY(&pubAreaSize, object->keyData, sizeof(pubAreaSize));
     idx += sizeof(pubAreaSize);
-    if (pubAreaSize <= (UINT16)sizeof(pubAreaBuffer)) {
-        /* Parse public */
-        /* TODO: pass: sizeof(UINT16) + pubAreaSize (see wolfTPM PR 419) */
+    if ((word32)pubAreaSize <= maxPubAreaSize) {
+        /* Parse public. The public blob is sizeof(UINT16) + pubAreaSize bytes;
+         * pass the remaining keyData length so the parser cannot read past the
+         * blob. */
         int parsedPubSize = pubAreaSize;
+        if (keyDataLen < idx + (word32)sizeof(UINT16) + (word32)pubAreaSize)
+            return BUFFER_E;
         ret = TPM2_ParsePublic(&object->tpmKey->pub, object->keyData + idx,
-            sizeof(object->tpmKey->pub), &parsedPubSize);
+            keyDataLen - idx, &parsedPubSize);
         if (ret == 0) {
             idx += sizeof(UINT16) + pubAreaSize;
 
+            if (keyDataLen < idx + (word32)sizeof(object->tpmKey->priv.size))
+                return BUFFER_E;
             XMEMCPY(&object->tpmKey->priv.size, object->keyData + idx,
                 sizeof(object->tpmKey->priv.size));
             if (object->tpmKey->priv.size <
                                     (int)sizeof(object->tpmKey->priv.buffer)) {
                 idx += sizeof(object->tpmKey->priv.size);
                 /* Extract private size and private */
+                if (keyDataLen < idx + (word32)object->tpmKey->priv.size)
+                    return BUFFER_E;
                 XMEMCPY(object->tpmKey->priv.buffer, object->keyData + idx,
                     object->tpmKey->priv.size);
             }
@@ -3681,6 +3714,38 @@ static int WP11_Object_DecodeTpmKey(WP11_Object* object)
 
     return ret;
 }
+
+#ifdef DEBUG_WOLFPKCS11
+/**
+ * Test hook: run WP11_Object_DecodeTpmKey against a caller-supplied keyData
+ * blob to exercise the storage-blob bounds checks without a live TPM. A
+ * truncated blob must return BUFFER_E rather than read past the buffer.
+ *
+ * @param  slotId      [in]  Slot id (1-based).
+ * @param  keyData     [in]  Encoded TPM key blob (possibly truncated).
+ * @param  keyDataLen  [in]  Length of keyData in bytes.
+ * @return  decode status; BUFFER_E for a short/truncated blob.
+ */
+WP11_API int WP11_Test_DecodeTpmKey(CK_SLOT_ID slotId, unsigned char* keyData,
+    int keyDataLen)
+{
+    WP11_Slot* slot = NULL;
+    WP11_Object object;
+    WOLFTPM2_KEYBLOB blob;
+
+    if (WP11_Slot_Get(slotId, &slot) != 0 || slot == NULL)
+        return BAD_FUNC_ARG;
+
+    XMEMSET(&object, 0, sizeof(object));
+    XMEMSET(&blob, 0, sizeof(blob));
+    object.slot = slot;
+    object.tpmKey = &blob;
+    object.keyData = keyData;
+    object.keyDataLen = keyDataLen;
+
+    return WP11_Object_DecodeTpmKey(&object);
+}
+#endif /* DEBUG_WOLFPKCS11 */
 
 static int WP11_Object_WrapTpmKey(WP11_Object* object); /* forward declaration */
 
@@ -7623,6 +7688,34 @@ void WP11_Slot_Logout(WP11_Slot* slot)
 
     WP11_Lock_UnlockRW(&slot->lock);
 }
+
+#ifdef DEBUG_WOLFPKCS11
+/**
+ * Test hook: report whether a slot's token object-encryption key is zeroized.
+ * Exposed only in debug builds so a white-box test can observe the logout
+ * scrub that has no PKCS#11-visible effect.
+ *
+ * @param  slotId  [in]  Slot id (1-based, as used by the PKCS#11 API).
+ * @return  1 when the key buffer is all zero, 0 when any byte is set,
+ *          -1 on a bad slot id.
+ */
+WP11_API int WP11_Slot_TokenKeyIsZero(CK_SLOT_ID slotId)
+{
+    WP11_Slot* slot = NULL;
+    size_t i;
+    byte acc = 0;
+
+    if (WP11_Slot_Get(slotId, &slot) != 0 || slot == NULL)
+        return -1;
+
+    WP11_Lock_LockRO(&slot->lock);
+    for (i = 0; i < sizeof(slot->token.key); i++)
+        acc |= slot->token.key[i];
+    WP11_Lock_UnlockRO(&slot->lock);
+
+    return acc == 0 ? 1 : 0;
+}
+#endif /* DEBUG_WOLFPKCS11 */
 
 /**
  * Retrieve the token's label.
@@ -14726,16 +14819,113 @@ int WP11_AesGcm_Encrypt(unsigned char* plain, word32 plainSz,
  * @return  -ve on encryption failure.
  *          0 on success.
  */
+/**
+ * Append data to the GCM accumulation buffer (gcm->enc). Used to buffer
+ * plaintext for multi-part encrypt and ciphertext for multi-part decrypt.
+ *
+ * @param  gcm     [in]  GCM parameters holding the buffer.
+ * @param  data    [in]  Data to append.
+ * @param  dataSz  [in]  Length of data in bytes.
+ * @return  MEMORY_E on allocation failure.
+ *          0 on success.
+ */
+#ifndef WOLFSSL_AESGCM_STREAM
+static int wp11_AesGcm_BufferAppend(WP11_GcmParams* gcm, unsigned char* data,
+                                    word32 dataSz)
+{
+    unsigned char* newBuf;
+
+#ifdef XREALLOC
+    newBuf = (unsigned char*)XREALLOC(gcm->enc, gcm->encSz + dataSz, NULL,
+                                      DYNAMIC_TYPE_TMP_BUFFER);
+    if (newBuf == NULL)
+        return MEMORY_E;
+    gcm->enc = newBuf;
+    XMEMCPY(gcm->enc + gcm->encSz, data, dataSz);
+    gcm->encSz += dataSz;
+#else
+    newBuf = (unsigned char*)XMALLOC(gcm->encSz + dataSz, NULL,
+                                     DYNAMIC_TYPE_TMP_BUFFER);
+    if (newBuf == NULL)
+        return MEMORY_E;
+    if (gcm->enc != NULL)
+        XMEMCPY(newBuf, gcm->enc, gcm->encSz);
+    XFREE(gcm->enc, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    gcm->enc = newBuf;
+    XMEMCPY(gcm->enc + gcm->encSz, data, dataSz);
+    gcm->encSz += dataSz;
+#endif
+
+    return 0;
+}
+#endif /* !WOLFSSL_AESGCM_STREAM */
+
 int WP11_AesGcm_EncryptUpdate(unsigned char* plain, word32 plainSz,
                               unsigned char* enc, word32* encSz,
                               WP11_Object* secret, WP11_Session* session)
 {
+    WP11_GcmParams* gcm = &session->params.gcm;
+#ifdef WOLFSSL_AESGCM_STREAM
+    int ret;
+    WP11_Data* key;
+
+    /* Stream the segment with wolfCrypt's GCM streaming API so the whole
+     * message need not be buffered. Each update emits its own ciphertext; the
+     * tag is produced at C_EncryptFinal. */
+    if (!gcm->streamInit) {
+        ret = wc_AesInit(&gcm->aes, NULL, secret->devId);
+        if (ret == 0) {
+            if (secret->onToken)
+                WP11_Lock_LockRO(secret->lock);
+            key = secret->data.symmKey;
+            ret = wc_AesGcmInit(&gcm->aes, key->data, key->len, gcm->iv,
+                                                                    gcm->ivSz);
+            if (secret->onToken)
+                WP11_Lock_UnlockRO(secret->lock);
+        }
+        if (ret != 0)
+            return ret;
+        gcm->streamInit = 1;
+    }
+
+    /* AAD is authenticated once, on the first update. */
+    ret = wc_AesGcmEncryptUpdate(&gcm->aes, enc, plain, plainSz, gcm->aad,
+                                                                   gcm->aadSz);
+    if (ret == 0) {
+        *encSz = plainSz;
+        if (gcm->aad != NULL) {
+            XFREE(gcm->aad, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            gcm->aad = NULL;
+            gcm->aadSz = 0;
+        }
+    }
+
+    return ret;
+#else
     int ret;
     Aes aes;
     WP11_Data* key;
-    WP11_GcmParams* gcm = &session->params.gcm;
     word32 authTagSz = gcm->tagBits / 8;
-    unsigned char* authTag = gcm->authTag;
+    word32 oldSz = (word32)gcm->encSz;
+    unsigned char* fullEnc = NULL;
+
+    /* No streaming API available: buffer the plaintext and encrypt the whole
+     * accumulated message under the single IV. GCM is a stream cipher, so this
+     * segment's ciphertext is the tail of the accumulated ciphertext.
+     * Re-encrypting each update keeps the tag over the full message and the
+     * AAD authenticated until C_EncryptFinal, matching the single-shot
+     * result. */
+    ret = wp11_AesGcm_BufferAppend(gcm, plain, plainSz);
+    if (ret != 0)
+        return ret;
+    if (gcm->encSz == 0) {
+        *encSz = 0;
+        return 0;
+    }
+
+    fullEnc = (unsigned char*)XMALLOC(gcm->encSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    if (fullEnc == NULL)
+        return MEMORY_E;
 
     ret = wc_AesInit(&aes, NULL, secret->devId);
     if (ret == 0) {
@@ -14747,21 +14937,21 @@ int WP11_AesGcm_EncryptUpdate(unsigned char* plain, word32 plainSz,
             WP11_Lock_UnlockRO(secret->lock);
 
         if (ret == 0)
-            ret = wc_AesGcmEncrypt(&aes, enc, plain, plainSz, gcm->iv,
-                                        gcm->ivSz, authTag, authTagSz, gcm->aad,
-                                        gcm->aadSz);
-        if (ret == 0)
+            ret = wc_AesGcmEncrypt(&aes, fullEnc, gcm->enc, (word32)gcm->encSz,
+                                        gcm->iv, gcm->ivSz, gcm->authTag,
+                                        authTagSz, gcm->aad, gcm->aadSz);
+        if (ret == 0) {
+            XMEMCPY(enc, fullEnc + oldSz, plainSz);
             *encSz = plainSz;
-
-        if (gcm->aad != NULL) {
-            XFREE(gcm->aad, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-            gcm->aad = NULL;
         }
 
         wc_AesFree(&aes);
     }
 
+    XFREE(fullEnc, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+
     return ret;
+#endif /* WOLFSSL_AESGCM_STREAM */
 }
 
 /**
@@ -14776,18 +14966,90 @@ int WP11_AesGcm_EncryptUpdate(unsigned char* plain, word32 plainSz,
  *          0 on success.
  */
 int WP11_AesGcm_EncryptFinal(unsigned char* enc, word32* encSz,
-                             WP11_Session* session)
+                             WP11_Object* secret, WP11_Session* session)
 {
     int ret = 0;
     WP11_GcmParams* gcm = &session->params.gcm;
     word32 authTagSz = gcm->tagBits / 8;
 
     if (*encSz < authTagSz)
-        ret = BUFFER_E;
-    if (ret == 0) {
+        return BUFFER_E;
+
+#ifdef WOLFSSL_AESGCM_STREAM
+    {
+        WP11_Data* key;
+
+        if (!gcm->streamInit) {
+            /* No update was issued: produce the tag over the empty message. */
+            ret = wc_AesInit(&gcm->aes, NULL, secret->devId);
+            if (ret == 0) {
+                if (secret->onToken)
+                    WP11_Lock_LockRO(secret->lock);
+                key = secret->data.symmKey;
+                ret = wc_AesGcmInit(&gcm->aes, key->data, key->len, gcm->iv,
+                                                                    gcm->ivSz);
+                if (secret->onToken)
+                    WP11_Lock_UnlockRO(secret->lock);
+            }
+            if (ret == 0) {
+                gcm->streamInit = 1;
+                ret = wc_AesGcmEncryptUpdate(&gcm->aes, NULL, NULL, 0, gcm->aad,
+                                                                   gcm->aadSz);
+            }
+        }
+        if (ret == 0)
+            ret = wc_AesGcmEncryptFinal(&gcm->aes, enc, authTagSz);
+        if (ret == 0)
+            *encSz = authTagSz;
+
+        if (gcm->streamInit) {
+            wc_AesFree(&gcm->aes);
+            gcm->streamInit = 0;
+        }
+    }
+#else
+    if (gcm->encSz > 0) {
+        /* The final EncryptUpdate computed the tag over the whole message. */
         XMEMCPY(enc, gcm->authTag, authTagSz);
         *encSz = authTagSz;
     }
+    else {
+        /* No data buffered: the tag is over the empty message and the AAD. */
+        Aes aes;
+        WP11_Data* key;
+
+        ret = wc_AesInit(&aes, NULL, secret->devId);
+        if (ret == 0) {
+            if (secret->onToken)
+                WP11_Lock_LockRO(secret->lock);
+            key = secret->data.symmKey;
+            ret = wc_AesGcmSetKey(&aes, key->data, key->len);
+            if (secret->onToken)
+                WP11_Lock_UnlockRO(secret->lock);
+
+            if (ret == 0)
+                ret = wc_AesGcmEncrypt(&aes, enc, NULL, 0, gcm->iv, gcm->ivSz,
+                                            enc, authTagSz, gcm->aad,
+                                            gcm->aadSz);
+            if (ret == 0)
+                *encSz = authTagSz;
+
+            wc_AesFree(&aes);
+        }
+    }
+
+    if (gcm->enc != NULL) {
+        XFREE(gcm->enc, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        gcm->enc = NULL;
+    }
+    gcm->encSz = 0;
+#endif /* WOLFSSL_AESGCM_STREAM */
+
+    if (gcm->aad != NULL) {
+        XFREE(gcm->aad, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        gcm->aad = NULL;
+    }
+    gcm->aadSz = 0;
 
     return ret;
 }
@@ -15197,6 +15459,205 @@ int WP11_AesKeyWrap_Decrypt(unsigned char* enc, word32 encSz,
         return ret;
     *decSz = ret;
     return 0;
+}
+
+/**
+ * RFC 3394 key unwrap core that returns the recovered integrity register A
+ * instead of verifying it, so RFC 5649 can inspect the AIV (which encodes the
+ * length being recovered). Mirrors wc_AesKeyUnWrap_ex. The padded plaintext
+ * (inSz - 8 bytes) is written to out and the recovered A to aOut.
+ */
+static int wp11_AesKeyUnwrapRaw(Aes* aes, const unsigned char* in, word32 inSz,
+        unsigned char* out, unsigned char* aOut)
+{
+    unsigned char a[KEYWRAP_BLOCK_SIZE];
+    unsigned char t[KEYWRAP_BLOCK_SIZE];
+    unsigned char tmp[2 * KEYWRAP_BLOCK_SIZE];
+    unsigned char* r;
+    word32 n = (inSz / KEYWRAP_BLOCK_SIZE) - 1;
+    word32 i;
+    word32 cnt = 6 * n;
+    int j, k;
+    int ret = 0;
+
+    XMEMCPY(a, in, KEYWRAP_BLOCK_SIZE);
+    XMEMCPY(out, in + KEYWRAP_BLOCK_SIZE, inSz - KEYWRAP_BLOCK_SIZE);
+
+    /* t = 6n as a big-endian 64-bit counter. */
+    XMEMSET(t, 0, sizeof(t));
+    t[7] = (unsigned char)(cnt);
+    t[6] = (unsigned char)(cnt >> 8);
+    t[5] = (unsigned char)(cnt >> 16);
+    t[4] = (unsigned char)(cnt >> 24);
+
+    for (j = 5; j >= 0; j--) {
+        for (i = n; i >= 1; i--) {
+            /* A ^= t */
+            for (k = 0; k < KEYWRAP_BLOCK_SIZE; k++)
+                a[k] ^= t[k];
+            /* t-- */
+            for (k = KEYWRAP_BLOCK_SIZE - 1; k >= 0; k--) {
+                t[k]--;
+                if (t[k] != 0xFF)
+                    break;
+            }
+            r = out + (i - 1) * KEYWRAP_BLOCK_SIZE;
+            XMEMCPY(tmp, a, KEYWRAP_BLOCK_SIZE);
+            XMEMCPY(tmp + KEYWRAP_BLOCK_SIZE, r, KEYWRAP_BLOCK_SIZE);
+            ret = wc_AesDecryptDirect(aes, tmp, tmp);
+            if (ret != 0)
+                break;
+            XMEMCPY(a, tmp, KEYWRAP_BLOCK_SIZE);
+            XMEMCPY(r, tmp + KEYWRAP_BLOCK_SIZE, KEYWRAP_BLOCK_SIZE);
+        }
+        if (ret != 0)
+            break;
+    }
+
+    XMEMCPY(aOut, a, KEYWRAP_BLOCK_SIZE);
+    wc_ForceZero(tmp, sizeof(tmp));
+    return ret;
+}
+
+/* RFC 5649 AIV fixed prefix. */
+static const unsigned char wp11_kwp_aiv[4] = { 0xA6, 0x59, 0x59, 0xA6 };
+
+/**
+ * AES Key Wrap with Padding (RFC 5649) - wrap direction.
+ * Wraps plainSz (>= 1) bytes from plain into enc. On success *encSz is set to
+ * the wrapped length, roundup8(plainSz) + 8 bytes.
+ */
+int WP11_AesKeyWrapPad_Encrypt(unsigned char* plain, word32 plainSz,
+        unsigned char* enc, word32* encSz, WP11_Session* session)
+{
+    int ret = 0;
+    WP11_KeyWrapParams *wrap = &session->params.kw;
+    word32 padded = (plainSz + KEYWRAP_BLOCK_SIZE - 1) &
+                    ~(word32)(KEYWRAP_BLOCK_SIZE - 1);
+    word32 outLen = padded + KEYWRAP_BLOCK_SIZE;
+    unsigned char aiv[KEYWRAP_BLOCK_SIZE];
+    unsigned char* buf = NULL;
+
+    if (plainSz == 0)
+        ret = BAD_FUNC_ARG;
+    if (ret == 0 && *encSz < outLen)
+        ret = BUFFER_E;
+    if (ret == 0) {
+        buf = (unsigned char*)XMALLOC(padded, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (buf == NULL)
+            ret = MEMORY_E;
+    }
+    if (ret == 0) {
+        /* AIV = A65959A6 || MLI (big-endian 32-bit plaintext length). */
+        XMEMCPY(aiv, wp11_kwp_aiv, sizeof(wp11_kwp_aiv));
+        aiv[4] = (unsigned char)(plainSz >> 24);
+        aiv[5] = (unsigned char)(plainSz >> 16);
+        aiv[6] = (unsigned char)(plainSz >> 8);
+        aiv[7] = (unsigned char)(plainSz);
+
+        XMEMCPY(buf, plain, plainSz);
+        XMEMSET(buf + plainSz, 0, padded - plainSz);
+
+        if (padded == KEYWRAP_BLOCK_SIZE) {
+            /* Single semiblock: ECB-encrypt AIV || padded plaintext. */
+            unsigned char block[2 * KEYWRAP_BLOCK_SIZE];
+            XMEMCPY(block, aiv, KEYWRAP_BLOCK_SIZE);
+            XMEMCPY(block + KEYWRAP_BLOCK_SIZE, buf, KEYWRAP_BLOCK_SIZE);
+            ret = wc_AesEncryptDirect(&wrap->aes, enc, block);
+            wc_ForceZero(block, sizeof(block));
+        }
+        else {
+            /* Multi-block: RFC 3394 wrap with the AIV as the initial value. */
+            ret = wc_AesKeyWrap_ex(&wrap->aes, buf, padded, enc, *encSz, aiv);
+            if (ret >= 0)
+                ret = 0;
+        }
+        if (ret == 0)
+            *encSz = outLen;
+    }
+
+    if (buf != NULL) {
+        wc_ForceZero(buf, padded);
+        XFREE(buf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    }
+    wc_AesFree(&wrap->aes);
+    session->init = 0;
+    return ret;
+}
+
+/**
+ * AES Key Wrap with Padding (RFC 5649) - unwrap direction.
+ * Recovers the original plaintext from enc into dec. On success *decSz is set to
+ * the recovered plaintext length.
+ */
+int WP11_AesKeyWrapPad_Decrypt(unsigned char* enc, word32 encSz,
+        unsigned char* dec, word32* decSz, WP11_Session* session)
+{
+    int ret = 0;
+    WP11_KeyWrapParams *wrap = &session->params.kw;
+    unsigned char aiv[KEYWRAP_BLOCK_SIZE];
+    unsigned char* padBuf = NULL;
+    word32 paddedSz = encSz - KEYWRAP_BLOCK_SIZE;
+    word32 mli = 0;
+    word32 i;
+    int bad = 0;
+
+    if (encSz < 2 * KEYWRAP_BLOCK_SIZE || (encSz % KEYWRAP_BLOCK_SIZE) != 0)
+        return BUFFER_E;
+
+    padBuf = (unsigned char*)XMALLOC(paddedSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    if (padBuf == NULL)
+        return MEMORY_E;
+
+    if (encSz == 2 * KEYWRAP_BLOCK_SIZE) {
+        /* Single semiblock: ECB-decrypt to AIV || padded plaintext. */
+        unsigned char block[2 * KEYWRAP_BLOCK_SIZE];
+        ret = wc_AesDecryptDirect(&wrap->aes, block, enc);
+        if (ret == 0) {
+            XMEMCPY(aiv, block, KEYWRAP_BLOCK_SIZE);
+            XMEMCPY(padBuf, block + KEYWRAP_BLOCK_SIZE, KEYWRAP_BLOCK_SIZE);
+        }
+        wc_ForceZero(block, sizeof(block));
+    }
+    else {
+        /* Multi-block: RFC 3394 unwrap recovering the AIV. */
+        ret = wp11_AesKeyUnwrapRaw(&wrap->aes, enc, encSz, padBuf, aiv);
+    }
+
+    if (ret == 0) {
+        /* Verify the AIV prefix and recover the message length indicator. */
+        if (XMEMCMP(aiv, wp11_kwp_aiv, sizeof(wp11_kwp_aiv)) != 0)
+            bad = 1;
+        mli = ((word32)aiv[4] << 24) | ((word32)aiv[5] << 16) |
+              ((word32)aiv[6] << 8) | (word32)aiv[7];
+        /* roundup8(mli) must equal paddedSz: paddedSz-8 < mli <= paddedSz. */
+        if (mli > paddedSz || mli + KEYWRAP_BLOCK_SIZE <= paddedSz)
+            bad = 1;
+        if (!bad) {
+            /* Padding octets must be zero. */
+            for (i = mli; i < paddedSz; i++) {
+                if (padBuf[i] != 0)
+                    bad = 1;
+            }
+        }
+        if (bad)
+            ret = BAD_KEYWRAP_IV_E;
+        else if (mli > *decSz) {
+            /* Report the required plaintext length to the caller. */
+            *decSz = mli;
+            ret = BUFFER_E;
+        }
+        else {
+            XMEMCPY(dec, padBuf, mli);
+            *decSz = mli;
+        }
+    }
+
+    wc_ForceZero(padBuf, paddedSz);
+    XFREE(padBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    wc_AesFree(&wrap->aes);
+    session->init = 0;
+    return ret;
 }
 #endif /* HAVE_AES_KEYWRAP */
 
