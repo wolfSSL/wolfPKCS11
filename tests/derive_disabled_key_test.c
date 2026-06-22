@@ -70,8 +70,8 @@ static CK_SLOT_ID slot = 0;
 static const char* tokenName = "wolfpkcs11";
 static byte* soPin = (byte*)"password123456";
 static int soPinLen = 14;
-static byte* userPin = (byte*)"someUserPin";
-static int userPinLen = 11;
+static byte* userPin = (byte*)"wolfpkcs11-test";
+static int userPinLen = 15;
 
 #define CHECK_CKR(rv, op) do {                              \
     if (rv != CKR_OK) {                                     \
