@@ -9951,6 +9951,7 @@ int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
 {
     int ret = 0;
     WP11_Data* key;
+    CK_ULONG keyLen = 0;
 
     if (object->onToken)
         WP11_Lock_LockRW(object->lock);
@@ -9962,22 +9963,35 @@ int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
     /* First item is the key's length. */
     if (ret == 0 && data[0] != NULL && len[0] != (int)sizeof(CK_ULONG))
         ret = BAD_FUNC_ARG;
+    if (ret == 0 && data[0] != NULL) {
+        keyLen = *(CK_ULONG*)data[0];
+        /* Bound the requested length against the fixed key buffer before
+         * narrowing to word32. This rejects oversized values and values that
+         * would not fit a word32, neither of which may be stored in key->len
+         * as that drives copies and zeroization of key->data. */
+        if (keyLen > WP11_MAX_SYM_KEY_SZ)
+            ret = BUFFER_E;
+    }
 #if !defined(NO_AES) && !defined(WOLFPKCS11_NSS)
     if (ret == 0 && object->type == CKK_AES && data[0] != NULL) {
-        if (*(CK_ULONG*)data[0] != AES_128_KEY_SIZE &&
-            *(CK_ULONG*)data[0] != AES_192_KEY_SIZE &&
-            *(CK_ULONG*)data[0] != AES_256_KEY_SIZE) {
+        if (keyLen != AES_128_KEY_SIZE &&
+            keyLen != AES_192_KEY_SIZE &&
+            keyLen != AES_256_KEY_SIZE) {
             ret = BAD_FUNC_ARG;
         }
     }
 #endif
     if (ret == 0 && data[0] != NULL)
-        key->len = (word32)*(CK_ULONG*)data[0];
+        key->len = (word32)keyLen;
 
     /* Second item is the key data. */
     if (ret == 0 && data[1] != NULL) {
-        if (key->len == 0)
-            key->len = (word32)len[1];
+        if (key->len == 0) {
+            if (len[1] > WP11_MAX_SYM_KEY_SZ)
+                ret = BUFFER_E;
+            else
+                key->len = (word32)len[1];
+        }
         else if (len[1] != (CK_ULONG)key->len)
             ret = BUFFER_E;
     }
@@ -9985,6 +9999,11 @@ int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
         ret = BUFFER_E;
     if (ret == 0 && data[1] != NULL)
         XMEMCPY(key->data, data[1], key->len);
+
+    /* On any error, record no length so later teardown does not zeroize or
+     * copy past the fixed key buffer. */
+    if (ret != 0)
+        key->len = 0;
 
     if (object->onToken)
         WP11_Lock_UnlockRW(object->lock);
