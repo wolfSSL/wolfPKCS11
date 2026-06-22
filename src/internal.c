@@ -5245,7 +5245,15 @@ static int wp11_Object_Decode_SymmKey(WP11_Object* object)
 {
     int ret = 0;
 
-    if (object->keyDataLen - AES_BLOCK_SIZE > WP11_MAX_SYM_KEY_SZ)
+    /* keyDataLen is signed and covers the encrypted payload plus the trailing
+     * AES_BLOCK_SIZE tag. Reject lengths below the tag so the payload length
+     * below cannot go negative when used as an unsigned length. A length of
+     * exactly AES_BLOCK_SIZE is a valid zero-byte secret: the encoder writes
+     * symmKey->len + AES_BLOCK_SIZE, so a zero-length key must still load. */
+    if (object->keyDataLen < AES_BLOCK_SIZE)
+        ret = BAD_FUNC_ARG;
+    if (ret == 0 &&
+            (word32)(object->keyDataLen - AES_BLOCK_SIZE) > WP11_MAX_SYM_KEY_SZ)
         ret = BUFFER_E;
     if (ret == 0) {
         ret = wp11_DecryptData(object->data.symmKey->data, object->keyData,
