@@ -12711,12 +12711,18 @@ int WP11_Rsa_Verify_Recover(CK_MECHANISM_TYPE mechanism, unsigned char* sig,
         case CKM_RSA_X_509: {
             byte* data_out = NULL;
             byte* pos;
-            ret =  wc_RsaDirect(sig, sigLen, out, (word32*)outLen,
+            /* wc_RsaDirect writes a word32 through the length pointer. Use a
+             * local word32 rather than casting the CK_ULONG_PTR so that only
+             * the low word of *outLen is not partially updated; assign the
+             * result back on success. */
+            word32 tmpLen = (word32)*outLen;
+            ret =  wc_RsaDirect(sig, sigLen, out, &tmpLen,
                                 pub->data.rsaKey, RSA_PUBLIC_DECRYPT, NULL);
             if (ret < 0) {
                 ret = CKR_FUNCTION_FAILED;
             }
             else {
+                *outLen = tmpLen;
                 ret = CKR_OK;
                 /* Result is front padded with 0x00 */
                 for (pos = out; pos < out + *outLen; pos++) {
