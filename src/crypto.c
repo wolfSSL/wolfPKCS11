@@ -537,6 +537,29 @@ static CK_RV SetIfNotFound(WP11_Object* obj, CK_ATTRIBUTE_TYPE type,
     return ret;
 }
 
+/* NSS uses wolfPKCS11 as its internal crypto module and relies on the
+ * historical permissive behavior: it reads key material directly via
+ * C_GetAttributeValue, derives from ephemeral keys without CKA_DERIVE, and
+ * uses multi-purpose RSA keys. Selecting NSS support therefore enables all of
+ * the "reverting" macros below, so the secure-default and enforcement
+ * hardening (F-4063, F-4064, F-4533, F-5519, F-5520) applies only to non-NSS
+ * builds. The hardening can still be toggled independently in non-NSS builds
+ * via the individual WOLFPKCS11_LEGACY_* macros. */
+#ifdef WOLFPKCS11_NSS
+    #ifndef WP11_NSS_PERMISSIVE_KEY_DEFAULTS
+        #define WP11_NSS_PERMISSIVE_KEY_DEFAULTS        /* F-4063, F-4064 */
+    #endif
+    #ifndef WOLFPKCS11_LEGACY_EXTRACTABLE_TRUE_DEFAULT
+        #define WOLFPKCS11_LEGACY_EXTRACTABLE_TRUE_DEFAULT  /* F-5519 */
+    #endif
+    #ifndef WOLFPKCS11_LEGACY_RSA_USAGE_DEFAULT
+        #define WOLFPKCS11_LEGACY_RSA_USAGE_DEFAULT     /* F-5520 */
+    #endif
+    #ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
+        #define WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT     /* F-4533 */
+    #endif
+#endif
+
 static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
                                   CK_ATTRIBUTE_PTR pTemplate,
                                   CK_ULONG ulCount)
@@ -647,14 +670,19 @@ static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
                 ret = SetIfNotFound(obj, CKA_PRIVATE, trueVal, pTemplate,
                                     ulCount);
 #endif
-#ifndef WOLFPKCS11_NSS
+            /* F-4063: default secret keys to CKA_SENSITIVE=CK_TRUE. */
+#ifndef WP11_NSS_PERMISSIVE_KEY_DEFAULTS
             if (ret == CKR_OK)
                 ret = SetIfNotFound(obj, CKA_SENSITIVE, trueVal, pTemplate,
                                     ulCount);
 #endif
+            /* F-5519: default secret keys to CKA_EXTRACTABLE=CK_FALSE so they
+             * are not wrap-exportable unless the template opts in. */
+#ifdef WOLFPKCS11_LEGACY_EXTRACTABLE_TRUE_DEFAULT
             if (ret == CKR_OK)
                 ret = SetIfNotFound(obj, CKA_EXTRACTABLE, trueVal, pTemplate,
                                     ulCount);
+#endif
             if (ret == CKR_OK)
                 ret = SetIfNotFound(obj, CKA_ENCRYPT, trueVal, pTemplate,
                                     ulCount);
@@ -678,7 +706,9 @@ static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
                 ret = SetIfNotFound(obj, CKA_PRIVATE, trueVal, pTemplate,
                                     ulCount);
 #endif
-#ifndef WOLFPKCS11_NSS
+            /* F-4063: default private keys to CKA_SENSITIVE=CK_TRUE and
+             * CKA_EXTRACTABLE=CK_FALSE. */
+#ifndef WP11_NSS_PERMISSIVE_KEY_DEFAULTS
             if (ret == CKR_OK)
                 ret = SetIfNotFound(obj, CKA_SENSITIVE, trueVal, pTemplate,
                                     ulCount);
@@ -692,6 +722,17 @@ static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
             if (ret == CKR_OK)
                 ret = SetIfNotFound(obj, CKA_EXTRACTABLE, trueVal, pTemplate,
                                     ulCount);
+#endif
+            /* F-5520: RSA private-key usage is opt-in. A minimal template
+             * otherwise grants CKA_DECRYPT, CKA_SIGN and CKA_SIGN_RECOVER all
+             * at once, so a key intended for one purpose is silently accepted
+             * for several. Require each use to be requested explicitly. */
+#ifndef WOLFPKCS11_LEGACY_RSA_USAGE_DEFAULT
+            if (type == CKK_RSA) {
+                encrypt = CK_FALSE;  /* CKA_DECRYPT */
+                sign    = CK_FALSE;  /* CKA_SIGN */
+                recover = CK_FALSE;  /* CKA_SIGN_RECOVER */
+            }
 #endif
             if (ret == CKR_OK)
                 ret = SetIfNotFound(obj, CKA_DECRYPT, encrypt, pTemplate,
@@ -8608,6 +8649,12 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
     CK_ULONG symmKeyLen;
     unsigned char* secretKeyData[2] = { NULL, NULL };
     CK_ULONG secretKeyLen[2] = { 0, 0 };
+#ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
+    /* F-4533: protection attributes inherited from the base key. */
+    CK_BBOOL baseSensitive = CK_FALSE;
+    CK_BBOOL baseExtractable = CK_TRUE;
+    CK_ULONG bLen;
+#endif
 #endif
 
     WOLFPKCS11_ENTER("C_DeriveKey");
@@ -8662,11 +8709,11 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
     if (ret != 0)
         return CKR_OBJECT_HANDLE_INVALID;
 
-#ifndef WOLFPKCS11_NSS
-    /* Spec-compliance gate: reject keys whose CKA_DERIVE is CK_FALSE. NSS
-     * generates ephemeral EC keys for TLS ECDHE without explicitly setting
-     * CKA_DERIVE=CK_TRUE and relies on the historic permissive behavior, so
-     * skip this check in NSS builds. */
+    /* F-4064: spec-compliance gate - reject keys whose CKA_DERIVE is CK_FALSE.
+     * Skipped for NSS, which generates ephemeral EC keys for TLS ECDHE without
+     * setting CKA_DERIVE=CK_TRUE and relies on the historic permissive
+     * behavior (WP11_NSS_PERMISSIVE_KEY_DEFAULTS is auto-enabled for NSS). */
+#ifndef WP11_NSS_PERMISSIVE_KEY_DEFAULTS
     ret = CheckOpSupported(obj, CKA_DERIVE);
     if (ret != CKR_OK)
         return ret;
@@ -8955,7 +9002,43 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
 #if defined(HAVE_ECC) || !defined(NO_DH) || defined(WOLFPKCS11_HKDF) || \
     (!defined(NO_AES) && defined(HAVE_AES_CBC))
     if ((ret == 0) && (derivedKey != NULL)) {
+#if (defined(HAVE_ECC) || !defined(NO_DH) || defined(WOLFPKCS11_HKDF)) && \
+    !defined(WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT)
+        /* F-4533: read the base key's protection bits while `obj' still
+         * refers to it, before CreateObject reuses `obj' for the new key. */
+        bLen = sizeof(CK_BBOOL);
+        if (WP11_Object_GetAttr(obj, CKA_SENSITIVE, &baseSensitive, &bLen) != 0)
+            baseSensitive = CK_FALSE;
+        bLen = sizeof(CK_BBOOL);
+        if (WP11_Object_GetAttr(obj, CKA_EXTRACTABLE, &baseExtractable,
+                                &bLen) != 0)
+            baseExtractable = CK_TRUE;
+#endif
         rv = CreateObject(session, pTemplate, ulAttributeCount, &obj);
+        if (rv == CKR_OK) {
+            /* obj now refers to the newly created derived key. */
+#if (defined(HAVE_ECC) || !defined(NO_DH) || defined(WOLFPKCS11_HKDF)) && \
+    !defined(WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT)
+            /* F-4533: PKCS#11 v3.0 5.5.5 - a derived key must be at least as
+             * protected as its base key. Force the inherited attributes after
+             * the caller template has been applied so a weaker template
+             * cannot win. */
+            if (baseSensitive == CK_TRUE) {
+                CK_BBOOL bbTrue = CK_TRUE;
+                if (WP11_Object_SetAttr(obj, CKA_SENSITIVE, &bbTrue,
+                                        sizeof(bbTrue)) != 0)
+                    rv = CKR_FUNCTION_FAILED;
+            }
+            if (rv == CKR_OK && baseExtractable == CK_FALSE) {
+                CK_BBOOL bbFalse = CK_FALSE;
+                if (WP11_Object_SetAttr(obj, CKA_EXTRACTABLE, &bbFalse,
+                                        sizeof(bbFalse)) != 0)
+                    rv = CKR_FUNCTION_FAILED;
+            }
+            if (rv != CKR_OK)
+                WP11_Object_Free(obj);
+#endif
+        }
         if (rv == CKR_OK) {
             ret = SymmKeyLen(obj, keyLen, &symmKeyLen);
             if (ret == 0) {

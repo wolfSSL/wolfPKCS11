@@ -4655,6 +4655,9 @@ static CK_RV get_aes_128_key(CK_SESSION_HANDLE session, unsigned char* id,
         { CKA_SIGN,              &ckTrue,           sizeof(ckTrue)            },
         { CKA_VERIFY,            &ckTrue,           sizeof(ckTrue)            },
         { CKA_DERIVE,            &ckTrue,           sizeof(ckTrue)            },
+        /* Readable base so derived secrets can be checked (F-4533). */
+        { CKA_SENSITIVE,         &ckFalse,          sizeof(ckFalse)           },
+        { CKA_EXTRACTABLE,       &ckTrue,           sizeof(ckTrue)            },
         /* CKA_WRAP/CKA_UNWRAP default to CK_FALSE per spec (Fenrir 2774).
          * This helper backs the wrapping-key role in test_aes_wrap_unwrap_*,
          * so set both explicitly. */
@@ -5706,6 +5709,10 @@ static CK_RV rsa_verify_recover(CK_SESSION_HANDLE session,
         { CKA_CLASS,             &privKeyClass,     sizeof(privKeyClass)      },
         { CKA_KEY_TYPE,          &rsaKeyType,       sizeof(rsaKeyType)        },
         { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue)            },
+        /* CKA_SIGN / CKA_SIGN_RECOVER are opt-in for RSA private keys
+         * (F-5520); this key is used for sign-recover. */
+        { CKA_SIGN,              &ckTrue,           sizeof(ckTrue)            },
+        { CKA_SIGN_RECOVER,      &ckTrue,           sizeof(ckTrue)            },
         { CKA_MODULUS,           rsa_2048_modulus,  sizeof(rsa_2048_modulus)  },
         { CKA_PRIVATE_EXPONENT,  rsa_2048_priv_exp, sizeof(rsa_2048_priv_exp) },
         { CKA_PRIME_1,           rsa_2048_p,        sizeof(rsa_2048_p)        },
@@ -6706,6 +6713,10 @@ static CK_RV get_rsa_priv_key(CK_SESSION_HANDLE session, unsigned char* privId,
         { CKA_CLASS,             &privKeyClass,     sizeof(privKeyClass)      },
         { CKA_KEY_TYPE,          &rsaKeyType,       sizeof(rsaKeyType)        },
         { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue)            },
+        /* CKA_SIGN / CKA_SIGN_RECOVER are opt-in for RSA private keys
+         * (F-5520); this helper backs sign and sign-recover tests. */
+        { CKA_SIGN,              &ckTrue,           sizeof(ckTrue)            },
+        { CKA_SIGN_RECOVER,      &ckTrue,           sizeof(ckTrue)            },
         { CKA_VERIFY,            &ckTrue,           sizeof(ckTrue)            },
         /* CKA_UNWRAP defaults to CK_FALSE post-2774; set explicitly so the
          * RSA wrap/unwrap path exercised by test_rsa_wrap_unwrap_key still
@@ -7735,6 +7746,8 @@ static CK_RV test_sha256_rsa_pkcs15(void* args)
         { CKA_CLASS,             &privKeyClass,     sizeof(privKeyClass)      },
         { CKA_KEY_TYPE,          &rsaKeyType,       sizeof(rsaKeyType)        },
         { CKA_DECRYPT,           &ckTrue,           sizeof(ckTrue)            },
+        /* CKA_SIGN is opt-in for RSA private keys (F-5520). */
+        { CKA_SIGN,              &ckTrue,           sizeof(ckTrue)            },
         { CKA_MODULUS,           rsa_2048_modulus,  sizeof(rsa_2048_modulus)  },
         { CKA_PRIVATE_EXPONENT,  rsa_2048_priv_exp, sizeof(rsa_2048_priv_exp) },
         { CKA_PRIME_1,           rsa_2048_p,        sizeof(rsa_2048_p)        },
@@ -8898,6 +8911,10 @@ static CK_RV gen_ec_keys(CK_SESSION_HANDLE session, byte* params, int paramSz,
     CK_ATTRIBUTE      privKeyTmpl[] = {
         { CKA_SIGN,            &ckTrue,            sizeof(ckTrue)             },
         { CKA_DERIVE,          &ckTrue,            sizeof(ckTrue)             },
+        /* Readable base so the derived secret can be checked (F-4533 makes
+         * the derived key inherit the base key's protection). */
+        { CKA_SENSITIVE,       &ckFalse,           sizeof(ckFalse)           },
+        { CKA_EXTRACTABLE,     &ckTrue,            sizeof(ckTrue)            },
         { CKA_TOKEN,           &token,             sizeof(token)              },
         { CKA_ID,              privId,             (CK_ULONG)privIdLen        },
     };
@@ -9746,7 +9763,8 @@ static CK_RV test_ecc_fixed_keys_ecdh(void* args)
     CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
 
-    ret = get_ecc_priv_key(session, CK_FALSE, &priv);
+    /* Extractable base so the derived ECDH secret can be read (F-4533). */
+    ret = get_ecc_priv_key(session, CK_TRUE, &priv);
     if (ret == CKR_OK)
         ret = get_ecc_pub_key(session, &pub);
     if (ret == CKR_OK) {
@@ -9922,7 +9940,8 @@ static CK_RV test_ecdh_x963(void* args)
     CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
 
-    ret = get_ecc_priv_key(session, CK_FALSE, &priv);
+    /* Extractable base so the derived ECDH secret can be read (F-4533). */
+    ret = get_ecc_priv_key(session, CK_TRUE, &priv);
     if (ret == CKR_OK)
         ret = get_ecc_pub_key(session, &pub);
     if (ret == CKR_OK) {
@@ -10003,6 +10022,9 @@ static CK_RV gen_dh_keys(CK_SESSION_HANDLE session, byte* prime, int primeSz,
     int               pubTmplCnt = sizeof(pubKeyTmpl)/sizeof(*pubKeyTmpl);
     CK_ATTRIBUTE      privKeyTmpl[] = {
         { CKA_DERIVE,          &ckTrue,            sizeof(ckTrue)             },
+        /* Readable base so the derived secret can be checked (F-4533). */
+        { CKA_SENSITIVE,       &ckFalse,           sizeof(ckFalse)           },
+        { CKA_EXTRACTABLE,     &ckTrue,            sizeof(ckTrue)            },
         { CKA_TOKEN,           &token,             sizeof(token)              },
         { CKA_ID,              privId,             (CK_ULONG)privIdLen        },
     };
@@ -10231,7 +10253,8 @@ static CK_RV test_dh_fixed_keys(void* args)
     CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
 
-    ret = get_dh_priv_key(session, CK_FALSE, &priv);
+    /* Extractable base so the derived DH secret can be read (F-4533). */
+    ret = get_dh_priv_key(session, CK_TRUE, &priv);
     if (ret == CKR_OK)
         ret = get_dh_pub_key(session, &pub);
     if (ret == CKR_OK) {
@@ -10270,6 +10293,9 @@ static CK_RV gen_aes_key(CK_SESSION_HANDLE session, int len, unsigned char* id,
     CK_ATTRIBUTE      keyTmpl[] = {
         { CKA_VALUE_LEN,       &keyLen,            sizeof(keyLen)             },
         { CKA_DERIVE,          &ckTrue,            sizeof(ckTrue)             },
+        /* Readable base so the derived secret can be checked (F-4533). */
+        { CKA_SENSITIVE,       &ckFalse,           sizeof(ckFalse)           },
+        { CKA_EXTRACTABLE,     &ckTrue,            sizeof(ckTrue)            },
         { CKA_TOKEN,           &token,             sizeof(token)              },
         { CKA_ID,              id,                 (CK_ULONG)idLen            },
     };
@@ -16129,7 +16155,9 @@ static CK_RV test_derive_tls12_master_key_dh(void* args) {
         {CKA_KEY_TYPE, &keyType, sizeof(keyType)},
         {CKA_VALUE, preMasterSecret, ulPreMasterSecretLen},
         {CKA_SENSITIVE, &falseValue, sizeof(falseValue)},
-        {CKA_EXTRACTABLE, &falseValue, sizeof(falseValue)},
+        /* Extractable base so the derived master secret can be read for
+         * comparison (F-4533 makes the derived key inherit base protection). */
+        {CKA_EXTRACTABLE, &trueValue, sizeof(trueValue)},
         {CKA_DERIVE, &trueValue, sizeof(trueValue)},
         {CKA_TOKEN, &falseValue, sizeof(falseValue)}
     };
@@ -16255,7 +16283,9 @@ static CK_RV test_derive_tls12_master_key(void* args) {
         {CKA_KEY_TYPE, &keyType, sizeof(keyType)},
         {CKA_VALUE, preMasterSecret, ulPreMasterSecretLen},
         {CKA_SENSITIVE, &falseValue, sizeof(falseValue)},
-        {CKA_EXTRACTABLE, &falseValue, sizeof(falseValue)},
+        /* Extractable base so the derived master secret can be read for
+         * comparison (F-4533 makes the derived key inherit base protection). */
+        {CKA_EXTRACTABLE, &trueValue, sizeof(trueValue)},
         {CKA_DERIVE, &trueValue, sizeof(trueValue)},
         {CKA_TOKEN, &falseValue, sizeof(falseValue)}
     };
@@ -16579,7 +16609,9 @@ static CK_RV test_nss_derive_tls12_master_key(void* args) {
         {CKA_KEY_TYPE, &keyType, sizeof(keyType)},
         {CKA_VALUE, preMasterSecret, ulPreMasterSecretLen},
         {CKA_SENSITIVE, &falseValue, sizeof(falseValue)},
-        {CKA_EXTRACTABLE, &falseValue, sizeof(falseValue)},
+        /* Extractable base so the derived master secret can be read for
+         * comparison (F-4533 makes the derived key inherit base protection). */
+        {CKA_EXTRACTABLE, &trueValue, sizeof(trueValue)},
         {CKA_DERIVE, &trueValue, sizeof(trueValue)},
         {CKA_TOKEN, &falseValue, sizeof(falseValue)}
     };

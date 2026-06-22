@@ -21,13 +21,15 @@
  * Test for empty PIN scenario with token storage - verifies that encrypted
  * objects can be stored and loaded correctly when using an empty user PIN.
  *
- * Benefit of empty PIN: the application never calls C_Login. The token is
- * usable immediately after C_OpenSession (one fewer API call, no PIN
- * handling). This saves time and simplifies headless/automated use (servers,
- * daemons) where there is no user to enter a PIN.
+ * Benefit of empty PIN: login is trivial. The token requires no PIN material,
+ * so C_Login(CKU_USER, "", 0) always succeeds. This simplifies headless and
+ * automated use (servers, daemons) where there is no user to enter a PIN.
  *
- * This test exercises that time-saving path: open session, use token objects
- * (create/find, get attributes) without ever calling C_Login.
+ * Note (F-3835): CKA_PRIVATE objects are still gated on the USER login state
+ * even when the PIN is empty, so a token that stores private objects must
+ * call C_Login (with the empty PIN) before accessing them. This test
+ * exercises that path: open session, log in with the empty PIN, then use
+ * token objects (create/find, get attributes).
  */
 
 #ifdef HAVE_CONFIG_H
@@ -223,12 +225,12 @@ static CK_RV pkcs11_open_session(CK_SESSION_HANDLE* session)
     if (ret != CKR_OK)
         return ret;
 
-    /* With empty PIN, no login is required; skip C_Login when userPinLen is 0 */
-    if (userPinLen != 0) {
-        ret = funcList->C_Login(*session, CKU_USER, userPin, userPinLen);
-        if (ret != CKR_OK)
-            return ret;
-    }
+    /* F-3835: accessing CKA_PRIVATE objects requires the USER login state.
+     * An empty PIN does not waive this, but C_Login with the empty PIN
+     * succeeds and grants access. */
+    ret = funcList->C_Login(*session, CKU_USER, userPin, userPinLen);
+    if (ret != CKR_OK)
+        return ret;
 
     return CKR_OK;
 }

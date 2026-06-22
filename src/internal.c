@@ -8885,21 +8885,25 @@ static WP11_Object* wp11_Session_FindNext(WP11_Session* session, int onToken,
         }
    #endif
 
-        /* Note: this CKA_PRIVATE check is intentionally active in NSS mode.
-         * NSS accesses private objects by handle (via WP11_Object_Find) rather
-         * than discovering them through C_FindObjects enumeration. */
+#ifndef WOLFPKCS11_NSS
+        /* F-3835: a public session must not discover CKA_PRIVATE objects.
+         * An empty user PIN does not waive this - the caller can still
+         * authenticate with C_Login (empty PIN included). Skipped in NSS
+         * mode, which operates as the internal crypto module without calling
+         * C_Login and enumerates private keys (e.g. certutil) from a public
+         * session - matching the by-handle WP11_Object_Find check below. */
         if ((ret->opFlag & WP11_FLAG_PRIVATE) == WP11_FLAG_PRIVATE) {
             if (!onToken)
                 WP11_Lock_LockRO(&session->slot->token.lock);
-            if (!WP11_Slot_Has_Empty_Pin(session->slot) &&
-                (session->slot->token.loginState == WP11_APP_STATE_RW_PUBLIC ||
-                 session->slot->token.loginState == WP11_APP_STATE_RO_PUBLIC)) {
+            if (session->slot->token.loginState == WP11_APP_STATE_RW_PUBLIC ||
+                session->slot->token.loginState == WP11_APP_STATE_RO_PUBLIC) {
                 object = ret;
                 ret = NULL;
             }
             if (!onToken)
                 WP11_Lock_UnlockRO(&session->slot->token.lock);
         }
+#endif
     }
 
     return ret;
@@ -10090,9 +10094,10 @@ int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
             int loginState;
             WP11_Lock_LockRO(&session->slot->lock);
             loginState = session->slot->token.loginState;
-            if (!WP11_Slot_Has_Empty_Pin(session->slot) &&
-                (loginState == WP11_APP_STATE_RW_PUBLIC ||
-                 loginState == WP11_APP_STATE_RO_PUBLIC)) {
+            /* F-3835: resolving a CKA_PRIVATE object by handle from a public
+             * session must be denied even when the user PIN is empty. */
+            if (loginState == WP11_APP_STATE_RW_PUBLIC ||
+                loginState == WP11_APP_STATE_RO_PUBLIC) {
                 ret = BAD_FUNC_ARG;
             }
             WP11_Lock_UnlockRO(&session->slot->lock);
