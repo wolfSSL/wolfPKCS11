@@ -49,6 +49,12 @@
 #define CK_ULONG_FITS_WORD32(v) \
     ((v) <= (CK_ULONG)0xFFFFFFFF - CK_ULONG_MAX_OVERHEAD)
 
+/* RFC 5869 limits HKDF-Expand output to 255 * HashLen octets. Cap the
+ * requested output length to the largest such value across supported digests
+ * so an oversized request does not drive a large allocation and zeroization
+ * before wolfCrypt enforces the per-digest limit. */
+#define WP11_MAX_HKDF_OUTPUT   (255 * WC_MAX_DIGEST_SIZE)
+
 #define CHECK_KEYTYPE(kt) \
    (kt == CKK_RSA || kt == CKK_EC || kt == CKK_DH || \
     kt == CKK_AES || kt == CKK_HKDF || kt == CKK_GENERIC_SECRET) ? \
@@ -8800,8 +8806,9 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
                     return CKR_ATTRIBUTE_VALUE_INVALID;
                 }
                 XMEMCPY(&reqLen, lenAttr->pValue, sizeof(CK_ULONG));
-                /* On 64-bit, CK_ULONG may exceed word32 range */
-                if (reqLen == 0 || reqLen > (CK_ULONG)0xFFFFFFFF) {
+                /* Reject zero and cap to the RFC 5869 maximum, which also
+                 * keeps the value within word32 range. */
+                if (reqLen == 0 || reqLen > WP11_MAX_HKDF_OUTPUT) {
                     return CKR_ATTRIBUTE_VALUE_INVALID;
                 }
                 keyLen = (word32)reqLen;
