@@ -31,14 +31,26 @@
 #include <wolfssl/wolfcrypt/settings.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/wolfcrypt/asn.h>
+#include <wolfssl/wolfcrypt/random.h>
 
 #include <wolfpkcs11/pkcs11.h>
 #include <wolfpkcs11/internal.h>
+
+#include <limits.h>
 
 #define ATTR_TYPE_ULONG        0
 #define ATTR_TYPE_BOOL         1
 #define ATTR_TYPE_DATA         2
 #define ATTR_TYPE_DATE         3
+
+/* Maximum number of random bytes generated per call to
+ * WP11_Slot_GenerateRandom(). A CK_ULONG request larger than this is split
+ * into several calls so that (a) the full buffer is filled rather than the
+ * length being silently truncated when cast to the int the lower layer takes,
+ * and (b) the RNG lock is not held for the duration of one huge request.
+ * wc_RNG_GenerateBlock() rejects any single request larger than
+ * RNG_MAX_BLOCK_LEN, so the chunk must not exceed it. */
+#define WOLFPKCS11_RNG_MAX_GEN  ((CK_ULONG)RNG_MAX_BLOCK_LEN)
 
 #define PRF_KEY_SIZE            48
 
@@ -9123,6 +9135,16 @@ CK_RV C_SeedRandom(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSeed,
         return rv;
     }
 
+    /* The seed is passed to the RNG as a one-shot nonce whose length is an
+     * int; a length that does not fit cannot be honoured without truncation
+     * (and repeatedly re-seeding would discard, not accumulate, entropy), so
+     * reject it rather than silently using a truncated length. */
+    if (ulSeedLen > (CK_ULONG)INT_MAX) {
+        rv = CKR_ARGUMENTS_BAD;
+        WOLFPKCS11_LEAVE("C_SeedRandom", rv);
+        return rv;
+    }
+
     slot = WP11_Session_GetSlot(session);
     ret = WP11_Slot_SeedRandom(slot, pSeed, (int)ulSeedLen);
     if (ret == MEMORY_E) {
@@ -9186,7 +9208,22 @@ CK_RV C_GenerateRandom(CK_SESSION_HANDLE hSession,
     }
 
     slot = WP11_Session_GetSlot(session);
-    ret = WP11_Slot_GenerateRandom(slot, pRandomData, (int)ulRandomLen);
+    /* ulRandomLen is a CK_ULONG which may exceed the range of the int taken by
+     * WP11_Slot_GenerateRandom(). Generate in bounded chunks so the entire
+     * requested buffer is filled instead of silently truncating the length. */
+    ret = 0;
+    {
+        CK_ULONG offset = 0;
+        while (offset < ulRandomLen) {
+            CK_ULONG remaining = ulRandomLen - offset;
+            int chunk = (remaining > WOLFPKCS11_RNG_MAX_GEN) ?
+                (int)WOLFPKCS11_RNG_MAX_GEN : (int)remaining;
+            ret = WP11_Slot_GenerateRandom(slot, pRandomData + offset, chunk);
+            if (ret != 0)
+                break;
+            offset += (CK_ULONG)chunk;
+        }
+    }
     if (ret == MEMORY_E) {
         rv = CKR_DEVICE_MEMORY;
         WOLFPKCS11_LEAVE("C_GenerateRandom", rv);
