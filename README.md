@@ -304,7 +304,8 @@ Set to any value to stop storage of token data.
 This release adds post-quantum cryptography support (ML-DSA and ML-KEM), CMake
 build support, and Doxygen API documentation. It also closes a large number of
 PKCS#11 specification compliance gaps and bugs found through static and
-negative analysis, and improves CI and interoperability testing.
+negative analysis, hardens memory safety in response to external security
+reports, and improves CI and interoperability testing.
 
 **Compatibility with 2.0 behavior**
 
@@ -352,7 +353,14 @@ related `C_DeriveKey`, `C_CopyObject`, `C_DestroyObject`, encapsulation and
 * Fixed resource leaks and ensured secure buffer erasing. (PR #172)
 * Fixed numerous PKCS#11 compliance and static analysis findings from Fenrir.
   (PR #168, PR #169, PR #171, PR #173, PR #178, PR #185, PR #186, PR #187,
-  PR #189)
+  PR #189, PR #194, PR #196, PR #197, PR #198)
+* Hardened memory safety across several operations in response to external
+  security reports: bounded the RSA verify-recover output length and validated
+  the mechanism and key type before use, bounded secret-key length handling and
+  the HKDF derive output length, guarded against length underflow when decoding
+  stored symmetric keys, clamped key zeroization, and dropped the active object
+  reference on `C_DestroyObject` so completing an operation can no longer read
+  freed memory. (PR #201)
 * Added negative testing and validation for wolfPKCS11. (PR #179)
 * Added Fenrir findings fixes and test additions. (PR #177)
 * Added a multi-call HMAC regression test. (PR #181)
@@ -367,6 +375,21 @@ related `C_DeriveKey`, `C_CopyObject`, `C_DestroyObject`, encapsulation and
 * Fixed CI issues. (PR #182)
 * Fixed the Firefox Dockerfile. (PR #160)
 * Fixed Debian rules for the documentation. (PR #153)
+* Fixed `CK_ULONG` length truncation in `C_GenerateRandom` and `C_SeedRandom`.
+  (PR #199)
+* Fixed the wolfSSL interoperability build by defining
+  `WOLFPKCS11_USER_SETTINGS`. (PR #200)
+* Updated copyright years and fixed the `configure.ac` start year. (PR #191)
+* Shipped the CMake package configuration in the Debian `-dev` package.
+  (PR #192)
+* Used FIPS-compliant length user PINs across the test suite. (PR #193)
+* Added per-job timeouts to all CI workflows. (PR #195)
+* Added CI coverage for C++ builds. (PR #190)
+* Thanks to Denis Mingulov for contributing the `C_GenerateRandom` /
+  `C_SeedRandom` length-truncation fix (PR #199) and for reporting several of
+  the memory-safety issues fixed in PR #201 (oversized `CKA_VALUE_LEN`
+  handling, the RSA verify-recover output-length type-punning, and the
+  use-after-free of an active object on `C_DestroyObject`).
 
 ### wolfPKCS11 Release 2.0 (August 26, 2025)
 
