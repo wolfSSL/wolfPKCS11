@@ -61,6 +61,12 @@
 #define CK_ULONG_FITS_WORD32(v) \
     ((v) <= (CK_ULONG)0xFFFFFFFF - CK_ULONG_MAX_OVERHEAD)
 
+/* RFC 5869 limits HKDF-Expand output to 255 * HashLen octets. Cap the
+ * requested output length to the largest such value across supported digests
+ * so an oversized request does not drive a large allocation and zeroization
+ * before wolfCrypt enforces the per-digest limit. */
+#define WP11_MAX_HKDF_OUTPUT   (255 * WC_MAX_DIGEST_SIZE)
+
 #define CHECK_KEYTYPE(kt) \
    (kt == CKK_RSA || kt == CKK_EC || kt == CKK_DH || \
     kt == CKK_AES || kt == CKK_HKDF || kt == CKK_GENERIC_SECRET) ? \
@@ -1704,6 +1710,9 @@ CK_RV C_DestroyObject(CK_SESSION_HANDLE hSession,
     }
 
     rv = WP11_Session_RemoveObject(session, obj);
+    /* Drop any active-operation reference to this object before freeing it so a
+     * pending operation cannot use freed memory. */
+    WP11_Slot_ClearActiveObject(WP11_Session_GetSlot(session), obj);
     WP11_Object_Free(obj);
 
     WOLFPKCS11_LEAVE("C_DestroyObject", rv);
@@ -6818,14 +6827,10 @@ CK_RV C_VerifyRecover(CK_SESSION_HANDLE hSession,
         return CKR_OPERATION_NOT_INITIALIZED;
     }
 
-    decDataLen = WP11_Rsa_KeyLen(obj);
-    if (pData == NULL) {
-        *pulDataLen = decDataLen;
-        return CKR_OK;
-    }
-    if (decDataLen > (word32)*pulDataLen)
-        return CKR_BUFFER_TOO_SMALL;
-
+    /* Validate the mechanism and that a verify-recover operation has been
+     * initialized before treating the active object as an RSA key. The active
+     * object pointer is also set by other *Init functions, so these checks must
+     * happen before WP11_Rsa_KeyLen dereferences obj as an RSA key. */
     switch (mechanism) {
         case CKM_RSA_PKCS:
             if (!WP11_Session_IsOpInitialized(session,
@@ -6839,6 +6844,23 @@ CK_RV C_VerifyRecover(CK_SESSION_HANDLE hSession,
             break;
         default:
             return CKR_MECHANISM_INVALID;
+    }
+    if (WP11_Object_GetType(obj) != CKK_RSA)
+        return CKR_KEY_TYPE_INCONSISTENT;
+    if (!CK_ULONG_FITS_WORD32(ulSignatureLen))
+        return CKR_ARGUMENTS_BAD;
+
+    decDataLen = WP11_Rsa_KeyLen(obj);
+    if (pData == NULL) {
+        *pulDataLen = decDataLen;
+        return CKR_OK;
+    }
+    if (!CK_ULONG_FITS_WORD32(*pulDataLen))
+        return CKR_ARGUMENTS_BAD;
+    if (decDataLen > (word32)*pulDataLen) {
+        /* Report the required size as mandated by PKCS#11. */
+        *pulDataLen = decDataLen;
+        return CKR_BUFFER_TOO_SMALL;
     }
 
     ret = WP11_Rsa_Verify_Recover(mechanism, pSignature, (word32)ulSignatureLen,
@@ -8796,8 +8818,9 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
                     return CKR_ATTRIBUTE_VALUE_INVALID;
                 }
                 XMEMCPY(&reqLen, lenAttr->pValue, sizeof(CK_ULONG));
-                /* On 64-bit, CK_ULONG may exceed word32 range */
-                if (reqLen == 0 || reqLen > (CK_ULONG)0xFFFFFFFF) {
+                /* Reject zero and cap to the RFC 5869 maximum, which also
+                 * keeps the value within word32 range. */
+                if (reqLen == 0 || reqLen > WP11_MAX_HKDF_OUTPUT) {
                     return CKR_ATTRIBUTE_VALUE_INVALID;
                 }
                 keyLen = (word32)reqLen;

@@ -5245,7 +5245,15 @@ static int wp11_Object_Decode_SymmKey(WP11_Object* object)
 {
     int ret = 0;
 
-    if (object->keyDataLen - AES_BLOCK_SIZE > WP11_MAX_SYM_KEY_SZ)
+    /* keyDataLen is signed and covers the encrypted payload plus the trailing
+     * AES_BLOCK_SIZE tag. Reject lengths below the tag so the payload length
+     * below cannot go negative when used as an unsigned length. A length of
+     * exactly AES_BLOCK_SIZE is a valid zero-byte secret: the encoder writes
+     * symmKey->len + AES_BLOCK_SIZE, so a zero-length key must still load. */
+    if (object->keyDataLen < AES_BLOCK_SIZE)
+        ret = BAD_FUNC_ARG;
+    if (ret == 0 &&
+            (word32)(object->keyDataLen - AES_BLOCK_SIZE) > WP11_MAX_SYM_KEY_SZ)
         ret = BUFFER_E;
     if (ret == 0) {
         ret = wp11_DecryptData(object->data.symmKey->data, object->keyData,
@@ -8896,6 +8904,61 @@ int WP11_Session_RemoveObject(WP11_Session* session, WP11_Object* object)
 }
 
 /**
+ * Drop any session reference to an object that is about to be freed.
+ *
+ * The active object pointer (session->curr) is a raw pointer cached when an
+ * operation is initialized. A token object can be the active object of more
+ * than one session.
+ *
+ * Symmetric operations (AES, HMAC/generic-secret, HKDF) copy the key into the
+ * operation context during their *Init and run to completion without referring
+ * to the object again, so a caller may legitimately destroy the key before
+ * finishing the operation (wolfCrypt's PKCS#11 layer does exactly this for
+ * multi-part HMAC). Those operations are left untouched.
+ *
+ * Asymmetric operations dereference the key object while running, so for those
+ * key types drop the active reference in every session that holds it and reset
+ * the operation state, ensuring a later step cannot use freed memory.
+ *
+ * @param  slot    [in]  Slot whose sessions are scanned.
+ * @param  object  [in]  Object being destroyed.
+ */
+void WP11_Slot_ClearActiveObject(WP11_Slot* slot, WP11_Object* object)
+{
+    WP11_Session* curr;
+    CK_KEY_TYPE keyType;
+
+    if (slot == NULL || object == NULL)
+        return;
+
+    keyType = WP11_Object_GetType(object);
+    if (keyType == CKK_AES || keyType == CKK_GENERIC_SECRET ||
+            keyType == CKK_HKDF)
+        return;
+
+    WP11_Lock_LockRW(&slot->lock);
+    for (curr = slot->session; curr != NULL; curr = curr->next) {
+        if (curr->curr == object) {
+#if !defined(NO_RSA) && !defined(WC_NO_RSA_OAEP)
+            /* Release the operation-owned RSA-OAEP label before dropping the
+             * operation state. Otherwise a later init for a different mechanism
+             * overwrites the params union and the label can no longer be
+             * freed. */
+            if (curr->mechanism == CKM_RSA_PKCS_OAEP &&
+                    curr->params.oaep.label != NULL) {
+                XFREE(curr->params.oaep.label, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                curr->params.oaep.label = NULL;
+                curr->params.oaep.labelSz = 0;
+            }
+#endif
+            curr->curr = NULL;
+            curr->init = 0;
+        }
+    }
+    WP11_Lock_UnlockRW(&slot->lock);
+}
+
+/**
  * Get the current object of the session - key for operation.
  *
  * @param  session  [in]   Session object.
@@ -9173,8 +9236,13 @@ void WP11_Object_Free(WP11_Object* object)
     #endif
     #ifndef NO_DH
         if (object->type == CKK_DH && object->data.dhKey != NULL) {
+            word32 zeroLen = object->data.dhKey->len;
             wc_FreeDhKey(&object->data.dhKey->params);
-            wc_ForceZero(object->data.dhKey->key, object->data.dhKey->len);
+            /* Clamp to the fixed buffer as a backstop against a length
+             * recorded larger than the buffer. */
+            if (zeroLen > sizeof(object->data.dhKey->key))
+                zeroLen = (word32)sizeof(object->data.dhKey->key);
+            wc_ForceZero(object->data.dhKey->key, zeroLen);
             XFREE(object->data.dhKey, NULL, DYNAMIC_TYPE_DH);
             object->data.dhKey = NULL;
         }
@@ -9189,7 +9257,12 @@ void WP11_Object_Free(WP11_Object* object)
     #endif
         if ((object->type == CKK_AES || object->type == CKK_GENERIC_SECRET ||
              object->type == CKK_HKDF) && object->data.symmKey != NULL) {
-            wc_ForceZero(object->data.symmKey->data, object->data.symmKey->len);
+            word32 zeroLen = object->data.symmKey->len;
+            /* Clamp to the fixed buffer as a backstop against a length
+             * recorded larger than the buffer. */
+            if (zeroLen > sizeof(object->data.symmKey->data))
+                zeroLen = (word32)sizeof(object->data.symmKey->data);
+            wc_ForceZero(object->data.symmKey->data, zeroLen);
             XFREE(object->data.symmKey, NULL, DYNAMIC_TYPE_AES);
             object->data.symmKey = NULL;
         }
@@ -9896,6 +9969,7 @@ int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
 {
     int ret = 0;
     WP11_Data* key;
+    CK_ULONG keyLen = 0;
 
     if (object->onToken)
         WP11_Lock_LockRW(object->lock);
@@ -9907,22 +9981,35 @@ int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
     /* First item is the key's length. */
     if (ret == 0 && data[0] != NULL && len[0] != (int)sizeof(CK_ULONG))
         ret = BAD_FUNC_ARG;
+    if (ret == 0 && data[0] != NULL) {
+        keyLen = *(CK_ULONG*)data[0];
+        /* Bound the requested length against the fixed key buffer before
+         * narrowing to word32. This rejects oversized values and values that
+         * would not fit a word32, neither of which may be stored in key->len
+         * as that drives copies and zeroization of key->data. */
+        if (keyLen > WP11_MAX_SYM_KEY_SZ)
+            ret = BUFFER_E;
+    }
 #if !defined(NO_AES) && !defined(WOLFPKCS11_NSS)
     if (ret == 0 && object->type == CKK_AES && data[0] != NULL) {
-        if (*(CK_ULONG*)data[0] != AES_128_KEY_SIZE &&
-            *(CK_ULONG*)data[0] != AES_192_KEY_SIZE &&
-            *(CK_ULONG*)data[0] != AES_256_KEY_SIZE) {
+        if (keyLen != AES_128_KEY_SIZE &&
+            keyLen != AES_192_KEY_SIZE &&
+            keyLen != AES_256_KEY_SIZE) {
             ret = BAD_FUNC_ARG;
         }
     }
 #endif
     if (ret == 0 && data[0] != NULL)
-        key->len = (word32)*(CK_ULONG*)data[0];
+        key->len = (word32)keyLen;
 
     /* Second item is the key data. */
     if (ret == 0 && data[1] != NULL) {
-        if (key->len == 0)
-            key->len = (word32)len[1];
+        if (key->len == 0) {
+            if (len[1] > WP11_MAX_SYM_KEY_SZ)
+                ret = BUFFER_E;
+            else
+                key->len = (word32)len[1];
+        }
         else if (len[1] != (CK_ULONG)key->len)
             ret = BUFFER_E;
     }
@@ -9930,6 +10017,11 @@ int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
         ret = BUFFER_E;
     if (ret == 0 && data[1] != NULL)
         XMEMCPY(key->data, data[1], key->len);
+
+    /* On any error, record no length so later teardown does not zeroize or
+     * copy past the fixed key buffer. */
+    if (ret != 0)
+        key->len = 0;
 
     if (object->onToken)
         WP11_Lock_UnlockRW(object->lock);
@@ -12711,12 +12803,18 @@ int WP11_Rsa_Verify_Recover(CK_MECHANISM_TYPE mechanism, unsigned char* sig,
         case CKM_RSA_X_509: {
             byte* data_out = NULL;
             byte* pos;
-            ret =  wc_RsaDirect(sig, sigLen, out, (word32*)outLen,
+            /* wc_RsaDirect writes a word32 through the length pointer. Use a
+             * local word32 rather than casting the CK_ULONG_PTR so that only
+             * the low word of *outLen is not partially updated; assign the
+             * result back on success. */
+            word32 tmpLen = (word32)*outLen;
+            ret =  wc_RsaDirect(sig, sigLen, out, &tmpLen,
                                 pub->data.rsaKey, RSA_PUBLIC_DECRYPT, NULL);
             if (ret < 0) {
                 ret = CKR_FUNCTION_FAILED;
             }
             else {
+                *outLen = tmpLen;
                 ret = CKR_OK;
                 /* Result is front padded with 0x00 */
                 for (pos = out; pos < out + *outLen; pos++) {
