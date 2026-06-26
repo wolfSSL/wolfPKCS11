@@ -297,7 +297,7 @@ Set to any value to stop storage of token data.
 
 ## Release Notes
 
-### wolfPKCS11 Release 2.1 (TBD, 2026)
+### wolfPKCS11 Release 2.1 (Jun 25, 2026)
 
 **Summary**
 
