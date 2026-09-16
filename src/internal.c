@@ -1118,8 +1118,12 @@ static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
                 sizeof(word32) + /* issuerLen */
                 sizeof(word32) + /* serialLen */
                 sizeof(word32) + /* subjectLen */
+#ifdef WOLFPKCS11_NSS
+                sizeof(word32) + /* emailLen */
+#endif
                 FIELD_SIZE(WP11_Object, category) +
-                variableSz /* keyIdLen + labelLen + issuerLen + serialLen + subjectLen */
+                variableSz /* keyIdLen + labelLen + issuerLen + serialLen +
+                            * subjectLen + emailLen */
             ;
             break;
         case WOLFPKCS11_STORE_DATA:
