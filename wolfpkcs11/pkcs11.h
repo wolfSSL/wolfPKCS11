@@ -193,6 +193,7 @@ extern "C" {
 #define CKA_TOKEN                             0x00000001UL
 #define CKA_PRIVATE                           0x00000002UL
 #define CKA_LABEL                             0x00000003UL
+#define CKA_UNIQUE_ID                         0x00000004UL
 #define CKA_APPLICATION                       0x00000010UL
 #define CKA_VALUE                             0x00000011UL
 #define CKA_OBJECT_ID                         0x00000012UL

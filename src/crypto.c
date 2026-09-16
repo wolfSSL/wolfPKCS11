@@ -266,6 +266,7 @@ static AttributeType attrType[] = {
     { CKA_TOKEN,                       ATTR_TYPE_DATA  },
     { CKA_PRIVATE,                     ATTR_TYPE_BOOL  },
     { CKA_LABEL,                       ATTR_TYPE_DATA  },
+    { CKA_UNIQUE_ID,                   ATTR_TYPE_DATA  },
     { CKA_APPLICATION,                 ATTR_TYPE_DATA  },
     { CKA_VALUE,                       ATTR_TYPE_DATA  },
     { CKA_OBJECT_ID,                   ATTR_TYPE_DATA  },
@@ -907,6 +908,13 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
     if (rv != CKR_OK)
         return rv;
 
+    /* CKA_UNIQUE_ID is generated and owned by the token; a caller may never
+     * supply or change it. Reject before any setter runs so a mixed template
+     * fails without mutating another attribute. */
+    for (i = 0; i < (int)ulCount; i++) {
+        if (pTemplate[i].type == CKA_UNIQUE_ID)
+            return CKR_ATTRIBUTE_READ_ONLY;
+    }
 
     type = WP11_Object_GetType(obj);
     objClass = WP11_Object_GetClass(obj);
