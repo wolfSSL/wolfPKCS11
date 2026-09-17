@@ -1782,10 +1782,12 @@ CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
     }
 
     /* copy all the attributes from the original object to the new object */
-    rv = WP11_Object_Copy(obj, newObj);
-    if (rv != CKR_OK) {
+    ret = WP11_Object_Copy(obj, newObj);
+    if (ret != 0) {
         WP11_Object_Free(newObj);
-        return rv;
+        if (ret == MEMORY_E)
+            return CKR_DEVICE_MEMORY;
+        return CKR_FUNCTION_FAILED;
     }
 
     if (pTemplate != NULL) {

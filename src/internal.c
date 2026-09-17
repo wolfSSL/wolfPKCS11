@@ -2748,18 +2748,55 @@ static long GetRsaExponentValue(unsigned char* eData, word32 eSz)
 
 #define OBJ_COPY_DATA(src, dest, field)                                        \
     do {                                                                       \
-        if (src->field != NULL) {                                              \
-            dest->field = (unsigned char*)XMALLOC(src->field##Len, NULL,       \
-                    DYNAMIC_TYPE_TMP_BUFFER);                                  \
-            if (dest->field == NULL)                                           \
-                return MEMORY_E;                                               \
-            XMEMCPY(dest->field, src->field, src->field##Len);                 \
-            dest->field##Len = src->field##Len;                                \
-        } else {                                                               \
-            dest->field = NULL;                                                \
-            dest->field##Len = 0;                                              \
+        if (ret == 0) {                                                        \
+            if (src->field != NULL) {                                          \
+                dest->field = (unsigned char*)XMALLOC(src->field##Len, NULL,   \
+                        DYNAMIC_TYPE_TMP_BUFFER);                              \
+                if (dest->field == NULL)                                       \
+                    ret = MEMORY_E;                                            \
+                else {                                                         \
+                    XMEMCPY(dest->field, src->field, src->field##Len);         \
+                    dest->field##Len = src->field##Len;                        \
+                }                                                              \
+            } else {                                                          \
+                dest->field = NULL;                                            \
+                dest->field##Len = 0;                                          \
+            }                                                                  \
         }                                                                      \
     } while (0)
+
+/**
+ * Duplicate a length-prefixed buffer for object copying. On success the
+ * destination owns a freshly allocated copy; on allocation failure the
+ * destination is left NULL and the caller frees any earlier copies through
+ * WP11_Object_Free.
+ */
+static int wp11_Object_CopyBuffer(byte* src, word32 srcLen, byte** dst,
+                                  word32* dstLen)
+{
+    int ret = 0;
+
+    /* A NULL buffer with a non-zero length is an inconsistent source; reject
+     * it rather than silently producing an empty copy. */
+    if (src == NULL && srcLen != 0)
+        return BAD_FUNC_ARG;
+
+    if (src != NULL && srcLen > 0) {
+        *dst = (byte*)XMALLOC(srcLen, NULL, DYNAMIC_TYPE_CERT);
+        if (*dst == NULL)
+            ret = MEMORY_E;
+        else {
+            XMEMCPY(*dst, src, srcLen);
+            *dstLen = srcLen;
+        }
+    }
+    else {
+        *dst = NULL;
+        *dstLen = 0;
+    }
+
+    return ret;
+}
 
 /**
  * Copy an object. Not all fields are supported.
@@ -2776,6 +2813,12 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
         return BAD_FUNC_ARG;
 
     /* We save data copying for the last step */
+
+    /* Copy the common mutable fields, and a data object's payload, under the
+     * source lock so a concurrent C_SetAttributeValue cannot free any of them
+     * mid-copy. */
+    if (src->onToken)
+        WP11_Lock_LockRO(src->lock);
 
     dest->size = src->size;
 #ifndef WOLFPKCS11_NO_STORE
@@ -2797,6 +2840,30 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
     dest->category = src->category;
     dest->devId    = src->devId;
 
+    if (ret == 0 && src->objClass == CKO_DATA) {
+        ret = wp11_Object_CopyBuffer(src->data.genericData.data,
+            src->data.genericData.dataLen,
+            &dest->data.genericData.data, &dest->data.genericData.dataLen);
+        if (ret == 0) {
+            ret = wp11_Object_CopyBuffer(src->data.genericData.application,
+                src->data.genericData.applicationLen,
+                &dest->data.genericData.application,
+                &dest->data.genericData.applicationLen);
+        }
+        if (ret == 0) {
+            ret = wp11_Object_CopyBuffer(src->data.genericData.objectId,
+                src->data.genericData.objectIdLen,
+                &dest->data.genericData.objectId,
+                &dest->data.genericData.objectIdLen);
+        }
+    }
+
+    if (src->onToken)
+        WP11_Lock_UnlockRO(src->lock);
+
+    if (ret != 0)
+        return ret;
+
     if (src->objClass == CKO_CERTIFICATE) {
         return BAD_FUNC_ARG;
     }
@@ -2805,6 +2872,9 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
         return BAD_FUNC_ARG;
     }
 #endif
+    else if (src->objClass == CKO_DATA) {
+        /* Payload copied above under the source lock. */
+    }
     else {
 #ifdef WOLFPKCS11_TPM
         /* Handle TPM keys - copy tpmKey structure directly */
@@ -10364,8 +10434,19 @@ void WP11_Object_Free(WP11_Object* object)
         certFreed = 1;
     }
     else if (object->objClass == CKO_DATA) {
+        /* A data object's value may hold keying material, so clear each
+         * payload buffer before releasing it. */
+        if (object->data.genericData.data != NULL)
+            wc_ForceZero(object->data.genericData.data,
+                         object->data.genericData.dataLen);
         XFREE(object->data.genericData.data, NULL, DYNAMIC_TYPE_CERT);
+        if (object->data.genericData.application != NULL)
+            wc_ForceZero(object->data.genericData.application,
+                         object->data.genericData.applicationLen);
         XFREE(object->data.genericData.application, NULL, DYNAMIC_TYPE_CERT);
+        if (object->data.genericData.objectId != NULL)
+            wc_ForceZero(object->data.genericData.objectId,
+                         object->data.genericData.objectIdLen);
         XFREE(object->data.genericData.objectId, NULL, DYNAMIC_TYPE_CERT);
     }
     else {
