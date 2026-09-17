@@ -880,6 +880,7 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
     int i, j;
     unsigned char* data[OBJ_MAX_PARAMS] = { 0, };
     CK_ULONG len[OBJ_MAX_PARAMS] = { 0, };
+    int present[OBJ_MAX_PARAMS] = { 0, };
     CK_ATTRIBUTE_TYPE* attrs = NULL;
     int cnt;
     CK_BBOOL attrsFound = 0;
@@ -990,6 +991,7 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
         for (j = 0; j < (int)ulCount; j++) {
             if (attrs[i] == pTemplate[j].type) {
                 attrsFound = 1;
+                present[i] = 1;
                 data[i] = (unsigned char*)pTemplate[j].pValue;
                 if (data[i] == NULL) {
                     /* For CKO_DATA, values can be NULL */
@@ -1012,7 +1014,7 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
         }
 #endif
         else if (objClass == CKO_DATA) {
-            ret = WP11_Object_DataObject(obj, data, len);
+            ret = WP11_Object_DataObject(obj, data, len, present);
         }
         else {
             /* Set the value and length of key specific attributes

@@ -262,6 +262,11 @@ noinst_PROGRAMS += tests/copy_data_object_token_test
 tests_copy_data_object_token_test_SOURCES = tests/copy_data_object_token_test.c
 tests_copy_data_object_token_test_LDADD =
 
+check_PROGRAMS += tests/data_object_partial_update_test
+noinst_PROGRAMS += tests/data_object_partial_update_test
+tests_data_object_partial_update_test_SOURCES = tests/data_object_partial_update_test.c
+tests_data_object_partial_update_test_LDADD =
+
 if BUILD_STATIC
 tests_pkcs11test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11mtt_LDADD  += src/libwolfpkcs11.la
@@ -315,6 +320,7 @@ tests_concurrent_destroy_object_test_LDADD += src/libwolfpkcs11.la
 tests_hbs_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_copy_data_object_test_LDADD += src/libwolfpkcs11.la
 tests_copy_data_object_token_test_LDADD += src/libwolfpkcs11.la
+tests_data_object_partial_update_test_LDADD += src/libwolfpkcs11.la
 else
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
 tests_empty_pin_store_test_LDADD += src/libwolfpkcs11.la
@@ -360,6 +366,7 @@ tests_concurrent_destroy_object_test_LDADD += src/libwolfpkcs11.la
 tests_hbs_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_copy_data_object_test_LDADD += src/libwolfpkcs11.la
 tests_copy_data_object_token_test_LDADD += src/libwolfpkcs11.la
+tests_data_object_partial_update_test_LDADD += src/libwolfpkcs11.la
 endif
 
 EXTRA_DIST += tests/unit.h \

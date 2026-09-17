@@ -11320,69 +11320,58 @@ int WP11_Object_SetTrust(WP11_Object* object, unsigned char** data,
 }
 #endif
 
-int WP11_Object_DataObject(WP11_Object* object, unsigned char** data,
-                           CK_ULONG* len)
+/* Update one generic-data field. An omitted attribute (present == 0) is left
+ * unchanged; a supplied attribute is replaced when it carries data, or cleared
+ * when it is empty. The old buffer may hold keying material, so it is zeroized
+ * before release. */
+static int wp11_SetGenericField(byte** field, word32* fieldLen, int present,
+                                unsigned char* data, CK_ULONG len)
 {
     int ret = 0;
+
+    if (!present)
+        return 0;
+
+    if (*field != NULL) {
+        wc_ForceZero(*field, *fieldLen);
+        XFREE(*field, NULL, DYNAMIC_TYPE_CERT);
+        *field = NULL;
+        *fieldLen = 0;
+    }
+
+    if (data != NULL && len > 0) {
+        *field = (byte*)XMALLOC(len, NULL, DYNAMIC_TYPE_CERT);
+        if (*field == NULL)
+            ret = MEMORY_E;
+        else {
+            XMEMCPY(*field, data, len);
+            *fieldLen = (word32)len;
+        }
+    }
+
+    return ret;
+}
+
+int WP11_Object_DataObject(WP11_Object* object, unsigned char** data,
+                           CK_ULONG* len, int* present)
+{
+    int ret;
 
     if (object->onToken)
         WP11_Lock_LockRW(object->lock);
 
-    if (data[0] != NULL && len[0] > 0) {
-        XFREE(object->data.genericData.data, NULL, DYNAMIC_TYPE_CERT);
-        object->data.genericData.data =
-            (byte*)XMALLOC(len[0], NULL, DYNAMIC_TYPE_CERT);
-        if (object->data.genericData.data == NULL) {
-            ret = MEMORY_E;
-        }
-        else {
-            XMEMCPY(object->data.genericData.data, data[0], len[0]);
-            object->data.genericData.dataLen = (word32)len[0];
-        }
+    ret = wp11_SetGenericField(&object->data.genericData.data,
+                               &object->data.genericData.dataLen,
+                               present[0], data[0], len[0]);
+    if (ret == 0) {
+        ret = wp11_SetGenericField(&object->data.genericData.application,
+                                   &object->data.genericData.applicationLen,
+                                   present[1], data[1], len[1]);
     }
-    else if (data[0] == NULL) {
-        /* Clear data if not provided */
-        XFREE(object->data.genericData.data, NULL, DYNAMIC_TYPE_CERT);
-        object->data.genericData.data = NULL;
-        object->data.genericData.dataLen = 0;
-    }
-
-    if (ret == 0 && data[1] != NULL && len[1] > 0) {
-        XFREE(object->data.genericData.application, NULL, DYNAMIC_TYPE_CERT);
-        object->data.genericData.application =
-            (byte*)XMALLOC(len[1], NULL, DYNAMIC_TYPE_CERT);
-        if (object->data.genericData.application == NULL) {
-            ret = MEMORY_E;
-        }
-        else {
-            XMEMCPY(object->data.genericData.application, data[1], len[1]);
-            object->data.genericData.applicationLen = (word32)len[1];
-        }
-    }
-    else if (ret == 0 && data[1] == NULL) {
-        /* Clear application if not provided */
-        XFREE(object->data.genericData.application, NULL, DYNAMIC_TYPE_CERT);
-        object->data.genericData.application = NULL;
-        object->data.genericData.applicationLen = 0;
-    }
-
-    if (ret == 0 && data[2] != NULL && len[2] > 0) {
-        XFREE(object->data.genericData.objectId, NULL, DYNAMIC_TYPE_CERT);
-        object->data.genericData.objectId =
-            (byte*)XMALLOC(len[2], NULL, DYNAMIC_TYPE_CERT);
-        if (object->data.genericData.objectId == NULL) {
-            ret = MEMORY_E;
-        }
-        else {
-            XMEMCPY(object->data.genericData.objectId, data[2], len[2]);
-            object->data.genericData.objectIdLen = (word32)len[2];
-        }
-    }
-    else if (ret == 0 && data[2] == NULL) {
-        /* Clear object ID if not provided */
-        XFREE(object->data.genericData.objectId, NULL, DYNAMIC_TYPE_CERT);
-        object->data.genericData.objectId = NULL;
-        object->data.genericData.objectIdLen = 0;
+    if (ret == 0) {
+        ret = wp11_SetGenericField(&object->data.genericData.objectId,
+                                   &object->data.genericData.objectIdLen,
+                                   present[2], data[2], len[2]);
     }
 
     if (object->onToken)
