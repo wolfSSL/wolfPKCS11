@@ -7834,6 +7834,38 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
  *          type of operation.
  *          CKR_OK on success.
  */
+/* Reject a key-pair template whose CKA_CLASS or CKA_KEY_TYPE, in any position,
+ * disagrees with the class and type the mechanism implies. */
+static CK_RV CheckGenPairAttrs(CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
+                               CK_OBJECT_CLASS expectClass,
+                               CK_KEY_TYPE expectType)
+{
+    int i;
+
+    /* Bound the count to int as elsewhere so a caller-supplied length cannot
+     * drive an over-read past the template array. */
+    for (i = 0; i < (int)ulCount; i++) {
+        CK_ATTRIBUTE* attr = &pTemplate[i];
+
+        if (attr->type == CKA_CLASS) {
+            if (attr->pValue == NULL ||
+                    attr->ulValueLen != sizeof(CK_OBJECT_CLASS))
+                return CKR_ATTRIBUTE_VALUE_INVALID;
+            if (*(CK_OBJECT_CLASS*)attr->pValue != expectClass)
+                return CKR_TEMPLATE_INCONSISTENT;
+        }
+        else if (attr->type == CKA_KEY_TYPE) {
+            if (attr->pValue == NULL ||
+                    attr->ulValueLen != sizeof(CK_KEY_TYPE))
+                return CKR_ATTRIBUTE_VALUE_INVALID;
+            if (*(CK_KEY_TYPE*)attr->pValue != expectType)
+                return CKR_TEMPLATE_INCONSISTENT;
+        }
+    }
+
+    return CKR_OK;
+}
+
 CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
                         CK_MECHANISM_PTR pMechanism,
                         CK_ATTRIBUTE_PTR pPublicKeyTemplate,
@@ -7849,6 +7881,8 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
     WP11_Object* pub = NULL;
     WP11_Object* priv = NULL;
     CK_ATTRIBUTE* reqAttr = NULL;
+    CK_KEY_TYPE pairType = 0;
+    int knownMech = 1;
 
     WOLFPKCS11_ENTER("C_GenerateKeyPair");
     #ifdef DEBUG_WOLFPKCS11
@@ -7915,6 +7949,52 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
     if (rv != CKR_OK) {
         WOLFPKCS11_LEAVE("C_GenerateKeyPair", rv);
         return rv;
+    }
+
+    /* Reject a template whose class or key type contradicts the mechanism
+     * before any object is constructed. */
+    switch (pMechanism->mechanism) {
+#if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN)
+        case CKM_RSA_PKCS_KEY_PAIR_GEN:
+            pairType = CKK_RSA;
+            break;
+#endif
+#ifdef HAVE_ECC
+        case CKM_EC_KEY_PAIR_GEN:
+            pairType = CKK_EC;
+            break;
+#endif
+#ifdef WOLFPKCS11_MLDSA
+        case CKM_ML_DSA_KEY_PAIR_GEN:
+            pairType = CKK_ML_DSA;
+            break;
+#endif
+#ifdef WOLFPKCS11_MLKEM
+        case CKM_ML_KEM_KEY_PAIR_GEN:
+            pairType = CKK_ML_KEM;
+            break;
+#endif
+#ifndef NO_DH
+        case CKM_DH_PKCS_KEY_PAIR_GEN:
+            pairType = CKK_DH;
+            break;
+#endif
+        default:
+            knownMech = 0;
+            break;
+    }
+    if (knownMech) {
+        rv = CheckGenPairAttrs(pPublicKeyTemplate, ulPublicKeyAttributeCount,
+                               CKO_PUBLIC_KEY, pairType);
+        if (rv == CKR_OK) {
+            rv = CheckGenPairAttrs(pPrivateKeyTemplate,
+                                   ulPrivateKeyAttributeCount, CKO_PRIVATE_KEY,
+                                   pairType);
+        }
+        if (rv != CKR_OK) {
+            WOLFPKCS11_LEAVE("C_GenerateKeyPair", rv);
+            return rv;
+        }
     }
 
     switch (pMechanism->mechanism) {
