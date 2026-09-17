@@ -265,6 +265,11 @@ noinst_PROGRAMS += tests/nss_email_store_test
 tests_nss_email_store_test_SOURCES = tests/nss_email_store_test.c
 tests_nss_email_store_test_LDADD =
 
+check_PROGRAMS += tests/generate_key_class_test
+noinst_PROGRAMS += tests/generate_key_class_test
+tests_generate_key_class_test_SOURCES = tests/generate_key_class_test.c
+tests_generate_key_class_test_LDADD =
+
 if BUILD_STATIC
 tests_pkcs11test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11mtt_LDADD  += src/libwolfpkcs11.la
@@ -319,6 +324,7 @@ tests_hbs_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_hkdf_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_unique_id_test_LDADD += src/libwolfpkcs11.la
 tests_nss_email_store_test_LDADD += src/libwolfpkcs11.la
+tests_generate_key_class_test_LDADD += src/libwolfpkcs11.la
 else
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
 tests_empty_pin_store_test_LDADD += src/libwolfpkcs11.la
@@ -365,6 +371,7 @@ tests_hbs_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_hkdf_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_unique_id_test_LDADD += src/libwolfpkcs11.la
 tests_nss_email_store_test_LDADD += src/libwolfpkcs11.la
+tests_generate_key_class_test_LDADD += src/libwolfpkcs11.la
 endif
 
 EXTRA_DIST += tests/unit.h \
