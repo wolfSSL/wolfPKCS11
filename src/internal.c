@@ -11613,6 +11613,23 @@ static int GetData(byte* data, CK_ULONG dataLen, byte* out, CK_ULONG* outLen)
     return ret;
 }
 
+static int GetUniqueId(WP11_Object* object, byte* data, CK_ULONG* len)
+{
+    byte str[24];
+    unsigned long handle = (unsigned long)object->handle;
+    int i = (int)sizeof(str);
+
+    /* Decimal ASCII of the token-assigned object handle. The handle is drawn
+     * from a monotonic per-token counter and persisted, so the value is unique
+     * per object and stable across reload. */
+    do {
+        str[--i] = (byte)('0' + (handle % 10));
+        handle /= 10;
+    } while (handle != 0 && i > 0);
+
+    return GetData(str + i, (CK_ULONG)(sizeof(str) - i), data, len);
+}
+
 static int GetCertAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                        CK_ULONG* len)
 {
@@ -12497,6 +12514,9 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
         case CKA_LABEL:
             ret = GetData(object->label, object->labelLen, data, len);
             break;
+        case CKA_UNIQUE_ID:
+            ret = GetUniqueId(object, data, len);
+            break;
         case CKA_TOKEN:
             ret = GetBool(object->onToken, data, len);
             break;
@@ -13285,6 +13305,11 @@ int WP11_Object_MatchAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
     byte attrData[8];
     byte* ptr;
     CK_ULONG attrLen = len;
+
+    /* A NULL search value with a non-zero length cannot match any stored
+     * attribute and must not be dereferenced by the comparison below. */
+    if (data == NULL && len != 0)
+        return 0;
 
     /* Get the attribute data into the stack buffer if big enough. */
     if (len <= (int)sizeof(attrData)) {
