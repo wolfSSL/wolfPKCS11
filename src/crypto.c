@@ -7449,6 +7449,35 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
     }
 
     if (rv == CKR_OK) {
+        int idx;
+
+        /* C_GenerateKey always yields a secret key of the mechanism-implied
+         * type. Reject a template that names a different class or key type
+         * rather than letting it override the generated object. Every
+         * occurrence is checked because a later duplicate would otherwise be
+         * applied by SetAttributeValue. The count is bounded to int as
+         * elsewhere so a caller-supplied length cannot drive an over-read. */
+        for (idx = 0; idx < (int)ulCount && rv == CKR_OK; idx++) {
+            CK_ATTRIBUTE* attr = &pTemplate[idx];
+
+            if (attr->type == CKA_CLASS) {
+                if (attr->pValue == NULL ||
+                        attr->ulValueLen != sizeof(CK_OBJECT_CLASS))
+                    rv = CKR_ATTRIBUTE_VALUE_INVALID;
+                else if (*(CK_OBJECT_CLASS*)attr->pValue != CKO_SECRET_KEY)
+                    rv = CKR_TEMPLATE_INCONSISTENT;
+            }
+            else if (attr->type == CKA_KEY_TYPE) {
+                if (attr->pValue == NULL ||
+                        attr->ulValueLen != sizeof(CK_KEY_TYPE))
+                    rv = CKR_ATTRIBUTE_VALUE_INVALID;
+                else if (*(CK_KEY_TYPE*)attr->pValue != keyType)
+                    rv = CKR_TEMPLATE_INCONSISTENT;
+            }
+        }
+    }
+
+    if (rv == CKR_OK) {
         CK_ATTRIBUTE *lenAttr = NULL;
 
 #ifndef NO_HMAC
