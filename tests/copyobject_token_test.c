@@ -32,6 +32,18 @@
 
 #include <stdio.h>
 
+#if defined(_WIN32) || defined(_MSC_VER)
+    #include <direct.h>
+    #include <io.h>
+    #include <sys/stat.h>
+    #define TEST_SET_READONLY(path) _chmod(path, _S_IREAD)
+    #define TEST_SET_WRITABLE(path) _chmod(path, _S_IREAD | _S_IWRITE)
+#else
+    #include <sys/stat.h>
+    #define TEST_SET_READONLY(path) chmod(path, 0500)
+    #define TEST_SET_WRITABLE(path) chmod(path, 0700)
+#endif
+
 #ifndef WOLFSSL_USER_SETTINGS
     #include <wolfssl/options.h>
 #endif
@@ -448,6 +460,61 @@ cleanup:
     return result;
 }
 
+/* A failed persistence attempt must roll the new token object out of the
+ * in-memory list before C_CopyObject frees it. */
+#ifndef WOLFPKCS11_NO_STORE
+static int test_copy_token_store_failure(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE src = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE copy = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE found;
+    CK_ULONG foundCount = 0;
+    CK_ATTRIBUTE copyTmpl[] = {
+        { CKA_TOKEN, &ckTrue, sizeof(ckTrue) },
+    };
+    CK_ATTRIBUTE findTmpl[] = {
+        { CKA_TOKEN, &ckTrue, sizeof(ckTrue) },
+    };
+    int storeReadOnly = 0;
+    int result = 0;
+
+    ret = create_aes_key(session, CK_FALSE, &src);
+    CHECK_CKR(ret, "Test6: create session source object", CKR_OK);
+
+    ret = TEST_SET_READONLY(COPY_TOKEN_TEST_DIR);
+    CHECK_COND(ret == 0, "Test6: make token storage read-only");
+    storeReadOnly = 1;
+
+    ret = funcList->C_CopyObject(session, src, copyTmpl, 1, &copy);
+    (void)TEST_SET_WRITABLE(COPY_TOKEN_TEST_DIR);
+    storeReadOnly = 0;
+    CHECK_CKR(ret, "Test6: token copy reports persistence failure",
+              CKR_FUNCTION_FAILED);
+
+    ret = funcList->C_FindObjectsInit(session, findTmpl, 1);
+    CHECK_CKR(ret, "Test6: find token objects after failed copy", CKR_OK);
+    ret = funcList->C_FindObjects(session, &found, 1, &foundCount);
+    CHECK_CKR(ret, "Test6: read token objects after failed copy", CKR_OK);
+    ret = funcList->C_FindObjectsFinal(session);
+    CHECK_CKR(ret, "Test6: finalize find after failed copy", CKR_OK);
+    CHECK_COND(foundCount == 0,
+               "Test6: failed copy was rolled out of token list");
+
+    ret = funcList->C_CopyObject(session, src, copyTmpl, 1, &copy);
+    CHECK_CKR(ret, "Test6: later token copy succeeds", CKR_OK);
+
+cleanup:
+    if (storeReadOnly)
+        (void)TEST_SET_WRITABLE(COPY_TOKEN_TEST_DIR);
+    if (copy != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, copy);
+    if (src != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, src);
+    return result;
+}
+#endif
+
 static int copyobject_token_test(void)
 {
     CK_RV ret;
@@ -500,6 +567,10 @@ static int copyobject_token_test(void)
         result = -1;
     if (test_copy_token_findable(session) != 0)
         result = -1;
+#ifndef WOLFPKCS11_NO_STORE
+    if (test_copy_token_store_failure(session) != 0)
+        result = -1;
+#endif
 
     pkcs11_close_session(session);
     pkcs11_final();

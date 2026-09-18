@@ -488,6 +488,7 @@ static int test_unwrap_buffer_size(CK_SESSION_HANDLE session)
 {
     CK_RV ret;
     CK_OBJECT_HANDLE kek = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_AES_KEY_WRAP_PAD, NULL, 0 };
     byte wrapped[64];
     byte out[64];
     CK_ULONG wrappedLen, outLen;
@@ -503,17 +504,21 @@ static int test_unwrap_buffer_size(CK_SESSION_HANDLE session)
     CHECK_CKR(ret, "Bufsize: wrap", CKR_OK);
     CHECK_COND(wrappedLen == sizeof(rfc5649_ct1), "Bufsize: wrapped length");
 
-    /* Buffer smaller than the recovered plaintext: reject and report size. */
+    /* Buffer smaller than the recovered plaintext: reject and report size,
+     * leaving the operation active for a retry. */
+    ret = funcList->C_DecryptInit(session, &mech, kek);
+    CHECK_CKR(ret, "Bufsize: decrypt init", CKR_OK);
     outLen = sizeof(rfc5649_pt1) - 4;
-    ret = kwp_unwrap(session, kek, wrapped, wrappedLen, out, &outLen);
+    ret = funcList->C_Decrypt(session, wrapped, wrappedLen, out, &outLen);
     CHECK_CKR(ret, "Bufsize: too-small buffer", CKR_BUFFER_TOO_SMALL);
     CHECK_COND(outLen == sizeof(rfc5649_pt1),
                "Bufsize: required length reported");
 
-    /* Buffer equal to the recovered length but below the upper bound: succeed. */
+    /* Retry without another C_DecryptInit. A buffer equal to the recovered
+     * length but below the upper bound must succeed. */
     outLen = sizeof(rfc5649_pt1);
-    ret = kwp_unwrap(session, kek, wrapped, wrappedLen, out, &outLen);
-    CHECK_CKR(ret, "Bufsize: exact-size buffer", CKR_OK);
+    ret = funcList->C_Decrypt(session, wrapped, wrappedLen, out, &outLen);
+    CHECK_CKR(ret, "Bufsize: exact-size retry", CKR_OK);
     CHECK_COND(outLen == sizeof(rfc5649_pt1) &&
                XMEMCMP(out, rfc5649_pt1, sizeof(rfc5649_pt1)) == 0,
                "Bufsize: exact-size buffer recovers plaintext");

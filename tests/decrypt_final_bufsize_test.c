@@ -165,6 +165,16 @@ static int run_test(void)
     CHECK_TRUE(i == (int)sizeof(lastPart),
                "no write past the caller-declared buffer length");
 
+    /* Retry without reinitializing. The decrypted final block must have been
+     * retained without decrypting it a second time or advancing CBC again. */
+    XMEMSET(lastPart, 0, sizeof(lastPart));
+    lastPartLen = sizeof(lastPart);
+    rv = funcList->C_DecryptFinal(session, lastPart, &lastPartLen);
+    CHECK_RV(rv, "C_DecryptFinal(retry)", CKR_OK);
+    CHECK_TRUE(lastPartLen == sizeof(plain) &&
+               XMEMCMP(lastPart, plain, sizeof(plain)) == 0,
+               "undersized-buffer retry recovers plaintext");
+
 out:
     if (session != 0)
         funcList->C_CloseSession(session);

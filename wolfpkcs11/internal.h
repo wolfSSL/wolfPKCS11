@@ -201,7 +201,7 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #define WP11_FIND_STATE_NULL           0
 #define WP11_FIND_STATE_INIT           1
 #define WP11_FIND_STATE_FOUND          2
-/* Maximum number of matching objects to hold handles of. */
+/* Initial number of matching object handles to allocate. */
 #ifndef WP11_FIND_MAX
 #ifdef WOLFPKCS11_NSS
 #define WP11_FIND_MAX                  100
@@ -378,6 +378,7 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #define OBJ_TYPE_E                     -11
 #define PARAM_E                        -12
 #define LOGGED_IN_ANOTHER_E            -13
+#define WP11_CTR_OVERFLOW_E             -14
 
 
 typedef struct WP11_Object WP11_Object;
@@ -408,6 +409,7 @@ WP11_LOCAL int WP11_Slot_SOPin_IsSet(WP11_Slot* slot);
 WP11_LOCAL int WP11_Slot_SOLogin(WP11_Slot* slot, char* pin, int pinLen);
 WP11_LOCAL int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen);
 WP11_LOCAL int WP11_Slot_IsLoggedIn(WP11_Slot* slot);
+WP11_LOCAL int WP11_Slot_IsUserLoggedIn(WP11_Slot* slot);
 WP11_LOCAL void WP11_Slot_Logout(WP11_Slot* slot);
 #ifdef DEBUG_WOLFPKCS11
 WP11_API int WP11_Slot_TokenKeyIsZero(CK_SLOT_ID slotId);
@@ -488,8 +490,8 @@ WP11_LOCAL void WP11_Session_GetObject(WP11_Session* session, WP11_Object** obje
 WP11_LOCAL void WP11_Session_SetObject(WP11_Session* session, WP11_Object* object);
 
 WP11_LOCAL int WP11_Session_FindInit(WP11_Session* session);
-WP11_LOCAL void WP11_Session_Find(WP11_Session* session, int onToken,
-                       CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount);
+WP11_LOCAL int WP11_Session_Find(WP11_Session* session, int onToken,
+                      CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount);
 WP11_LOCAL int WP11_Session_FindGet(WP11_Session* session, CK_OBJECT_HANDLE* id);
 WP11_LOCAL void WP11_Session_FindFinal(WP11_Session* session);
 WP11_LOCAL int WP11_Session_IsFindActive(WP11_Session* session);

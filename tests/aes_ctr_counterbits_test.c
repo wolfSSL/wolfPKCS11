@@ -19,8 +19,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  *
  * Regression test for issue F-5523: AES-CTR setup must reject CK_AES_CTR_PARAMS
- * with ulCounterBits == 0 or > 128 (CKR_MECHANISM_PARAM_INVALID) in both
- * C_EncryptInit and C_DecryptInit, while accepting the valid value 128.
+ * with ulCounterBits == 0 or > 128 and enforce the selected counter field
+ * without allowing it to overflow into nonce bits.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -306,6 +306,65 @@ cleanup:
     return result;
 }
 
+/* A one-bit counter permits exactly two blocks when initialized to zero.
+ * Exercise single-part preflight and a multipart operation that consumes a
+ * block across update boundaries before exhausting the counter field. */
+static int test_ctr_overflow(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE key)
+{
+    CK_RV ret;
+    CK_MECHANISM mech;
+    CK_AES_CTR_PARAMS ctrParams;
+    byte in[33];
+    byte out[33];
+    CK_ULONG outSz;
+    int i;
+    int result = 0;
+
+    XMEMSET(in, 0x5a, sizeof(in));
+
+    ctr_mech_init(&mech, &ctrParams, 1);
+    ret = funcList->C_EncryptInit(session, &mech, key);
+    CHECK_CKR(ret, "C_EncryptInit ulCounterBits=1", CKR_OK);
+
+    XMEMSET(out, 0xa5, sizeof(out));
+    outSz = sizeof(out);
+    ret = funcList->C_Encrypt(session, in, sizeof(in), out, &outSz);
+    CHECK_CKR(ret, "C_Encrypt rejects one-bit counter overflow",
+              CKR_DATA_LEN_RANGE);
+    for (i = 0; i < (int)sizeof(out) && out[i] == 0xa5; i++) {
+    }
+    CHECK_CKR(i == (int)sizeof(out) ? CKR_OK : CKR_GENERAL_ERROR,
+              "C_Encrypt overflow writes no output", CKR_OK);
+
+    ctr_mech_init(&mech, &ctrParams, 1);
+    ret = funcList->C_EncryptInit(session, &mech, key);
+    CHECK_CKR(ret, "C_EncryptInit multipart ulCounterBits=1", CKR_OK);
+
+    outSz = 15;
+    ret = funcList->C_EncryptUpdate(session, in, 15, out, &outSz);
+    CHECK_CKR(ret, "C_EncryptUpdate consumes partial first counter", CKR_OK);
+    outSz = 17;
+    ret = funcList->C_EncryptUpdate(session, in + 15, 17, out + 15, &outSz);
+    CHECK_CKR(ret, "C_EncryptUpdate consumes last counter", CKR_OK);
+    outSz = 1;
+    ret = funcList->C_EncryptUpdate(session, in + 32, 1, out + 32, &outSz);
+    CHECK_CKR(ret, "C_EncryptUpdate rejects exhausted counter",
+              CKR_DATA_LEN_RANGE);
+
+    /* Starting at the maximum one-bit value permits only one block. */
+    ctr_mech_init(&mech, &ctrParams, 1);
+    ctrParams.cb[15] = 1;
+    ret = funcList->C_DecryptInit(session, &mech, key);
+    CHECK_CKR(ret, "C_DecryptInit maximum one-bit counter", CKR_OK);
+    outSz = 17;
+    ret = funcList->C_Decrypt(session, in, 17, out, &outSz);
+    CHECK_CKR(ret, "C_Decrypt rejects maximum counter overflow",
+              CKR_DATA_LEN_RANGE);
+
+cleanup:
+    return result;
+}
+
 static int run_aes_ctr_counterbits_test(void)
 {
     CK_RV ret;
@@ -392,6 +451,8 @@ static int run_aes_ctr_counterbits_test(void)
     if (test_ctr_encrypt_init(session, key) != 0)
         result = -1;
     if (test_ctr_decrypt_init(session, key) != 0)
+        result = -1;
+    if (test_ctr_overflow(session, key) != 0)
         result = -1;
 
     pkcs11_close_session(session);

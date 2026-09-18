@@ -2441,6 +2441,18 @@ static CK_RV test_get_interface(void* args)
         CHECK_CKR(ret, "Get Interface");
     }
     if (ret == CKR_OK) {
+        version.major = 2;
+        version.minor = 20;
+        ret = ((CK_C_GetInterface)func)(NULL, &version, &interface, 0);
+        CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD,
+                       "Get default Interface with unsupported version");
+    }
+    if (ret == CKR_OK) {
+        ret = ((CK_C_GetInterface)func)(NULL, NULL, &interface, 1);
+        CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD,
+                       "Get default Interface with unsupported flags");
+    }
+    if (ret == CKR_OK) {
         interfaceName = (CK_UTF8CHAR_PTR)"FAIL";
         ret = ((CK_C_GetInterface)func)(interfaceName, NULL, &interface, flags);
         CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD, "Get Interface");
@@ -2488,6 +2500,18 @@ static CK_RV test_get_interface(void* args)
     if (ret == CKR_OK) {
         ret = C_GetInterface(interfaceName, NULL, &interface, 0);
         CHECK_CKR(ret, "Get Interface");
+    }
+    if (ret == CKR_OK) {
+        version.major = 2;
+        version.minor = 20;
+        ret = C_GetInterface(NULL, &version, &interface, 0);
+        CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD,
+                       "Get default Interface with unsupported version");
+    }
+    if (ret == CKR_OK) {
+        ret = C_GetInterface(NULL, NULL, &interface, 1);
+        CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD,
+                       "Get default Interface with unsupported flags");
     }
     if (ret == CKR_OK) {
         interfaceName = (CK_UTF8CHAR_PTR)"FAIL";

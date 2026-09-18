@@ -479,7 +479,14 @@ static CK_RV CheckPrivateLogin(WP11_Session* session,
         return CKR_OK;
     if (WP11_Slot_Has_Empty_Pin(slot))
         return CKR_OK;
+#ifdef WOLFPKCS11_NSS
+    /* NSS operates as an internal crypto module and has separate private
+     * object semantics. Preserve its existing any-login behavior; F-8650
+     * applies to the standard PKCS#11 session model. */
     if (!WP11_Slot_IsLoggedIn(slot))
+#else
+    if (!WP11_Slot_IsUserLoggedIn(slot))
+#endif
         return CKR_USER_NOT_LOGGED_IN;
     return CKR_OK;
 }
@@ -2147,7 +2154,7 @@ CK_RV C_SetAttributeValue(CK_SESSION_HANDLE hSession,
 
 /**
  * Initialize the finding of an object associated with the session.
- * All matching objects are found, up to a limit, by this call.
+ * All matching objects are found by this call.
  *
  * @param  hSession   [in]  Handle of session.
  * @param  pTemplate  [in]  Template of attributes match against object.
@@ -2167,6 +2174,7 @@ CK_RV C_FindObjectsInit(CK_SESSION_HANDLE hSession,
     CK_RV rv;
     WP11_Session* session;
     CK_ATTRIBUTE* attr;
+    int ret;
     int onToken = 1;
 
     WOLFPKCS11_ENTER("C_FindObjectsInit");
@@ -2192,8 +2200,9 @@ CK_RV C_FindObjectsInit(CK_SESSION_HANDLE hSession,
         return rv;
     }
 
-    if (WP11_Session_FindInit(session) != 0) {
-        rv = CKR_OPERATION_ACTIVE;
+    ret = WP11_Session_FindInit(session);
+    if (ret != 0) {
+        rv = ret == MEMORY_E ? CKR_HOST_MEMORY : CKR_OPERATION_ACTIVE;
         WOLFPKCS11_LEAVE("C_FindObjectsInit", rv);
         return rv;
     }
@@ -2201,11 +2210,13 @@ CK_RV C_FindObjectsInit(CK_SESSION_HANDLE hSession,
     FindAttributeType(pTemplate, ulCount, CKA_TOKEN, &attr);
     if (attr != NULL) {
         if (attr->pValue == NULL) {
+            WP11_Session_FindFinal(session);
             rv = CKR_ATTRIBUTE_VALUE_INVALID;
             WOLFPKCS11_LEAVE("C_FindObjectsInit", rv);
             return rv;
         }
         if (attr->ulValueLen != sizeof(CK_BBOOL)) {
+            WP11_Session_FindFinal(session);
             rv = CKR_ATTRIBUTE_VALUE_INVALID;
             WOLFPKCS11_LEAVE("C_FindObjectsInit", rv);
             return rv;
@@ -2213,7 +2224,13 @@ CK_RV C_FindObjectsInit(CK_SESSION_HANDLE hSession,
         onToken = *(CK_BBOOL*)attr->pValue;
     }
 
-    WP11_Session_Find(session, onToken, pTemplate, ulCount);
+    ret = WP11_Session_Find(session, onToken, pTemplate, ulCount);
+    if (ret != 0) {
+        WP11_Session_FindFinal(session);
+        rv = ret == MEMORY_E ? CKR_HOST_MEMORY : CKR_FUNCTION_FAILED;
+        WOLFPKCS11_LEAVE("C_FindObjectsInit", rv);
+        return rv;
+    }
 
     rv = CKR_OK;
     WOLFPKCS11_LEAVE("C_FindObjectsInit", rv);
@@ -2829,6 +2846,8 @@ CK_RV C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             encDataLen = (word32)*pulEncryptedDataLen;
             ret = WP11_AesCtr_Do(pData, (word32)ulDataLen, pEncryptedData,
                                  &encDataLen, session);
+            if (ret == WP11_CTR_OVERFLOW_E)
+                return CKR_DATA_LEN_RANGE;
             if (ret != 0)
                 break;
             *pulEncryptedDataLen = encDataLen;
@@ -3140,6 +3159,10 @@ CK_RV C_EncryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
             encPartLen = (word32)*pulEncryptedPartLen;
             ret = WP11_AesCtr_Update(pPart, (int)ulPartLen, pEncryptedPart,
                                      &encPartLen, session);
+            if (ret == WP11_CTR_OVERFLOW_E) {
+                WP11_AesCtr_Final(session);
+                return CKR_DATA_LEN_RANGE;
+            }
             if (ret < 0) {
                 WP11_Session_SetOpInitialized(session, 0);
                 return CKR_FUNCTION_FAILED;
@@ -3869,6 +3892,8 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
             decDataLen = (word32)*pulDataLen;
             ret = WP11_AesCtr_Do(pEncryptedData,
                     (word32)ulEncryptedDataLen, pData, &decDataLen, session);
+            if (ret == WP11_CTR_OVERFLOW_E)
+                return CKR_DATA_LEN_RANGE;
             if (ret != 0)
                 break;
             *pulDataLen = decDataLen;
@@ -4024,7 +4049,6 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
                     (word32)ulEncryptedDataLen, pData, &decDataLen, session);
             if (ret == BUFFER_E) {
                 *pulDataLen = decDataLen;
-                WP11_Session_SetOpInitialized(session, 0);
                 return CKR_BUFFER_TOO_SMALL;
             }
             if (ret != 0)
@@ -4188,6 +4212,10 @@ CK_RV C_DecryptUpdate(CK_SESSION_HANDLE hSession,
             decPartLen = (word32)*pulPartLen;
             ret = WP11_AesCtr_Update(pEncryptedPart, (word32)ulEncryptedPartLen,
                                      pPart, &decPartLen, session);
+            if (ret == WP11_CTR_OVERFLOW_E) {
+                WP11_AesCtr_Final(session);
+                return CKR_DATA_LEN_RANGE;
+            }
             if (ret < 0) {
                 WP11_Session_SetOpInitialized(session, 0);
                 return CKR_FUNCTION_FAILED;

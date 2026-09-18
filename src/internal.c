@@ -333,10 +333,11 @@ struct WP11_Object {
 
 typedef struct WP11_Find {
     int state;                         /* Whether operation is initialized    */
-    CK_OBJECT_HANDLE found[WP11_FIND_MAX];
+    CK_OBJECT_HANDLE* found;
                                        /* List of object handles found        */
     int count;                         /* Count of object handles             */
     int curr;                          /* Index of last object returned       */
+    int capacity;                      /* Allocated entries in found          */
 } WP11_Find;
 
 #ifndef NO_RSA
@@ -374,13 +375,21 @@ typedef struct WP11_CbcParams {
     Aes aes;                           /* AES object from wolfCrypt           */
     unsigned char partial[AES_BLOCK_SIZE];
                                        /* Partial block when streaming        */
+    unsigned char final[AES_BLOCK_SIZE];
+                                       /* Decrypted final block for retry     */
     byte partialSz;                    /* Size of partial block data          */
+    byte finalReady;                   /* Final block has been decrypted      */
 } WP11_CbcParams;
 #endif
 
 #ifdef HAVE_AESCTR
 typedef struct WP11_CtrParams {
     Aes aes;                           /* AES object from wolfCrypt           */
+    unsigned char counter[AES_BLOCK_SIZE];
+                                       /* Next counter block to use           */
+    byte counterBits;                  /* Bits in counter field               */
+    byte offset;                       /* Bytes used in current stream block  */
+    byte exhausted;                    /* Counter field has wrapped           */
 } WP11_CtrParams;
 #endif
 
@@ -6487,6 +6496,9 @@ static int wp11_Object_Load(WP11_Object* object, int tokenId, int objId)
             #ifndef NO_AES
                 case CKK_AES:
             #endif
+            #ifdef WOLFPKCS11_HKDF
+                case CKK_HKDF:
+            #endif
                 case CKK_GENERIC_SECRET:
                     ret = wp11_Object_Load_SymmKey(object, tokenId, objId);
                     break;
@@ -6617,14 +6629,6 @@ static int wp11_Object_Store(WP11_Object* object, int tokenId, int objId)
     /* Open access to key object. */
     ret = wp11_Object_Store_Object(object, tokenId, objId);
 
-    if (ret == 0 && object->keyData == NULL &&
-            (object->objClass == CKO_PRIVATE_KEY ||
-               object->type == CKK_AES ||
-               object->type == CKK_GENERIC_SECRET)) {
-        /* Generate new IV if needed */
-        ret = wc_RNG_GenerateBlock(&object->slot->token.rng, object->iv,
-                                                            sizeof(object->iv));
-    }
     if (ret == 0) {
         if (object->objClass == CKO_CERTIFICATE) {
             ret = wp11_Object_Store_Cert(object, tokenId, objId);
@@ -6678,6 +6682,9 @@ static int wp11_Object_Store(WP11_Object* object, int tokenId, int objId)
             #endif
             #ifndef NO_AES
                 case CKK_AES:
+            #endif
+            #ifdef WOLFPKCS11_HKDF
+                case CKK_HKDF:
             #endif
                 case CKK_GENERIC_SECRET:
                     ret = wp11_Object_Store_SymmKey(object, tokenId, objId);
@@ -6760,6 +6767,9 @@ static int wp11_Object_Decode(WP11_Object* object)
         #ifndef NO_AES
             case CKK_AES:
         #endif
+        #ifdef WOLFPKCS11_HKDF
+            case CKK_HKDF:
+        #endif
             case CKK_GENERIC_SECRET:
                 ret = wp11_Object_Decode_SymmKey(object);
                 break;
@@ -6783,7 +6793,7 @@ static int wp11_Object_Decode(WP11_Object* object)
  * @return  0 on success.
  * @return  -ve on failure.
  */
-static int wp11_Object_Encode(WP11_Object* object, int protect)
+static int wp11_Object_EncodeData(WP11_Object* object, int protect)
 {
     int ret;
 
@@ -6858,6 +6868,9 @@ static int wp11_Object_Encode(WP11_Object* object, int protect)
         #ifndef NO_AES
             case CKK_AES:
         #endif
+        #ifdef WOLFPKCS11_HKDF
+            case CKK_HKDF:
+        #endif
             case CKK_GENERIC_SECRET:
                 ret = wp11_Object_Encode_SymmKey(object);
                 if (protect && ret == 0) {
@@ -6869,6 +6882,32 @@ static int wp11_Object_Encode(WP11_Object* object, int protect)
                 ret = NOT_AVAILABLE_E;
         }
     }
+
+    return ret;
+}
+
+static int wp11_Object_Encode(WP11_Object* object, int protect)
+{
+    int ret = 0;
+    int encrypt = object->objClass == CKO_PRIVATE_KEY ||
+                  object->type == CKK_AES ||
+                  object->type == CKK_GENERIC_SECRET;
+
+#ifdef WOLFPKCS11_HKDF
+    encrypt = encrypt || object->type == CKK_HKDF;
+#endif
+
+    /* Every AES-GCM encryption under the token key needs a fresh nonce. Do
+     * this immediately before encoding, while the plaintext is still the
+     * source of the ciphertext that will be persisted. */
+    if (encrypt) {
+        WP11_Lock_LockRW(&object->slot->token.rngLock);
+        ret = wc_RNG_GenerateBlock(&object->slot->token.rng, object->iv,
+                                   sizeof(object->iv));
+        WP11_Lock_UnlockRW(&object->slot->token.rngLock);
+    }
+    if (ret == 0)
+        ret = wp11_Object_EncodeData(object, protect);
 
     return ret;
 }
@@ -6965,6 +7004,9 @@ static int wp11_Object_Unstore(WP11_Object* object, int tokenId, int objId)
     #endif
     #ifndef NO_AES
         case CKK_AES:
+    #endif
+    #ifdef WOLFPKCS11_HKDF
+        case CKK_HKDF:
     #endif
         case CKK_GENERIC_SECRET:
             storeObjType = WOLFPKCS11_STORE_SYMMKEY;
@@ -8697,6 +8739,30 @@ int WP11_Slot_IsLoggedIn(WP11_Slot* slot)
             state != WP11_APP_STATE_RW_PUBLIC);
 }
 
+static int wp11_LoginStateIsUser(int state)
+{
+    return (state == WP11_APP_STATE_RO_USER ||
+            state == WP11_APP_STATE_RW_USER);
+}
+
+/**
+ * Check whether the normal user is logged in to the token.
+ *
+ * @param  slot  [in]  Slot object referencing token.
+ * @return  1 when the normal user is logged in.
+ *          0 when the session is public or the SO is logged in.
+ */
+int WP11_Slot_IsUserLoggedIn(WP11_Slot* slot)
+{
+    int state;
+
+    WP11_Lock_LockRO(&slot->lock);
+    state = slot->token.loginState;
+    WP11_Lock_UnlockRO(&slot->lock);
+
+    return wp11_LoginStateIsUser(state);
+}
+
 void WP11_Slot_Logout(WP11_Slot* slot)
 {
 #ifndef WOLFPKCS11_NO_STORE
@@ -9555,7 +9621,9 @@ int WP11_Session_SetCbcParams(WP11_Session* session, unsigned char* iv,
      * state here. Reset it before use (as the other Set*Params routines do) so
      * a fresh CBC operation cannot inherit a bogus partial-block count. */
     cbc->partialSz = 0;
+    cbc->finalReady = 0;
     XMEMSET(cbc->partial, 0, sizeof(cbc->partial));
+    XMEMSET(cbc->final, 0, sizeof(cbc->final));
 
     /* AES object on session. */
     ret = wc_AesInit(&cbc->aes, NULL, object->devId);
@@ -9602,6 +9670,7 @@ int WP11_Session_SetCtrParams(WP11_Session* session, CK_ULONG ulCounterBits,
     if (ulCounterBits > 128 || ulCounterBits == 0)
         return BAD_FUNC_ARG;
 
+    XMEMSET(ctr, 0, sizeof(*ctr));
     ret = wc_AesInit(&ctr->aes, NULL, object->devId);
     if (ret == 0) {
         if (object->onToken)
@@ -9610,6 +9679,10 @@ int WP11_Session_SetCtrParams(WP11_Session* session, CK_ULONG ulCounterBits,
         ret = wc_AesSetKey(&ctr->aes, key->data, key->len, cb, AES_ENCRYPTION);
         if (object->onToken)
             WP11_Lock_UnlockRO(object->lock);
+    }
+    if (ret == 0) {
+        XMEMCPY(ctr->counter, cb, sizeof(ctr->counter));
+        ctr->counterBits = (byte)ulCounterBits;
     }
 
     return ret;
@@ -9813,6 +9886,12 @@ int WP11_Session_AddObject(WP11_Session* session, int onToken,
     token = &session->slot->token;
     WP11_Lock_LockRW(&token->lock);
     if (onToken) {
+#ifndef WOLFPKCS11_NO_STORE
+        WP11_Object* oldHead = token->object;
+        int oldObjCnt = token->objCnt;
+        int oldNextObjId = token->nextObjId;
+#endif
+
         if (token->objCnt >= WP11_TOKEN_OBJECT_CNT_MAX)
             ret = OBJ_COUNT_E;
     #ifndef WOLFPKCS11_NO_STORE
@@ -9832,6 +9911,14 @@ int WP11_Session_AddObject(WP11_Session* session, int onToken,
     #ifndef WOLFPKCS11_NO_STORE
         if (ret == 0) {
             ret = wp11_Slot_Store(session->slot, (int)session->slotId);
+            if (ret != 0) {
+                token->object = oldHead;
+                token->objCnt = oldObjCnt;
+                token->nextObjId = oldNextObjId;
+                object->handle = CK_INVALID_HANDLE;
+                object->next = NULL;
+                object->lock = NULL;
+            }
         }
     #endif
     }
@@ -10129,9 +10216,17 @@ int WP11_Session_FindInit(WP11_Session* session)
     if (session->find.state != WP11_FIND_STATE_NULL)
         ret = BAD_STATE_E;
     if (ret == 0) {
+        session->find.found = (CK_OBJECT_HANDLE*)XMALLOC(
+            WP11_FIND_MAX * sizeof(*session->find.found), NULL,
+            DYNAMIC_TYPE_TMP_BUFFER);
+        if (session->find.found == NULL)
+            ret = MEMORY_E;
+    }
+    if (ret == 0) {
         session->find.state = WP11_FIND_STATE_INIT;
         session->find.count = 0;
         session->find.curr = 0;
+        session->find.capacity = WP11_FIND_MAX;
     }
 
     return ret;
@@ -10186,8 +10281,8 @@ static WP11_Object* wp11_Session_FindNext(WP11_Session* session, int onToken,
         if ((ret->opFlag & WP11_FLAG_PRIVATE) == WP11_FLAG_PRIVATE) {
             if (!onToken)
                 WP11_Lock_LockRO(&session->slot->token.lock);
-            if (session->slot->token.loginState == WP11_APP_STATE_RW_PUBLIC ||
-                session->slot->token.loginState == WP11_APP_STATE_RO_PUBLIC) {
+            if (!wp11_LoginStateIsUser(
+                    session->slot->token.loginState)) {
                 object = ret;
                 ret = NULL;
             }
@@ -10205,16 +10300,27 @@ static WP11_Object* wp11_Session_FindNext(WP11_Session* session, int onToken,
  *
  * @param  session  [in]  Session object.
  * @param  object   [in]  Object object to store reference to.
- * @return  FIND_FULL_E when the found list is full.
+ * @return  MEMORY_E when the found list cannot be grown.
  *          0 on success.
  */
 static int wp11_Session_FindMatched(WP11_Session* session, WP11_Object* object)
 {
     int ret = 0;
 
-    if (session->find.count == WP11_FIND_MAX)
-        ret = FIND_FULL_E;
-    else {
+    if (session->find.count == session->find.capacity) {
+        int capacity = session->find.capacity * 2;
+        CK_OBJECT_HANDLE* found = (CK_OBJECT_HANDLE*)XREALLOC(
+            session->find.found, capacity * sizeof(*found), NULL,
+            DYNAMIC_TYPE_TMP_BUFFER);
+
+        if (found == NULL)
+            ret = MEMORY_E;
+        else {
+            session->find.found = found;
+            session->find.capacity = capacity;
+        }
+    }
+    if (ret == 0) {
         session->find.found[session->find.count++] = object->handle;
         session->find.state = WP11_FIND_STATE_FOUND;
     }
@@ -10230,16 +10336,18 @@ static int wp11_Session_FindMatched(WP11_Session* session, WP11_Object* object)
  * @param  pTemplate  [in]  Array of attributes that must match.
  * @param  ulCount    [in]  Number of attributes in array.
  */
-void WP11_Session_Find(WP11_Session* session, int onToken,
-                       CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount)
+int WP11_Session_Find(WP11_Session* session, int onToken,
+                      CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount)
 {
     WP11_Object* obj = NULL;
+    int ret = 0;
     int i;
     CK_ATTRIBUTE* attr;
 
     if (onToken)
         WP11_Lock_LockRO(&session->slot->token.lock);
-    while ((obj = wp11_Session_FindNext(session, onToken, obj)) != NULL) {
+    while (ret == 0 &&
+           (obj = wp11_Session_FindNext(session, onToken, obj)) != NULL) {
         for (i = 0; i < (int)ulCount; i++) {
             attr = &pTemplate[i];
             if (!WP11_Object_MatchAttr(obj, attr->type, (byte*)attr->pValue,
@@ -10248,13 +10356,13 @@ void WP11_Session_Find(WP11_Session* session, int onToken,
             }
         }
 
-        if (i == (int)ulCount) {
-            if (wp11_Session_FindMatched(session, obj) == FIND_FULL_E)
-                break;
-        }
+        if (i == (int)ulCount)
+            ret = wp11_Session_FindMatched(session, obj);
     }
     if (onToken)
         WP11_Lock_UnlockRO(&session->slot->token.lock);
+
+    return ret;
 }
 
 /**
@@ -10292,6 +10400,13 @@ int WP11_Session_FindGet(WP11_Session* session, CK_OBJECT_HANDLE* handle)
  */
 void WP11_Session_FindFinal(WP11_Session* session)
 {
+    if (session->find.found != NULL) {
+        XFREE(session->find.found, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        session->find.found = NULL;
+    }
+    session->find.count = 0;
+    session->find.curr = 0;
+    session->find.capacity = 0;
     session->find.state = WP11_FIND_STATE_NULL;
 }
 
@@ -11468,10 +11583,10 @@ int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
             int loginState;
             WP11_Lock_LockRO(&session->slot->lock);
             loginState = session->slot->token.loginState;
-            /* F-3835: resolving a CKA_PRIVATE object by handle from a public
-             * session must be denied even when the user PIN is empty. */
-            if (loginState == WP11_APP_STATE_RW_PUBLIC ||
-                loginState == WP11_APP_STATE_RO_PUBLIC) {
+            /* F-3835: resolving a CKA_PRIVATE object requires a normal-user
+             * login even when the user PIN is empty. An SO login grants no
+             * access to private objects. */
+            if (!wp11_LoginStateIsUser(loginState)) {
                 ret = BAD_FUNC_ARG;
             }
             WP11_Lock_UnlockRO(&session->slot->lock);
@@ -16106,12 +16221,14 @@ int WP11_AesCbcPad_DecryptFinal(unsigned char* dec, word32* decSz,
     unsigned char* p = dec;
     size_t mask;
 
-    ret = wc_AesCbcDecrypt(&cbc->aes, cbc->partial, cbc->partial,
-                                                                cbc->partialSz);
-    if (ret == 0) {
+    if (!cbc->finalReady) {
+        ret = wc_AesCbcDecrypt(&cbc->aes, cbc->final, cbc->partial,
+                               cbc->partialSz);
+    }
+    if (ret == 0 && !cbc->finalReady) {
         byte padBad;
 
-        padCnt = cbc->partial[AES_BLOCK_SIZE-1];
+        padCnt = cbc->final[AES_BLOCK_SIZE-1];
 
         /* Validate PKCS#7 padding in constant time:
          * padCnt must be 1..AES_BLOCK_SIZE and all padding bytes must equal
@@ -16122,13 +16239,17 @@ int WP11_AesCbcPad_DecryptFinal(unsigned char* dec, word32* decSz,
             /* inPad is 0xFF when i is in the padding region, 0x00 otherwise */
             byte inPad = (byte)(0 -
                 ((unsigned)(AES_BLOCK_SIZE - 1 - i) < (unsigned)padCnt));
-            padBad |= inPad & (cbc->partial[i] ^ padCnt);
+            padBad |= inPad & (cbc->final[i] ^ padCnt);
         }
         if (padBad) {
             ret = BAD_PADDING_E;
         }
+        else {
+            cbc->finalReady = 1;
+        }
     }
     if (ret == 0) {
+        padCnt = cbc->final[AES_BLOCK_SIZE-1];
         outSz = AES_BLOCK_SIZE - (padCnt & (0 - (padCnt <= AES_BLOCK_SIZE)));
         /* Refuse to overflow caller's buffer. Output size is 0..15 bytes;
          * caller passes the remaining capacity in *decSz. On a too-small
@@ -16144,14 +16265,16 @@ int WP11_AesCbcPad_DecryptFinal(unsigned char* dec, word32* decSz,
             mask = (size_t)0 - (i != outSz);
             p = (unsigned char*)((size_t)p & mask);
             p = (unsigned char*)((size_t)p | ((size_t)tmp & (~mask)));
-            *p = cbc->partial[i];
+            *p = cbc->final[i];
             p++;
         }
         *decSz = outSz;
     }
 
     wc_AesFree(&cbc->aes);
+    wc_ForceZero(cbc->final, sizeof(cbc->final));
     cbc->partialSz = 0;
+    cbc->finalReady = 0;
     session->init = 0;
 
     return ret;
@@ -16159,6 +16282,60 @@ int WP11_AesCbcPad_DecryptFinal(unsigned char* dec, word32* decSz,
 #endif /* HAVE_AES_CBC */
 
 #ifdef HAVE_AESCTR
+/* Add to the least-significant counterBits bits of a big-endian counter. */
+static int wp11_AesCtr_Add(unsigned char* counter, byte counterBits,
+                           word32 add)
+{
+    int first = AES_BLOCK_SIZE - (counterBits + 7) / 8;
+    int i;
+    word32 carry = add;
+    byte mask = (counterBits & 7) == 0 ? 0xff :
+                (byte)((1U << (counterBits & 7)) - 1U);
+
+    for (i = AES_BLOCK_SIZE - 1; i >= first; i--) {
+        word32 value = counter[i];
+        word32 sum;
+
+        if (i == first)
+            value &= mask;
+        sum = value + (carry & 0xff);
+        carry = (carry >> 8) + (sum >> 8);
+        if (i == first) {
+            counter[i] = (counter[i] & (byte)~mask) | (byte)(sum & mask);
+            if (sum > mask)
+                carry = 1;
+        }
+        else {
+            counter[i] = (byte)sum;
+        }
+    }
+
+    return carry != 0;
+}
+
+/* Check that all counters needed for an update are still in range. */
+static int wp11_AesCtr_Check(WP11_CtrParams* ctr, word32 inSz,
+                             word32* newBlocks)
+{
+    unsigned char counter[AES_BLOCK_SIZE];
+    word32 available = ctr->offset == 0 ? 0 : AES_BLOCK_SIZE - ctr->offset;
+    word32 remaining = inSz > available ? inSz - available : 0;
+
+    *newBlocks = remaining / AES_BLOCK_SIZE;
+    if ((remaining & (AES_BLOCK_SIZE - 1)) != 0)
+        (*newBlocks)++;
+    if (*newBlocks == 0)
+        return 0;
+    if (ctr->exhausted)
+        return WP11_CTR_OVERFLOW_E;
+
+    XMEMCPY(counter, ctr->counter, sizeof(counter));
+    if (wp11_AesCtr_Add(counter, ctr->counterBits, *newBlocks - 1))
+        return WP11_CTR_OVERFLOW_E;
+
+    return 0;
+}
+
 /**
  * Encrypt or decrypt data with AES-CTR.
  * Output buffer must be large enough to hold all data.
@@ -16204,12 +16381,19 @@ int WP11_AesCtr_Update(unsigned char* in, word32 inSz, unsigned char* out,
 {
     int ret = 0;
     WP11_CtrParams* ctr = &session->params.ctr;
+    word32 newBlocks;
 
     if (*outSz < inSz)
         return BUFFER_E;
-    ret = wc_AesCtrEncrypt(&ctr->aes, out, in, inSz);
+    ret = wp11_AesCtr_Check(ctr, inSz, &newBlocks);
     if (ret == 0)
+        ret = wc_AesCtrEncrypt(&ctr->aes, out, in, inSz);
+    if (ret == 0) {
+        if (wp11_AesCtr_Add(ctr->counter, ctr->counterBits, newBlocks))
+            ctr->exhausted = 1;
+        ctr->offset = (byte)((ctr->offset + inSz) & (AES_BLOCK_SIZE - 1));
         *outSz = inSz;
+    }
 
     return ret;
 }
@@ -17161,8 +17345,10 @@ int WP11_AesKeyWrapPad_Decrypt(unsigned char* enc, word32 encSz,
 
     wc_ForceZero(padBuf, paddedSz);
     XFREE(padBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-    wc_AesFree(&wrap->aes);
-    session->init = 0;
+    if (ret != BUFFER_E) {
+        wc_AesFree(&wrap->aes);
+        session->init = 0;
+    }
     return ret;
 }
 #endif /* HAVE_AES_KEYWRAP */

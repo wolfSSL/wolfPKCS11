@@ -470,38 +470,38 @@ CK_RV C_GetInterface(CK_UTF8CHAR_PTR pInterfaceName, CK_VERSION_PTR pVersion,
 {
     int i;
 
-	if (ppInterface == NULL) {
-		return CKR_ARGUMENTS_BAD;
-	}
+    if (ppInterface == NULL)
+        return CKR_ARGUMENTS_BAD;
 
-	if (pInterfaceName == NULL_PTR) {
-		/* return default interface */
-		*ppInterface = &interfaces[DEFAULT_INTERFACE];
-		return CKR_OK;
-	}
+    for (i = 0; i < NUM_INTERFACES; i++) {
+        CK_VERSION_PTR interfaceVersion =
+            (CK_VERSION_PTR)interfaces[i].pFunctionList;
 
-	for (i = 0; i < NUM_INTERFACES; i++) {
-		CK_VERSION_PTR interface_version = (CK_VERSION_PTR)interfaces[i].pFunctionList;
+        if (pInterfaceName == NULL_PTR && i != DEFAULT_INTERFACE)
+            continue;
+        if (pInterfaceName != NULL_PTR &&
+                strcmp((char*)pInterfaceName,
+                       (char*)interfaces[i].pInterfaceName) != 0) {
+            continue;
+        }
 
-		if (strcmp((char*)pInterfaceName, (char*)interfaces[i].pInterfaceName) != 0)
-			continue;
+        /* If version is not null, it must match. */
+        if (pVersion != NULL_PTR &&
+                (pVersion->major != interfaceVersion->major ||
+                 pVersion->minor != interfaceVersion->minor)) {
+            continue;
+        }
 
-		/* If version is not null, it must match */
-		if (pVersion != NULL_PTR && (pVersion->major != interface_version->major ||
-		    pVersion->minor != interface_version->minor)) {
-			continue;
-		}
+        /* If any flags are specified, the interface must support them. */
+        if ((flags & interfaces[i].flags) != flags)
+            continue;
 
-		/* If any flags specified, it must be supported by the interface */
-		if ((flags & interfaces[i].flags) != flags)
-			continue;
-
-		*ppInterface = &interfaces[i];
+        *ppInterface = &interfaces[i];
 
         return CKR_OK;
-	}
+    }
 
-	return CKR_ARGUMENTS_BAD;
+    return CKR_ARGUMENTS_BAD;
 }
 
 #endif /* defined WOLFPKCS11_PKCS11_V3_0 */

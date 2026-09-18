@@ -544,6 +544,7 @@ static CK_RV test_slot(void* args)
     CK_ULONG count;
     CK_MECHANISM_TYPE* list = NULL;
     CK_MECHANISM_INFO info;
+    int ssl3MasterFound = 0;
     int i;
 
     (void)session;
@@ -625,6 +626,19 @@ static CK_RV test_slot(void* args)
         ret = funcList->C_GetMechanismList(slot, list, &count);
         CHECK_CKR(ret, "Get Mechanism List count");
     }
+    if (ret == CKR_OK) {
+        for (i = 0; i < (int)count; i++) {
+            if (list[i] == CKM_SSL3_MASTER_KEY_DERIVE)
+                ssl3MasterFound = 1;
+        }
+#ifdef WOLFPKCS11_NSS
+        CHECK_COND(ssl3MasterFound, ret,
+                   "NSS SSL3 master target mechanism advertised");
+#else
+        CHECK_COND(!ssl3MasterFound, ret,
+                   "Unimplemented SSL3 master derive not advertised");
+#endif
+    }
 
     if (ret == CKR_OK) {
         ret = funcList->C_GetMechanismInfo(0, list[0], &info);
@@ -639,6 +653,20 @@ static CK_RV test_slot(void* args)
         ret = funcList->C_GetMechanismInfo(slot, -1, &info);
         CHECK_CKR_FAIL(ret, CKR_MECHANISM_INVALID,
                                                  "Get Mechanism Info bad mech");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetMechanismInfo(slot, CKM_SSL3_MASTER_KEY_DERIVE,
+                                           &info);
+#ifdef WOLFPKCS11_NSS
+        CHECK_CKR(ret, "Get NSS SSL3 master target mechanism info");
+        if (ret == CKR_OK) {
+            CHECK_COND(info.flags == 0, ret,
+                       "NSS SSL3 master target has no derive capability");
+        }
+#else
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_INVALID,
+                       "Get Mechanism Info unimplemented SSL3 derive");
+#endif
     }
     if (ret == CKR_OK) {
         for (i = 0; ret == CKR_OK && i < (int)count; i++) {
@@ -4637,6 +4665,72 @@ static CK_RV test_find_objects(void* args)
         ret = funcList->C_FindObjectsFinal(session);
         CHECK_CKR(ret, "Find Objects Final");
     }
+
+    return ret;
+}
+
+static CK_RV test_find_objects_many(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE objects[WP11_FIND_MAX + 1];
+    CK_OBJECT_HANDLE found[7];
+    CK_ULONG foundCount;
+    CK_ULONG total = 0;
+    int created = 0;
+    int findActive = 0;
+    int i;
+    static byte keyData[] = { 0x5a };
+    static byte id[] = { 0x46, 0x38, 0x36, 0x35, 0x37 };
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,    &secretKeyClass,  sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE, &genericKeyType,  sizeof(genericKeyType) },
+        { CKA_VALUE,    keyData,          sizeof(keyData)         },
+        { CKA_ID,       id,               sizeof(id)              },
+        { CKA_TOKEN,    &ckTrue,          sizeof(ckTrue)          },
+        { CKA_PRIVATE,  &ckFalse,         sizeof(ckFalse)         },
+    };
+    CK_ATTRIBUTE findTmpl[] = {
+        { CKA_ID, id, sizeof(id) },
+    };
+
+    for (i = 0; ret == CKR_OK && i < (int)(WP11_FIND_MAX + 1); i++) {
+        ret = funcList->C_CreateObject(session, tmpl,
+            sizeof(tmpl) / sizeof(*tmpl), &objects[i]);
+        CHECK_CKR(ret, "Create object beyond former find cache limit");
+        if (ret == CKR_OK)
+            created++;
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_FindObjectsInit(session, findTmpl,
+            sizeof(findTmpl) / sizeof(*findTmpl));
+        CHECK_CKR(ret, "Find many objects init");
+        if (ret == CKR_OK)
+            findActive = 1;
+    }
+    while (ret == CKR_OK) {
+        ret = funcList->C_FindObjects(session, found,
+                                      sizeof(found) / sizeof(*found),
+                                      &foundCount);
+        CHECK_CKR(ret, "Find many objects batch");
+        if (ret != CKR_OK || foundCount == 0)
+            break;
+        total += foundCount;
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(total == WP11_FIND_MAX + 1, ret,
+                   "Find returns objects beyond former cache limit");
+    }
+    if (findActive) {
+        CK_RV finalRet = funcList->C_FindObjectsFinal(session);
+        CHECK_CKR(finalRet, "Find many objects final");
+        if (ret == CKR_OK)
+            ret = finalRet;
+    }
+
+    for (i = 0; i < created; i++)
+        funcList->C_DestroyObject(session, objects[i]);
 
     return ret;
 }
@@ -16964,6 +17058,16 @@ static CK_RV test_private_object_access(void* args)
     };
     CK_ULONG findTmplCnt = sizeof(findTmpl) / sizeof(*findTmpl);
     CK_OBJECT_HANDLE found;
+#ifndef WOLFPKCS11_NSS
+    CK_OBJECT_HANDLE soObj = CK_INVALID_HANDLE;
+#else
+    CK_OBJECT_HANDLE nssObj = CK_INVALID_HANDLE;
+    CK_BBOOL nssSession = CK_FALSE;
+#endif
+    CK_ULONG valueLen = 0;
+    CK_ATTRIBUTE getTmpl = {
+        CKA_VALUE_LEN, &valueLen, sizeof(valueLen)
+    };
     CK_ULONG count;
 
     /* Create a private object while logged in (test setup logs us in) */
@@ -16994,8 +17098,79 @@ static CK_RV test_private_object_access(void* args)
         }
     }
 
+#ifndef WOLFPKCS11_NSS
     if (ret == CKR_OK) {
-        /* Login as user */
+        ret = funcList->C_Login(session, CKU_SO, soPin, soPinLen);
+        CHECK_CKR(ret, "Login SO for private object test");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_FindObjectsInit(session, findTmpl, findTmplCnt);
+        CHECK_CKR(ret, "Find Objects Init - SO logged in");
+        if (ret == CKR_OK) {
+            ret = funcList->C_FindObjects(session, &found, 1, &count);
+            CHECK_CKR(ret, "Find Objects - SO logged in");
+        }
+        if (ret == CKR_OK && count != 0) {
+            ret = -1;
+            CHECK_CKR(ret, "SO must not discover private objects");
+        }
+        if (ret == CKR_OK) {
+            ret = funcList->C_FindObjectsFinal(session);
+            CHECK_CKR(ret, "Find Objects Final - SO logged in");
+        }
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, obj, &getTmpl, 1);
+        CHECK_CKR_FAIL(ret, CKR_OBJECT_HANDLE_INVALID,
+                       "SO must not resolve private object handles");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, tmpl, tmplCnt, &soObj);
+        CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN,
+                       "SO must not create private objects");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_Logout(session);
+        CHECK_CKR(ret, "Logout SO for private object test");
+    }
+#else
+    /* NSS is an internal crypto module with an established SO-session
+     * exception to the standard private-object rules. Keep that compatibility
+     * behavior while F-8650 tightens only the default PKCS#11 build. */
+    if (ret == CKR_OK) {
+        ret = funcList->C_Login(session, CKU_SO, soPin, soPinLen);
+        CHECK_CKR(ret, "Login SO for NSS private object test");
+    }
+
+    if (ret == CKR_OK) {
+        tmpl[4].pValue = &nssSession;
+        ret = funcList->C_CreateObject(session, tmpl, tmplCnt, &nssObj);
+        CHECK_CKR(ret, "NSS SO creates private session object");
+    }
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, nssObj, &getTmpl, 1);
+        CHECK_CKR(ret, "NSS SO resolves private session object");
+    }
+
+    if (nssObj != CK_INVALID_HANDLE) {
+        funcList->C_DestroyObject(session, nssObj);
+        nssObj = CK_INVALID_HANDLE;
+    }
+    tmpl[4].pValue = &ckTrue;
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_Logout(session);
+        CHECK_CKR(ret, "Logout SO for NSS private object test");
+    }
+#endif
+
+    if (ret == CKR_OK) {
+        /* Login as user. */
         ret = funcList->C_Login(session, CKU_USER, userPin, userPinLen);
         CHECK_CKR(ret, "Login for private object test");
     }
@@ -18097,6 +18272,7 @@ static TEST_FUNC testFunc[] = {
 #endif
     PKCS11TEST_FUNC_SESS_DECL(test_get_attr_value_all_processed),
     PKCS11TEST_FUNC_SESS_DECL(test_find_objects),
+    PKCS11TEST_FUNC_SESS_DECL(test_find_objects_many),
     PKCS11TEST_FUNC_SESS_DECL(test_private_object_access),
 #ifndef WOLFPKCS11_NSS
     PKCS11TEST_FUNC_SESS_DECL(test_private_object_handle_access),
