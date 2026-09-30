@@ -17250,12 +17250,21 @@ int WP11_AesKeyWrap_Decrypt(unsigned char* enc, word32 encSz,
     return 0;
 }
 
-/* Single-block AES encrypt/decrypt. FIPS modules before v5.3 can declare
+/* Single-block AES encrypt/decrypt. FIPS modules before v5.3 declare
  * wc_AesEncryptDirect/wc_AesDecryptDirect as returning void, so no result is
- * available there. */
+ * available there. The v5.2.3 and v5.2.4 modules return int for ARM assembly
+ * builds. */
+#if (!defined(HAVE_FIPS) || FIPS_VERSION_GE(5, 3))
+    #define WP11_AES_DIRECT_RETURNS_INT
+#elif defined(WOLFSSL_ARMASM) && defined(FIPS_VERSION3_GE)
+    #if FIPS_VERSION3_GE(5, 2, 3)
+        #define WP11_AES_DIRECT_RETURNS_INT
+    #endif
+#endif
+
 static int wp11_AesEncryptDirect(Aes* aes, byte* out, const byte* in)
 {
-#if (!defined(HAVE_FIPS) || FIPS_VERSION_GE(5, 3))
+#ifdef WP11_AES_DIRECT_RETURNS_INT
     return wc_AesEncryptDirect(aes, out, in);
 #else
     wc_AesEncryptDirect(aes, out, in);
@@ -17265,7 +17274,7 @@ static int wp11_AesEncryptDirect(Aes* aes, byte* out, const byte* in)
 
 static int wp11_AesDecryptDirect(Aes* aes, byte* out, const byte* in)
 {
-#if (!defined(HAVE_FIPS) || FIPS_VERSION_GE(5, 3))
+#ifdef WP11_AES_DIRECT_RETURNS_INT
     return wc_AesDecryptDirect(aes, out, in);
 #else
     wc_AesDecryptDirect(aes, out, in);
