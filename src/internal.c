@@ -17250,6 +17250,38 @@ int WP11_AesKeyWrap_Decrypt(unsigned char* enc, word32 encSz,
     return 0;
 }
 
+/* Single-block AES encrypt/decrypt. FIPS modules before v5.3 declare
+ * wc_AesEncryptDirect/wc_AesDecryptDirect as returning void, so no result is
+ * available there. The v5.2.3 and v5.2.4 modules return int for ARM assembly
+ * builds. */
+#if (!defined(HAVE_FIPS) || FIPS_VERSION_GE(5, 3))
+    #define WP11_AES_DIRECT_RETURNS_INT
+#elif defined(WOLFSSL_ARMASM) && defined(FIPS_VERSION3_GE)
+    #if FIPS_VERSION3_GE(5, 2, 3)
+        #define WP11_AES_DIRECT_RETURNS_INT
+    #endif
+#endif
+
+static int wp11_AesEncryptDirect(Aes* aes, byte* out, const byte* in)
+{
+#ifdef WP11_AES_DIRECT_RETURNS_INT
+    return wc_AesEncryptDirect(aes, out, in);
+#else
+    wc_AesEncryptDirect(aes, out, in);
+    return 0;
+#endif
+}
+
+static int wp11_AesDecryptDirect(Aes* aes, byte* out, const byte* in)
+{
+#ifdef WP11_AES_DIRECT_RETURNS_INT
+    return wc_AesDecryptDirect(aes, out, in);
+#else
+    wc_AesDecryptDirect(aes, out, in);
+    return 0;
+#endif
+}
+
 /**
  * RFC 3394 key unwrap core that returns the recovered integrity register A
  * instead of verifying it, so RFC 5649 can inspect the AIV (which encodes the
@@ -17293,7 +17325,7 @@ static int wp11_AesKeyUnwrapRaw(Aes* aes, const unsigned char* in, word32 inSz,
             r = out + (i - 1) * KEYWRAP_BLOCK_SIZE;
             XMEMCPY(tmp, a, KEYWRAP_BLOCK_SIZE);
             XMEMCPY(tmp + KEYWRAP_BLOCK_SIZE, r, KEYWRAP_BLOCK_SIZE);
-            ret = wc_AesDecryptDirect(aes, tmp, tmp);
+            ret = wp11_AesDecryptDirect(aes, tmp, tmp);
             if (ret != 0)
                 break;
             XMEMCPY(a, tmp, KEYWRAP_BLOCK_SIZE);
@@ -17352,7 +17384,7 @@ int WP11_AesKeyWrapPad_Encrypt(unsigned char* plain, word32 plainSz,
             unsigned char block[2 * KEYWRAP_BLOCK_SIZE];
             XMEMCPY(block, aiv, KEYWRAP_BLOCK_SIZE);
             XMEMCPY(block + KEYWRAP_BLOCK_SIZE, buf, KEYWRAP_BLOCK_SIZE);
-            ret = wc_AesEncryptDirect(&wrap->aes, enc, block);
+            ret = wp11_AesEncryptDirect(&wrap->aes, enc, block);
             wc_ForceZero(block, sizeof(block));
         }
         else {
@@ -17401,7 +17433,7 @@ int WP11_AesKeyWrapPad_Decrypt(unsigned char* enc, word32 encSz,
     if (encSz == 2 * KEYWRAP_BLOCK_SIZE) {
         /* Single semiblock: ECB-decrypt to AIV || padded plaintext. */
         unsigned char block[2 * KEYWRAP_BLOCK_SIZE];
-        ret = wc_AesDecryptDirect(&wrap->aes, block, enc);
+        ret = wp11_AesDecryptDirect(&wrap->aes, block, enc);
         if (ret == 0) {
             XMEMCPY(aiv, block, KEYWRAP_BLOCK_SIZE);
             XMEMCPY(padBuf, block + KEYWRAP_BLOCK_SIZE, KEYWRAP_BLOCK_SIZE);
