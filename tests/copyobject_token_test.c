@@ -463,6 +463,21 @@ cleanup:
 /* A failed persistence attempt must roll the new token object out of the
  * in-memory list before C_CopyObject frees it. */
 #ifndef WOLFPKCS11_NO_STORE
+#define COPY_TOKEN_PROBE_FILE COPY_TOKEN_TEST_DIR "/.write_probe"
+
+/* Returns 1 if a new file can still be created in the token storage
+ * directory. Privileged users (e.g. root) bypass directory permissions. */
+static int test_store_dir_writable(void)
+{
+    FILE* f = fopen(COPY_TOKEN_PROBE_FILE, "wb");
+
+    if (f == NULL)
+        return 0;
+    fclose(f);
+    (void)remove(COPY_TOKEN_PROBE_FILE);
+    return 1;
+}
+
 static int test_copy_token_store_failure(CK_SESSION_HANDLE session)
 {
     CK_RV ret;
@@ -485,6 +500,11 @@ static int test_copy_token_store_failure(CK_SESSION_HANDLE session)
     ret = TEST_SET_READONLY(COPY_TOKEN_TEST_DIR);
     CHECK_COND(ret == 0, "Test6: make token storage read-only");
     storeReadOnly = 1;
+
+    if (test_store_dir_writable()) {
+        printf("SKIP: Test6: token storage still writable (running as root?)\n");
+        goto cleanup;
+    }
 
     ret = funcList->C_CopyObject(session, src, copyTmpl, 1, &copy);
     (void)TEST_SET_WRITABLE(COPY_TOKEN_TEST_DIR);
