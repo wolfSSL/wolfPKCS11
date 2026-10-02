@@ -8500,6 +8500,10 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
 
                 rv = C_Encrypt(hSession, serialBuff, serialSize, pWrappedKey,
                     pulWrappedKeyLen);
+                /* C_WrapKey is single-part: a length query or a short buffer
+                 * leaves C_Encrypt's operation active, which would make the
+                 * caller's next C_WrapKey fail with CKR_OPERATION_ACTIVE. */
+                WP11_Session_SetOpInitialized(session, 0);
                 if (rv != CKR_OK)
                     goto err_out;
             }
