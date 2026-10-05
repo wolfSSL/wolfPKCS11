@@ -152,6 +152,19 @@ versions may need to update templates or error-handling:
   bootstrap empty-password databases. Integrators who require an enforced
   minimum can opt in at build time with `C_EXTRA_FLAGS="-DWP11_MIN_PIN_LEN=N"`
   (`N>0`); non-NSS builds already default to `4`.
+- `C_GetAttributeValue` returns `CKR_ATTRIBUTE_TYPE_INVALID` when a template
+  names an attribute the object does not have or that is not supported, and
+  keeps processing the rest of the template. Previously such attributes
+  returned `CK_UNAVAILABLE_INFORMATION` as the function's return value, and
+  `CKA_CERTIFICATE_TYPE` on a non-certificate object failed the whole call
+  with `CKR_FUNCTION_FAILED`. In both cases the attribute's `ulValueLen` is
+  set to `CK_UNAVAILABLE_INFORMATION`.
+- `CKA_KEY_TYPE` is only an attribute of key objects. Reading it from a
+  certificate or data object now returns `CKR_ATTRIBUTE_TYPE_INVALID` (an
+  X.509 certificate previously read back as `CKK_RSA`), `C_FindObjects` with
+  `CKA_KEY_TYPE` in the template no longer matches non-key objects, and
+  `C_SetAttributeValue` of `CKA_KEY_TYPE` on them returns
+  `CKR_ATTRIBUTE_TYPE_INVALID`.
 
 #### Analog Devices, Inc. MAXQ10xx Secure Elements ([MAXQ1065](https://www.analog.com/en/products/maxq1065.html)/MAXQ1080)
 
