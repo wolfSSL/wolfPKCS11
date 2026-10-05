@@ -12686,6 +12686,8 @@ static int GetEcbCheckValue(WP11_Object* secret, byte* dataOut,
  *                           On out, length of data in bytes.
  * @return  BUFFER_E when buffer is too small for data.
  *          NOT_AVAILABLE_E when attribute type is not supported.
+ *          CKR_ATTRIBUTE_TYPE_INVALID when attribute is not valid for the
+ *          object's class.
  *          0 on success.
  */
 int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
@@ -12770,7 +12772,14 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             ret = GetData(object->keyId, object->keyIdLen, data, len);
             break;
         case CKA_KEY_TYPE:
-            ret = GetULong(object->type, data, len);
+            /* Only key objects have a key type. Other classes reuse
+             * object->type, e.g. certificates store CKA_CERTIFICATE_TYPE. */
+            if (object->objClass == CKO_PUBLIC_KEY ||
+                    object->objClass == CKO_PRIVATE_KEY ||
+                    object->objClass == CKO_SECRET_KEY)
+                ret = GetULong(object->type, data, len);
+            else
+                ret = CKR_ATTRIBUTE_TYPE_INVALID;
             break;
         case CKA_START_DATE:
             if (object->startDate[0] == '\0') {
