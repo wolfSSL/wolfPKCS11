@@ -321,6 +321,43 @@ static void verify_final_sig_len_range_test(CK_SESSION_HANDLE session)
 
     funcList->C_DestroyObject(session, key);
 }
+
+/* Signing accepts an output buffer length above 32 bits. */
+static void sign_output_capacity_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_SHA256_HMAC, NULL, 0 };
+    byte data[16];
+    byte mac[32];
+    CK_ULONG macLen;
+
+    XMEMSET(data, 0x68, sizeof(data));
+    rv = create_hmac_key(session, &key);
+    CHECK_RV(rv, "create HMAC key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    macLen = big_len(0);
+    rv = funcList->C_SignInit(session, &mech, key);
+    if (rv == CKR_OK)
+        rv = funcList->C_Sign(session, data, sizeof(data), mac, &macLen);
+    CHECK_RV(rv, "C_Sign(HMAC) with a buffer length above 32 bits", CKR_OK);
+    CHECK_TRUE(macLen == sizeof(mac), "C_Sign(HMAC) reports the MAC length");
+
+    macLen = big_len(0);
+    rv = funcList->C_SignInit(session, &mech, key);
+    if (rv == CKR_OK)
+        rv = funcList->C_SignUpdate(session, data, sizeof(data));
+    if (rv == CKR_OK)
+        rv = funcList->C_SignFinal(session, mac, &macLen);
+    CHECK_RV(rv, "C_SignFinal(HMAC) with a buffer length above 32 bits",
+             CKR_OK);
+    CHECK_TRUE(macLen == sizeof(mac),
+               "C_SignFinal(HMAC) reports the MAC length");
+
+    funcList->C_DestroyObject(session, key);
+}
 #endif
 #endif /* !NO_SHA256 */
 
@@ -377,9 +414,53 @@ static void rsa_input_len_range_test(CK_SESSION_HANDLE session)
 }
 #endif
 
+#ifndef NO_RSA
+/* An RSA sign accepts an output buffer length above 32 bits. */
+static void rsa_sign_output_capacity_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_RSA_PKCS, NULL, 0 };
+    byte data[16];
+    byte sig[2048 / 8];
+    CK_ULONG sigLen = big_len(0);
+
+    XMEMSET(data, 0x69, sizeof(data));
+    rv = create_rsa_keys(session, &priv, &pub);
+    CHECK_RV(rv, "create RSA key pair", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_SignInit(session, &mech, priv);
+    if (rv == CKR_OK)
+        rv = funcList->C_Sign(session, data, sizeof(data), sig, &sigLen);
+    CHECK_RV(rv, "C_Sign(RSA) with a buffer length above 32 bits", CKR_OK);
+    CHECK_TRUE(sigLen == sizeof(sig), "C_Sign(RSA) reports the length");
+
+    funcList->C_DestroyObject(session, priv);
+    funcList->C_DestroyObject(session, pub);
+}
+#endif
+
 #if !defined(NO_AES) && defined(HAVE_AESCMAC)
 static CK_OBJECT_CLASS aesKeyClass = CKO_SECRET_KEY;
 static CK_KEY_TYPE aesKeyType = CKK_AES;
+
+static CK_RV create_cmac_key(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE* key)
+{
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,    &aesKeyClass, sizeof(aesKeyClass) },
+        { CKA_KEY_TYPE, &aesKeyType,  sizeof(aesKeyType)  },
+        { CKA_SIGN,     &ckTrue,      sizeof(ckTrue)      },
+        { CKA_VERIFY,   &ckTrue,      sizeof(ckTrue)      },
+        { CKA_PRIVATE,  &ckFalse,     sizeof(ckFalse)     },
+        { CKA_VALUE,    aes_128_key,  sizeof(aes_128_key) },
+    };
+
+    return funcList->C_CreateObject(session, keyTmpl,
+                                    sizeof(keyTmpl) / sizeof(*keyTmpl), key);
+}
 
 /* A multi-part CMAC verify takes the signature length in full. */
 static void cmac_verify_final_sig_len_range_test(CK_SESSION_HANDLE session)
@@ -390,18 +471,9 @@ static void cmac_verify_final_sig_len_range_test(CK_SESSION_HANDLE session)
     byte data[16];
     byte mac[16];
     CK_ULONG macLen = sizeof(mac);
-    CK_ATTRIBUTE keyTmpl[] = {
-        { CKA_CLASS,    &aesKeyClass, sizeof(aesKeyClass) },
-        { CKA_KEY_TYPE, &aesKeyType,  sizeof(aesKeyType)  },
-        { CKA_SIGN,     &ckTrue,      sizeof(ckTrue)      },
-        { CKA_VERIFY,   &ckTrue,      sizeof(ckTrue)      },
-        { CKA_PRIVATE,  &ckFalse,     sizeof(ckFalse)     },
-        { CKA_VALUE,    aes_128_key,  sizeof(aes_128_key) },
-    };
 
     XMEMSET(data, 0x66, sizeof(data));
-    rv = funcList->C_CreateObject(session, keyTmpl,
-                                  sizeof(keyTmpl) / sizeof(*keyTmpl), &key);
+    rv = create_cmac_key(session, &key);
     CHECK_RV(rv, "create AES key", CKR_OK);
     if (rv != CKR_OK)
         return;
@@ -421,6 +493,43 @@ static void cmac_verify_final_sig_len_range_test(CK_SESSION_HANDLE session)
     rv = funcList->C_VerifyFinal(session, mac, macLen);
     CHECK_RV(rv, "C_VerifyFinal(CMAC) length error ends the operation",
              CKR_OPERATION_NOT_INITIALIZED);
+
+    funcList->C_DestroyObject(session, key);
+}
+
+/* A CMAC sign accepts an output buffer length above 32 bits. */
+static void cmac_sign_output_capacity_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_AES_CMAC, NULL, 0 };
+    byte data[16];
+    byte mac[16];
+    CK_ULONG macLen;
+
+    XMEMSET(data, 0x67, sizeof(data));
+    rv = create_cmac_key(session, &key);
+    CHECK_RV(rv, "create AES key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    macLen = big_len(0);
+    rv = funcList->C_SignInit(session, &mech, key);
+    if (rv == CKR_OK)
+        rv = funcList->C_Sign(session, data, sizeof(data), mac, &macLen);
+    CHECK_RV(rv, "C_Sign(CMAC) with a buffer length above 32 bits", CKR_OK);
+    CHECK_TRUE(macLen == sizeof(mac), "C_Sign(CMAC) reports the MAC length");
+
+    macLen = big_len(0);
+    rv = funcList->C_SignInit(session, &mech, key);
+    if (rv == CKR_OK)
+        rv = funcList->C_SignUpdate(session, data, sizeof(data));
+    if (rv == CKR_OK)
+        rv = funcList->C_SignFinal(session, mac, &macLen);
+    CHECK_RV(rv, "C_SignFinal(CMAC) with a buffer length above 32 bits",
+             CKR_OK);
+    CHECK_TRUE(macLen == sizeof(mac),
+               "C_SignFinal(CMAC) reports the MAC length");
 
     funcList->C_DestroyObject(session, key);
 }
@@ -502,13 +611,16 @@ static int run_test(void)
 #if !defined(NO_HMAC)
             hmac_input_len_range_test(session);
             verify_final_sig_len_range_test(session);
+            sign_output_capacity_test(session);
 #endif
 #endif
 #ifndef NO_RSA
             rsa_input_len_range_test(session);
+            rsa_sign_output_capacity_test(session);
 #endif
 #if !defined(NO_AES) && defined(HAVE_AESCMAC)
             cmac_verify_final_sig_len_range_test(session);
+            cmac_sign_output_capacity_test(session);
 #endif
         }
     }
