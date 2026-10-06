@@ -2166,6 +2166,10 @@ int wolfPKCS11_Store_Remove(int type, CK_ULONG id1, CK_ULONG id2)
     ret = wolfPKCS11_Store_Name(type, id1, id2, name, sizeof(name));
     if (ret > 0 && ret < (int)sizeof(name)) {
         ret = remove(name);
+        if (ret < 0 && errno == ENOENT) {
+            /* Nothing was stored, so nothing is left behind. */
+            ret = 0;
+        }
         if (ret < 0) {
             printf("remove(%s) failed: %d\n", name, ret);
         }
@@ -11799,6 +11803,9 @@ int WP11_Session_RemoveObjectByHandle(WP11_Session* session,
     WP11_Token* token = &session->slot->token;
     WP11_Session* owner = session;
     int id = 0;
+#ifndef WOLFPKCS11_NO_STORE
+    int storeRet;
+#endif
 
     /* The token lock guards every object list on the slot (session lists
      * included). Take it before touching any list or the object. Token objects
@@ -11890,13 +11897,16 @@ int WP11_Session_RemoveObjectByHandle(WP11_Session* session,
 
         #ifndef WOLFPKCS11_NO_STORE
             /* remove any id's with higher value */
-            ret = wp11_Object_Unstore(*curr, (int)session->slotId, id);
+            storeRet = wp11_Object_Unstore(*curr, (int)session->slotId, id);
         #ifdef DEBUG_WOLFPKCS11
-            if (ret != 0) {
+            if (storeRet != 0) {
                 printf("Failed to unstore slot %d, id: %d, ret: %d, continuing...\n",
-                    (int)session->slotId, id, ret);
+                    (int)session->slotId, id, storeRet);
             }
         #endif
+            /* NOT_AVAILABLE_E: storage is disabled, nothing to remove. */
+            if (ret == 0 && storeRet != NOT_AVAILABLE_E)
+                ret = storeRet;
         #endif
 
             curr = &(*curr)->next;
@@ -11905,21 +11915,25 @@ int WP11_Session_RemoveObjectByHandle(WP11_Session* session,
         }
 
     #ifndef WOLFPKCS11_NO_STORE
-        ret = wp11_Object_Unstore(object, (int)session->slotId, id);
+        storeRet = wp11_Object_Unstore(object, (int)session->slotId, id);
     #ifdef DEBUG_WOLFPKCS11
-        if (ret != 0) {
+        if (storeRet != 0) {
             printf("Failed to unstore slot %d, id: %d, ret: %d\n",
-                (int)session->slotId, id, ret);
+                (int)session->slotId, id, storeRet);
         }
     #endif
+        if (ret == 0 && storeRet != NOT_AVAILABLE_E)
+            ret = storeRet;
         /* re-store the token */
-        ret = wp11_Slot_Store(session->slot, (int)session->slotId);
+        storeRet = wp11_Slot_Store(session->slot, (int)session->slotId);
     #ifdef DEBUG_WOLFPKCS11
-        if (ret != 0) {
+        if (storeRet != 0) {
             printf("Failed to store slot %d, ret: %d\n",
-                (int)session->slotId, ret);
+                (int)session->slotId, storeRet);
         }
     #endif
+        if (ret == 0)
+            ret = storeRet;
     #endif
     }
     else {
