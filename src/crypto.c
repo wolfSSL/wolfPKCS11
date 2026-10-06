@@ -5400,6 +5400,8 @@ static int CKM_TLS_MAC_init(CK_KEY_TYPE type, CK_MECHANISM_PTR pMechanism,
         return CKR_MECHANISM_PARAM_INVALID;
     }
     params = (CK_TLS_MAC_PARAMS*)pMechanism->pParameter;
+    if (!CK_ULONG_FITS_WORD32(params->ulMacLength))
+        return CKR_MECHANISM_PARAM_INVALID;
     if (params->prfHashMechanism == CKM_TLS_PRF) {
         if (params->ulMacLength != 12)
             return CKR_MECHANISM_PARAM_INVALID;
