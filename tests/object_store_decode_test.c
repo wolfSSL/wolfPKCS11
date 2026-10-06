@@ -36,6 +36,7 @@
 #endif
 #include <wolfssl/wolfcrypt/settings.h>
 #include <wolfssl/wolfcrypt/misc.h>
+#include <wolfssl/wolfcrypt/memory.h>
 
 #ifndef WOLFPKCS11_USER_SETTINGS
     #include <wolfpkcs11/options.h>
@@ -79,6 +80,74 @@ static const char* storeKinds[] = {
     "obj", "data", "symmkey", "rsakey_priv", "rsakey_pub", "ecckey_priv",
     "ecckey_pub", "dhkey_priv", "dhkey_pub", "cert", "trust"
 };
+
+#if defined(USE_WOLFSSL_MEMORY) && !defined(WOLFSSL_STATIC_MEMORY) && \
+    !defined(WOLFSSL_DEBUG_MEMORY)
+#define HAVE_ALLOC_TRACKING
+#define ALLOC_REFUSE_SZ ((size_t)64 * 1024 * 1024)
+
+#define TRACK_HDR_SZ    16
+
+static size_t largestAlloc = 0;
+/* Live bytes in blocks no larger than peakCap, and their peak. */
+static size_t peakCap = 0;
+static size_t liveBytes = 0;
+static size_t peakLive = 0;
+
+static void* track_malloc(size_t sz)
+{
+    unsigned char* p;
+
+    if (sz > largestAlloc)
+        largestAlloc = sz;
+    if (sz >= ALLOC_REFUSE_SZ)
+        return NULL;
+    p = (unsigned char*)malloc(sz + TRACK_HDR_SZ);
+    if (p == NULL)
+        return NULL;
+    XMEMCPY(p, &sz, sizeof(sz));
+    if (sz <= peakCap) {
+        liveBytes += sz;
+        if (liveBytes > peakLive)
+            peakLive = liveBytes;
+    }
+    return p + TRACK_HDR_SZ;
+}
+
+static void track_free(void* ptr)
+{
+    unsigned char* p;
+    size_t sz;
+
+    if (ptr == NULL)
+        return;
+    p = (unsigned char*)ptr - TRACK_HDR_SZ;
+    XMEMCPY(&sz, p, sizeof(sz));
+    if (sz <= peakCap)
+        liveBytes -= sz;
+    free(p);
+}
+
+static void* track_realloc(void* ptr, size_t sz)
+{
+    void* n;
+    size_t old;
+
+    if (ptr == NULL)
+        return track_malloc(sz);
+    if (sz == 0) {
+        track_free(ptr);
+        return NULL;
+    }
+    n = track_malloc(sz);
+    if (n == NULL)
+        return NULL;
+    XMEMCPY(&old, (unsigned char*)ptr - TRACK_HDR_SZ, sizeof(old));
+    XMEMCPY(n, ptr, (old < sz) ? old : sz);
+    track_free(ptr);
+    return n;
+}
+#endif
 
 static void store_path(char* path, size_t sz, const char* kind, int objId)
 {
@@ -410,6 +479,149 @@ static void test_negative_attribute_length(void)
     cleanup_test_files();
 }
 
+#define LARGE_VALUE_SZ  300001
+static byte largeValue[LARGE_VALUE_SZ];
+static byte largeRead[LARGE_VALUE_SZ];
+
+static CK_RV create_large_data_object(CK_SESSION_HANDLE session)
+{
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,   &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN,   &ckTrue,    sizeof(ckTrue)    },
+        { CKA_PRIVATE, &ckFalse,   sizeof(ckFalse)   },
+        { CKA_VALUE,   largeValue, sizeof(largeValue) },
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(largeValue); i++)
+        largeValue[i] = (byte)(i * 7 + (i >> 8));
+    return funcList->C_CreateObject(session, tmpl,
+        sizeof(tmpl) / sizeof(*tmpl), &obj);
+}
+
+static void test_large_stored_value_round_trip(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_ULONG count = 0;
+    CK_ATTRIBUTE findTmpl[] = {
+        { CKA_CLASS, &dataClass, sizeof(dataClass) },
+    };
+    CK_ATTRIBUTE value = { CKA_VALUE, largeRead, sizeof(largeRead) };
+
+    printf("\n--- large stored value reloads intact ---\n");
+    rv = store_objects(create_large_data_object);
+    CHECK_RV(rv, "store large data object", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    rv = pkcs11_load();
+    if (rv == CKR_OK) {
+        rv = init_slot(&slot);
+        if (rv == CKR_OK)
+            rv = open_session(slot, 0, &session);
+        if (rv == CKR_OK)
+            rv = funcList->C_FindObjectsInit(session, findTmpl, 1);
+        if (rv == CKR_OK)
+            rv = funcList->C_FindObjects(session, &obj, 1, &count);
+        if (rv == CKR_OK)
+            rv = funcList->C_FindObjectsFinal(session);
+        if (rv == CKR_OK && count != 1)
+            rv = CKR_GENERAL_ERROR;
+        if (rv == CKR_OK)
+            rv = funcList->C_GetAttributeValue(session, obj, &value, 1);
+        (void)funcList->C_Finalize(NULL);
+        pkcs11_unload();
+    }
+    CHECK_RV(rv, "reload large data object", CKR_OK);
+    CHECK_TRUE(rv == CKR_OK && value.ulValueLen == sizeof(largeValue) &&
+               XMEMCMP(largeRead, largeValue, sizeof(largeValue)) == 0,
+               "large stored value is unchanged after reload");
+    cleanup_test_files();
+}
+
+#ifdef HAVE_ALLOC_TRACKING
+/* Loading must not size an allocation from a length the data cannot back. */
+static int child_load_allocation_bound(void)
+{
+    CK_SLOT_ID slot = 0;
+
+    if (wolfSSL_SetAllocators(track_malloc, track_free, track_realloc) != 0)
+        return CHILD_SETUP;
+    if (pkcs11_load() != CKR_OK)
+        return CHILD_SETUP;
+    if (init_slot(&slot) == CKR_OK)
+        (void)funcList->C_Finalize(NULL);
+    if (largestAlloc >= ALLOC_REFUSE_SZ) {
+        fprintf(stderr, "  largest allocation while loading: %lu\n",
+                (unsigned long)largestAlloc);
+        return CHILD_FAIL;
+    }
+    return CHILD_PASS;
+}
+
+static void test_oversized_attribute_length(void)
+{
+    CK_RV rv;
+    char path[256];
+    int res = CHILD_SETUP;
+
+    printf("\n--- stored attribute length must be bounded ---\n");
+    rv = store_objects(create_data_object);
+    CHECK_RV(rv, "store data object", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    if (find_store_file("obj", path, sizeof(path)) == 0 &&
+            patch_length(path, OBJ_LABEL_LEN_OFF, 0, 0x7FFFFFF8UL) == 0) {
+        res = run_in_child(child_load_allocation_bound);
+    }
+    CHECK_TRUE(res == CHILD_PASS,
+               "oversized stored attribute length is not allocated");
+    cleanup_test_files();
+}
+
+/* Loading a large stored value holds about one copy of it, not two. Larger
+ * blocks cannot be partial copies of it, so they are not counted. */
+static int child_large_value_peak(void)
+{
+    CK_SLOT_ID slot = 0;
+
+    peakCap = LARGE_VALUE_SZ;
+    if (wolfSSL_SetAllocators(track_malloc, track_free, track_realloc) != 0)
+        return CHILD_SETUP;
+    if (pkcs11_load() != CKR_OK)
+        return CHILD_SETUP;
+    if (init_slot(&slot) == CKR_OK)
+        (void)funcList->C_Finalize(NULL);
+    if (peakLive >= (size_t)LARGE_VALUE_SZ + LARGE_VALUE_SZ / 2) {
+        fprintf(stderr, "  peak live bytes while loading: %lu\n",
+                (unsigned long)peakLive);
+        return CHILD_FAIL;
+    }
+    return CHILD_PASS;
+}
+
+static void test_large_stored_value_peak(void)
+{
+    CK_RV rv;
+    int res;
+
+    printf("\n--- large stored value loads without a second copy ---\n");
+    rv = store_objects(create_large_data_object);
+    CHECK_RV(rv, "store large data object", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    res = run_in_child(child_large_value_peak);
+    CHECK_TRUE(res == CHILD_PASS,
+               "peak memory while loading stays near one copy");
+    cleanup_test_files();
+}
+#endif
+
 int main(int argc, char* argv[])
 {
     (void)argc;
@@ -419,6 +631,13 @@ int main(int argc, char* argv[])
     printf("=== wolfPKCS11 stored object decode test ===\n");
     test_negative_optional_length();
     test_negative_attribute_length();
+#ifdef HAVE_ALLOC_TRACKING
+    test_oversized_attribute_length();
+#endif
+    test_large_stored_value_round_trip();
+#ifdef HAVE_ALLOC_TRACKING
+    test_large_stored_value_peak();
+#endif
 
     return pkcs11_test_summary();
 }

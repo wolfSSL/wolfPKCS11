@@ -142,6 +142,11 @@
 #define WP11_MAX_CERT_SZ              4096
 #endif
 
+/* Initial allocation when reading a variable-length array from storage. */
+#ifndef WP11_STORE_READ_CHUNK_SZ
+#define WP11_STORE_READ_CHUNK_SZ      4096
+#endif
+
 #define PKCS11_CHECK_VALUE_SIZE       3
 
 /* Sizes for storage. */
@@ -1962,6 +1967,36 @@ int wolfPKCS11_Store_Read(void* store, unsigned char* buffer, int len)
     return ret;
 }
 
+#ifndef WOLFPKCS11_TPM_STORE
+/**
+ * Get the number of bytes left to read from a store file.
+ *
+ * @param [in]   store  Context for operation.
+ * @param [out]  left   Number of bytes after the read position.
+ * @return  0 on success.
+ * @return  BUFFER_E when the position cannot be worked out or restored.
+ */
+static int wolfPKCS11_Store_Left(void* store, long* left)
+{
+    WP11_FileStoreCtx* ctx = (WP11_FileStoreCtx*)store;
+    long pos = -1;
+    long end = -1;
+
+    /* stdio directly: the file store's handles are FILE* (see fdopen()). */
+    if (ctx != NULL && ctx->file != XBADFILE && ctx->file != NULL) {
+        pos = ftell(ctx->file);
+        if (pos >= 0 && fseek(ctx->file, 0, SEEK_END) == 0)
+            end = ftell(ctx->file);
+        if (pos >= 0 && fseek(ctx->file, pos, SEEK_SET) != 0)
+            end = -1;
+    }
+    if (pos < 0 || end < pos)
+        return BUFFER_E;
+    *left = end - pos;
+    return 0;
+}
+#endif
+
 /**
  * Writes a specific number of bytes from buffer.
  *
@@ -2061,6 +2096,26 @@ static int wp11_storage_remove(int type, CK_ULONG id1, CK_ULONG id2)
 static void wp11_storage_close(void* storage)
 {
     wolfPKCS11_Store_Close(storage);
+}
+
+/**
+ * Get the number of bytes left to read, when the store can tell.
+ *
+ * @param [in]   storage  Context for operation.
+ * @param [out]  left     Number of bytes left to read.
+ * @return  0 on success.
+ * @return  NOT_AVAILABLE_E when the store cannot tell.
+ * @return  Other value on failure.
+ */
+static int wp11_storage_left(void* storage, long* left)
+{
+#if !defined(WOLFPKCS11_CUSTOM_STORE) && !defined(WOLFPKCS11_TPM_STORE)
+    return wolfPKCS11_Store_Left(storage, left);
+#else
+    (void)storage;
+    (void)left;
+    return NOT_AVAILABLE_E;
+#endif
 }
 
 /**
@@ -2452,6 +2507,13 @@ static int wp11_storage_read_alloc_array(void* storage,
                                          unsigned char** buffer, int* len)
 {
     int ret;
+    int have = 0;
+    int bufSz = 0;
+    int newSz;
+    int first = WP11_STORE_READ_CHUNK_SZ;
+    long left = 0;
+    unsigned char* buf = NULL;
+    unsigned char* tmp;
 
     /* Read length of array. */
     ret = wp11_storage_read_int(storage, len);
@@ -2461,19 +2523,55 @@ static int wp11_storage_read_alloc_array(void* storage,
         ret = ASN_PARSE_E;
     }
     if (ret == 0 && *len > 0) {
-        /* Allocate buffer to hold data. */
-        *buffer = (unsigned char*)XMALLOC(*len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        if (*buffer == NULL)
-            ret = MEMORY_E;
+        /* When the store knows its size, allocate once if the data is there. */
+        ret = wp11_storage_left(storage, &left);
+        if (ret == 0 && (long)*len > left)
+            ret = BUFFER_E;
+        else if (ret == 0)
+            first = *len;
+        else if (ret == NOT_AVAILABLE_E)
+            ret = 0;
+    }
+    /* Otherwise grow the buffer only as stored data is read, so a corrupt
+     * length cannot drive an allocation larger than the data present. */
+    while (ret == 0 && have < *len) {
+        if (bufSz == 0)
+            newSz = first;
+        else if (bufSz <= *len / 2)
+            newSz = bufSz * 2;
+        else
+            newSz = *len;
+        if (newSz > *len)
+            newSz = *len;
 
-        if (ret == 0) {
-            /* Read array data into allocated buffer. */
-            ret = wp11_storage_read(storage, *buffer, *len);
-            if (ret != 0) {
-                XFREE(*buffer, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-                *buffer = NULL;
-            }
+        tmp = (unsigned char*)XMALLOC(newSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (tmp == NULL) {
+            ret = MEMORY_E;
         }
+        else {
+            if (buf != NULL) {
+                XMEMCPY(tmp, buf, have);
+                wc_ForceZero(buf, (word32)have);
+                XFREE(buf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            }
+            buf = tmp;
+            bufSz = newSz;
+            /* Read array data into the newly allocated space. */
+            ret = wp11_storage_read(storage, buf + have, bufSz - have);
+            if (ret == 0)
+                have = bufSz;
+        }
+    }
+
+    if (ret != 0 && (buf != NULL || ret == MEMORY_E)) {
+        if (buf != NULL) {
+            wc_ForceZero(buf, (word32)bufSz);
+            XFREE(buf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        }
+        *buffer = NULL;
+    }
+    else if (buf != NULL) {
+        *buffer = buf;
     }
 
     return ret;
