@@ -503,6 +503,47 @@ static void test_token_reset_store_failure(void)
     funcList->C_Finalize(NULL);
 }
 
+/* C_Finalize reports a token that could not be stored. */
+static void test_finalize_reports_store_failure(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+
+    if (geteuid() == 0) {
+        printf("\nSkipping finalize store failure test when run as root\n");
+        return;
+    }
+    printf("\n--- finalize reports a token store failure ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "final-first", &obj);
+        CHECK_RV(rv, "create token object", CKR_OK);
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    if (rv == CKR_OK && chmod(TEST_DIR, 0500) == 0) {
+        rv = funcList->C_Finalize(NULL);
+        (void)chmod(TEST_DIR, 0700);
+        CHECK_RV(rv, "finalize reports the store failure",
+                 CKR_FUNCTION_FAILED);
+        rv = lib_init();
+        CHECK_RV(rv, "library initializes after the failed finalize", CKR_OK);
+        if (rv == CKR_OK)
+            rv = user_session(slot, &session);
+        if (rv == CKR_OK) {
+            CHECK_TRUE(count_label(session, "final-first") == 1,
+                       "previously stored object is still present");
+        }
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
 static int run_tests(void)
 {
     CK_RV rv;
@@ -518,6 +559,7 @@ static int run_tests(void)
     test_pin_change_store_failure();
     test_init_pin_store_failure();
     test_token_reset_store_failure();
+    test_finalize_reports_store_failure();
 
     clear_store_dir();
     pkcs11_unload();

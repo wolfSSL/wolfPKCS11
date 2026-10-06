@@ -399,7 +399,7 @@ typedef struct WP11_ObjectCalls WP11_ObjectCalls;
 
 
 WP11_LOCAL int WP11_Library_Init(void);
-WP11_LOCAL void WP11_Library_Final(void);
+WP11_LOCAL int WP11_Library_Final(void);
 WP11_LOCAL int WP11_Library_IsInitialized(void);
 
 WP11_LOCAL int WP11_SlotIdValid(CK_SLOT_ID slotId);
