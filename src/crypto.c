@@ -6574,6 +6574,8 @@ static CK_RV wp11_C_SignFinal(CK_SESSION_HANDLE hSession,
                 *pulSignatureLen = (CK_ULONG)WP11_TLS_MAC_get_len(session);
                 return CKR_OK;
             }
+            if ((CK_ULONG)WP11_TLS_MAC_get_len(session) > *pulSignatureLen)
+                return CKR_BUFFER_TOO_SMALL;
 
             WP11_Session_GetData(session, &data, &dataLen);
             ret = (int)C_Sign(hSession, data, dataLen, pSignature,

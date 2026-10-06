@@ -269,6 +269,86 @@ static void aes_cmac_full_block_test(CK_SESSION_HANDLE session)
 }
 #endif
 
+#if defined(WOLFSSL_HAVE_PRF) && !defined(NO_SHA256)
+static CK_OBJECT_CLASS tlsKeyClass = CKO_SECRET_KEY;
+static CK_KEY_TYPE genericKeyType = CKK_GENERIC_SECRET;
+static byte tlsSecret[48] = { 0x42 };
+static byte tlsHandshakeHash[32] = { 0x17 };
+
+static CK_RV create_generic_key(CK_SESSION_HANDLE session,
+                                CK_OBJECT_HANDLE* key)
+{
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,    &tlsKeyClass,    sizeof(tlsKeyClass)    },
+        { CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType) },
+        { CKA_SIGN,     &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VERIFY,   &ckTrue,         sizeof(ckTrue)         },
+        { CKA_PRIVATE,  &ckFalse,        sizeof(ckFalse)        },
+        { CKA_VALUE,    tlsSecret,       sizeof(tlsSecret)      },
+    };
+
+    return funcList->C_CreateObject(session, keyTmpl,
+                                    sizeof(keyTmpl) / sizeof(*keyTmpl), key);
+}
+
+static void tls_mac_params(CK_TLS_MAC_PARAMS* params, CK_MECHANISM* mech)
+{
+    params->prfHashMechanism = CKM_SHA256;
+    params->ulMacLength = 12;
+    params->ulServerOrClient = 1;
+    mech->mechanism = CKM_TLS_MAC;
+    mech->pParameter = params;
+    mech->ulParameterLen = sizeof(*params);
+}
+
+/* A short output buffer leaves a multi-part TLS MAC active for a retry. */
+static void tls_mac_sign_final_retry_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_TLS_MAC_PARAMS params;
+    CK_MECHANISM mech;
+    byte expMac[12];
+    byte mac[12];
+    CK_ULONG macLen;
+
+    rv = create_generic_key(session, &key);
+    CHECK_RV(rv, "create TLS secret", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    tls_mac_params(&params, &mech);
+
+    rv = funcList->C_SignInit(session, &mech, key);
+    CHECK_RV(rv, "C_SignInit(TLS MAC single-part)", CKR_OK);
+    if (rv == CKR_OK) {
+        macLen = sizeof(expMac);
+        rv = funcList->C_Sign(session, tlsHandshakeHash,
+                              sizeof(tlsHandshakeHash), expMac, &macLen);
+        CHECK_RV(rv, "C_Sign(TLS MAC)", CKR_OK);
+    }
+
+    rv = funcList->C_SignInit(session, &mech, key);
+    CHECK_RV(rv, "C_SignInit(TLS MAC multi-part)", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_SignUpdate(session, tlsHandshakeHash,
+                                    sizeof(tlsHandshakeHash));
+        CHECK_RV(rv, "C_SignUpdate(TLS MAC)", CKR_OK);
+        macLen = 4;
+        rv = funcList->C_SignFinal(session, mac, &macLen);
+        CHECK_RV(rv, "C_SignFinal(TLS MAC, short buffer)",
+                 CKR_BUFFER_TOO_SMALL);
+        macLen = sizeof(mac);
+        rv = funcList->C_SignFinal(session, mac, &macLen);
+        CHECK_RV(rv, "C_SignFinal(TLS MAC, retry)", CKR_OK);
+        CHECK_TRUE(rv == CKR_OK && macLen == sizeof(expMac) &&
+                   XMEMCMP(mac, expMac, sizeof(expMac)) == 0,
+                   "retried TLS MAC matches the single-part result");
+    }
+
+    funcList->C_DestroyObject(session, key);
+}
+#endif
+
 static CK_RV token_init(CK_SLOT_ID* slot)
 {
     CK_RV rv;
@@ -341,6 +421,9 @@ static int run_test(void)
 #endif
 #if !defined(NO_AES) && defined(HAVE_AESCMAC)
         aes_cmac_full_block_test(session);
+#endif
+#if defined(WOLFSSL_HAVE_PRF) && !defined(NO_SHA256)
+        tls_mac_sign_final_retry_test(session);
 #endif
     }
 
