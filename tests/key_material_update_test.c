@@ -367,6 +367,42 @@ static void test_rejected_secret_update_keeps_key(CK_SESSION_HANDLE session)
 #endif
 }
 
+#ifndef NO_DH
+/* A DH private value cannot be replaced once the key exists. */
+static void test_dh_private_value_fixed(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS privClass = CKO_PRIVATE_KEY;
+    CK_KEY_TYPE dhType = CKK_DH;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,       &privClass,     sizeof(privClass)      },
+        { CKA_KEY_TYPE,    &dhType,        sizeof(dhType)         },
+        { CKA_TOKEN,       &ckFalse,       sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckFalse,       sizeof(ckFalse)        },
+        { CKA_EXTRACTABLE, &ckTrue,        sizeof(ckTrue)         },
+        { CKA_PRIME,       dh_ffdhe2048_p, sizeof(dh_ffdhe2048_p) },
+        { CKA_BASE,        dh_ffdhe2048_g, sizeof(dh_ffdhe2048_g) },
+        { CKA_VALUE,       dh_2048_priv,   sizeof(dh_2048_priv)   },
+    };
+    CK_ATTRIBUTE shorterValue[] = {
+        { CKA_VALUE, dh_2048_priv, sizeof(dh_2048_priv) / 2 },
+    };
+
+    rv = funcList->C_CreateObject(session, keyTmpl,
+                                  sizeof(keyTmpl) / sizeof(*keyTmpl), &key);
+    CHECK_RV(rv, "create DH private key", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_SetAttributeValue(session, key, shorterValue, 1);
+        CHECK_RV(rv, "set shorter DH private value", CKR_ATTRIBUTE_READ_ONLY);
+        CHECK_TRUE(attr_equals(session, key, CKA_VALUE, dh_2048_priv,
+                               sizeof(dh_2048_priv)),
+                   "DH private value unchanged");
+    }
+    destroy_obj(session, &key);
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -386,6 +422,9 @@ static int run_test(void)
     if (rv == CKR_OK) {
         test_token_key_value_fixed(&session);
         test_rejected_secret_update_keeps_key(session);
+#ifndef NO_DH
+        test_dh_private_value_fixed(session);
+#endif
     }
 
     if (session != 0) {
