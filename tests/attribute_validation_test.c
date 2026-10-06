@@ -421,6 +421,85 @@ static void test_rejected_update_is_atomic(CK_SESSION_HANDLE session)
 }
 #endif
 
+/* Attribute lengths beyond what the library stores are rejected before any
+ * value is read, for both generic and key component attributes. */
+static void test_attr_length_range(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_ULONG wrapLen = 0;
+    CK_ATTRIBUTE labelTmpl[] = {
+        { CKA_LABEL, (void*)newLabel, (CK_ULONG)INT_MAX + 1 },
+    };
+#ifndef NO_RSA
+    CK_OBJECT_CLASS rsaClass = CKO_PRIVATE_KEY;
+    CK_KEY_TYPE rsaType = CKK_RSA;
+    CK_ATTRIBUTE rsaTmpl[] = {
+        { CKA_CLASS,            &rsaClass,         sizeof(rsaClass)          },
+        { CKA_KEY_TYPE,         &rsaType,          sizeof(rsaType)           },
+        { CKA_TOKEN,            &ckFalse,          sizeof(ckFalse)           },
+        { CKA_PRIVATE,          &ckFalse,          sizeof(ckFalse)           },
+        { CKA_MODULUS,          rsa_2048_modulus,  sizeof(rsa_2048_modulus)  },
+        { CKA_PRIVATE_EXPONENT, rsa_2048_priv_exp, sizeof(rsa_2048_priv_exp) },
+        { CKA_PRIME_1,          rsa_2048_p,        sizeof(rsa_2048_p)        },
+        { CKA_PRIME_2,          rsa_2048_q,        sizeof(rsa_2048_q)        },
+        { CKA_EXPONENT_1,       rsa_2048_dP,       sizeof(rsa_2048_dP)       },
+        { CKA_EXPONENT_2,       rsa_2048_dQ,       sizeof(rsa_2048_dQ)       },
+        { CKA_COEFFICIENT,      rsa_2048_u,        sizeof(rsa_2048_u)        },
+        { CKA_PUBLIC_EXPONENT,  rsa_2048_pub_exp,  sizeof(rsa_2048_pub_exp)  },
+    };
+#endif
+#ifndef NO_DH
+    CK_OBJECT_CLASS dhClass = CKO_PUBLIC_KEY;
+    CK_KEY_TYPE dhType = CKK_DH;
+    CK_ATTRIBUTE dhTmpl[] = {
+        { CKA_CLASS,    &dhClass,       sizeof(dhClass)        },
+        { CKA_KEY_TYPE, &dhType,        sizeof(dhType)         },
+        { CKA_TOKEN,    &ckFalse,       sizeof(ckFalse)        },
+        { CKA_PRIVATE,  &ckFalse,       sizeof(ckFalse)        },
+        { CKA_PRIME,    dh_ffdhe2048_p, sizeof(dh_ffdhe2048_p) },
+        { CKA_BASE,     dh_ffdhe2048_g, sizeof(dh_ffdhe2048_g) },
+        { CKA_VALUE,    dh_2048_pub,    sizeof(dh_2048_pub)    },
+    };
+#endif
+
+    rv = create_data_object(session, &obj);
+    CHECK_RV(rv, "create data object", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_SetAttributeValue(session, obj, labelTmpl, 1);
+        CHECK_RV(rv, "set label with oversized length",
+                 CKR_ATTRIBUTE_VALUE_INVALID);
+        expect_label(session, obj, dataLabel, sizeof(dataLabel) - 1,
+                     "label unchanged after oversized length");
+    }
+    destroy_obj(session, &obj);
+
+    /* Only a 64-bit CK_ULONG can carry a length whose low 32 bits look
+     * valid. */
+    if (sizeof(CK_ULONG) <= 4)
+        return;
+    wrapLen = (CK_ULONG)1 << 16 << 16;
+#ifndef NO_RSA
+    rsaTmpl[6].ulValueLen += wrapLen;
+    rv = funcList->C_CreateObject(session, rsaTmpl,
+                                  sizeof(rsaTmpl) / sizeof(*rsaTmpl), &key);
+    CHECK_RV(rv, "create RSA key with oversized prime length",
+             CKR_ATTRIBUTE_VALUE_INVALID);
+    destroy_obj(session, &key);
+#endif
+#ifndef NO_DH
+    dhTmpl[4].ulValueLen += wrapLen;
+    rv = funcList->C_CreateObject(session, dhTmpl,
+                                  sizeof(dhTmpl) / sizeof(*dhTmpl), &key);
+    CHECK_RV(rv, "create DH key with oversized prime length",
+             CKR_ATTRIBUTE_VALUE_INVALID);
+    destroy_obj(session, &key);
+#endif
+    (void)wrapLen;
+    (void)key;
+}
+
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
     defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
     !defined(NO_RSA) && !defined(NO_AES) && \
@@ -546,6 +625,7 @@ static int run_test(void)
         test_create_class_consistent(session);
         test_rejected_update_is_atomic(session);
 #endif
+        test_attr_length_range(session);
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
     defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
     !defined(NO_RSA) && !defined(NO_AES) && \
