@@ -763,6 +763,40 @@ static void test_oversized_public_key_record(void)
 }
 #endif
 
+#ifdef WOLFPKCS11_NSS
+static CK_RV create_trust_object(CK_SESSION_HANDLE session)
+{
+    CK_OBJECT_CLASS trustClass = CKO_NSS_TRUST;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    static byte issuer[] = "CN=Test,O=wolfSSL,C=US";
+    static byte serial[] = { 0x02, 0x05, 0x00, 0xC6, 0xA7, 0x91, 0x84 };
+    static byte sha1Hash[20] = { 0 };
+    static byte md5Hash[16] = { 0 };
+    CK_ULONG trustValue = 0xCE534352;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_TOKEN,             &ckTrue,     sizeof(ckTrue)     },
+        { CKA_CLASS,             &trustClass, sizeof(trustClass) },
+        { CKA_ISSUER,            issuer,      sizeof(issuer) - 1 },
+        { CKA_SERIAL_NUMBER,     serial,      sizeof(serial)     },
+        { CKA_CERT_SHA1_HASH,    sha1Hash,    sizeof(sha1Hash)   },
+        { CKA_CERT_MD5_HASH,     md5Hash,     sizeof(md5Hash)    },
+        { CKA_TRUST_SERVER_AUTH, &trustValue, sizeof(trustValue) },
+    };
+
+    return funcList->C_CreateObject(session, tmpl,
+        sizeof(tmpl) / sizeof(*tmpl), &obj);
+}
+
+/* Trust records have a fixed size and are stored unencrypted. */
+static void test_trust_record_length(void)
+{
+    printf("\n--- trust record length must match ---\n");
+    check_damaged_key_record("oversized trust", create_trust_object, "trust",
+                             1024);
+    check_damaged_key_record("empty trust", create_trust_object, "trust", 0);
+}
+#endif
+
 #define LARGE_VALUE_SZ  300001
 static byte largeValue[LARGE_VALUE_SZ];
 static byte largeRead[LARGE_VALUE_SZ];
@@ -926,6 +960,9 @@ int main(int argc, char* argv[])
     test_short_private_key_record();
 #ifndef NO_DH
     test_oversized_public_key_record();
+#endif
+#ifdef WOLFPKCS11_NSS
+    test_trust_record_length();
 #endif
 
     return pkcs11_test_summary();
