@@ -1099,6 +1099,7 @@ static void wp11_Session_FreeOp(WP11_Session* session)
                      session->params.digest.hashType);
         session->init &= ~WP11_INIT_DIGEST_MASK;
     }
+    WP11_Session_FreeData(session);
     /* Older wolfSSL versions do not zeroize the key schedule in wc_AesFree. */
     wc_ForceZero(&session->params, sizeof(session->params));
     /* Ensure no stale bits remain after all cleanup. */
