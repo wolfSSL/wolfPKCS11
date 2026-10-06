@@ -768,6 +768,7 @@ WP11_LOCAL int WP11_AesGcm_DecryptUpdate(unsigned char* enc, word32 encSz,
                               WP11_Session* session);
 WP11_LOCAL int WP11_AesGcm_DecryptFinal(unsigned char* dec, word32* decSz,
                              WP11_Object* secret, WP11_Session* session);
+WP11_LOCAL void WP11_AesGcm_Final(WP11_Session* session);
 
 WP11_LOCAL int WP11_AesCcm_DataLen(WP11_Session* session);
 WP11_LOCAL int WP11_AesCcm_GetMacLen(WP11_Session* session);
