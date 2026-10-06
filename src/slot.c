@@ -1494,7 +1494,7 @@ CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
 
     slot = WP11_Session_GetSlot(session);
     if (state == WP11_APP_STATE_RW_SO) {
-        ret = WP11_Slot_CheckSOPin(slot, (char*)pOldPin, (int)ulOldLen);
+        ret = WP11_Slot_CheckSOPinLockout(slot, (char*)pOldPin, (int)ulOldLen);
         if (ret == PIN_NOT_SET_E) {
             rv = CKR_USER_PIN_NOT_INITIALIZED;
             WOLFPKCS11_LEAVE("C_SetPIN", rv);
