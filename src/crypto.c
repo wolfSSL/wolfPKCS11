@@ -5847,6 +5847,10 @@ static CK_RV wp11_C_SignInit(CK_SESSION_HANDLE hSession,
                   pMechanism->ulParameterLen != sizeof(CK_MAC_GENERAL_PARAMS)) {
                 return CKR_MECHANISM_PARAM_INVALID;
             }
+            if (!CK_ULONG_FITS_WORD32(
+                        *(CK_MAC_GENERAL_PARAMS*)pMechanism->pParameter)) {
+                return CKR_MECHANISM_PARAM_INVALID;
+            }
             ret = WP11_Aes_Cmac_Init(obj, session,
                      (word32)*((CK_MAC_GENERAL_PARAMS*)pMechanism->pParameter));
             if (ret == BAD_FUNC_ARG)
@@ -7039,6 +7043,10 @@ static CK_RV wp11_C_VerifyInit(CK_SESSION_HANDLE hSession,
                 return CKR_KEY_TYPE_INCONSISTENT;
             if (pMechanism->pParameter == NULL ||
                   pMechanism->ulParameterLen != sizeof(CK_MAC_GENERAL_PARAMS)) {
+                return CKR_MECHANISM_PARAM_INVALID;
+            }
+            if (!CK_ULONG_FITS_WORD32(
+                        *(CK_MAC_GENERAL_PARAMS*)pMechanism->pParameter)) {
                 return CKR_MECHANISM_PARAM_INVALID;
             }
             ret = WP11_Aes_Cmac_Init(obj, session,

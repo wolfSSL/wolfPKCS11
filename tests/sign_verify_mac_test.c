@@ -267,6 +267,43 @@ static void aes_cmac_full_block_test(CK_SESSION_HANDLE session)
 
     funcList->C_DestroyObject(session, key);
 }
+
+/* The CKM_AES_CMAC_GENERAL length is validated as the full CK_ULONG value. */
+static void aes_cmac_general_len_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_MAC_GENERAL_PARAMS macLen = 16;
+    CK_MECHANISM mech = { CKM_AES_CMAC_GENERAL, &macLen, sizeof(macLen) };
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,    &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE, &aesKeyType,     sizeof(aesKeyType)     },
+        { CKA_SIGN,     &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VERIFY,   &ckTrue,         sizeof(ckTrue)         },
+        { CKA_PRIVATE,  &ckFalse,        sizeof(ckFalse)        },
+        { CKA_VALUE,    cmacKey,         sizeof(cmacKey)        },
+    };
+
+    if (sizeof(CK_ULONG) <= sizeof(word32))
+        return;
+    /* Out of range, but equal to a valid length in the low 32 bits. */
+    macLen |= ((CK_ULONG)1 << 16) << 16;
+
+    rv = funcList->C_CreateObject(session, keyTmpl,
+                                  sizeof(keyTmpl) / sizeof(*keyTmpl), &key);
+    CHECK_RV(rv, "create AES key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_SignInit(session, &mech, key);
+    CHECK_RV(rv, "C_SignInit(AES-CMAC-GENERAL, out of range length)",
+             CKR_MECHANISM_PARAM_INVALID);
+    rv = funcList->C_VerifyInit(session, &mech, key);
+    CHECK_RV(rv, "C_VerifyInit(AES-CMAC-GENERAL, out of range length)",
+             CKR_MECHANISM_PARAM_INVALID);
+
+    funcList->C_DestroyObject(session, key);
+}
 #endif
 
 #if defined(WOLFSSL_HAVE_PRF) && !defined(NO_SHA256)
@@ -612,6 +649,7 @@ static int run_test(void)
 #endif
 #if !defined(NO_AES) && defined(HAVE_AESCMAC)
         aes_cmac_full_block_test(session);
+        aes_cmac_general_len_test(session);
 #endif
 #if defined(WOLFSSL_HAVE_PRF) && !defined(NO_SHA256)
         tls_mac_sign_final_retry_test(session);
