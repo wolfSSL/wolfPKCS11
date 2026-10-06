@@ -20249,18 +20249,18 @@ int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
     unsigned long mechSize = 0;
     int hashType = WC_HASH_TYPE_NONE;
     int ret;
+    CK_MECHANISM_TYPE mechanism;
 #if defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX < 0x05007004
     wc_HashAlg* hashAlg;
 #else
     wc_Hashes* hashAlg;
 #endif
 
-    if (stateDataLen < sizeof(session->mechanism))
+    if (stateDataLen < sizeof(mechanism))
         return CKR_SAVED_STATE_INVALID;
 
-    WP11_Session_AbortOp(session);
-    XMEMCPY(&session->mechanism, stateData, sizeof(session->mechanism));
-    switch (session->mechanism) {
+    XMEMCPY(&mechanism, stateData, sizeof(mechanism));
+    switch (mechanism) {
 #ifndef NO_MD5
         case CKM_MD5:
             mechSize = sizeof(wc_Md5);
@@ -20295,15 +20295,19 @@ int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
             return CKR_SAVED_STATE_INVALID;
     }
 
-    if (stateDataLen < (sizeof(session->mechanism) + mechSize))
+    if (stateDataLen < (sizeof(mechanism) + mechSize))
         return CKR_SAVED_STATE_INVALID;
 
-    stateData += sizeof(session->mechanism);
+    stateData += sizeof(mechanism);
 
-    ret = wp11_digest_hash_type(session->mechanism, &hashType);
+    ret = wp11_digest_hash_type(mechanism, &hashType);
 
     if (ret != CKR_OK)
         return ret;
+
+    /* The saved state is valid: replace the current operation. */
+    WP11_Session_AbortOp(session);
+    session->mechanism = mechanism;
 
     session->params.digest.hashType = (enum wc_HashType)hashType;
     ret = wc_HashInit(&session->params.digest.hash,
