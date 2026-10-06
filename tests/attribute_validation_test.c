@@ -28,6 +28,7 @@
 
 #include <limits.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #ifndef WOLFSSL_USER_SETTINGS
@@ -35,6 +36,7 @@
 #endif
 #include <wolfssl/wolfcrypt/settings.h>
 #include <wolfssl/wolfcrypt/misc.h>
+#include <wolfssl/wolfcrypt/memory.h>
 
 #ifndef WOLFPKCS11_USER_SETTINGS
     #include <wolfpkcs11/options.h>
@@ -49,6 +51,33 @@
 #include "pkcs11_test_util.h"
 
 #define TEST_DIR "./store/attribute_validation_test"
+
+#if defined(USE_WOLFSSL_MEMORY) && !defined(WOLFSSL_STATIC_MEMORY) && \
+    !defined(WOLFSSL_NO_MALLOC) && !defined(WOLFSSL_DEBUG_MEMORY)
+#define ATTR_TEST_ALLOC_HOOK
+/* Allocation of exactly this size fails while armed. */
+#define FAIL_ALLOC_SIZE 97
+static int failAllocArmed = 0;
+
+static void* test_malloc(size_t n)
+{
+    if (failAllocArmed && n == FAIL_ALLOC_SIZE)
+        return NULL;
+    return malloc(n);
+}
+
+static void test_free(void* p)
+{
+    free(p);
+}
+
+static void* test_realloc(void* p, size_t n)
+{
+    if (failAllocArmed && n == FAIL_ALLOC_SIZE)
+        return NULL;
+    return realloc(p, n);
+}
+#endif
 
 static CK_OBJECT_CLASS dataClass = CKO_DATA;
 static CK_BBOOL ckTrue  = CK_TRUE;
@@ -628,6 +657,47 @@ static void test_empty_date_roundtrip(CK_SESSION_HANDLE session)
     destroy_obj(session, &obj);
 }
 
+#ifdef ATTR_TEST_ALLOC_HOOK
+/* A replacement value that cannot be stored leaves the previous one. */
+static void test_failed_replace_keeps_value(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    byte big[FAIL_ALLOC_SIZE];
+    byte idBuf[16];
+    CK_ATTRIBUTE labelTmpl[] = { { CKA_LABEL, big, sizeof(big) } };
+    CK_ATTRIBUTE idTmpl[]    = { { CKA_ID,    big, sizeof(big) } };
+    CK_ATTRIBUTE idSet[]     = { { CKA_ID, (void*)newLabel,
+                                   sizeof(newLabel) - 1 } };
+    CK_ATTRIBUTE idGet = { CKA_ID, idBuf, sizeof(idBuf) };
+
+    XMEMSET(big, 'x', sizeof(big));
+    rv = create_data_object(session, &obj);
+    CHECK_RV(rv, "create data object", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_SetAttributeValue(session, obj, idSet, 1);
+        CHECK_RV(rv, "set CKA_ID", CKR_OK);
+
+        failAllocArmed = 1;
+        rv = funcList->C_SetAttributeValue(session, obj, labelTmpl, 1);
+        failAllocArmed = 0;
+        CHECK_RV(rv, "label replacement out of memory", CKR_DEVICE_MEMORY);
+        expect_label(session, obj, dataLabel, sizeof(dataLabel) - 1,
+                     "label kept after failed replacement");
+
+        failAllocArmed = 1;
+        rv = funcList->C_SetAttributeValue(session, obj, idTmpl, 1);
+        failAllocArmed = 0;
+        CHECK_RV(rv, "CKA_ID replacement out of memory", CKR_DEVICE_MEMORY);
+        rv = funcList->C_GetAttributeValue(session, obj, &idGet, 1);
+        CHECK_TRUE(rv == CKR_OK && idGet.ulValueLen == sizeof(newLabel) - 1 &&
+                   XMEMCMP(idBuf, newLabel, sizeof(newLabel) - 1) == 0,
+                   "CKA_ID kept after failed replacement");
+    }
+    destroy_obj(session, &obj);
+}
+#endif
+
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
     defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
     !defined(NO_RSA) && !defined(NO_AES) && \
@@ -759,6 +829,9 @@ static int run_test(void)
 #endif
         test_data_attr_requires_value(session);
         test_empty_date_roundtrip(session);
+#ifdef ATTR_TEST_ALLOC_HOOK
+        test_failed_replace_keeps_value(session);
+#endif
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
     defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
     !defined(NO_RSA) && !defined(NO_AES) && \
@@ -784,6 +857,12 @@ int main(int argc, char* argv[])
 #endif
 
     printf("=== wolfPKCS11 attribute validation test ===\n");
+#ifdef ATTR_TEST_ALLOC_HOOK
+    if (wolfSSL_SetAllocators(test_malloc, test_free, test_realloc) != 0) {
+        fprintf(stderr, "FAIL: wolfSSL_SetAllocators\n");
+        return 1;
+    }
+#endif
     run_test();
     return pkcs11_test_summary();
 }
