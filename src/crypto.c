@@ -4994,7 +4994,7 @@ static CK_RV wp11_C_DecryptFinal(CK_SESSION_HANDLE hSession,
                 *pulLastPartLen = decPartLen;
                 return CKR_OK;
             }
-            if (decPartLen > (word32)*pulLastPartLen)
+            if ((CK_ULONG)decPartLen > *pulLastPartLen)
                 return CKR_BUFFER_TOO_SMALL;
 
             ret = WP11_AesGcm_DecryptFinal(pLastPart, &decPartLen, obj,
