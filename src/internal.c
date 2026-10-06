@@ -5115,6 +5115,14 @@ static int wp11_Object_Encode_DhKey(WP11_Object* object)
         }
     }
 
+    if (ret != 0) {
+        if (object->keyData != NULL)
+            wc_ForceZero(object->keyData, object->keyDataLen);
+        XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        object->keyData = NULL;
+        object->keyDataLen = 0;
+    }
+
     return ret;
 }
 
@@ -6490,6 +6498,14 @@ static int wp11_Object_Encode_SymmKey(WP11_Object* object)
                                     sizeof(object->iv), object->devId);
         if (ret == 0)
             object->keyDataLen = object->data.symmKey->len + AES_BLOCK_SIZE;
+    }
+
+    if (ret != 0) {
+        if (object->keyData != NULL)
+            wc_ForceZero(object->keyData, object->keyDataLen);
+        XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        object->keyData = NULL;
+        object->keyDataLen = 0;
     }
 
     return ret;
