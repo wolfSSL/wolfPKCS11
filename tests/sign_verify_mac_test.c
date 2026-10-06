@@ -474,6 +474,44 @@ static void tls_mac_verify_multipart_test(CK_SESSION_HANDLE session)
     funcList->C_DestroyObject(session, key);
 }
 
+/* The TLS MAC length is validated as the full CK_ULONG value. */
+static void tls_mac_len_param_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_TLS_MAC_PARAMS params;
+    CK_MECHANISM mech;
+    CK_ULONG high;
+
+    if (sizeof(CK_ULONG) <= sizeof(word32))
+        return;
+    high = ((CK_ULONG)1 << 16) << 16;
+
+    rv = create_generic_key(session, &key);
+    CHECK_RV(rv, "create TLS secret", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    tls_mac_params(&params, &mech);
+
+    params.ulMacLength = high;
+    rv = funcList->C_SignInit(session, &mech, key);
+    CHECK_RV(rv, "C_SignInit(TLS MAC, length above 32 bits)",
+             CKR_MECHANISM_PARAM_INVALID);
+    rv = funcList->C_VerifyInit(session, &mech, key);
+    CHECK_RV(rv, "C_VerifyInit(TLS MAC, length above 32 bits)",
+             CKR_MECHANISM_PARAM_INVALID);
+
+    params.ulMacLength = high | 12;
+    rv = funcList->C_SignInit(session, &mech, key);
+    CHECK_RV(rv, "C_SignInit(TLS MAC, length above 32 bits plus 12)",
+             CKR_MECHANISM_PARAM_INVALID);
+    rv = funcList->C_VerifyInit(session, &mech, key);
+    CHECK_RV(rv, "C_VerifyInit(TLS MAC, length above 32 bits plus 12)",
+             CKR_MECHANISM_PARAM_INVALID);
+
+    funcList->C_DestroyObject(session, key);
+}
+
 /* Closing a session discards any multi-part TLS MAC data it held. */
 static void tls_mac_verify_session_close_test(CK_SLOT_ID slot)
 {
@@ -655,6 +693,7 @@ static int run_test(void)
         tls_mac_sign_final_retry_test(session);
         tls_mac_verify_multipart_test(session);
         tls_mac_verify_session_close_test(slot);
+        tls_mac_len_param_test(session);
 #endif
 #ifdef HAVE_ECC
         ecdsa_sig_len_test(session);
