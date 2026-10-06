@@ -5706,7 +5706,7 @@ static CK_RV wp11_C_SignInit(CK_SESSION_HANDLE hSession,
             if (rv != CKR_OK)
                 return rv;
             ret = WP11_Session_SetPssParams(session, params->hashAlg,
-                                                params->mgf, (int)params->sLen);
+                                                params->mgf, params->sLen);
             if (ret != 0)
                 return CKR_MECHANISM_PARAM_INVALID;
             init |= WP11_INIT_RSA_PKCS_PSS_SIGN;
@@ -6888,7 +6888,7 @@ static CK_RV wp11_C_VerifyInit(CK_SESSION_HANDLE hSession,
             if (rv != CKR_OK)
                 return rv;
             ret = WP11_Session_SetPssParams(session, params->hashAlg,
-                                                params->mgf, (int)params->sLen);
+                                                params->mgf, params->sLen);
             if (ret != 0)
                 return CKR_MECHANISM_PARAM_INVALID;
             init |= WP11_INIT_RSA_PKCS_PSS_VERIFY;

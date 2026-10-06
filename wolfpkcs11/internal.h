@@ -487,7 +487,7 @@ WP11_LOCAL CK_MECHANISM_TYPE WP11_Session_GetMechanism(WP11_Session* session);
 WP11_LOCAL void WP11_Session_SetMechanism(WP11_Session* session,
                                CK_MECHANISM_TYPE mechanism);
 WP11_LOCAL int WP11_Session_SetPssParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
-                              CK_MECHANISM_TYPE mgf, int sLen);
+                              CK_MECHANISM_TYPE mgf, CK_ULONG sLen);
 WP11_LOCAL int WP11_Session_SetOaepParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
                                CK_MECHANISM_TYPE mgf, byte* label, int labelSz);
 WP11_LOCAL int WP11_Session_SetCbcParams(WP11_Session* session, unsigned char* iv, int enc,

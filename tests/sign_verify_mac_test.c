@@ -178,6 +178,43 @@ static void pss_hash_binding_test(CK_SESSION_HANDLE session)
     funcList->C_DestroyObject(session, priv);
     funcList->C_DestroyObject(session, pub);
 }
+
+/* A PSS salt length larger than any RSA modulus is rejected, not remapped. */
+static void pss_salt_len_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_RSA_PKCS_PSS_PARAMS params;
+    CK_MECHANISM mech;
+    CK_ULONG badLen[2];
+    int i;
+
+    badLen[0] = (CK_ULONG)0xFFFFFFFFUL;
+    badLen[1] = (CK_ULONG)0xFFFFFFFEUL;
+    rv = create_rsa_keys(session, &priv, &pub);
+    CHECK_RV(rv, "create RSA key pair", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    mech.mechanism = CKM_RSA_PKCS_PSS;
+    mech.pParameter = &params;
+    mech.ulParameterLen = sizeof(params);
+    params.hashAlg = CKM_SHA256;
+    params.mgf = CKG_MGF1_SHA256;
+    for (i = 0; i < 2; i++) {
+        params.sLen = badLen[i];
+        rv = funcList->C_SignInit(session, &mech, priv);
+        CHECK_RV(rv, "C_SignInit(RSA PSS, oversized salt length)",
+                 CKR_MECHANISM_PARAM_INVALID);
+        rv = funcList->C_VerifyInit(session, &mech, pub);
+        CHECK_RV(rv, "C_VerifyInit(RSA PSS, oversized salt length)",
+                 CKR_MECHANISM_PARAM_INVALID);
+    }
+
+    funcList->C_DestroyObject(session, priv);
+    funcList->C_DestroyObject(session, pub);
+}
 #endif
 
 #if !defined(NO_AES) && defined(HAVE_AESCMAC)
@@ -684,6 +721,7 @@ static int run_test(void)
     if (rv == CKR_OK) {
 #if !defined(NO_RSA) && defined(WC_RSA_PSS) && !defined(NO_SHA256)
         pss_hash_binding_test(session);
+        pss_salt_len_test(session);
 #endif
 #if !defined(NO_AES) && defined(HAVE_AESCMAC)
         aes_cmac_full_block_test(session);

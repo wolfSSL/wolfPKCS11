@@ -11343,7 +11343,7 @@ int WP11_Session_SetOaepParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
  *          0 on success.
  */
 int WP11_Session_SetPssParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
-                              CK_MECHANISM_TYPE mgf, int sLen)
+                              CK_MECHANISM_TYPE mgf, CK_ULONG sLen)
 {
     int ret;
     WP11_PssParams* pss = &session->params.pss;
@@ -11353,12 +11353,15 @@ int WP11_Session_SetPssParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
     ret = wp11_hash_type(hashAlg, &hashType);
     if (ret == 0)
         ret = wp11_mgf(mgf, &mgfType);
+    /* Larger values would alias wolfCrypt's negative salt length markers. */
+    if (ret == 0 && sLen > (CK_ULONG)(RSA_MAX_SIZE / 8))
+        ret = BAD_FUNC_ARG;
     if (ret == 0) {
         WP11_Session_AbortOp(session);
         XMEMSET(pss, 0, sizeof(*pss));
         pss->hashType = hashType;
         pss->mgf = mgfType;
-        pss->saltLen = sLen;
+        pss->saltLen = (int)sLen;
     }
 
     return ret;
