@@ -965,6 +965,8 @@ static int wp11_Slot_AddSession(WP11_Slot* slot, WP11_Session** session)
     return ret;
 }
 
+static void wp11_Session_FreeOp(WP11_Session* session);
+
 /**
  * Finalize a session - clean-up but don't clear out.
  *
@@ -997,6 +999,17 @@ static void wp11_Session_Final(WP11_Session* session)
     /* Finalize any find. */
     WP11_Session_FindFinal(session);
 
+    wp11_Session_FreeOp(session);
+}
+
+/**
+ * Release the resources owned by the session's current operation and mark no
+ * operation as initialized.
+ *
+ * @param  session  [in]  Session object.
+ */
+static void wp11_Session_FreeOp(WP11_Session* session)
+{
 #if !defined(NO_RSA) && !defined(WC_NO_RSA_OAEP)
     if (session->mechanism == CKM_RSA_PKCS_OAEP &&
                                            session->params.oaep.label != NULL) {
@@ -1025,8 +1038,11 @@ static void wp11_Session_Final(WP11_Session* session)
             session->params.gcm.aad = NULL;
         }
         if (session->params.gcm.enc != NULL) {
+            wc_ForceZero(session->params.gcm.enc,
+                         (word32)session->params.gcm.encSz);
             XFREE(session->params.gcm.enc, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             session->params.gcm.enc = NULL;
+            session->params.gcm.encSz = 0;
         }
 #ifdef WOLFSSL_AESGCM_STREAM
         if (session->params.gcm.streamInit) {
@@ -1084,6 +1100,17 @@ static void wp11_Session_Final(WP11_Session* session)
     }
     /* Ensure no stale bits remain after all cleanup. */
     session->init = 0;
+}
+
+/**
+ * Abort the active operation on the session, releasing what it owns.
+ *
+ * @param  session  [in]  Session object.
+ */
+void WP11_Session_AbortOp(WP11_Session* session)
+{
+    if (session->init != 0)
+        wp11_Session_FreeOp(session);
 }
 
 #ifndef WOLFPKCS11_NO_STORE
@@ -10907,6 +10934,8 @@ CK_MECHANISM_TYPE WP11_Session_GetMechanism(WP11_Session* session)
 void WP11_Session_SetMechanism(WP11_Session* session,
                                CK_MECHANISM_TYPE mechanism)
 {
+    /* Committing a new operation ends any operation it replaces. */
+    WP11_Session_AbortOp(session);
     session->mechanism = mechanism;
 }
 
@@ -11030,14 +11059,22 @@ int WP11_Session_SetOaepParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
 {
     int ret;
     WP11_OaepParams* oaep = &session->params.oaep;
+    enum wc_HashType hashType;
+    int mgfType;
 
+    ret = wp11_hash_type(hashAlg, &hashType);
+    if (ret == 0)
+        ret = wp11_mgf(mgf, &mgfType);
+    if (ret != 0)
+        return ret;
+
+    WP11_Session_AbortOp(session);
     if (session->mechanism == CKM_RSA_PKCS_OAEP && oaep->label != NULL) {
         XFREE(oaep->label, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     }
     XMEMSET(oaep, 0, sizeof(*oaep));
-    ret = wp11_hash_type(hashAlg, &oaep->hashType);
-    if (ret == 0)
-        ret = wp11_mgf(mgf, &oaep->mgf);
+    oaep->hashType = hashType;
+    oaep->mgf = mgfType;
     if (ret == 0 && label == NULL) {
         oaep->label = NULL;
         oaep->labelSz = 0;
@@ -11073,13 +11110,19 @@ int WP11_Session_SetPssParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
 {
     int ret;
     WP11_PssParams* pss = &session->params.pss;
+    enum wc_HashType hashType;
+    int mgfType;
 
-    XMEMSET(pss, 0, sizeof(*pss));
-    ret = wp11_hash_type(hashAlg, &pss->hashType);
+    ret = wp11_hash_type(hashAlg, &hashType);
     if (ret == 0)
-        ret = wp11_mgf(mgf, &pss->mgf);
-    if (ret == 0)
+        ret = wp11_mgf(mgf, &mgfType);
+    if (ret == 0) {
+        WP11_Session_AbortOp(session);
+        XMEMSET(pss, 0, sizeof(*pss));
+        pss->hashType = hashType;
+        pss->mgf = mgfType;
         pss->saltLen = sLen;
+    }
 
     return ret;
 }
@@ -11100,7 +11143,8 @@ int WP11_Session_SetMldsaParams(WP11_Session* session, CK_VOID_PTR params,
                                 CK_ULONG paramsLen)
 {
     int ret = 0;
-    WP11_MldsaParams* mldsa = &session->params.mldsa;
+    WP11_MldsaParams newParams;
+    WP11_MldsaParams* mldsa = &newParams;
 
     XMEMSET(mldsa, 0, sizeof(*mldsa));
 
@@ -11162,6 +11206,11 @@ int WP11_Session_SetMldsaParams(WP11_Session* session, CK_VOID_PTR params,
         mldsa->ctxSz = 0;
     }
 
+    if (ret == 0) {
+        WP11_Session_AbortOp(session);
+        XMEMCPY(&session->params.mldsa, mldsa, sizeof(*mldsa));
+    }
+
     return ret;
 }
 #endif /* WOLFPKCS11_MLDSA */
@@ -11189,6 +11238,7 @@ int WP11_Session_SetCbcParams(WP11_Session* session, unsigned char* iv,
      * at allocation, so a prior operation can leave stale multi-part streaming
      * state here. Reset it before use (as the other Set*Params routines do) so
      * a fresh CBC operation cannot inherit a bogus partial-block count. */
+    WP11_Session_AbortOp(session);
     cbc->partialSz = 0;
     cbc->finalReady = 0;
     XMEMSET(cbc->partial, 0, sizeof(cbc->partial));
@@ -11239,6 +11289,7 @@ int WP11_Session_SetCtrParams(WP11_Session* session, CK_ULONG ulCounterBits,
     if (ulCounterBits > 128 || ulCounterBits == 0)
         return BAD_FUNC_ARG;
 
+    WP11_Session_AbortOp(session);
     XMEMSET(ctr, 0, sizeof(*ctr));
     ret = wc_AesInit(&ctr->aes, NULL, object->devId);
     if (ret == 0) {
@@ -11266,6 +11317,7 @@ int WP11_Session_SetAesWrapParams(WP11_Session* session, byte* iv, word32 ivLen,
     WP11_KeyWrapParams *wrap = &session->params.kw;
     WP11_Data *key;
 
+    WP11_Session_AbortOp(session);
     XMEMSET(wrap, 0, sizeof(*wrap));
     ret = wc_AesInit(&wrap->aes, NULL, object->devId);
     if (ret == 0) {
@@ -11321,6 +11373,7 @@ int WP11_Session_SetGcmParams(WP11_Session* session, unsigned char* iv,
         ret = BAD_FUNC_ARG;
 
     if (ret == 0) {
+        WP11_Session_AbortOp(session);
         if (session->mechanism == CKM_AES_GCM && gcm->aad != NULL) {
             XFREE(gcm->aad, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         }
@@ -11381,6 +11434,7 @@ int WP11_Session_SetCcmParams(WP11_Session* session, int dataSz,
         ret = BAD_FUNC_ARG;
 
     if (ret == 0) {
+        WP11_Session_AbortOp(session);
         if (session->mechanism == CKM_AES_CCM && ccm->aad != NULL) {
             XFREE(ccm->aad, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         }
@@ -11416,6 +11470,7 @@ int WP11_Session_SetCtsParams(WP11_Session* session, unsigned char* iv,
     WP11_CtsParams* cts = &session->params.cts;
     WP11_Data* key;
 
+    WP11_Session_AbortOp(session);
     /* AES object on session. */
     ret = wc_AesInit(&cts->aes, NULL, object->devId);
     if (ret == 0) {
@@ -19306,6 +19361,7 @@ int WP11_Aes_Cmac_Init(WP11_Object* secret, WP11_Session* session,
 
     if (sigLen > WC_CMAC_TAG_MAX_SZ || sigLen < WC_CMAC_TAG_MIN_SZ)
         return BAD_FUNC_ARG;
+    WP11_Session_AbortOp(session);
     cmac->sigLen = (byte)sigLen;
     if (secret->onToken)
         WP11_Lock_LockRO(secret->lock);
@@ -19490,6 +19546,7 @@ int WP11_Digest_Init(CK_MECHANISM_TYPE mechanism, WP11_Session* session)
     ret = wp11_digest_hash_type(mechanism, &hashType);
 
     if (ret == 0) {
+        WP11_Session_AbortOp(session);
         digest->hashType = (enum wc_HashType)hashType;
         ret = wc_HashInit(&digest->hash, (enum wc_HashType)hashType);
     }
@@ -19716,12 +19773,14 @@ int WP11_Hmac_Init(CK_MECHANISM_TYPE mechanism, WP11_Object* secret,
     WP11_Data* key;
 
     ret = wp11_hmac_hash_type(mechanism, &hashType);
-    if (ret == 0)
-        hmac->hmacSz = wc_HmacSizeByType(hashType);
-    if (ret == 0 && digestSize != 0 && hmac->hmacSz != (word32)digestSize)
+    if (ret == 0 && digestSize != 0 &&
+            (word32)wc_HmacSizeByType(hashType) != (word32)digestSize)
         ret = BAD_FUNC_ARG;
-    if (ret == 0)
+    if (ret == 0) {
+        WP11_Session_AbortOp(session);
+        hmac->hmacSz = wc_HmacSizeByType(hashType);
         ret = wc_HmacInit(&hmac->hmac, NULL, secret->slot->devId);
+    }
     if (ret == 0) {
         if (secret->onToken)
             WP11_Lock_LockRO(secret->lock);
@@ -19872,6 +19931,9 @@ int WP11_TLS_MAC_init(unsigned long hashType, unsigned long macLen, byte server,
     int ret = 0;
     WP11_TlsMacParams *mac = &session->params.tlsMac;
 
+    if (hashType != CKM_TLS_PRF && MechToMac(hashType) == no_mac)
+        return BAD_FUNC_ARG;
+    WP11_Session_AbortOp(session);
     XMEMSET(mac, 0, sizeof(*mac));
     if (hashType == CKM_TLS_PRF) {
         mac->isTlsPrf = 1;
