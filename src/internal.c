@@ -20384,6 +20384,8 @@ int WP11_TLS_MAC_init(unsigned long hashType, unsigned long macLen, byte server,
     if (hashType != CKM_TLS_PRF && MechToMac(hashType) == no_mac)
         return BAD_FUNC_ARG;
     WP11_Session_AbortOp(session);
+    /* Multi-part data from an earlier operation must not carry over. */
+    WP11_Session_FreeData(session);
     XMEMSET(mac, 0, sizeof(*mac));
     if (hashType == CKM_TLS_PRF) {
         mac->isTlsPrf = 1;

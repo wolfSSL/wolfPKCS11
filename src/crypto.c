@@ -7410,8 +7410,17 @@ static CK_RV wp11_C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
         case CKM_NSS_TLS_PRF_GENERAL_SHA256:
 #endif
         {
+            byte* data = NULL;
+            word32 dataLen = 0;
+
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_TLS_MAC_VERIFY))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            /* C_Verify cannot finish a multi-part verify. */
+            WP11_Session_GetData(session, &data, &dataLen);
+            if (data != NULL || dataLen != 0) {
+                WP11_Session_FreeData(session);
+                return CKR_FUNCTION_FAILED;
+            }
 
             ret = WP11_TLS_MAC_verify(pData, (word32)ulDataLen, pSignature,
                     (word32)ulSignatureLen, &stat, session);
@@ -7552,6 +7561,22 @@ static CK_RV wp11_C_VerifyUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
             break;
 #endif
 #endif
+#ifdef WOLFSSL_HAVE_PRF
+        case CKM_TLS_MAC:
+            if (!WP11_Session_IsOpInitialized(session,
+                                              WP11_INIT_TLS_MAC_VERIFY)) {
+                return CKR_OPERATION_NOT_INITIALIZED;
+            }
+            if (!CK_ULONG_FITS_WORD32(ulPartLen)) {
+                WP11_Session_FreeData(session);
+                return CKR_DATA_LEN_RANGE;
+            }
+
+            ret = WP11_Session_UpdateData(session, pPart, (word32)ulPartLen);
+            if (ret < 0)
+                WP11_Session_FreeData(session);
+            break;
+#endif
         default:
             (void)ulPartLen;
             WP11_Session_AbortOp(session);
@@ -7686,6 +7711,28 @@ static CK_RV wp11_C_VerifyFinal(CK_SESSION_HANDLE hSession,
                     &stat, session);
             break;
 #endif
+#endif
+#ifdef WOLFSSL_HAVE_PRF
+        case CKM_TLS_MAC:
+        {
+            byte* data = NULL;
+            word32 dataLen = 0;
+
+            if (!WP11_Session_IsOpInitialized(session,
+                                              WP11_INIT_TLS_MAC_VERIFY)) {
+                return CKR_OPERATION_NOT_INITIALIZED;
+            }
+            if (!CK_ULONG_FITS_WORD32(ulSignatureLen)) {
+                WP11_Session_FreeData(session);
+                return CKR_SIGNATURE_LEN_RANGE;
+            }
+
+            WP11_Session_GetData(session, &data, &dataLen);
+            ret = WP11_TLS_MAC_verify(data, dataLen, pSignature,
+                    (word32)ulSignatureLen, &stat, session);
+            WP11_Session_FreeData(session);
+            break;
+        }
 #endif
         default:
             (void)ulSignatureLen;
