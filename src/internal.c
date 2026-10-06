@@ -17410,6 +17410,15 @@ int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
                 ret = WP11_Object_Find(session, params->hSaltKey, &saltKey);
                 if (ret != 0)
                     return CKR_OBJECT_HANDLE_INVALID;
+                /* Only these secret key types hold their value in symmKey. */
+                if (saltKey->objClass != CKO_SECRET_KEY ||
+                    (saltKey->type != CKK_GENERIC_SECRET &&
+#ifndef NO_AES
+                     saltKey->type != CKK_AES &&
+#endif
+                     saltKey->type != CKK_HKDF) ||
+                    saltKey->data.symmKey == NULL)
+                    return CKR_MECHANISM_PARAM_INVALID;
                 salt = saltKey->data.symmKey->data;
                 saltLen = saltKey->data.symmKey->len;
                 break;

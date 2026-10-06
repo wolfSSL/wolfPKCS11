@@ -9783,7 +9783,10 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
 
             ret = WP11_KDF_Derive(session, kdfParams, derivedKey, &keyLen, obj);
 
-            if (ret != 0)
+            /* A parameter check reports a CK_RV, not a wolfCrypt error. */
+            if (ret == (int)CKR_MECHANISM_PARAM_INVALID)
+                rv = CKR_MECHANISM_PARAM_INVALID;
+            else if (ret != 0)
                 rv = CKR_FUNCTION_FAILED;
             break;
         }
