@@ -1572,8 +1572,9 @@ static CK_RV CreateObject(WP11_Session* session, CK_ATTRIBUTE_PTR pTemplate,
  *          CKR_FUNCTION_FAILED when creating the object fails.
  *          CKR_OK on success.
  */
-CK_RV C_CreateObject(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate,
-                     CK_ULONG ulCount, CK_OBJECT_HANDLE_PTR phObject)
+static CK_RV wp11_C_CreateObject(CK_SESSION_HANDLE hSession,
+                                 CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
+                                 CK_OBJECT_HANDLE_PTR phObject)
 {
     CK_RV rv;
     WP11_Session* session;
@@ -1652,6 +1653,18 @@ CK_RV C_CreateObject(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate,
     return rv;
 }
 
+/* Logout must not free an object this call may still be using. */
+CK_RV C_CreateObject(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate,
+                     CK_ULONG ulCount, CK_OBJECT_HANDLE_PTR phObject)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_CreateObject(hSession, pTemplate, ulCount, phObject);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
+}
+
 /**
  * Copy the object in the session or on the token associated with the session.
  *
@@ -1675,9 +1688,10 @@ CK_RV C_CreateObject(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate,
  *          CK_UNAVAILABLE_INFORMATION when an attribute type is not supported.
  *          CKR_OK on success.
  */
-CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
-                   CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
-                   CK_OBJECT_HANDLE_PTR phNewObject)
+static CK_RV wp11_C_CopyObject(CK_SESSION_HANDLE hSession,
+                               CK_OBJECT_HANDLE hObject,
+                               CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
+                               CK_OBJECT_HANDLE_PTR phNewObject)
 {
     int ret;
     CK_RV rv;
@@ -1831,6 +1845,19 @@ CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
     return CKR_OK;
 }
 
+/* Logout must not free an object this call may still be using. */
+CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
+                   CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
+                   CK_OBJECT_HANDLE_PTR phNewObject)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_CopyObject(hSession, hObject, pTemplate, ulCount, phNewObject);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
+}
+
 /**
  * Destroy object in session or on token.
  *
@@ -1842,8 +1869,8 @@ CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
  *          CKR_OBJECT_HANDLE_INVALID when handle is not to a valid object.
  *          CKR_OK on success.
  */
-CK_RV C_DestroyObject(CK_SESSION_HANDLE hSession,
-                      CK_OBJECT_HANDLE hObject)
+static CK_RV wp11_C_DestroyObject(CK_SESSION_HANDLE hSession,
+                                  CK_OBJECT_HANDLE hObject)
 {
     int ret;
     int onToken;
@@ -1911,12 +1938,25 @@ CK_RV C_DestroyObject(CK_SESSION_HANDLE hSession,
     /* Drop any active-operation reference to this object before freeing it so a
      * pending operation cannot use freed memory. */
     WP11_Slot_ClearActiveObject(WP11_Session_GetSlot(session), obj);
-    WP11_Object_Free(obj);
+    /* Freed once no call that looked the object up can still be using it. */
+    WP11_Slot_DiscardObject(WP11_Session_GetSlot(session), obj);
 
     /* The object was unlinked; a negative status means persisting the token
      * afterwards failed. Surface it rather than reporting success. */
     rv = (ret < 0) ? CKR_FUNCTION_FAILED : CKR_OK;
     WOLFPKCS11_LEAVE("C_DestroyObject", rv);
+    return rv;
+}
+
+/* Logout must not free an object this call may still be using. */
+CK_RV C_DestroyObject(CK_SESSION_HANDLE hSession,
+                      CK_OBJECT_HANDLE hObject)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_DestroyObject(hSession, hObject);
+    WP11_Slot_ObjectCallLeave(calls);
     return rv;
 }
 
@@ -1935,8 +1975,9 @@ CK_RV C_DestroyObject(CK_SESSION_HANDLE hSession,
  *          CKR_OBJECT_HANDLE_INVALID when handle is not to a valid object.
  *          CKR_OK on success.
  */
-CK_RV C_GetObjectSize(CK_SESSION_HANDLE hSession,
-                      CK_OBJECT_HANDLE hObject, CK_ULONG_PTR pulSize)
+static CK_RV wp11_C_GetObjectSize(CK_SESSION_HANDLE hSession,
+                                  CK_OBJECT_HANDLE hObject,
+                                  CK_ULONG_PTR pulSize)
 {
     CK_RV rv;
     int ret;
@@ -1980,6 +2021,18 @@ CK_RV C_GetObjectSize(CK_SESSION_HANDLE hSession,
     return rv;
 }
 
+/* Logout must not free an object this call may still be using. */
+CK_RV C_GetObjectSize(CK_SESSION_HANDLE hSession,
+                      CK_OBJECT_HANDLE hObject, CK_ULONG_PTR pulSize)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_GetObjectSize(hSession, hObject, pulSize);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
+}
+
 
 /**
  * Get the values of the attributes from the object.
@@ -1998,9 +2051,10 @@ CK_RV C_GetObjectSize(CK_SESSION_HANDLE hSession,
  *          CKR_FUNCTION_FAILED when getting a value fails.
  *          CKR_OK on success.
  */
-CK_RV C_GetAttributeValue(CK_SESSION_HANDLE hSession,
-                          CK_OBJECT_HANDLE hObject,
-                          CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount)
+static CK_RV wp11_C_GetAttributeValue(CK_SESSION_HANDLE hSession,
+                                      CK_OBJECT_HANDLE hObject,
+                                      CK_ATTRIBUTE_PTR pTemplate,
+                                      CK_ULONG ulCount)
 {
     int ret;
     CK_RV rv;
@@ -2082,6 +2136,19 @@ CK_RV C_GetAttributeValue(CK_SESSION_HANDLE hSession,
     return rv;
 }
 
+/* Logout must not free an object this call may still be using. */
+CK_RV C_GetAttributeValue(CK_SESSION_HANDLE hSession,
+                          CK_OBJECT_HANDLE hObject,
+                          CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_GetAttributeValue(hSession, hObject, pTemplate, ulCount);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
+}
+
 /**
  * Set the values of the attributes into the object.
  *
@@ -2103,9 +2170,10 @@ CK_RV C_GetAttributeValue(CK_SESSION_HANDLE hSession,
  *          CKR_FUNCTION_FAILED when getting a value fails.
  *          CKR_OK on success.
  */
-CK_RV C_SetAttributeValue(CK_SESSION_HANDLE hSession,
-                          CK_OBJECT_HANDLE hObject,
-                          CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount)
+static CK_RV wp11_C_SetAttributeValue(CK_SESSION_HANDLE hSession,
+                                      CK_OBJECT_HANDLE hObject,
+                                      CK_ATTRIBUTE_PTR pTemplate,
+                                      CK_ULONG ulCount)
 {
     CK_RV rv;
     int ret;
@@ -2163,6 +2231,19 @@ CK_RV C_SetAttributeValue(CK_SESSION_HANDLE hSession,
 
     rv = SetAttributeValue(session, obj, pTemplate, ulCount, CK_FALSE);
     WOLFPKCS11_LEAVE("C_SetAttributeValue", rv);
+    return rv;
+}
+
+/* Logout must not free an object this call may still be using. */
+CK_RV C_SetAttributeValue(CK_SESSION_HANDLE hSession,
+                          CK_OBJECT_HANDLE hObject,
+                          CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_SetAttributeValue(hSession, hObject, pTemplate, ulCount);
+    WP11_Slot_ObjectCallLeave(calls);
     return rv;
 }
 
@@ -2661,7 +2742,12 @@ static CK_RV EncryptInit(CK_SESSION_HANDLE hSession,
 CK_RV C_EncryptInit(CK_SESSION_HANDLE hSession,
                     CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
 {
-    return EncryptInit(hSession, pMechanism, hKey, 0);
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = EncryptInit(hSession, pMechanism, hKey, 0);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
 }
 
 /**
@@ -2685,9 +2771,9 @@ CK_RV C_EncryptInit(CK_SESSION_HANDLE hSession,
  *          CKR_FUNCTION_FAILED when encrypting failed.
  *          CKR_OK on success.
  */
-CK_RV C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
-                CK_ULONG ulDataLen, CK_BYTE_PTR pEncryptedData,
-                CK_ULONG_PTR pulEncryptedDataLen)
+static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
+                            CK_ULONG ulDataLen, CK_BYTE_PTR pEncryptedData,
+                            CK_ULONG_PTR pulEncryptedDataLen)
 {
     CK_RV rv;
     int ret = 0;
@@ -3031,6 +3117,20 @@ CK_RV C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
     return CKR_OK;
 }
 
+/* Logout must not free an object this call may still be using. */
+CK_RV C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
+                CK_ULONG ulDataLen, CK_BYTE_PTR pEncryptedData,
+                CK_ULONG_PTR pulEncryptedDataLen)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_Encrypt(hSession, pData, ulDataLen, pEncryptedData,
+                        pulEncryptedDataLen);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
+}
+
 /**
  * Continue encrypting multi-part data.
  *
@@ -3052,9 +3152,10 @@ CK_RV C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
  *          CKR_FUNCTION_FAILED when encrypting failed.
  *          CKR_OK on success.
  */
-CK_RV C_EncryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
-                      CK_ULONG ulPartLen, CK_BYTE_PTR pEncryptedPart,
-                      CK_ULONG_PTR pulEncryptedPartLen)
+static CK_RV wp11_C_EncryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
+                                  CK_ULONG ulPartLen,
+                                  CK_BYTE_PTR pEncryptedPart,
+                                  CK_ULONG_PTR pulEncryptedPartLen)
 {
     int ret;
     WP11_Session* session;
@@ -3246,6 +3347,20 @@ CK_RV C_EncryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
     return rv;
 }
 
+/* Logout must not free an object this call may still be using. */
+CK_RV C_EncryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
+                      CK_ULONG ulPartLen, CK_BYTE_PTR pEncryptedPart,
+                      CK_ULONG_PTR pulEncryptedPartLen)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_EncryptUpdate(hSession, pPart, ulPartLen, pEncryptedPart,
+                              pulEncryptedPartLen);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
+}
+
 /**
  * Finishes encrypting multi-part data.
  *
@@ -3265,9 +3380,9 @@ CK_RV C_EncryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
  *          CKR_FUNCTION_FAILED when encrypting failed.
  *          CKR_OK on success.
  */
-CK_RV C_EncryptFinal(CK_SESSION_HANDLE hSession,
-                     CK_BYTE_PTR pLastEncryptedPart,
-                     CK_ULONG_PTR pulLastEncryptedPartLen)
+static CK_RV wp11_C_EncryptFinal(CK_SESSION_HANDLE hSession,
+                                 CK_BYTE_PTR pLastEncryptedPart,
+                                 CK_ULONG_PTR pulLastEncryptedPartLen)
 {
     int ret;
     WP11_Session* session;
@@ -3416,6 +3531,20 @@ CK_RV C_EncryptFinal(CK_SESSION_HANDLE hSession,
 
     WP11_Session_SetOpInitialized(session, 0);
     return CKR_OK;
+}
+
+/* Logout must not free an object this call may still be using. */
+CK_RV C_EncryptFinal(CK_SESSION_HANDLE hSession,
+                     CK_BYTE_PTR pLastEncryptedPart,
+                     CK_ULONG_PTR pulLastEncryptedPartLen)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_EncryptFinal(hSession, pLastEncryptedPart,
+                             pulLastEncryptedPartLen);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
 }
 
 static CK_RV DecryptInit(CK_SESSION_HANDLE hSession,
@@ -3700,7 +3829,12 @@ static CK_RV DecryptInit(CK_SESSION_HANDLE hSession,
 CK_RV C_DecryptInit(CK_SESSION_HANDLE hSession,
                     CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
 {
-    return DecryptInit(hSession, pMechanism, hKey, 0);
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = DecryptInit(hSession, pMechanism, hKey, 0);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
 }
 
 /**
@@ -3725,9 +3859,10 @@ CK_RV C_DecryptInit(CK_SESSION_HANDLE hSession,
  *          CKR_MECHANISM_INVALID when wrong initialization function was used.
  *          CKR_OK on success.
  */
-CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
-                CK_ULONG ulEncryptedDataLen, CK_BYTE_PTR pData,
-                CK_ULONG_PTR pulDataLen)
+static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
+                            CK_BYTE_PTR pEncryptedData,
+                            CK_ULONG ulEncryptedDataLen, CK_BYTE_PTR pData,
+                            CK_ULONG_PTR pulDataLen)
 {
     int ret = 0;
     WP11_Session* session;
@@ -4086,6 +4221,20 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
     return CKR_OK;
 }
 
+/* Logout must not free an object this call may still be using. */
+CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
+                CK_ULONG ulEncryptedDataLen, CK_BYTE_PTR pData,
+                CK_ULONG_PTR pulDataLen)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_Decrypt(hSession, pEncryptedData, ulEncryptedDataLen, pData,
+                        pulDataLen);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
+}
+
 /**
  * Continue decrypting multi-part data.
  *
@@ -4108,10 +4257,10 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
  *          CKR_MECHANISM_INVALID when wrong initialization function was used.
  *          CKR_OK on success.
  */
-CK_RV C_DecryptUpdate(CK_SESSION_HANDLE hSession,
-                      CK_BYTE_PTR pEncryptedPart,
-                      CK_ULONG ulEncryptedPartLen, CK_BYTE_PTR pPart,
-                      CK_ULONG_PTR pulPartLen)
+static CK_RV wp11_C_DecryptUpdate(CK_SESSION_HANDLE hSession,
+                                  CK_BYTE_PTR pEncryptedPart,
+                                  CK_ULONG ulEncryptedPartLen,
+                                  CK_BYTE_PTR pPart, CK_ULONG_PTR pulPartLen)
 {
     int ret;
     WP11_Session* session;
@@ -4289,6 +4438,21 @@ CK_RV C_DecryptUpdate(CK_SESSION_HANDLE hSession,
     return CKR_OK;
 }
 
+/* Logout must not free an object this call may still be using. */
+CK_RV C_DecryptUpdate(CK_SESSION_HANDLE hSession,
+                      CK_BYTE_PTR pEncryptedPart,
+                      CK_ULONG ulEncryptedPartLen, CK_BYTE_PTR pPart,
+                      CK_ULONG_PTR pulPartLen)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_DecryptUpdate(hSession, pEncryptedPart, ulEncryptedPartLen,
+                              pPart, pulPartLen);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
+}
+
 /**
  * Finishes decrypting multi-part data.
  *
@@ -4308,8 +4472,9 @@ CK_RV C_DecryptUpdate(CK_SESSION_HANDLE hSession,
  *          CKR_MECHANISM_INVALID when wrong initialization function was used.
  *          CKR_OK on success.
  */
-CK_RV C_DecryptFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastPart,
-                     CK_ULONG_PTR pulLastPartLen)
+static CK_RV wp11_C_DecryptFinal(CK_SESSION_HANDLE hSession,
+                                 CK_BYTE_PTR pLastPart,
+                                 CK_ULONG_PTR pulLastPartLen)
 {
     int ret;
     WP11_Session* session;
@@ -4478,6 +4643,18 @@ CK_RV C_DecryptFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastPart,
 
     WP11_Session_SetOpInitialized(session, 0);
     return CKR_OK;
+}
+
+/* Logout must not free an object this call may still be using. */
+CK_RV C_DecryptFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastPart,
+                     CK_ULONG_PTR pulLastPartLen)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_DecryptFinal(hSession, pLastPart, pulLastPartLen);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
 }
 
 /**
@@ -4667,7 +4844,7 @@ CK_RV C_DigestUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
  *          CKR_OPERATION_NOT_INITIALIZED when C_DigestInit has not been
  *          successfully called.
  */
-CK_RV C_DigestKey(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hKey)
+static CK_RV wp11_C_DigestKey(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hKey)
 {
     int ret;
     WP11_Session* session;
@@ -4711,6 +4888,17 @@ CK_RV C_DigestKey(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hKey)
         return (CK_RV)ret;
     }
     return CKR_OK;
+}
+
+/* Logout must not free an object this call may still be using. */
+CK_RV C_DigestKey(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hKey)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_DigestKey(hSession, hKey);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
 }
 
 /**
@@ -4917,8 +5105,8 @@ static int GetInitValue(CK_MECHANISM_TYPE mechanism) {
  *          CKR_FUNCTION_FAILED when initializing fails.
  *          CKR_OK on success.
  */
-CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
-                    CK_OBJECT_HANDLE hKey)
+static CK_RV wp11_C_SignInit(CK_SESSION_HANDLE hSession,
+                             CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
 {
     int ret;
     WP11_Session* session;
@@ -5237,6 +5425,18 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
     return CKR_OK;
 }
 
+/* Logout must not free an object this call may still be using. */
+CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
+                    CK_OBJECT_HANDLE hKey)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_SignInit(hSession, pMechanism, hKey);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
+}
+
 /**
  * Sign the single-part data.
  *
@@ -5258,9 +5458,9 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
  *          CKR_MECHANISM_INVALID when wrong initialization function was used.
  *          CKR_OK on success.
  */
-CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
-             CK_ULONG ulDataLen, CK_BYTE_PTR pSignature,
-             CK_ULONG_PTR pulSignatureLen)
+static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
+                         CK_ULONG ulDataLen, CK_BYTE_PTR pSignature,
+                         CK_ULONG_PTR pulSignatureLen)
 {
     int ret = 0;
 #ifndef NO_RSA
@@ -5611,6 +5811,19 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
     return CKR_OK;
 }
 
+/* Logout must not free an object this call may still be using. */
+CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
+             CK_ULONG ulDataLen, CK_BYTE_PTR pSignature,
+             CK_ULONG_PTR pulSignatureLen)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_Sign(hSession, pData, ulDataLen, pSignature, pulSignatureLen);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
+}
+
 /**
  * Continue signing the multi-part data.
  *
@@ -5626,8 +5839,8 @@ CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
  *          CKR_MECHANISM_INVALID when wrong initialization function was used.
  *          CKR_OK on success.
  */
-CK_RV C_SignUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
-                   CK_ULONG ulPartLen)
+static CK_RV wp11_C_SignUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
+                               CK_ULONG ulPartLen)
 {
     int ret;
     WP11_Session* session;
@@ -5739,6 +5952,18 @@ CK_RV C_SignUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
     return CKR_OK;
 }
 
+/* Logout must not free an object this call may still be using. */
+CK_RV C_SignUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
+                   CK_ULONG ulPartLen)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_SignUpdate(hSession, pPart, ulPartLen);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
+}
+
 /**
  * Finish signing the multi-part data.
  *
@@ -5759,8 +5984,9 @@ CK_RV C_SignUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
  *          CKR_MECHANISM_INVALID when wrong initialization function was used.
  *          CKR_OK on success.
  */
-CK_RV C_SignFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature,
-                  CK_ULONG_PTR pulSignatureLen)
+static CK_RV wp11_C_SignFinal(CK_SESSION_HANDLE hSession,
+                              CK_BYTE_PTR pSignature,
+                              CK_ULONG_PTR pulSignatureLen)
 {
     int ret;
     WP11_Session* session;
@@ -5902,6 +6128,18 @@ CK_RV C_SignFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature,
     return CKR_OK;
 }
 
+/* Logout must not free an object this call may still be using. */
+CK_RV C_SignFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature,
+                  CK_ULONG_PTR pulSignatureLen)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_SignFinal(hSession, pSignature, pulSignatureLen);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
+}
+
 /**
  * Initialize signing operation that recovers data from signature.
  * No mechanisms are supported.
@@ -5916,9 +6154,9 @@ CK_RV C_SignFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature,
  *          CKR_MECHANISM_INVALID when the mechanism is not supported with this
  *          type of operation.
  */
-CK_RV C_SignRecoverInit(CK_SESSION_HANDLE hSession,
-                        CK_MECHANISM_PTR pMechanism,
-                        CK_OBJECT_HANDLE hKey)
+static CK_RV wp11_C_SignRecoverInit(CK_SESSION_HANDLE hSession,
+                                    CK_MECHANISM_PTR pMechanism,
+                                    CK_OBJECT_HANDLE hKey)
 {
     int ret;
     WP11_Session* session;
@@ -5957,6 +6195,19 @@ CK_RV C_SignRecoverInit(CK_SESSION_HANDLE hSession,
 
     rv = CKR_MECHANISM_INVALID;
     WOLFPKCS11_LEAVE("C_SignRecoverInit", rv);
+    return rv;
+}
+
+/* Logout must not free an object this call may still be using. */
+CK_RV C_SignRecoverInit(CK_SESSION_HANDLE hSession,
+                        CK_MECHANISM_PTR pMechanism,
+                        CK_OBJECT_HANDLE hKey)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_SignRecoverInit(hSession, pMechanism, hKey);
+    WP11_Slot_ObjectCallLeave(calls);
     return rv;
 }
 
@@ -6033,8 +6284,9 @@ CK_RV C_SignRecover(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
  *          CKR_FUNCTION_FAILED when initializing fails.
  *          CKR_OK on success.
  */
-CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
-                   CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
+static CK_RV wp11_C_VerifyInit(CK_SESSION_HANDLE hSession,
+                               CK_MECHANISM_PTR pMechanism,
+                               CK_OBJECT_HANDLE hKey)
 {
     int ret;
     WP11_Session* session;
@@ -6357,6 +6609,18 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
     return CKR_OK;
 }
 
+/* Logout must not free an object this call may still be using. */
+CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
+                   CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_VerifyInit(hSession, pMechanism, hKey);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
+}
+
 /**
  * Verify the single-part data.
  *
@@ -6375,9 +6639,9 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
  *          CKR_SIGNATURE_INVALID when the signature does not verify the data.
  *          CKR_OK on success.
  */
-CK_RV C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
-               CK_ULONG ulDataLen, CK_BYTE_PTR pSignature,
-               CK_ULONG ulSignatureLen)
+static CK_RV wp11_C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
+                           CK_ULONG ulDataLen, CK_BYTE_PTR pSignature,
+                           CK_ULONG ulSignatureLen)
 {
     int ret = 0;
     int stat = 0;
@@ -6687,6 +6951,19 @@ CK_RV C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
     return CKR_OK;
 }
 
+/* Logout must not free an object this call may still be using. */
+CK_RV C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
+               CK_ULONG ulDataLen, CK_BYTE_PTR pSignature,
+               CK_ULONG ulSignatureLen)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_Verify(hSession, pData, ulDataLen, pSignature, ulSignatureLen);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
+}
+
 /**
  * Continue verifying the multi-part data.
  *
@@ -6702,8 +6979,8 @@ CK_RV C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
  *          CKR_MECHANISM_INVALID when wrong initialization function was used.
  *          CKR_OK on success.
  */
-CK_RV C_VerifyUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
-                     CK_ULONG ulPartLen)
+static CK_RV wp11_C_VerifyUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
+                                 CK_ULONG ulPartLen)
 {
     int ret;
     WP11_Session* session;
@@ -6806,6 +7083,18 @@ CK_RV C_VerifyUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
     return CKR_OK;
 }
 
+/* Logout must not free an object this call may still be using. */
+CK_RV C_VerifyUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
+                     CK_ULONG ulPartLen)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_VerifyUpdate(hSession, pPart, ulPartLen);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
+}
+
 /**
  * Finishes verifying the multi-part data.
  *
@@ -6822,8 +7111,8 @@ CK_RV C_VerifyUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
  *          CKR_SIGNATURE_INVALID when the signature does not verify the data.
  *          CKR_OK on success.
  */
-CK_RV C_VerifyFinal(CK_SESSION_HANDLE hSession,
-                    CK_BYTE_PTR pSignature, CK_ULONG ulSignatureLen)
+static CK_RV wp11_C_VerifyFinal(CK_SESSION_HANDLE hSession,
+                                CK_BYTE_PTR pSignature, CK_ULONG ulSignatureLen)
 {
     int ret = 0;
     int stat = 0;
@@ -6930,6 +7219,18 @@ CK_RV C_VerifyFinal(CK_SESSION_HANDLE hSession,
     return CKR_OK;
 }
 
+/* Logout must not free an object this call may still be using. */
+CK_RV C_VerifyFinal(CK_SESSION_HANDLE hSession,
+                    CK_BYTE_PTR pSignature, CK_ULONG ulSignatureLen)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_VerifyFinal(hSession, pSignature, ulSignatureLen);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
+}
+
 /**
  * Initialize verification operation where data is recovered from the signature.
  *
@@ -6943,9 +7244,9 @@ CK_RV C_VerifyFinal(CK_SESSION_HANDLE hSession,
  *          CKR_MECHANISM_INVALID when the mechanism is not supported with this
  *          type of operation.
  */
-CK_RV C_VerifyRecoverInit(CK_SESSION_HANDLE hSession,
-                          CK_MECHANISM_PTR pMechanism,
-                          CK_OBJECT_HANDLE hKey)
+static CK_RV wp11_C_VerifyRecoverInit(CK_SESSION_HANDLE hSession,
+                                      CK_MECHANISM_PTR pMechanism,
+                                      CK_OBJECT_HANDLE hKey)
 {
     int ret;
     int init = 0;
@@ -7028,6 +7329,19 @@ CK_RV C_VerifyRecoverInit(CK_SESSION_HANDLE hSession,
     return CKR_OK;
 }
 
+/* Logout must not free an object this call may still be using. */
+CK_RV C_VerifyRecoverInit(CK_SESSION_HANDLE hSession,
+                          CK_MECHANISM_PTR pMechanism,
+                          CK_OBJECT_HANDLE hKey)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_VerifyRecoverInit(hSession, pMechanism, hKey);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
+}
+
 /**
  * Verify the signature where the data is recovered from the signature.
  *
@@ -7045,9 +7359,10 @@ CK_RV C_VerifyRecoverInit(CK_SESSION_HANDLE hSession,
  *          successfully called.
  *          CKR_OK on success.
  */
-CK_RV C_VerifyRecover(CK_SESSION_HANDLE hSession,
-                      CK_BYTE_PTR pSignature, CK_ULONG ulSignatureLen,
-                      CK_BYTE_PTR pData, CK_ULONG_PTR pulDataLen)
+static CK_RV wp11_C_VerifyRecover(CK_SESSION_HANDLE hSession,
+                                  CK_BYTE_PTR pSignature,
+                                  CK_ULONG ulSignatureLen, CK_BYTE_PTR pData,
+                                  CK_ULONG_PTR pulDataLen)
 {
     WP11_Session* session;
 #if !defined(NO_RSA) && defined(WC_RSA_DIRECT)
@@ -7139,6 +7454,20 @@ CK_RV C_VerifyRecover(CK_SESSION_HANDLE hSession,
 
     return CKR_OK;
 #endif
+}
+
+/* Logout must not free an object this call may still be using. */
+CK_RV C_VerifyRecover(CK_SESSION_HANDLE hSession,
+                      CK_BYTE_PTR pSignature, CK_ULONG ulSignatureLen,
+                      CK_BYTE_PTR pData, CK_ULONG_PTR pulDataLen)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_VerifyRecover(hSession, pSignature, ulSignatureLen, pData,
+                              pulDataLen);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
 }
 
 /**
@@ -7386,10 +7715,10 @@ CK_RV C_DecryptVerifyUpdate(CK_SESSION_HANDLE hSession,
  *          type of operation.
  *          CKR_OK on success.
  */
-CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
-                    CK_MECHANISM_PTR pMechanism,
-                    CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
-                    CK_OBJECT_HANDLE_PTR phKey)
+static CK_RV wp11_C_GenerateKey(CK_SESSION_HANDLE hSession,
+                                CK_MECHANISM_PTR pMechanism,
+                                CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
+                                CK_OBJECT_HANDLE_PTR phKey)
 {
     CK_RV rv = CKR_OK;
     WP11_Session* session = NULL;
@@ -7845,6 +8174,20 @@ CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
     return rv;
 }
 
+/* Logout must not free an object this call may still be using. */
+CK_RV C_GenerateKey(CK_SESSION_HANDLE hSession,
+                    CK_MECHANISM_PTR pMechanism,
+                    CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
+                    CK_OBJECT_HANDLE_PTR phKey)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_GenerateKey(hSession, pMechanism, pTemplate, ulCount, phKey);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
+}
+
 
 /**
  * Generate a public/private key pair into new key objects.
@@ -7908,14 +8251,14 @@ static CK_RV CheckGenPairAttrs(CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
     return CKR_OK;
 }
 
-CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
-                        CK_MECHANISM_PTR pMechanism,
-                        CK_ATTRIBUTE_PTR pPublicKeyTemplate,
-                        CK_ULONG ulPublicKeyAttributeCount,
-                        CK_ATTRIBUTE_PTR pPrivateKeyTemplate,
-                        CK_ULONG ulPrivateKeyAttributeCount,
-                        CK_OBJECT_HANDLE_PTR phPublicKey,
-                        CK_OBJECT_HANDLE_PTR phPrivateKey)
+static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
+                                    CK_MECHANISM_PTR pMechanism,
+                                    CK_ATTRIBUTE_PTR pPublicKeyTemplate,
+                                    CK_ULONG ulPublicKeyAttributeCount,
+                                    CK_ATTRIBUTE_PTR pPrivateKeyTemplate,
+                                    CK_ULONG ulPrivateKeyAttributeCount,
+                                    CK_OBJECT_HANDLE_PTR phPublicKey,
+                                    CK_OBJECT_HANDLE_PTR phPrivateKey)
 {
     int ret;
     CK_RV rv = CKR_OK;
@@ -8302,6 +8645,27 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
     return rv;
 }
 
+/* Logout must not free an object this call may still be using. */
+CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
+                        CK_MECHANISM_PTR pMechanism,
+                        CK_ATTRIBUTE_PTR pPublicKeyTemplate,
+                        CK_ULONG ulPublicKeyAttributeCount,
+                        CK_ATTRIBUTE_PTR pPrivateKeyTemplate,
+                        CK_ULONG ulPrivateKeyAttributeCount,
+                        CK_OBJECT_HANDLE_PTR phPublicKey,
+                        CK_OBJECT_HANDLE_PTR phPrivateKey)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_GenerateKeyPair(hSession, pMechanism, pPublicKeyTemplate,
+                                ulPublicKeyAttributeCount, pPrivateKeyTemplate,
+                                ulPrivateKeyAttributeCount, phPublicKey,
+                                phPrivateKey);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
+}
+
 /**
  * Wrap a key using another key.
  *
@@ -8328,11 +8692,11 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
  *          CKR_MECHANISM_INVALID when the mechanism is not supported with this
  *          type of operation.
  */
-CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
-                CK_MECHANISM_PTR pMechanism,
-                CK_OBJECT_HANDLE hWrappingKey, CK_OBJECT_HANDLE hKey,
-                CK_BYTE_PTR pWrappedKey,
-                CK_ULONG_PTR pulWrappedKeyLen)
+static CK_RV wp11_C_WrapKey(CK_SESSION_HANDLE hSession,
+                            CK_MECHANISM_PTR pMechanism,
+                            CK_OBJECT_HANDLE hWrappingKey,
+                            CK_OBJECT_HANDLE hKey, CK_BYTE_PTR pWrappedKey,
+                            CK_ULONG_PTR pulWrappedKeyLen)
 {
     int ret;
     CK_RV rv;
@@ -8569,6 +8933,22 @@ err_out:
     return rv;
 }
 
+/* Logout must not free an object this call may still be using. */
+CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
+                CK_MECHANISM_PTR pMechanism,
+                CK_OBJECT_HANDLE hWrappingKey, CK_OBJECT_HANDLE hKey,
+                CK_BYTE_PTR pWrappedKey,
+                CK_ULONG_PTR pulWrappedKeyLen)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_WrapKey(hSession, pMechanism, hWrappingKey, hKey, pWrappedKey,
+                        pulWrappedKeyLen);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
+}
+
 /**
  * Unwrap a key using a wrap key.
  * Support only RSA private key wrapped by AESCBCPAD mechanism
@@ -8590,13 +8970,13 @@ err_out:
  *          CKR_MECHANISM_INVALID when the mechanism is not supported with this
  *          type of operation.
  */
-CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
-                  CK_MECHANISM_PTR pMechanism,
-                  CK_OBJECT_HANDLE hUnwrappingKey,
-                  CK_BYTE_PTR pWrappedKey, CK_ULONG ulWrappedKeyLen,
-                  CK_ATTRIBUTE_PTR pTemplate,
-                  CK_ULONG ulAttributeCount,
-                  CK_OBJECT_HANDLE_PTR phKey)
+static CK_RV wp11_C_UnwrapKey(CK_SESSION_HANDLE hSession,
+                              CK_MECHANISM_PTR pMechanism,
+                              CK_OBJECT_HANDLE hUnwrappingKey,
+                              CK_BYTE_PTR pWrappedKey, CK_ULONG ulWrappedKeyLen,
+                              CK_ATTRIBUTE_PTR pTemplate,
+                              CK_ULONG ulAttributeCount,
+                              CK_OBJECT_HANDLE_PTR phKey)
 {
     CK_RV rv;
     int ret;
@@ -8818,6 +9198,24 @@ err_out:
         XFREE(workBuffer, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     }
 
+    return rv;
+}
+
+/* Logout must not free an object this call may still be using. */
+CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
+                  CK_MECHANISM_PTR pMechanism,
+                  CK_OBJECT_HANDLE hUnwrappingKey,
+                  CK_BYTE_PTR pWrappedKey, CK_ULONG ulWrappedKeyLen,
+                  CK_ATTRIBUTE_PTR pTemplate,
+                  CK_ULONG ulAttributeCount,
+                  CK_OBJECT_HANDLE_PTR phKey)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_UnwrapKey(hSession, pMechanism, hUnwrappingKey, pWrappedKey,
+                          ulWrappedKeyLen, pTemplate, ulAttributeCount, phKey);
+    WP11_Slot_ObjectCallLeave(calls);
     return rv;
 }
 
@@ -9045,12 +9443,12 @@ static int Tls12_Extract_Keys(WP11_Session* session,
  *          type of operation.
  *          CKR_OK on success.
  */
-CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
-                  CK_MECHANISM_PTR pMechanism,
-                  CK_OBJECT_HANDLE hBaseKey,
-                  CK_ATTRIBUTE_PTR pTemplate,
-                  CK_ULONG ulAttributeCount,
-                  CK_OBJECT_HANDLE_PTR phKey)
+static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
+                              CK_MECHANISM_PTR pMechanism,
+                              CK_OBJECT_HANDLE hBaseKey,
+                              CK_ATTRIBUTE_PTR pTemplate,
+                              CK_ULONG ulAttributeCount,
+                              CK_OBJECT_HANDLE_PTR phKey)
 {
     int ret;
     CK_RV rv = CKR_OK;
@@ -9489,6 +9887,23 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
     }
 #endif
 
+    return rv;
+}
+
+/* Logout must not free an object this call may still be using. */
+CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
+                  CK_MECHANISM_PTR pMechanism,
+                  CK_OBJECT_HANDLE hBaseKey,
+                  CK_ATTRIBUTE_PTR pTemplate,
+                  CK_ULONG ulAttributeCount,
+                  CK_OBJECT_HANDLE_PTR phKey)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_DeriveKey(hSession, pMechanism, hBaseKey, pTemplate,
+                          ulAttributeCount, phKey);
+    WP11_Slot_ObjectCallLeave(calls);
     return rv;
 }
 
@@ -10023,10 +10438,14 @@ static CK_RV CheckPrivateObjectLogin(WP11_Session* session,
 }
 #endif /* WOLFPKCS11_MLKEM */
 
-CK_RV C_EncapsulateKey(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
-                       CK_OBJECT_HANDLE hPublicKey, CK_ATTRIBUTE_PTR pTemplate,
-                       CK_ULONG ulAttributeCount, CK_BYTE_PTR pCiphertext,
-                       CK_ULONG_PTR pulCiphertextLen, CK_OBJECT_HANDLE_PTR phKey)
+static CK_RV wp11_C_EncapsulateKey(CK_SESSION_HANDLE hSession,
+                                   CK_MECHANISM_PTR pMechanism,
+                                   CK_OBJECT_HANDLE hPublicKey,
+                                   CK_ATTRIBUTE_PTR pTemplate,
+                                   CK_ULONG ulAttributeCount,
+                                   CK_BYTE_PTR pCiphertext,
+                                   CK_ULONG_PTR pulCiphertextLen,
+                                   CK_OBJECT_HANDLE_PTR phKey)
 {
 #ifdef WOLFPKCS11_MLKEM
     int ret;
@@ -10143,10 +10562,30 @@ CK_RV C_EncapsulateKey(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
 #endif
 }
 
-CK_RV C_DecapsulateKey(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
-                       CK_OBJECT_HANDLE hPrivateKey, CK_ATTRIBUTE_PTR pTemplate,
+/* Logout must not free an object this call may still be using. */
+CK_RV C_EncapsulateKey(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
+                       CK_OBJECT_HANDLE hPublicKey, CK_ATTRIBUTE_PTR pTemplate,
                        CK_ULONG ulAttributeCount, CK_BYTE_PTR pCiphertext,
-                       CK_ULONG ulCiphertextLen, CK_OBJECT_HANDLE_PTR phKey)
+                       CK_ULONG_PTR pulCiphertextLen, CK_OBJECT_HANDLE_PTR phKey)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_EncapsulateKey(hSession, pMechanism, hPublicKey, pTemplate,
+                               ulAttributeCount, pCiphertext, pulCiphertextLen,
+                               phKey);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
+}
+
+static CK_RV wp11_C_DecapsulateKey(CK_SESSION_HANDLE hSession,
+                                   CK_MECHANISM_PTR pMechanism,
+                                   CK_OBJECT_HANDLE hPrivateKey,
+                                   CK_ATTRIBUTE_PTR pTemplate,
+                                   CK_ULONG ulAttributeCount,
+                                   CK_BYTE_PTR pCiphertext,
+                                   CK_ULONG ulCiphertextLen,
+                                   CK_OBJECT_HANDLE_PTR phKey)
 {
 #ifdef WOLFPKCS11_MLKEM
     int ret;
@@ -10255,6 +10694,22 @@ CK_RV C_DecapsulateKey(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
     (void)phKey;
     return CKR_FUNCTION_NOT_SUPPORTED;
 #endif
+}
+
+/* Logout must not free an object this call may still be using. */
+CK_RV C_DecapsulateKey(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
+                       CK_OBJECT_HANDLE hPrivateKey, CK_ATTRIBUTE_PTR pTemplate,
+                       CK_ULONG ulAttributeCount, CK_BYTE_PTR pCiphertext,
+                       CK_ULONG ulCiphertextLen, CK_OBJECT_HANDLE_PTR phKey)
+{
+    CK_RV rv;
+    WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
+
+    rv = wp11_C_DecapsulateKey(hSession, pMechanism, hPrivateKey, pTemplate,
+                               ulAttributeCount, pCiphertext, ulCiphertextLen,
+                               phKey);
+    WP11_Slot_ObjectCallLeave(calls);
+    return rv;
 }
 
 CK_RV C_VerifySignatureInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
