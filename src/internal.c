@@ -11285,8 +11285,8 @@ static int wp11_mgf(CK_MECHANISM_TYPE mgfType, int *mgf)
  * @param  labelSz  [in]  Length of data in bytes.
  * @return  MEMORY_E when dynamic memory allocation fails.
  *          BAD_FUNC_ARG when the digest algorithm id or the mask generation
- *          function id are not recognized, or label is NULL with a non-zero
- *          length.
+ *          function id are not recognized, labelSz is negative, or label is
+ *          NULL with a non-zero length.
  *          0 on success.
  */
 int WP11_Session_SetOaepParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
@@ -11300,7 +11300,7 @@ int WP11_Session_SetOaepParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
     ret = wp11_hash_type(hashAlg, &hashType);
     if (ret == 0)
         ret = wp11_mgf(mgf, &mgfType);
-    if (ret == 0 && label == NULL && labelSz != 0)
+    if (ret == 0 && (labelSz < 0 || (label == NULL && labelSz != 0)))
         ret = BAD_FUNC_ARG;
     if (ret != 0)
         return ret;

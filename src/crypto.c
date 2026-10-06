@@ -2858,6 +2858,8 @@ static CK_RV EncryptInit(CK_SESSION_HANDLE hSession,
             params = (CK_RSA_PKCS_OAEP_PARAMS*)pMechanism->pParameter;
             if (params->source != CKZ_DATA_SPECIFIED)
                 return CKR_MECHANISM_PARAM_INVALID;
+            if (params->ulSourceDataLen > (CK_ULONG)INT_MAX)
+                return CKR_MECHANISM_PARAM_INVALID;
 
             ret = WP11_Session_SetOaepParams(session, params->hashAlg,
                 params->mgf, (byte*)params->pSourceData,
@@ -3977,6 +3979,8 @@ static CK_RV DecryptInit(CK_SESSION_HANDLE hSession,
 
             params = (CK_RSA_PKCS_OAEP_PARAMS*)pMechanism->pParameter;
             if (params->source != CKZ_DATA_SPECIFIED)
+                return CKR_MECHANISM_PARAM_INVALID;
+            if (params->ulSourceDataLen > (CK_ULONG)INT_MAX)
                 return CKR_MECHANISM_PARAM_INVALID;
 
             ret = WP11_Session_SetOaepParams(session, params->hashAlg,
