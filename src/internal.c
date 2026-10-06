@@ -13423,6 +13423,7 @@ int WP11_Object_SetCert(WP11_Object* object, unsigned char** data,
 {
     int ret = 0;
     WP11_Cert* cert;
+    byte* newData = NULL;
 
     if (object->onToken)
         WP11_Lock_LockRW(object->lock);
@@ -13435,21 +13436,21 @@ int WP11_Object_SetCert(WP11_Object* object, unsigned char** data,
     if (ret == 0 && data[0] != NULL)
         cert->type = (word32)*(CK_ULONG*)data[0];
 
-    /* Second item is certificate data (CKA_VALUE) */
+    /* Second item is certificate data (CKA_VALUE). Copy it before releasing
+     * the current value so a failed allocation leaves the object intact. */
     if (ret == 0 && data[1] != NULL) {
-        cert->len = (word32)len[1];
+        newData = (byte*)XMALLOC(len[1], NULL, DYNAMIC_TYPE_CERT);
+        if (newData == NULL)
+            ret = MEMORY_E;
+        else
+            XMEMCPY(newData, data[1], len[1]);
     }
     if (ret == 0 && data[1] != NULL) {
         if (cert->data != NULL) {
             XFREE(cert->data, NULL, DYNAMIC_TYPE_CERT);
         }
-        cert->data = (byte *)XMALLOC(cert->len, NULL, DYNAMIC_TYPE_CERT);
-        if (cert->data == NULL) {
-            ret = MEMORY_E;
-        }
-    }
-    if (ret == 0 && data[1] != NULL) {
-        XMEMCPY(cert->data, data[1], cert->len);
+        cert->data = newData;
+        cert->len = (word32)len[1];
     }
 
     if (object->onToken)
