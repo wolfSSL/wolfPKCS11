@@ -865,33 +865,38 @@ static int wp11_Session_New(WP11_Slot* slot, CK_OBJECT_HANDLE handle,
  */
 int WP11_Slot_Has_Empty_Pin(WP11_Slot* slot)
 {
+    int ret = 0;
+    int pinSet;
+    int cached;
+    byte seed[PIN_SEED_SZ];
+
     if (slot == NULL)
         return 0;
 
-    if (slot->token.tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET) {
-        switch (slot->token.userPinEmpty) {
-            case 1:
-                /* Empty user PIN */
-                return 1;
-            case 2:
-                /* Non-empty user PIN */
-                return 0;
-            default:
-                /* Cache result as WP11_Slot_CheckUserPin is very expensive */
-                if (WP11_Slot_CheckUserPin(slot, (char*)"", 0) == 0) {
-                    /* Empty user PIN */
-                    slot->token.userPinEmpty = 1;
-                    return 1;
-                }
-                else {
-                    /* Non-empty user PIN */
-                    slot->token.userPinEmpty = 2;
-                    return 0;
-                }
+    WP11_Lock_LockRO(&slot->lock);
+    pinSet = (slot->token.tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET) != 0;
+    cached = slot->token.userPinEmpty;
+    XMEMCPY(seed, slot->token.userPinSeed, sizeof(seed));
+    WP11_Lock_UnlockRO(&slot->lock);
+
+    if (pinSet) {
+        if (cached == 0) {
+            /* Cache result as WP11_Slot_CheckUserPin is very expensive */
+            ret = (WP11_Slot_CheckUserPin(slot, (char*)"", 0) == 0);
+            WP11_Lock_LockRW(&slot->lock);
+            /* Only cache a verdict for the PIN that was checked. */
+            if (slot->token.userPinEmpty == 0 &&
+                    XMEMCMP(seed, slot->token.userPinSeed, sizeof(seed)) == 0) {
+                slot->token.userPinEmpty = ret ? 1 : 2;
+            }
+            WP11_Lock_UnlockRW(&slot->lock);
+        }
+        else {
+            ret = (cached == 1);
         }
     }
 
-    return 0;
+    return ret;
 }
 
 /**
@@ -8458,6 +8463,7 @@ int WP11_Slot_CheckUserPin(WP11_Slot* slot, char* pin, int pinLen)
     int ret = 0;
     WP11_Token* token;
     byte hash[PIN_HASH_SZ];
+    byte seed[PIN_SEED_SZ];
 
     WP11_Lock_LockRO(&slot->lock);
     token = &slot->token;
@@ -8469,11 +8475,13 @@ int WP11_Slot_CheckUserPin(WP11_Slot* slot, char* pin, int pinLen)
         ret = PIN_NOT_SET_E;
 
     if (ret == 0) {
+        /* C_SetPIN may replace the seed while the hash runs unlocked. */
+        XMEMCPY(seed, token->userPinSeed, sizeof(seed));
         WP11_Lock_UnlockRO(&slot->lock);
 
         /* Costly Operation done out of lock. */
-        ret = HashPIN(pin, pinLen, token->userPinSeed,
-                        sizeof(token->userPinSeed), hash, sizeof(hash), slot);
+        ret = HashPIN(pin, pinLen, seed, sizeof(seed), hash, sizeof(hash),
+                      slot);
 
         WP11_Lock_LockRO(&slot->lock);
     }
@@ -8974,7 +8982,13 @@ time_t WP11_Slot_TokenFailedExpire(WP11_Slot* slot, int login)
  */
 int WP11_Slot_IsTokenUserPinInitialized(WP11_Slot* slot)
 {
-    return slot->token.tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET;
+    int ret;
+
+    WP11_Lock_LockRO(&slot->lock);
+    ret = slot->token.tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET;
+    WP11_Lock_UnlockRO(&slot->lock);
+
+    return ret;
 }
 
 /**
