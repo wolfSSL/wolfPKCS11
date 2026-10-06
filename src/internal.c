@@ -17041,6 +17041,8 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
     }
 
     ret = wc_ecc_init_ex(&pubKey, NULL, priv->devId);
+    if (ret == 0 && x963Len > pointLen - (word32)(x963Data - point))
+        ret = BUFFER_E;
     if (ret == 0 && priv->data.ecKey->dp != NULL) {
         /* Compressed point is size + 1 bytes, uncompressed 2 * size + 1 */
         expectedPointLen = (word32)priv->data.ecKey->dp->size + 1;
