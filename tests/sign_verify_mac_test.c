@@ -347,6 +347,140 @@ static void tls_mac_sign_final_retry_test(CK_SESSION_HANDLE session)
 
     funcList->C_DestroyObject(session, key);
 }
+
+/* A TLS MAC verify supports the multi-part update and final calls. */
+static void tls_mac_verify_multipart_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_TLS_MAC_PARAMS params;
+    CK_MECHANISM mech;
+    byte mac[12];
+    CK_ULONG macLen = sizeof(mac);
+    CK_ULONG half = sizeof(tlsHandshakeHash) / 2;
+
+    rv = create_generic_key(session, &key);
+    CHECK_RV(rv, "create TLS secret", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    tls_mac_params(&params, &mech);
+
+    rv = funcList->C_SignInit(session, &mech, key);
+    CHECK_RV(rv, "C_SignInit(TLS MAC)", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_Sign(session, tlsHandshakeHash,
+                              sizeof(tlsHandshakeHash), mac, &macLen);
+        CHECK_RV(rv, "C_Sign(TLS MAC)", CKR_OK);
+    }
+
+    rv = funcList->C_VerifyInit(session, &mech, key);
+    CHECK_RV(rv, "C_VerifyInit(TLS MAC multi-part)", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_VerifyUpdate(session, tlsHandshakeHash, half);
+        CHECK_RV(rv, "C_VerifyUpdate(TLS MAC, first part)", CKR_OK);
+        rv = funcList->C_VerifyUpdate(session, tlsHandshakeHash + half,
+                                      sizeof(tlsHandshakeHash) - half);
+        CHECK_RV(rv, "C_VerifyUpdate(TLS MAC, second part)", CKR_OK);
+        rv = funcList->C_VerifyFinal(session, mac, macLen);
+        CHECK_RV(rv, "C_VerifyFinal(TLS MAC)", CKR_OK);
+    }
+
+    rv = funcList->C_VerifyInit(session, &mech, key);
+    CHECK_RV(rv, "C_VerifyInit(TLS MAC, other data)", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_VerifyUpdate(session, tlsHandshakeHash, half);
+        CHECK_RV(rv, "C_VerifyUpdate(TLS MAC, partial data)", CKR_OK);
+        rv = funcList->C_VerifyFinal(session, mac, macLen);
+        CHECK_RV(rv, "C_VerifyFinal(TLS MAC, other data)",
+                 CKR_SIGNATURE_INVALID);
+    }
+
+    rv = funcList->C_VerifyInit(session, &mech, key);
+    CHECK_RV(rv, "C_VerifyInit(TLS MAC, mixed calls)", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_VerifyUpdate(session, tlsHandshakeHash, half);
+        CHECK_RV(rv, "C_VerifyUpdate(TLS MAC, before single-part)", CKR_OK);
+        rv = funcList->C_Verify(session, tlsHandshakeHash,
+                                sizeof(tlsHandshakeHash), mac, macLen);
+        CHECK_TRUE(rv != CKR_OK,
+                   "C_Verify(TLS MAC) does not finish a multi-part verify");
+    }
+
+    rv = funcList->C_SignInit(session, &mech, key);
+    CHECK_RV(rv, "C_SignInit(TLS MAC, mixed calls)", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_SignUpdate(session, tlsHandshakeHash, half);
+        CHECK_RV(rv, "C_SignUpdate(TLS MAC, before single-part)", CKR_OK);
+        macLen = sizeof(mac);
+        rv = funcList->C_Sign(session, tlsHandshakeHash,
+                              sizeof(tlsHandshakeHash), mac, &macLen);
+        CHECK_RV(rv, "C_Sign(TLS MAC, after update)", CKR_OK);
+    }
+    rv = funcList->C_VerifyInit(session, &mech, key);
+    CHECK_RV(rv, "C_VerifyInit(TLS MAC, after sign)", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_VerifyUpdate(session, tlsHandshakeHash,
+                                      sizeof(tlsHandshakeHash));
+        CHECK_RV(rv, "C_VerifyUpdate(TLS MAC, after sign)", CKR_OK);
+        rv = funcList->C_VerifyFinal(session, mac, macLen);
+        CHECK_RV(rv, "C_VerifyFinal(TLS MAC, after sign)", CKR_OK);
+    }
+
+    rv = funcList->C_VerifyInit(session, &mech, key);
+    CHECK_RV(rv, "C_VerifyInit(TLS MAC, after mixed calls)", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_Verify(session, tlsHandshakeHash,
+                                sizeof(tlsHandshakeHash), mac, macLen);
+        CHECK_RV(rv, "C_Verify(TLS MAC, after mixed calls)", CKR_OK);
+    }
+
+    funcList->C_DestroyObject(session, key);
+}
+
+/* Closing a session discards any multi-part TLS MAC data it held. */
+static void tls_mac_verify_session_close_test(CK_SLOT_ID slot)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = 0;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_TLS_MAC_PARAMS params;
+    CK_MECHANISM mech;
+    byte mac[12];
+    CK_ULONG macLen = sizeof(mac);
+    int i;
+
+    tls_mac_params(&params, &mech);
+    for (i = 0; i < 2; i++) {
+        rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+        CHECK_RV(rv, "C_OpenSession(TLS MAC close)", CKR_OK);
+        if (rv != CKR_OK)
+            return;
+        rv = create_generic_key(session, &key);
+        CHECK_RV(rv, "create TLS secret (TLS MAC close)", CKR_OK);
+        if (rv == CKR_OK && i == 0) {
+            rv = funcList->C_VerifyInit(session, &mech, key);
+            CHECK_RV(rv, "C_VerifyInit(TLS MAC, abandoned)", CKR_OK);
+            rv = funcList->C_VerifyUpdate(session, tlsHandshakeHash, 8);
+            CHECK_RV(rv, "C_VerifyUpdate(TLS MAC, abandoned)", CKR_OK);
+        }
+        else if (rv == CKR_OK) {
+            rv = funcList->C_SignInit(session, &mech, key);
+            CHECK_RV(rv, "C_SignInit(TLS MAC, new session)", CKR_OK);
+            rv = funcList->C_Sign(session, tlsHandshakeHash,
+                                  sizeof(tlsHandshakeHash), mac, &macLen);
+            CHECK_RV(rv, "C_Sign(TLS MAC, new session)", CKR_OK);
+            rv = funcList->C_VerifyInit(session, &mech, key);
+            CHECK_RV(rv, "C_VerifyInit(TLS MAC, new session)", CKR_OK);
+            rv = funcList->C_VerifyUpdate(session, tlsHandshakeHash,
+                                          sizeof(tlsHandshakeHash));
+            CHECK_RV(rv, "C_VerifyUpdate(TLS MAC, new session)", CKR_OK);
+            rv = funcList->C_VerifyFinal(session, mac, macLen);
+            CHECK_RV(rv, "C_VerifyFinal(TLS MAC, new session)", CKR_OK);
+        }
+        funcList->C_CloseSession(session);
+    }
+}
 #endif
 
 static CK_RV token_init(CK_SLOT_ID* slot)
@@ -424,6 +558,8 @@ static int run_test(void)
 #endif
 #if defined(WOLFSSL_HAVE_PRF) && !defined(NO_SHA256)
         tls_mac_sign_final_retry_test(session);
+        tls_mac_verify_multipart_test(session);
+        tls_mac_verify_session_close_test(slot);
 #endif
     }
 
