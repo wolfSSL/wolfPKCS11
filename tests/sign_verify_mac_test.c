@@ -35,6 +35,9 @@
 #endif
 #include <wolfssl/wolfcrypt/settings.h>
 #include <wolfssl/wolfcrypt/misc.h>
+#ifndef NO_RSA
+    #include <wolfssl/wolfcrypt/rsa.h>
+#endif
 
 #ifndef WOLFPKCS11_USER_SETTINGS
     #include <wolfpkcs11/options.h>
@@ -139,6 +142,56 @@ static void rsa_x509_verify_block_test(CK_SESSION_HANDLE session)
 
     funcList->C_DestroyObject(session, priv);
     funcList->C_DestroyObject(session, pub);
+}
+
+/* Larger than the maximum RSA modulus wolfCrypt is built for. */
+#define BIG_MOD_SZ  ((RSA_MAX_SIZE / 8) + 64)
+static byte bigMod[BIG_MOD_SZ];
+static byte bigHalf[BIG_MOD_SZ / 2];
+static byte bigSig[BIG_MOD_SZ];
+
+/* Raw RSA fails cleanly for a key larger than the supported modulus size. */
+static void rsa_x509_big_modulus_sign_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_RSA_X_509, NULL, 0 };
+    byte data[32];
+    CK_ULONG sigLen = sizeof(bigSig);
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_CLASS,            &privKeyClass,    sizeof(privKeyClass)     },
+        { CKA_KEY_TYPE,         &rsaKeyType,      sizeof(rsaKeyType)       },
+        { CKA_SIGN,             &ckTrue,          sizeof(ckTrue)           },
+        { CKA_PRIVATE,          &ckFalse,         sizeof(ckFalse)          },
+        { CKA_MODULUS,          bigMod,           sizeof(bigMod)           },
+        { CKA_PRIVATE_EXPONENT, bigMod,           sizeof(bigMod)           },
+        { CKA_PRIME_1,          bigHalf,          sizeof(bigHalf)          },
+        { CKA_PRIME_2,          bigHalf,          sizeof(bigHalf)          },
+        { CKA_EXPONENT_1,       bigHalf,          sizeof(bigHalf)          },
+        { CKA_EXPONENT_2,       bigHalf,          sizeof(bigHalf)          },
+        { CKA_COEFFICIENT,      bigHalf,          sizeof(bigHalf)          },
+        { CKA_PUBLIC_EXPONENT,  rsa_2048_pub_exp, sizeof(rsa_2048_pub_exp) },
+    };
+
+    XMEMSET(bigMod, 0xa5, sizeof(bigMod));
+    XMEMSET(bigHalf, 0xc3, sizeof(bigHalf));
+    XMEMSET(data, 0x11, sizeof(data));
+    rv = funcList->C_CreateObject(session, privTmpl,
+                                  sizeof(privTmpl) / sizeof(*privTmpl), &priv);
+    if (rv != CKR_OK) {
+        CHECK_TRUE(1, "oversized RSA private key rejected at import");
+        return;
+    }
+
+    rv = funcList->C_SignInit(session, &mech, priv);
+    if (rv == CKR_OK) {
+        rv = funcList->C_Sign(session, data, sizeof(data), bigSig, &sigLen);
+        CHECK_TRUE(rv != CKR_OK, "C_Sign(RSA X.509) fails for oversized key");
+    }
+    else {
+        CHECK_TRUE(1, "C_SignInit(RSA X.509) rejects oversized key");
+    }
+    funcList->C_DestroyObject(session, priv);
 }
 #endif
 
@@ -818,6 +871,7 @@ static int run_test(void)
 #endif
 #if !defined(NO_RSA) && defined(WC_RSA_DIRECT)
         rsa_x509_verify_block_test(session);
+        rsa_x509_big_modulus_sign_test(session);
 #endif
 #if !defined(NO_AES) && defined(HAVE_AESCMAC)
         aes_cmac_full_block_test(session);

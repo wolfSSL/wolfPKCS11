@@ -16252,6 +16252,11 @@ int WP11_Rsa_Sign(unsigned char* in, word32 inLen, unsigned char* sig,
         WP11_Lock_LockRO(priv->lock);
 
     keyLen = wc_RsaEncryptSize(priv->data.rsaKey);
+    if (keyLen > sizeof(data)) {
+        if (priv->onToken)
+            WP11_Lock_UnlockRO(priv->lock);
+        return BUFFER_E;
+    }
     if (inLen < keyLen) {
         XMEMSET(data, 0, keyLen - inLen);
         XMEMCPY(data + keyLen - inLen, in, inLen);
