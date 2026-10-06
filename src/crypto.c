@@ -9949,6 +9949,8 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                 return CKR_MECHANISM_PARAM_INVALID;
             nssParams = (CK_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_PARAMS*)
                 pMechanism->pParameter;
+            if (!CK_ULONG_FITS_WORD32(nssParams->ulSessionHashLen))
+                return CKR_MECHANISM_PARAM_INVALID;
 
             keyLen = PRF_KEY_SIZE;
             derivedKey = (byte*)XMALLOC(keyLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
