@@ -2398,7 +2398,7 @@ CK_RV C_FindObjects(CK_SESSION_HANDLE hSession,
                     CK_ULONG_PTR pulObjectCount)
 {
     CK_RV rv;
-    int i;
+    CK_ULONG i;
     CK_OBJECT_HANDLE handle;
     WP11_Session* session;
 
@@ -2431,7 +2431,7 @@ CK_RV C_FindObjects(CK_SESSION_HANDLE hSession,
         return rv;
     }
 
-    for (i = 0; i < (int)ulMaxObjectCount; i++) {
+    for (i = 0; i < ulMaxObjectCount; i++) {
         if (WP11_Session_FindGet(session, &handle) == FIND_NO_MORE_E)
             break;
         phObject[i] = handle;
