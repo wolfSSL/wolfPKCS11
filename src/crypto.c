@@ -902,6 +902,101 @@ static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
     return ret;
 }
 
+/* Policy checks for one template attribute against the object's current
+ * state. Run over the whole template before any change, and again just before
+ * each write so a concurrent update is not undone using a stale result. */
+static CK_RV CheckAttributeUpdate(WP11_Session* session, WP11_Object* obj,
+                                  CK_ATTRIBUTE* attr, CK_OBJECT_CLASS objClass,
+                                  CK_BBOOL newObject)
+{
+    CK_RV rv;
+    CK_BBOOL getVar;
+    CK_ULONG getVarLen;
+    byte roCur[sizeof(CK_ULONG)];
+    CK_ULONG roCurLen;
+
+    /* Cannot change sensitive from true to false */
+    if (attr->type == CKA_SENSITIVE) {
+        getVarLen = sizeof(getVar);
+        rv = WP11_Object_GetAttr(obj, CKA_SENSITIVE, &getVar, &getVarLen);
+        if (rv != CKR_OK)
+            return rv;
+
+        if ((getVar == CK_TRUE) && (*(CK_BBOOL*)attr->pValue == CK_FALSE))
+            return CKR_ATTRIBUTE_READ_ONLY;
+    }
+    /* Cannot change extractable from false to true */
+    if (!newObject && attr->type == CKA_EXTRACTABLE) {
+        getVarLen = sizeof(getVar);
+        rv = WP11_Object_GetAttr(obj, CKA_EXTRACTABLE, &getVar,
+                                 &getVarLen);
+        if (rv != CKR_OK)
+            return rv;
+
+        if ((getVar == CK_FALSE) && (*(CK_BBOOL*)attr->pValue == CK_TRUE))
+            return CKR_ATTRIBUTE_READ_ONLY;
+    }
+    /* PKCS#11 v2.40 sec 4.4.1: once CKA_COPYABLE/CKA_DESTROYABLE has been
+     * set to CK_FALSE it cannot be set back to CK_TRUE. Read the stored
+     * flag bit directly so the check is independent of the GetAttr view
+     * (which the legacy macro may override). */
+    if (!newObject && attr->type == CKA_COPYABLE) {
+        if (attr->pValue == NULL ||
+                attr->ulValueLen != sizeof(CK_BBOOL))
+            return CKR_ATTRIBUTE_VALUE_INVALID;
+        if (!WP11_Object_IsCopyable(obj) &&
+                *(CK_BBOOL*)attr->pValue == CK_TRUE)
+            return CKR_ATTRIBUTE_READ_ONLY;
+    }
+    if (!newObject && attr->type == CKA_DESTROYABLE) {
+        if (attr->pValue == NULL ||
+                attr->ulValueLen != sizeof(CK_BBOOL))
+            return CKR_ATTRIBUTE_VALUE_INVALID;
+        if (!WP11_Object_IsDestroyable(obj) &&
+                *(CK_BBOOL*)attr->pValue == CK_TRUE)
+            return CKR_ATTRIBUTE_READ_ONLY;
+    }
+    /* PKCS#11 v2.40 sec 4.5: only an SO session may set CKA_TRUSTED to
+     * CK_TRUE. A regular-user session must not forge trust and bypass the
+     * CKA_WRAP_WITH_TRUSTED export gate enforced by C_WrapKey. Not
+     * qualified with !newObject so it also stops C_CreateObject /
+     * C_GenerateKey from minting a trusted key. CheckAttributes above has
+     * already validated CKA_TRUSTED as a well-formed CK_BBOOL. */
+    if (attr->type == CKA_TRUSTED &&
+            *(CK_BBOOL*)attr->pValue == CK_TRUE &&
+            WP11_Session_GetState(session) != WP11_APP_STATE_RW_SO) {
+        return CKR_ATTRIBUTE_READ_ONLY;
+    }
+    /* The type-specific storage was allocated for the creation class. */
+    if (newObject && attr->type == CKA_CLASS &&
+            *(CK_OBJECT_CLASS*)attr->pValue != objClass) {
+        return CKR_TEMPLATE_INCONSISTENT;
+    }
+    /* Derived by the token; never accepted in a creation template. */
+    if (newObject && (attr->type == CKA_ALWAYS_SENSITIVE ||
+                      attr->type == CKA_NEVER_EXTRACTABLE)) {
+        return CKR_ATTRIBUTE_READ_ONLY;
+    }
+    /* These class/identity and generated-state attributes are read-only
+     * once the object exists; reject a change. Setting the current value
+     * is a no-op. */
+    if (!newObject && (attr->type == CKA_CLASS ||
+                       attr->type == CKA_KEY_TYPE ||
+                       attr->type == CKA_LOCAL ||
+                       attr->type == CKA_KEY_GEN_MECHANISM ||
+                       attr->type == CKA_ALWAYS_SENSITIVE ||
+                       attr->type == CKA_NEVER_EXTRACTABLE)) {
+        roCurLen = sizeof(roCur);
+        if (WP11_Object_GetAttr(obj, attr->type, roCur, &roCurLen) == 0 &&
+            (attr->pValue == NULL || attr->ulValueLen != roCurLen ||
+             XMEMCMP(attr->pValue, roCur, roCurLen) != 0)) {
+            return CKR_ATTRIBUTE_READ_ONLY;
+        }
+    }
+
+    return CKR_OK;
+}
+
 /**
  * Set the values of the attributes into the object.
  *
@@ -936,10 +1031,6 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
     CK_BBOOL attrsFound = 0;
     CK_KEY_TYPE type;
     CK_OBJECT_CLASS objClass;
-    CK_BBOOL getVar;
-    CK_ULONG getVarLen = 1;
-    byte roCur[sizeof(CK_ULONG)];
-    CK_ULONG roCurLen;
 
     if (pTemplate == NULL || ulCount > (CK_ULONG)INT_MAX)
         return CKR_ARGUMENTS_BAD;
@@ -1042,6 +1133,15 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
                 (void)len;
                 return CKR_OBJECT_HANDLE_INVALID;
         }
+    }
+
+    /* Validate the whole template before any setter runs so a rejected
+     * update leaves the object unchanged. */
+    for (i = 0; i < (int)ulCount; i++) {
+        rv = CheckAttributeUpdate(session, obj, &pTemplate[i], objClass,
+                                  newObject);
+        if (rv != CKR_OK)
+            return rv;
     }
 
     for (i = 0; i < cnt; i++) {
@@ -1150,84 +1250,9 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
     /* Set remaining attributes - key specific attributes ignored. */
     for (i = 0; i < (int)ulCount; i++) {
         attr = &pTemplate[i];
-
-        /* Cannot change sensitive from true to false */
-        if (attr->type == CKA_SENSITIVE) {
-            rv = WP11_Object_GetAttr(obj, CKA_SENSITIVE, &getVar, &getVarLen);
-            if (rv != CKR_OK)
-                return rv;
-
-            if ((getVar == CK_TRUE) && (*(CK_BBOOL*)attr->pValue == CK_FALSE))
-                return CKR_ATTRIBUTE_READ_ONLY;
-        }
-        /* Cannot change extractable from false to true */
-        if (!newObject && attr->type == CKA_EXTRACTABLE) {
-            getVarLen = sizeof(getVar);
-            rv = WP11_Object_GetAttr(obj, CKA_EXTRACTABLE, &getVar,
-                                     &getVarLen);
-            if (rv != CKR_OK)
-                return rv;
-
-            if ((getVar == CK_FALSE) && (*(CK_BBOOL*)attr->pValue == CK_TRUE))
-                return CKR_ATTRIBUTE_READ_ONLY;
-        }
-        /* PKCS#11 v2.40 sec 4.4.1: once CKA_COPYABLE/CKA_DESTROYABLE has been
-         * set to CK_FALSE it cannot be set back to CK_TRUE. Read the stored
-         * flag bit directly so the check is independent of the GetAttr view
-         * (which the legacy macro may override). */
-        if (!newObject && attr->type == CKA_COPYABLE) {
-            if (attr->pValue == NULL ||
-                    attr->ulValueLen != sizeof(CK_BBOOL))
-                return CKR_ATTRIBUTE_VALUE_INVALID;
-            if (!WP11_Object_IsCopyable(obj) &&
-                    *(CK_BBOOL*)attr->pValue == CK_TRUE)
-                return CKR_ATTRIBUTE_READ_ONLY;
-        }
-        if (!newObject && attr->type == CKA_DESTROYABLE) {
-            if (attr->pValue == NULL ||
-                    attr->ulValueLen != sizeof(CK_BBOOL))
-                return CKR_ATTRIBUTE_VALUE_INVALID;
-            if (!WP11_Object_IsDestroyable(obj) &&
-                    *(CK_BBOOL*)attr->pValue == CK_TRUE)
-                return CKR_ATTRIBUTE_READ_ONLY;
-        }
-        /* PKCS#11 v2.40 sec 4.5: only an SO session may set CKA_TRUSTED to
-         * CK_TRUE. A regular-user session must not forge trust and bypass the
-         * CKA_WRAP_WITH_TRUSTED export gate enforced by C_WrapKey. Not
-         * qualified with !newObject so it also stops C_CreateObject /
-         * C_GenerateKey from minting a trusted key. CheckAttributes above has
-         * already validated CKA_TRUSTED as a well-formed CK_BBOOL. */
-        if (attr->type == CKA_TRUSTED &&
-                *(CK_BBOOL*)attr->pValue == CK_TRUE &&
-                WP11_Session_GetState(session) != WP11_APP_STATE_RW_SO) {
-            return CKR_ATTRIBUTE_READ_ONLY;
-        }
-        /* The type-specific storage was allocated for the creation class. */
-        if (newObject && attr->type == CKA_CLASS &&
-                *(CK_OBJECT_CLASS*)attr->pValue != objClass) {
-            return CKR_TEMPLATE_INCONSISTENT;
-        }
-        /* Derived by the token; never accepted in a creation template. */
-        if (newObject && (attr->type == CKA_ALWAYS_SENSITIVE ||
-                          attr->type == CKA_NEVER_EXTRACTABLE)) {
-            return CKR_ATTRIBUTE_READ_ONLY;
-        }
-        /* These class/identity and generated-state attributes are read-only
-         * once the object exists; reject a change. Setting the current value
-         * is a no-op. */
-        if (!newObject && (attr->type == CKA_CLASS ||
-                           attr->type == CKA_KEY_TYPE ||
-                           attr->type == CKA_LOCAL ||
-                           attr->type == CKA_KEY_GEN_MECHANISM ||
-                           attr->type == CKA_ALWAYS_SENSITIVE ||
-                           attr->type == CKA_NEVER_EXTRACTABLE)) {
-            roCurLen = sizeof(roCur);
-            if (WP11_Object_GetAttr(obj, attr->type, roCur, &roCurLen) == 0 &&
-                (attr->pValue == NULL || attr->ulValueLen != roCurLen ||
-                 XMEMCMP(attr->pValue, roCur, roCurLen) != 0)) {
-                return CKR_ATTRIBUTE_READ_ONLY;
-            }
-        }
+        rv = CheckAttributeUpdate(session, obj, attr, objClass, newObject);
+        if (rv != CKR_OK)
+            return rv;
         ret = WP11_Object_SetAttr(obj, attr->type, (byte*)attr->pValue,
                                                               attr->ulValueLen);
         if (ret == MEMORY_E)
