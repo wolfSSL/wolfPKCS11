@@ -515,6 +515,79 @@ cleanup:
 }
 #endif
 
+#ifdef WOLFSSL_HAVE_PRF
+/* TLS key expansion requires both client and server random data. */
+static int test_tls_randoms_required(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_TLS12_KEY_MAT_PARAMS params;
+    CK_SSL3_KEY_MAT_OUT out;
+    byte master[48];
+    int result = 0;
+
+    XMEMSET(master, 0x5c, sizeof(master));
+    tls_key_mat_init(&params, &out, 256, 128, 0);
+    ret = create_secret_base(session, CKK_GENERIC_SECRET, master,
+                             sizeof(master), &base);
+    CHECK_CKR(ret, "create TLS master secret");
+
+    params.RandomInfo.pClientRandom = NULL;
+    ret = tls_key_mat_derive(session, base, &params, NULL, 0);
+    CHECK_RV(ret, CKR_MECHANISM_PARAM_INVALID,
+             "TLS key and MAC derive without client random rejected");
+
+    tls_key_mat_init(&params, &out, 256, 128, 0);
+    params.RandomInfo.pServerRandom = NULL;
+    ret = tls_key_mat_derive(session, base, &params, NULL, 0);
+    CHECK_RV(ret, CKR_MECHANISM_PARAM_INVALID,
+             "TLS key and MAC derive without server random rejected");
+
+cleanup:
+    destroy_key_mat(session, &out);
+    destroy_obj(session, &base);
+    return result;
+}
+#endif
+
+#if defined(WOLFSSL_HAVE_PRF) && defined(WOLFPKCS11_NSS)
+/* The extended master secret is bound to a session hash. */
+static int test_session_hash_required(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    CK_VERSION version = { 3, 3 };
+    CK_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_PARAMS params;
+    CK_MECHANISM mech = { CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE, &params,
+                          sizeof(params) };
+    int result = 0;
+
+    ret = create_secret_base(session, CKK_GENERIC_SECRET, baseSecret,
+                             sizeof(baseSecret), &base);
+    CHECK_CKR(ret, "create TLS base key");
+
+    XMEMSET(&params, 0, sizeof(params));
+    params.prfHashMechanism = CKM_SHA256;
+    params.pSessionHash = NULL;
+    params.ulSessionHashLen = 0;
+    params.pVersion = &version;
+    ret = derive_generic(session, &mech, base, 48, &derived);
+    CHECK_RV(ret, CKR_MECHANISM_PARAM_INVALID,
+             "extended master secret without session hash rejected");
+
+    params.ulSessionHashLen = 32;
+    ret = derive_generic(session, &mech, base, 48, &derived);
+    CHECK_RV(ret, CKR_MECHANISM_PARAM_INVALID,
+             "extended master secret with NULL session hash rejected");
+
+cleanup:
+    destroy_obj(session, &derived);
+    destroy_obj(session, &base);
+    return result;
+}
+#endif
+
 static CK_RV pkcs11_init(void)
 {
     CK_RV ret;
@@ -648,6 +721,15 @@ static int kdf_tls_derive_test(void)
 
 #if !defined(NO_AES) && defined(HAVE_AES_CBC)
     if (test_aes_cbc_encrypt_data_value(session) != 0)
+        result = -1;
+#endif
+
+#ifdef WOLFSSL_HAVE_PRF
+    if (test_tls_randoms_required(session) != 0)
+        result = -1;
+#endif
+#if defined(WOLFSSL_HAVE_PRF) && defined(WOLFPKCS11_NSS)
+    if (test_session_hash_required(session) != 0)
         result = -1;
 #endif
 
