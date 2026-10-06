@@ -578,6 +578,56 @@ static void test_data_attr_requires_value(CK_SESSION_HANDLE session)
     destroy_obj(session, &bad);
 }
 
+/* An empty CKA_START_DATE/CKA_END_DATE, as read from an object without
+ * dates, can be written back and clears a set date. */
+static void check_date_roundtrip(CK_SESSION_HANDLE session,
+                                 CK_OBJECT_HANDLE obj, CK_ATTRIBUTE_TYPE type,
+                                 const char* name)
+{
+    CK_RV rv;
+    CK_DATE date = { {'2','0','3','0'}, {'0','6'}, {'1','5'} };
+    CK_DATE got;
+    CK_ATTRIBUTE getAttr = { type, &got, sizeof(got) };
+    CK_ATTRIBUTE emptyNull[] = { { type, NULL, 0 } };
+    CK_ATTRIBUTE emptyBuf[]  = { { type, &got, 0 } };
+    CK_ATTRIBUTE setDate[]   = { { type, &date, sizeof(date) } };
+
+    rv = funcList->C_GetAttributeValue(session, obj, &getAttr, 1);
+    CHECK_TRUE(rv == CKR_OK && getAttr.ulValueLen == 0, name);
+
+    rv = funcList->C_SetAttributeValue(session, obj, emptyNull, 1);
+    CHECK_RV(rv, "write back empty date", CKR_OK);
+
+    rv = funcList->C_SetAttributeValue(session, obj, setDate, 1);
+    CHECK_RV(rv, "set date", CKR_OK);
+    getAttr.ulValueLen = sizeof(got);
+    rv = funcList->C_GetAttributeValue(session, obj, &getAttr, 1);
+    CHECK_TRUE(rv == CKR_OK && getAttr.ulValueLen == sizeof(date) &&
+               XMEMCMP(&got, &date, sizeof(date)) == 0, "date read back");
+
+    rv = funcList->C_SetAttributeValue(session, obj, emptyBuf, 1);
+    CHECK_RV(rv, "clear date with empty value", CKR_OK);
+    getAttr.ulValueLen = sizeof(got);
+    rv = funcList->C_GetAttributeValue(session, obj, &getAttr, 1);
+    CHECK_TRUE(rv == CKR_OK && getAttr.ulValueLen == 0, "date cleared");
+}
+
+static void test_empty_date_roundtrip(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+
+    rv = create_data_object(session, &obj);
+    CHECK_RV(rv, "create data object", CKR_OK);
+    if (rv == CKR_OK) {
+        check_date_roundtrip(session, obj, CKA_START_DATE,
+                             "unset CKA_START_DATE reads as empty");
+        check_date_roundtrip(session, obj, CKA_END_DATE,
+                             "unset CKA_END_DATE reads as empty");
+    }
+    destroy_obj(session, &obj);
+}
+
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
     defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
     !defined(NO_RSA) && !defined(NO_AES) && \
@@ -708,6 +758,7 @@ static int run_test(void)
         test_always_authenticate_rejected(session);
 #endif
         test_data_attr_requires_value(session);
+        test_empty_date_roundtrip(session);
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
     defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
     !defined(NO_RSA) && !defined(NO_AES) && \

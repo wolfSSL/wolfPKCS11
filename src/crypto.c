@@ -551,6 +551,9 @@ static CK_RV CheckAttributes(CK_ATTRIBUTE* pTemplate, CK_ULONG ulCount, int set)
             }
         }
         else if (attrType[j].type == ATTR_TYPE_DATE) {
+            /* An empty date is valid and leaves the date unspecified. */
+            if (set && attr->ulValueLen == 0)
+                continue;
             if (attr->pValue == NULL && set)
                 return CKR_ATTRIBUTE_VALUE_INVALID;
             if ((attr->pValue != NULL) &&

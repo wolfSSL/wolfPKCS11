@@ -14974,7 +14974,7 @@ static int WP11_Object_SetData(byte** attribute, int* attributeLen, byte* data,
  *
  * @param  object     [in]  Object object.
  * @param  startDate  [in]  Start data as a string.
- * @param  len        [in]  Length of string.
+ * @param  len        [in]  Length of string. Zero clears the date.
  * @return  BUFFER_E when string is too small.
  *          0 on success.
  */
@@ -14983,9 +14983,11 @@ static int WP11_Object_SetStartDate(WP11_Object* object, char* startDate,
 {
     int ret = 0;
 
-    if (len != sizeof(object->startDate))
+    if (len == 0)
+        XMEMSET(object->startDate, 0, sizeof(object->startDate));
+    else if (len != sizeof(object->startDate))
         ret = BUFFER_E;
-    if (ret == 0)
+    else
         XMEMCPY(object->startDate, startDate, sizeof(object->startDate));
 
     return ret;
@@ -14996,7 +14998,7 @@ static int WP11_Object_SetStartDate(WP11_Object* object, char* startDate,
  *
  * @param  object   [in]  Object object.
  * @param  endData  [in]  End data as a string.
- * @param  len      [in]  Length of string.
+ * @param  len      [in]  Length of string. Zero clears the date.
  * @return  BUFFER_E when string is too small.
  *          0 on success.
  */
@@ -15004,9 +15006,11 @@ static int WP11_Object_SetEndDate(WP11_Object* object, char* endDate, int len)
 {
     int ret = 0;
 
-    if (len != sizeof(object->endDate))
+    if (len == 0)
+        XMEMSET(object->endDate, 0, sizeof(object->endDate));
+    else if (len != sizeof(object->endDate))
         ret = BUFFER_E;
-    if (ret == 0)
+    else
         XMEMCPY(object->endDate, endDate, sizeof(object->endDate));
 
     return ret;
