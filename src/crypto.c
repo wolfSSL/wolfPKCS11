@@ -68,6 +68,10 @@
     ((v) <= (CK_ULONG)0xFFFFFFFF - CK_ULONG_MAX_OVERHEAD)
 /* For lengths passed straight to a word32 parameter with no overhead added. */
 #define CK_ULONG_IS_WORD32(v)  ((CK_ULONG)(word32)(v) == (v))
+/* A caller buffer length as a word32 capacity that saturates, not wraps. */
+#define CK_ULONG_CAP_WORD32(v) \
+    (CK_ULONG_FITS_WORD32(v) ? (word32)(v) : \
+                               (word32)(0xFFFFFFFF - CK_ULONG_MAX_OVERHEAD))
 
 /* RFC 5869 limits HKDF-Expand output to 255 * HashLen octets. Cap the
  * requested output length to the largest such value across supported digests
@@ -6036,7 +6040,7 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulSignatureLen = sigLen;
                 return CKR_OK;
             }
-            if (sigLen > (word32)*pulSignatureLen)
+            if ((CK_ULONG)sigLen > *pulSignatureLen)
                 return CKR_BUFFER_TOO_SMALL;
 
             ret = WP11_Rsa_Sign(pData, (int)ulDataLen, pSignature, &sigLen, obj,
@@ -6075,7 +6079,7 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulSignatureLen = sigLen;
                 return CKR_OK;
             }
-            if (sigLen > (word32)*pulSignatureLen)
+            if ((CK_ULONG)sigLen > *pulSignatureLen)
                 return CKR_BUFFER_TOO_SMALL;
 
             if (hash_type != WC_HASH_TYPE_NONE) {
@@ -6144,7 +6148,7 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulSignatureLen = sigLen;
                 return CKR_OK;
             }
-            if (sigLen > (word32)*pulSignatureLen)
+            if ((CK_ULONG)sigLen > *pulSignatureLen)
                 return CKR_BUFFER_TOO_SMALL;
 
             if (hash_type != WC_HASH_TYPE_NONE) {
@@ -6196,7 +6200,7 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulSignatureLen = sigLen;
                 return CKR_OK;
             }
-            if (sigLen > (word32)*pulSignatureLen)
+            if ((CK_ULONG)sigLen > *pulSignatureLen)
                 return CKR_BUFFER_TOO_SMALL;
 
             if (hash_type != WC_HASH_TYPE_NONE) {
@@ -6226,7 +6230,7 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulSignatureLen = sigLen;
                 return CKR_OK;
             }
-            if (sigLen > (word32)*pulSignatureLen)
+            if ((CK_ULONG)sigLen > *pulSignatureLen)
                 return CKR_BUFFER_TOO_SMALL;
 
             ret = WP11_Mldsa_Sign(pData, (int)ulDataLen, pSignature,
@@ -6278,7 +6282,7 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulSignatureLen = sigLen;
                 return CKR_OK;
             }
-            if (sigLen > (word32)*pulSignatureLen)
+            if ((CK_ULONG)sigLen > *pulSignatureLen)
                 return CKR_BUFFER_TOO_SMALL;
 
             ret = WP11_Hmac_Sign(pData, (int)ulDataLen, pSignature, &sigLen,
@@ -6297,7 +6301,7 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             if (ret != CKR_OK || pSignature == NULL)
                 return ret;
 
-            sigLen = (word32)*pulSignatureLen;
+            sigLen = CK_ULONG_CAP_WORD32(*pulSignatureLen);
             ret = WP11_Aes_Cmac_Sign(pData, (word32)ulDataLen, pSignature,
                     &sigLen, session);
             *pulSignatureLen = sigLen;
@@ -6316,10 +6320,10 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulSignatureLen = (CK_ULONG)WP11_TLS_MAC_get_len(session);
                 return CKR_OK;
             }
-            if (WP11_TLS_MAC_get_len(session) > (word32)*pulSignatureLen)
+            if ((CK_ULONG)WP11_TLS_MAC_get_len(session) > *pulSignatureLen)
                 return CKR_BUFFER_TOO_SMALL;
 
-            sigLen = (word32)*pulSignatureLen;
+            sigLen = CK_ULONG_CAP_WORD32(*pulSignatureLen);
             ret = WP11_TLS_MAC_sign(pData, (word32)ulDataLen, pSignature,
                     &sigLen, session);
             *pulSignatureLen = sigLen;
@@ -6596,7 +6600,7 @@ static CK_RV wp11_C_SignFinal(CK_SESSION_HANDLE hSession,
                 *pulSignatureLen = sigLen;
                 return CKR_OK;
             }
-            if (sigLen > (word32)*pulSignatureLen)
+            if ((CK_ULONG)sigLen > *pulSignatureLen)
                 return CKR_BUFFER_TOO_SMALL;
 
             ret = WP11_Hmac_SignFinal(pSignature, &sigLen, session);
@@ -6614,7 +6618,7 @@ static CK_RV wp11_C_SignFinal(CK_SESSION_HANDLE hSession,
             if (ret != CKR_OK || pSignature == NULL)
                 return ret;
 
-            sigLen = (word32)*pulSignatureLen;
+            sigLen = CK_ULONG_CAP_WORD32(*pulSignatureLen);
             ret = WP11_Aes_Cmac_Sign_Final(pSignature, &sigLen, session);
             *pulSignatureLen = sigLen;
             break;
