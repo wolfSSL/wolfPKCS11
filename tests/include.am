@@ -361,6 +361,11 @@ noinst_PROGRAMS += tests/object_create_getattr_test
 tests_object_create_getattr_test_SOURCES = tests/object_create_getattr_test.c
 tests_object_create_getattr_test_LDADD =
 
+check_PROGRAMS += tests/encrypt_decrypt_params_test
+noinst_PROGRAMS += tests/encrypt_decrypt_params_test
+tests_encrypt_decrypt_params_test_SOURCES = tests/encrypt_decrypt_params_test.c
+tests_encrypt_decrypt_params_test_LDADD =
+
 if BUILD_STATIC
 tests_pkcs11test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11mtt_LDADD  += src/libwolfpkcs11.la
@@ -434,6 +439,7 @@ tests_info_mech_table_test_LDADD += src/libwolfpkcs11.la
 tests_attribute_validation_test_LDADD += src/libwolfpkcs11.la
 tests_key_material_update_test_LDADD += src/libwolfpkcs11.la
 tests_object_create_getattr_test_LDADD += src/libwolfpkcs11.la
+tests_encrypt_decrypt_params_test_LDADD += src/libwolfpkcs11.la
 else
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
 tests_empty_pin_store_test_LDADD += src/libwolfpkcs11.la
@@ -499,6 +505,7 @@ tests_info_mech_table_test_LDADD += src/libwolfpkcs11.la
 tests_attribute_validation_test_LDADD += src/libwolfpkcs11.la
 tests_key_material_update_test_LDADD += src/libwolfpkcs11.la
 tests_object_create_getattr_test_LDADD += src/libwolfpkcs11.la
+tests_encrypt_decrypt_params_test_LDADD += src/libwolfpkcs11.la
 endif
 
 EXTRA_DIST += tests/unit.h \

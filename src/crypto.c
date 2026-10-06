@@ -3782,6 +3782,7 @@ static CK_RV wp11_C_EncryptFinal(CK_SESSION_HANDLE hSession,
                 WP11_Session_AbortOp(session);
                 return CKR_FUNCTION_FAILED;
             }
+            *pulLastEncryptedPartLen = encPartLen;
             break;
     #endif
     #ifdef HAVE_AESCTR

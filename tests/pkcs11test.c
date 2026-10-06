@@ -11526,6 +11526,7 @@ static CK_RV test_aes_cbc_pad(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE key,
     if (ret == CKR_OK) {
         ret = funcList->C_EncryptFinal(session, pOut, &encSz);
         CHECK_CKR(ret, "AES-CBC Pad Encrypt Final");
+        encSz += cumSz;
     }
 
     if (ret == CKR_OK) {
