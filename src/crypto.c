@@ -9737,6 +9737,13 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
             kdfParams = (CK_HKDF_PARAMS_PTR)pMechanism->pParameter;
             if (!kdfParams->bExpand && !kdfParams->bExtract)
                 return CKR_MECHANISM_PARAM_INVALID;
+            if (kdfParams->bExtract &&
+                kdfParams->ulSaltType == CKF_HKDF_SALT_DATA &&
+                !CK_ULONG_FITS_WORD32(kdfParams->ulSaltLen))
+                return CKR_MECHANISM_PARAM_INVALID;
+            if (kdfParams->bExpand &&
+                !CK_ULONG_FITS_WORD32(kdfParams->ulInfoLen))
+                return CKR_MECHANISM_PARAM_INVALID;
 
             FindAttributeType(pTemplate, ulAttributeCount, CKA_VALUE_LEN,
                 &lenAttr);
