@@ -1404,7 +1404,7 @@ static CK_RV AddRSAPrivateKeyObject(WP11_Session* session,
         CK_OBJECT_HANDLE hPub;
 
         CK_ATTRIBUTE pubt[] = {
-                {CKA_TOKEN,    NULL, sizeof(CK_BBOOL)},
+                {CKA_TOKEN,    &falseVal, sizeof(CK_BBOOL)},
                 {CKA_LABEL,    NULL, 0},
                 {CKA_WRAP,    &falseVal, sizeof(falseVal)},
                 {CKA_VERIFY,  &trueVal, sizeof(trueVal)},
