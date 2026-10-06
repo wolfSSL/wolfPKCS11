@@ -72,6 +72,9 @@
 static const char* soPin = "password123456";
 static const char* userPin = "wolfpkcs11-test";
 static const char tokenLabel[] = "login-pin-state";
+#ifndef WOLFPKCS11_NO_TIME
+static const char* wrongOldPin = "wrong-old-pin";
+#endif
 
 /* Start from an unprovisioned token so earlier runs cannot affect this one. */
 static void cleanup_test_files(void)
@@ -353,6 +356,49 @@ static void empty_pin_change_requires_login_test(void)
 }
 #endif
 
+#ifndef WOLFPKCS11_NO_TIME
+/* Changing a PIN counts wrong old PINs toward the login lockout. */
+static void set_pin_lockout(CK_USER_TYPE type, const char* pin, int maxFails,
+                            const char* what)
+{
+    CK_RV rv;
+    int i;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    const char* newPin = "replacement-pin";
+
+    rv = token_setup(&slot, userPin);
+    if (rv == CKR_OK)
+        rv = open_rw(slot, &session);
+    if (rv == CKR_OK && type == CKU_SO) {
+        rv = funcList->C_Login(session, CKU_SO, (CK_UTF8CHAR_PTR)soPin,
+                               (CK_ULONG)XSTRLEN(soPin));
+    }
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv != CKR_OK) {
+        funcList->C_Finalize(NULL);
+        return;
+    }
+    for (i = 0; i < maxFails; i++) {
+        rv = funcList->C_SetPIN(session, (CK_UTF8CHAR_PTR)wrongOldPin,
+                                (CK_ULONG)XSTRLEN(wrongOldPin),
+                                (CK_UTF8CHAR_PTR)newPin,
+                                (CK_ULONG)XSTRLEN(newPin));
+        CHECK_RV(rv, "C_SetPIN with wrong old PIN", CKR_PIN_INCORRECT);
+    }
+    rv = funcList->C_SetPIN(session, (CK_UTF8CHAR_PTR)pin,
+                            (CK_ULONG)XSTRLEN(pin), (CK_UTF8CHAR_PTR)newPin,
+                            (CK_ULONG)XSTRLEN(newPin));
+    CHECK_TRUE(rv == CKR_PIN_INCORRECT || rv == CKR_PIN_LOCKED, what);
+    if (type == CKU_SO)
+        funcList->C_Logout(session);
+    funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+    /* The lockout is persisted; start later tests from a fresh token. */
+    cleanup_test_files();
+}
+#endif
+
 #if !defined(SINGLE_THREADED) && !defined(WOLFPKCS11_NO_TIME)
 #define LOCKOUT_THREADS 6
 #define LOCKOUT_ROUNDS 4
@@ -496,6 +542,11 @@ static int run_test(void)
 #endif
 #if !defined(SINGLE_THREADED) && !defined(WOLFPKCS11_NO_TIME)
     concurrent_login_lockout_test();
+#endif
+#ifndef WOLFPKCS11_NO_TIME
+    printf("--- C_SetPIN counts failed SO PIN checks ---\n");
+    set_pin_lockout(CKU_SO, soPin, WP11_MAX_LOGIN_FAILS_SO,
+                    "SO C_SetPIN locked after failures");
 #endif
 
     pkcs11_unload();
