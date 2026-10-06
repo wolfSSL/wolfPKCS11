@@ -404,6 +404,8 @@ WP11_LOCAL int WP11_Slot_CheckSOPin(WP11_Slot* slot, char* pin, int pinLen);
 WP11_LOCAL int WP11_Slot_CheckSOPinLockout(WP11_Slot* slot, char* pin,
                                            int pinLen);
 WP11_LOCAL int WP11_Slot_CheckUserPin(WP11_Slot* slot, char* pin, int pinLen);
+WP11_LOCAL int WP11_Slot_CheckUserPinLockout(WP11_Slot* slot, char* pin,
+                                             int pinLen);
 WP11_LOCAL int WP11_Slot_Has_Empty_Pin(WP11_Slot* slot);
 WP11_LOCAL int WP11_Slot_SOPin_IsSet(WP11_Slot* slot);
 WP11_LOCAL int WP11_Slot_SOLogin(WP11_Slot* slot, char* pin, int pinLen);

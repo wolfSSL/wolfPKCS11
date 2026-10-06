@@ -8573,6 +8573,69 @@ int WP11_Slot_CheckUserPin(WP11_Slot* slot, char* pin, int pinLen)
 }
 
 /**
+ * Check the user PIN with the failed-login lockout applied, but without
+ * logging in. Wrong PINs count toward the same WP11_MAX_LOGIN_FAILS_USER limit
+ * that WP11_Slot_UserLogin enforces.
+ *
+ * @param  slot    [in]  Slot object.
+ * @param  pin     [in]  PIN to check.
+ * @param  pinLen  [in]  Length of PIN.
+ * @return  PIN_NOT_SET_E when the user PIN is not set.
+ *          PIN_INVALID_E when the PIN is not correct or the user is locked out.
+ *          Other -ve value when hashing PIN fails.
+ *          0 when PIN is correct.
+ */
+int WP11_Slot_CheckUserPinLockout(WP11_Slot* slot, char* pin, int pinLen)
+{
+    int ret;
+#ifndef WOLFPKCS11_NO_TIME
+    time_t now;
+    time_t allowed;
+
+    if (wc_GetTime(&now, sizeof(now)) != 0)
+        return PIN_INVALID_E;
+
+    /* Check for too many fails and whether the timeout has elapsed. */
+    WP11_Lock_LockRW(&slot->lock);
+    if (slot->token.userFailedLogin >= WP11_MAX_LOGIN_FAILS_USER) {
+        allowed = slot->token.userLastFailedLogin +
+                                               slot->token.userFailLoginTimeout;
+        if (allowed < now)
+            slot->token.userFailedLogin = 0;
+        else {
+            WP11_Lock_UnlockRW(&slot->lock);
+            return PIN_INVALID_E;
+        }
+    }
+    WP11_Lock_UnlockRW(&slot->lock);
+#endif
+
+    ret = WP11_Slot_CheckUserPin(slot, pin, pinLen);
+
+#ifndef WOLFPKCS11_NO_TIME
+    WP11_Lock_LockRW(&slot->lock);
+    /* PIN failed - update failure info. */
+    if (ret == PIN_INVALID_E &&
+            slot->token.userFailedLogin < WP11_MAX_LOGIN_FAILS_USER) {
+        slot->token.userFailedLogin++;
+        if (slot->token.userFailedLogin == WP11_MAX_LOGIN_FAILS_USER) {
+            slot->token.userLastFailedLogin = now;
+            slot->token.userFailLoginTimeout += WP11_USER_LOGIN_FAIL_TIMEOUT;
+        }
+    }
+    /* Worked - clear failure info. */
+    else if (ret == 0) {
+        slot->token.userFailedLogin = 0;
+        slot->token.userLastFailedLogin = 0;
+        slot->token.userFailLoginTimeout = 0;
+    }
+    WP11_Lock_UnlockRW(&slot->lock);
+#endif
+
+    return ret;
+}
+
+/**
  * Log the SO (Security Officer) into the token.
  *
  * @param  slot    [in]  Slot object.

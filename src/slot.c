@@ -1514,7 +1514,8 @@ CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
         }
     }
     else {
-        ret = WP11_Slot_CheckUserPin(slot, (char*)pOldPin, (int)ulOldLen);
+        ret = WP11_Slot_CheckUserPinLockout(slot, (char*)pOldPin,
+                                            (int)ulOldLen);
         if (ret == PIN_NOT_SET_E) {
             rv = CKR_USER_PIN_NOT_INITIALIZED;
             WOLFPKCS11_LEAVE("C_SetPIN", rv);
