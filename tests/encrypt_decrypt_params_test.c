@@ -1295,6 +1295,81 @@ static void test_gcm_decrypt_update_len_range(CK_SESSION_HANDLE session)
 }
 #endif
 
+#if !defined(NO_AES) && defined(HAVE_AESGCM)
+static void check_gcm_encrypt_update_rejected(CK_SESSION_HANDLE session,
+                                              byte* data, CK_ULONG dataLen,
+                                              CK_ULONG badLen)
+{
+    CK_RV rv;
+    byte out[64];
+    CK_ULONG outLen;
+
+    outLen = badLen;
+    rv = funcList->C_EncryptUpdate(session, data, badLen, out, &outLen);
+    CHECK_RV(rv, "GCM encrypt update: rejects part length",
+             CKR_DATA_LEN_RANGE);
+    outLen = sizeof(out);
+    rv = funcList->C_EncryptUpdate(session, data, dataLen, out, &outLen);
+    CHECK_RV(rv, "GCM encrypt update: operation ended",
+             CKR_OPERATION_NOT_INITIALIZED);
+    if (rv == CKR_OK) {
+        /* End the still-active operation so the next check can start. */
+        outLen = sizeof(out);
+        (void)funcList->C_EncryptFinal(session, out, &outLen);
+    }
+}
+
+/* Multi-part AES-GCM encryption rejects a part that would take the operation
+ * past INT_MAX bytes, and ends the operation. */
+static void test_gcm_encrypt_update_total_len(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_GCM_PARAMS params;
+    CK_MECHANISM mech;
+    byte iv[12];
+    byte aad[16];
+    byte data[32];
+#ifndef WOLFSSL_AESGCM_STREAM
+    byte out[32];
+    CK_ULONG outLen;
+#endif
+
+    XMEMSET(iv, 0xE1, sizeof(iv));
+    XMEMSET(aad, 0xF2, sizeof(aad));
+    XMEMSET(data, 0x03, sizeof(data));
+
+    rv = create_aes_key(session, aes_128_key, sizeof(aes_128_key), &key);
+    CHECK_RV(rv, "GCM encrypt update: create AES key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    gcm_params_init(&params, &mech, iv, aad);
+
+    printf("GCM encrypt update: part length 0x80000000\n");
+    rv = funcList->C_EncryptInit(session, &mech, key);
+    CHECK_RV(rv, "GCM encrypt update: C_EncryptInit", CKR_OK);
+    if (rv == CKR_OK) {
+        check_gcm_encrypt_update_rejected(session, data, sizeof(data),
+                                          (CK_ULONG)0x80000000UL);
+    }
+
+#ifndef WOLFSSL_AESGCM_STREAM
+    printf("GCM encrypt update: buffered length past INT_MAX\n");
+    rv = funcList->C_EncryptInit(session, &mech, key);
+    CHECK_RV(rv, "GCM encrypt update: C_EncryptInit", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    outLen = sizeof(out);
+    rv = funcList->C_EncryptUpdate(session, data, sizeof(data), out, &outLen);
+    CHECK_RV(rv, "GCM encrypt update: first part", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    check_gcm_encrypt_update_rejected(session, data, sizeof(data),
+                                      (CK_ULONG)INT_MAX - sizeof(data) + 1);
+#endif
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -1366,6 +1441,7 @@ static int run_test(void)
 #endif
 #if !defined(NO_AES) && defined(HAVE_AESGCM)
         run_in_session(slot, test_gcm_decrypt_update_len_range);
+        run_in_session(slot, test_gcm_encrypt_update_total_len);
 #endif
     }
 
