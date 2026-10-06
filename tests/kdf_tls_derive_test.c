@@ -63,7 +63,7 @@
     #define AES_CBC_WIDE_TEST
 #endif
 
-#if (defined(WOLFPKCS11_HKDF) && defined(WIDE_CK_ULONG)) || \
+#if defined(WOLFPKCS11_HKDF) || \
     defined(NSS_EMS_WIDE_TEST) || defined(WOLFSSL_HAVE_PRF) || \
     (!defined(NO_AES) && defined(HAVE_AES_CBC))
     #define SECRET_BASE_TESTS
@@ -632,6 +632,117 @@ cleanup:
 }
 #endif
 
+#if defined(WOLFPKCS11_HKDF) || !defined(NO_DH) || \
+    (!defined(NO_AES) && defined(HAVE_AES_CBC))
+/* A derived key has the requested CKA_VALUE_LEN or the derive fails. */
+static int test_derived_length_matches_template(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    CK_MECHANISM mech;
+#ifdef WOLFPKCS11_HKDF
+    CK_HKDF_PARAMS hkdfParams;
+#endif
+#if !defined(NO_AES) && defined(HAVE_AES_CBC)
+    byte key[sizeof(aes_cbc_key)];
+    byte plain[sizeof(aes_cbc_plain)];
+    CK_AES_CBC_ENCRYPT_DATA_PARAMS cbcParams;
+#endif
+#ifndef NO_DH
+    CK_OBJECT_CLASS privClass = CKO_PRIVATE_KEY;
+    CK_KEY_TYPE dhType = CKK_DH;
+    byte peer[2 * sizeof(dh_ffdhe2048_p)];
+    byte value[sizeof(dh_ffdhe2048_p)];
+    CK_ATTRIBUTE valueAttr = { CKA_VALUE, value, sizeof(value) };
+    CK_ATTRIBUTE dhTmpl[] = {
+        { CKA_CLASS,       &privClass,     sizeof(privClass)      },
+        { CKA_KEY_TYPE,    &dhType,        sizeof(dhType)         },
+        { CKA_PRIVATE,     &ckFalse,       sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckFalse,       sizeof(ckFalse)        },
+        { CKA_EXTRACTABLE, &ckTrue,        sizeof(ckTrue)         },
+        { CKA_DERIVE,      &ckTrue,        sizeof(ckTrue)         },
+        { CKA_PRIME,       dh_ffdhe2048_p, sizeof(dh_ffdhe2048_p) },
+        { CKA_BASE,        dh_ffdhe2048_g, sizeof(dh_ffdhe2048_g) },
+        { CKA_VALUE,       dh_2048_priv,   sizeof(dh_2048_priv)   },
+    };
+#endif
+    int result = 0;
+
+#ifdef WOLFPKCS11_HKDF
+    ret = create_secret_base(session, CKK_GENERIC_SECRET, baseSecret,
+                             sizeof(baseSecret), &base);
+    CHECK_CKR(ret, "create HKDF base key");
+    XMEMSET(&hkdfParams, 0, sizeof(hkdfParams));
+    hkdfParams.bExtract = CK_TRUE;
+    hkdfParams.bExpand = CK_FALSE;
+    hkdfParams.prfHashMechanism = CKM_SHA256;
+    hkdfParams.ulSaltType = CKF_HKDF_SALT_NULL;
+    mech.mechanism = CKM_HKDF_DERIVE;
+    mech.pParameter = &hkdfParams;
+    mech.ulParameterLen = sizeof(hkdfParams);
+    ret = derive_generic(session, &mech, base, 32, &derived);
+    CHECK_CKR(ret, "HKDF extract with digest-sized length");
+    destroy_obj(session, &derived);
+    ret = derive_generic(session, &mech, base, 48, &derived);
+    CHECK_RV(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+             "HKDF extract longer than the digest rejected");
+    destroy_obj(session, &base);
+#endif
+
+#if !defined(NO_AES) && defined(HAVE_AES_CBC)
+    XMEMCPY(key, aes_cbc_key, sizeof(key));
+    XMEMCPY(plain, aes_cbc_plain, sizeof(plain));
+    ret = create_secret_base(session, CKK_AES, key, sizeof(key), &base);
+    CHECK_CKR(ret, "create AES base key");
+    XMEMSET(&cbcParams, 0, sizeof(cbcParams));
+    XMEMCPY(cbcParams.iv, aes_cbc_iv, sizeof(cbcParams.iv));
+    cbcParams.pData = plain;
+    cbcParams.length = sizeof(plain);
+    mech.mechanism = CKM_AES_CBC_ENCRYPT_DATA;
+    mech.pParameter = &cbcParams;
+    mech.ulParameterLen = sizeof(cbcParams);
+    ret = derive_generic(session, &mech, base, 2 * sizeof(plain), &derived);
+    CHECK_RV(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+             "AES-CBC encrypt-data longer than the data rejected");
+    destroy_obj(session, &base);
+#endif
+
+#ifndef NO_DH
+    ret = funcList->C_CreateObject(session, dhTmpl,
+                                   sizeof(dhTmpl) / sizeof(*dhTmpl), &base);
+    CHECK_CKR(ret, "create DH base key");
+    /* This peer value gives a shared secret with a leading zero byte. */
+    XMEMSET(peer, 0, sizeof(peer));
+    peer[sizeof(peer) - 2] = 0x01;
+    peer[sizeof(peer) - 1] = 0x5f;
+    mech.mechanism = CKM_DH_PKCS_DERIVE;
+    mech.pParameter = peer + sizeof(dh_ffdhe2048_p);
+    mech.ulParameterLen = sizeof(dh_ffdhe2048_p);
+    ret = derive_generic(session, &mech, base, sizeof(dh_ffdhe2048_p),
+                         &derived);
+    CHECK_CKR(ret, "DH derive of a prime-sized secret");
+    ret = funcList->C_GetAttributeValue(session, derived, &valueAttr, 1);
+    CHECK_CKR(ret, "read DH derived value");
+    if (valueAttr.ulValueLen != sizeof(dh_ffdhe2048_p) || value[0] != 0)
+        ret = CKR_GENERAL_ERROR;
+    CHECK_CKR(ret, "DH derived value keeps its leading zero byte");
+    destroy_obj(session, &derived);
+
+    mech.pParameter = peer;
+    mech.ulParameterLen = sizeof(peer);
+    ret = derive_generic(session, &mech, base, sizeof(peer), &derived);
+    CHECK_RV(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+             "DH derive longer than the prime rejected");
+#endif
+
+cleanup:
+    destroy_obj(session, &derived);
+    destroy_obj(session, &base);
+    return result;
+}
+#endif
+
 static CK_RV pkcs11_init(void)
 {
     CK_RV ret;
@@ -778,6 +889,12 @@ static int kdf_tls_derive_test(void)
 #endif
 #if defined(WOLFSSL_HAVE_PRF) && defined(WOLFPKCS11_NSS)
     if (test_session_hash_required(session) != 0)
+        result = -1;
+#endif
+
+#if defined(WOLFPKCS11_HKDF) || !defined(NO_DH) || \
+    (!defined(NO_AES) && defined(HAVE_AES_CBC))
+    if (test_derived_length_matches_template(session) != 0)
         result = -1;
 #endif
 
