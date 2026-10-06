@@ -3228,7 +3228,7 @@ static int wp11_Object_New(WP11_Slot* slot, CK_KEY_TYPE type,
 
     /* Type-specific allocation will be done later when object class is known */
 
-    if (ret != 0) {
+    if (ret != 0 && obj != NULL) {
         WP11_Object_Free(obj);
         obj = NULL;
     }
@@ -12292,6 +12292,9 @@ int WP11_Session_IsFindActive(WP11_Session* session)
 void WP11_Object_Free(WP11_Object* object)
 {
     int certFreed = 0;
+
+    if (object == NULL)
+        return;
 #ifdef WOLFPKCS11_TPM
     if (object->tpmKey != NULL) {
         wolfTPM2_UnloadHandle(&object->slot->tpmDev, &object->tpmKey->handle);
