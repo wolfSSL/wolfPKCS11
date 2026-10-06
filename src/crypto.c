@@ -560,6 +560,8 @@ static CK_RV CheckAttributes(CK_ATTRIBUTE* pTemplate, CK_ULONG ulCount, int set)
         else if (attrType[j].type == ATTR_TYPE_DATA) {
             if (set && attr->ulValueLen == CK_UNAVAILABLE_INFORMATION)
                 return CKR_ATTRIBUTE_VALUE_INVALID;
+            if (set && attr->pValue == NULL && attr->ulValueLen != 0)
+                return CKR_ATTRIBUTE_VALUE_INVALID;
             /* Object setters take int lengths. */
             if (set && attr->ulValueLen > (CK_ULONG)INT_MAX)
                 return CKR_ATTRIBUTE_VALUE_INVALID;

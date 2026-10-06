@@ -14904,13 +14904,17 @@ static void WP11_Object_SetOpFlag(WP11_Object* object, word32 flag, int set)
  * @param  object    [in]  Object object.
  * @param  keyId     [in]  Key identifier data.
  * @param  keyIdLen  [in]  Length of key identifier in bytes.
- * @return  MEMORY_E when dynamic memory allocation fails.
+ * @return  BAD_FUNC_ARG when keyId is NULL and keyIdLen is not zero.
+ *          MEMORY_E when dynamic memory allocation fails.
  *          0 on success.
  */
 static int WP11_Object_SetKeyId(WP11_Object* object, unsigned char* keyId,
                                 int keyIdLen)
 {
     int ret = 0;
+
+    if (keyId == NULL && keyIdLen > 0)
+        return BAD_FUNC_ARG;
 
     XFREE(object->keyId, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     object->keyId = NULL;
@@ -14936,13 +14940,17 @@ static int WP11_Object_SetKeyId(WP11_Object* object, unsigned char* keyId,
  * @param  attributeLen [out] Length of attribute in bytes.
  * @param  data         [in]  Data to be set.
  * @param  dataLen      [in]  Length of data in bytes.
- * @return  MEMORY_E when dynamic memory allocation fails.
+ * @return  BAD_FUNC_ARG when data is NULL and dataLen is not zero.
+ *          MEMORY_E when dynamic memory allocation fails.
  *          0 on success.
  */
 static int WP11_Object_SetData(byte** attribute, int* attributeLen, byte* data,
                                 int dataLen)
 {
     int ret = 0;
+
+    if (data == NULL && dataLen > 0)
+        return BAD_FUNC_ARG;
 
     XFREE(*attribute, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     *attribute = NULL;

@@ -544,6 +544,40 @@ static void test_always_authenticate_rejected(CK_SESSION_HANDLE session)
 }
 #endif
 
+/* A byte-string attribute with a length must come with a value. */
+static void test_data_attr_requires_value(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE bad = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE labelTmpl[] = { { CKA_LABEL, NULL, 5 } };
+    CK_ATTRIBUTE createTmpl[] = {
+        { CKA_CLASS,   &dataClass,       sizeof(dataClass)     },
+        { CKA_TOKEN,   &ckFalse,         sizeof(ckFalse)       },
+        { CKA_PRIVATE, &ckFalse,         sizeof(ckFalse)       },
+        { CKA_VALUE,   (void*)dataValue, sizeof(dataValue) - 1 },
+        { CKA_ID,      NULL,             4                     },
+    };
+
+    rv = create_data_object(session, &obj);
+    CHECK_RV(rv, "create data object", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_SetAttributeValue(session, obj, labelTmpl, 1);
+        CHECK_RV(rv, "set label with length and no value",
+                 CKR_ATTRIBUTE_VALUE_INVALID);
+        expect_label(session, obj, dataLabel, sizeof(dataLabel) - 1,
+                     "label unchanged after missing value");
+    }
+    destroy_obj(session, &obj);
+
+    rv = funcList->C_CreateObject(session, createTmpl,
+                                  sizeof(createTmpl) / sizeof(*createTmpl),
+                                  &bad);
+    CHECK_RV(rv, "create object with CKA_ID length and no value",
+             CKR_ATTRIBUTE_VALUE_INVALID);
+    destroy_obj(session, &bad);
+}
+
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
     defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
     !defined(NO_RSA) && !defined(NO_AES) && \
@@ -673,6 +707,7 @@ static int run_test(void)
 #ifndef NO_AES
         test_always_authenticate_rejected(session);
 #endif
+        test_data_attr_requires_value(session);
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
     defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
     !defined(NO_RSA) && !defined(NO_AES) && \
