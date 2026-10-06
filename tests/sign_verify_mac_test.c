@@ -99,6 +99,49 @@ static CK_RV create_rsa_keys(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE* priv,
 }
 #endif
 
+#if !defined(NO_RSA) && defined(WC_RSA_DIRECT)
+/* A raw RSA verify compares the whole recovered block with the data. */
+static void rsa_x509_verify_block_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_RSA_X_509, NULL, 0 };
+    byte data[32];
+    byte sig[2048 / 8];
+    CK_ULONG sigLen = sizeof(sig);
+
+    XMEMSET(data, 0x5a, sizeof(data));
+    rv = create_rsa_keys(session, &priv, &pub);
+    CHECK_RV(rv, "create RSA key pair", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_SignInit(session, &mech, priv);
+    CHECK_RV(rv, "C_SignInit(RSA X.509)", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_Sign(session, data, sizeof(data), sig, &sigLen);
+        CHECK_RV(rv, "C_Sign(RSA X.509)", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_VerifyInit(session, &mech, pub);
+        CHECK_RV(rv, "C_VerifyInit(RSA X.509)", CKR_OK);
+        rv = funcList->C_Verify(session, data, sizeof(data), sig, sigLen);
+        CHECK_RV(rv, "C_Verify(RSA X.509, signed data)", CKR_OK);
+
+        rv = funcList->C_VerifyInit(session, &mech, pub);
+        CHECK_RV(rv, "C_VerifyInit(RSA X.509, shorter data)", CKR_OK);
+        rv = funcList->C_Verify(session, data + 1, sizeof(data) - 1, sig,
+                                sigLen);
+        CHECK_RV(rv, "C_Verify(RSA X.509, trailing part of signed data)",
+                 CKR_SIGNATURE_INVALID);
+    }
+
+    funcList->C_DestroyObject(session, priv);
+    funcList->C_DestroyObject(session, pub);
+}
+#endif
+
 #if !defined(NO_RSA) && defined(WC_RSA_PSS) && !defined(NO_SHA256)
 /* A hashed RSA-PSS mechanism fixes the PSS hash to its own digest; any valid
  * MGF1 hash is accepted. */
@@ -772,6 +815,9 @@ static int run_test(void)
 #if !defined(NO_RSA) && defined(WC_RSA_PSS) && !defined(NO_SHA256)
         pss_hash_binding_test(session);
         pss_salt_len_test(session);
+#endif
+#if !defined(NO_RSA) && defined(WC_RSA_DIRECT)
+        rsa_x509_verify_block_test(session);
 #endif
 #if !defined(NO_AES) && defined(HAVE_AESCMAC)
         aes_cmac_full_block_test(session);
