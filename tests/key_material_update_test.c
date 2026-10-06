@@ -586,6 +586,43 @@ static void test_ec_point_needs_curve(CK_SESSION_HANDLE session)
 }
 #endif
 
+#if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN)
+/* A modulus size the key generator cannot honour is rejected rather than
+ * narrowed to a different size. */
+static void test_rsa_modulus_bits_range(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_MECHANISM mech = { CKM_RSA_PKCS_KEY_PAIR_GEN, NULL, 0 };
+    CK_ULONG bits;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_MODULUS_BITS,    &bits,            sizeof(bits)             },
+        { CKA_PUBLIC_EXPONENT, rsa_2048_pub_exp, sizeof(rsa_2048_pub_exp) },
+        { CKA_TOKEN,           &ckFalse,         sizeof(ckFalse)          },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_TOKEN, &ckFalse, sizeof(ckFalse) },
+        { CKA_SIGN,  &ckTrue,  sizeof(ckTrue)  },
+    };
+
+    /* Only a 64-bit CK_ULONG can carry a size whose low 32 bits look valid. */
+    if (sizeof(CK_ULONG) <= 4)
+        return;
+    bits = ((CK_ULONG)1 << 16 << 16) + 2048;
+    rv = funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+                                     sizeof(pubTmpl) / sizeof(*pubTmpl),
+                                     privTmpl,
+                                     sizeof(privTmpl) / sizeof(*privTmpl),
+                                     &pub, &priv);
+    CHECK_TRUE(rv != CKR_OK, "oversized modulus bits rejected");
+    if (rv == CKR_OK) {
+        destroy_obj(session, &pub);
+        destroy_obj(session, &priv);
+    }
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -611,6 +648,9 @@ static int run_test(void)
         test_asym_private_fixed(session);
 #ifdef HAVE_ECC
         test_ec_point_needs_curve(session);
+#endif
+#if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN)
+        test_rsa_modulus_bits_range(session);
 #endif
     }
 

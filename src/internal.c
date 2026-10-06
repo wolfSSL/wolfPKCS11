@@ -12736,7 +12736,10 @@ int WP11_Object_SetRsaKey(WP11_Object* object, unsigned char** data,
             }
         }
         if (ret == 0) {
-        if (len[8] == sizeof(CK_ULONG))
+        if (len[8] == sizeof(CK_ULONG) &&
+                *(CK_ULONG*)data[8] > (CK_ULONG)RSA_MAX_SIZE)
+            ret = BAD_FUNC_ARG;
+        else if (len[8] == sizeof(CK_ULONG))
             object->size = (word32)*(CK_ULONG*)data[8];
         else if (len[8] != 0)
             ret = BUFFER_E;
