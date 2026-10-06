@@ -264,10 +264,14 @@ static CK_RV open_with_keys(CK_SLOT_ID slot, CK_SESSION_HANDLE* session,
 
     rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
                                  NULL, NULL, session);
+#ifndef NO_AES
     if (rv == CKR_OK) {
         rv = create_secret(*session, &aesType, aesKeyValue,
                            sizeof(aesKeyValue), aesKey);
     }
+#else
+    (void)aesKey;
+#endif
     if (rv == CKR_OK) {
         rv = create_secret(*session, &genericType, macKeyValue,
                            sizeof(macKeyValue), macKey);
@@ -960,6 +964,60 @@ out:
 }
 #endif
 
+#ifndef NO_SHA256
+/* Operation state is only available while a digest is in progress, and a
+ * refused request leaves the caller's length untouched. */
+static void test_operation_state_requires_active_digest(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE aesKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE macKey = CK_INVALID_HANDLE;
+    CK_MECHANISM sha256Mech = { CKM_SHA256, NULL, 0 };
+#ifndef NO_HMAC
+    CK_MECHANISM hmacMech = { CKM_SHA256_HMAC, NULL, 0 };
+#endif
+    byte digest[32];
+    CK_ULONG digestLen;
+    CK_ULONG stateLen;
+    CK_SLOT_ID slot;
+
+    printf("\n--- operation state needs an active digest ---\n");
+    rv = init_library(&slot);
+    if (rv == CKR_OK)
+        rv = open_with_keys(slot, &session, &aesKey, &macKey);
+    CHECK_RV(rv, "open session with keys", CKR_OK);
+    if (rv != CKR_OK)
+        goto out;
+
+    rv = funcList->C_DigestInit(session, &sha256Mech);
+    CHECK_RV(rv, "C_DigestInit(SHA-256)", CKR_OK);
+    digestLen = sizeof(digest);
+    rv = funcList->C_Digest(session, plainMarker, sizeof(plainMarker), digest,
+                            &digestLen);
+    CHECK_RV(rv, "C_Digest completes the operation", CKR_OK);
+    stateLen = 0;
+    rv = funcList->C_GetOperationState(session, NULL, &stateLen);
+    CHECK_RV(rv, "C_GetOperationState after digest completed",
+             CKR_OPERATION_NOT_INITIALIZED);
+
+#ifndef NO_HMAC
+    rv = funcList->C_SignInit(session, &hmacMech, macKey);
+    CHECK_RV(rv, "C_SignInit(HMAC)", CKR_OK);
+    stateLen = 1234;
+    rv = funcList->C_GetOperationState(session, NULL, &stateLen);
+    CHECK_RV(rv, "C_GetOperationState during HMAC", CKR_STATE_UNSAVEABLE);
+    CHECK_TRUE(stateLen == 1234,
+               "refused C_GetOperationState leaves the length untouched");
+#endif
+
+out:
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
 #if defined(TRACK_ALLOCS) && !defined(NO_AES) && defined(HAVE_AESGCM) && \
     !defined(WOLFSSL_AESGCM_STREAM)
 /* Destroying the key of a multi-part AES-GCM operation must release the
@@ -1068,6 +1126,9 @@ static int run_test(void)
     test_mac_input_scrubbed_on_release();
     test_mac_input_grows_linearly();
     test_mac_input_released_on_close();
+#endif
+#ifndef NO_SHA256
+    test_operation_state_requires_active_digest();
 #endif
 
     pkcs11_unload();
