@@ -8178,6 +8178,8 @@ int WP11_Slot_OpenSession(WP11_Slot* slot, unsigned long flags, void* app,
     return ret;
 }
 
+static void wp11_Slot_Logout(WP11_Slot* slot);
+
 /**
  * Close a session associated with a slot.
  *
@@ -8216,18 +8218,18 @@ void WP11_Slot_CloseSession(WP11_Slot* slot, WP11_Session* session)
         wp11_Slot_FreeSession(slot, session);
     else
         wp11_Session_Final(session);
-    WP11_Lock_UnlockRW(&slot->lock);
 
-    WP11_Lock_LockRO(&slot->lock);
+    /* Decide and log out under the same lock so a concurrent open is either
+     * seen here or opens after the logout. */
     for (curr = slot->session; curr != NULL; curr = curr->next) {
         if (curr->inUse) {
             noMore = 0;
             break;
         }
     }
-    WP11_Lock_UnlockRO(&slot->lock);
     if (noMore)
-        WP11_Slot_Logout(slot);
+        wp11_Slot_Logout(slot);
+    WP11_Lock_UnlockRW(&slot->lock);
 }
 
 /**
@@ -8252,13 +8254,10 @@ void WP11_Slot_CloseSessions(WP11_Slot* slot)
     /* Finalize the rest. */
     for (curr = slot->session; curr != NULL; curr = curr->next)
         wp11_Session_Final(curr);
-    WP11_Lock_UnlockRW(&slot->lock);
-
     /* PKCS#11: closing an application's last session with a token logs the
-     * application out. Mirror the single-session close path and reset the
-     * token login state (outside the slot lock, as WP11_Slot_Logout takes it).
-     */
-    WP11_Slot_Logout(slot);
+     * application out. Done under the same lock as the close. */
+    wp11_Slot_Logout(slot);
+    WP11_Lock_UnlockRW(&slot->lock);
 }
 
 /**
@@ -9019,14 +9018,17 @@ int WP11_Slot_IsUserLoggedIn(WP11_Slot* slot)
     return wp11_LoginStateIsUser(state);
 }
 
-void WP11_Slot_Logout(WP11_Slot* slot)
+/**
+ * Logout of the token. Caller holds the slot lock for writing.
+ *
+ * @param  slot  [in]  Slot object referencing token.
+ */
+static void wp11_Slot_Logout(WP11_Slot* slot)
 {
 #ifndef WOLFPKCS11_NO_STORE
     int state;
     int ret = 0;
 #endif
-
-    WP11_Lock_LockRW(&slot->lock);
 
 #ifndef WOLFPKCS11_NO_STORE
     state = slot->token.loginState;
@@ -9042,7 +9044,17 @@ void WP11_Slot_Logout(WP11_Slot* slot)
     }
 #endif
     slot->token.loginState = WP11_APP_STATE_RW_PUBLIC;
+}
 
+/**
+ * Logout of the token.
+ *
+ * @param  slot  [in]  Slot object referencing token.
+ */
+void WP11_Slot_Logout(WP11_Slot* slot)
+{
+    WP11_Lock_LockRW(&slot->lock);
+    wp11_Slot_Logout(slot);
     WP11_Lock_UnlockRW(&slot->lock);
 }
 

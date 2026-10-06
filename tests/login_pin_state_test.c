@@ -525,6 +525,97 @@ static void concurrent_login_lockout_test(void)
 }
 #endif
 
+#ifndef SINGLE_THREADED
+#define CLOSE_OPEN_ROUNDS 10
+
+static pthread_mutex_t openMutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t openCond = PTHREAD_COND_INITIALIZER;
+static int openFlag = 0;
+
+typedef struct open_ctx {
+    CK_SLOT_ID slot;
+    CK_SESSION_HANDLE session;
+    CK_STATE firstState;
+    CK_STATE lastState;
+    CK_RV rv;
+} open_ctx;
+
+static void* open_during_close(void* arg)
+{
+    open_ctx* ctx = (open_ctx*)arg;
+    CK_SESSION_INFO info;
+
+    pthread_mutex_lock(&openMutex);
+    while (!openFlag)
+        pthread_cond_wait(&openCond, &openMutex);
+    pthread_mutex_unlock(&openMutex);
+
+    ctx->rv = open_rw(ctx->slot, &ctx->session);
+    if (ctx->rv == CKR_OK)
+        ctx->rv = funcList->C_GetSessionInfo(ctx->session, &info);
+    if (ctx->rv == CKR_OK)
+        ctx->firstState = info.state;
+    return NULL;
+}
+
+/* A session opened while another one closes is never logged out after
+ * C_OpenSession reported it as logged in. */
+static void close_last_session_race_test(void)
+{
+    CK_RV rv;
+    int i;
+    int consistent = 1;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_SESSION_INFO info;
+    pthread_t thread;
+    open_ctx ctx;
+
+    printf("--- closing the last session races an open ---\n");
+    rv = token_setup(&slot, userPin);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    for (i = 0; rv == CKR_OK && i < CLOSE_OPEN_ROUNDS; i++) {
+        rv = open_rw(slot, &session);
+        if (rv == CKR_OK)
+            rv = user_login(session, userPin);
+        if (rv != CKR_OK)
+            break;
+
+        XMEMSET(&ctx, 0, sizeof(ctx));
+        XMEMSET(&info, 0, sizeof(info));
+        ctx.slot = slot;
+        ctx.session = CK_INVALID_HANDLE;
+        openFlag = 0;
+        if (pthread_create(&thread, NULL, open_during_close, &ctx) != 0) {
+            rv = CKR_GENERAL_ERROR;
+            break;
+        }
+        pthread_mutex_lock(&openMutex);
+        openFlag = 1;
+        pthread_cond_broadcast(&openCond);
+        pthread_mutex_unlock(&openMutex);
+        rv = funcList->C_CloseSession(session);
+        pthread_join(thread, NULL);
+        if (rv == CKR_OK)
+            rv = ctx.rv;
+        if (rv == CKR_OK)
+            rv = funcList->C_GetSessionInfo(ctx.session, &info);
+        if (rv == CKR_OK && ctx.firstState == CKS_RW_USER_FUNCTIONS &&
+                info.state != CKS_RW_USER_FUNCTIONS) {
+            consistent = 0;
+        }
+        if (ctx.session != CK_INVALID_HANDLE) {
+            if (info.state == CKS_RW_USER_FUNCTIONS)
+                funcList->C_Logout(ctx.session);
+            funcList->C_CloseSession(ctx.session);
+        }
+    }
+    CHECK_RV(rv, "open and close sessions concurrently", CKR_OK);
+    CHECK_TRUE(consistent, "opened session keeps its reported login state");
+    funcList->C_Finalize(NULL);
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -539,6 +630,9 @@ static int run_test(void)
 #endif
 #ifdef LOGIN_TEST_FILE_STORE
     failed_login_leaves_no_token_key_test();
+#endif
+#ifndef SINGLE_THREADED
+    close_last_session_race_test();
 #endif
 #if !defined(SINGLE_THREADED) && !defined(WOLFPKCS11_NO_TIME)
     concurrent_login_lockout_test();
