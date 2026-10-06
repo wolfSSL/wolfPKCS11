@@ -353,6 +353,74 @@ static void test_create_class_consistent(CK_SESSION_HANDLE session)
 }
 #endif
 
+#ifndef NO_AES
+/* A rejected multi-attribute update leaves every attribute unchanged. */
+static void test_rejected_update_is_atomic(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE keyType = CKK_AES;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    byte keyData[16];
+    byte valueBuf[64];
+    CK_ATTRIBUTE valueAttr = { CKA_VALUE, valueBuf, sizeof(valueBuf) };
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,     &keyClass,         sizeof(keyClass)      },
+        { CKA_KEY_TYPE,  &keyType,          sizeof(keyType)       },
+        { CKA_TOKEN,     &ckFalse,          sizeof(ckFalse)       },
+        { CKA_PRIVATE,   &ckFalse,          sizeof(ckFalse)       },
+        { CKA_SENSITIVE, &ckTrue,           sizeof(ckTrue)        },
+        { CKA_LABEL,     (void*)dataLabel,  sizeof(dataLabel) - 1 },
+        { CKA_VALUE,     keyData,           sizeof(keyData)       },
+    };
+    CK_ATTRIBUTE labelAndClass[] = {
+        { CKA_LABEL, (void*)newLabel, sizeof(newLabel) - 1 },
+        { CKA_CLASS, &dataClass,      sizeof(dataClass)    },
+    };
+    CK_ATTRIBUTE labelAndSensitive[] = {
+        { CKA_LABEL,     (void*)newLabel, sizeof(newLabel) - 1 },
+        { CKA_SENSITIVE, &ckFalse,        sizeof(ckFalse)      },
+    };
+    CK_ATTRIBUTE valueAndClass[] = {
+        { CKA_VALUE, (void*)newLabel, sizeof(newLabel) - 1 },
+        { CKA_CLASS, &keyClass,       sizeof(keyClass)     },
+    };
+
+    XMEMSET(keyData, 0x7e, sizeof(keyData));
+    rv = funcList->C_CreateObject(session, keyTmpl,
+                                  sizeof(keyTmpl) / sizeof(*keyTmpl), &key);
+    CHECK_RV(rv, "create labelled secret key", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_SetAttributeValue(session, key, labelAndClass, 2);
+        CHECK_RV(rv, "set label with read-only class", CKR_ATTRIBUTE_READ_ONLY);
+        expect_label(session, key, dataLabel, sizeof(dataLabel) - 1,
+                     "label unchanged after rejected class update");
+
+        rv = funcList->C_SetAttributeValue(session, key, labelAndSensitive, 2);
+        CHECK_RV(rv, "set label with sensitive cleared",
+                 CKR_ATTRIBUTE_READ_ONLY);
+        expect_label(session, key, dataLabel, sizeof(dataLabel) - 1,
+                     "label unchanged after rejected sensitive update");
+    }
+
+    rv = create_data_object(session, &obj);
+    CHECK_RV(rv, "create data object", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_SetAttributeValue(session, obj, valueAndClass, 2);
+        CHECK_RV(rv, "set value with read-only class", CKR_ATTRIBUTE_READ_ONLY);
+        rv = funcList->C_GetAttributeValue(session, obj, &valueAttr, 1);
+        CHECK_TRUE(rv == CKR_OK &&
+                   valueAttr.ulValueLen == sizeof(dataValue) - 1 &&
+                   XMEMCMP(valueBuf, dataValue, sizeof(dataValue) - 1) == 0,
+                   "value unchanged after rejected class update");
+    }
+
+    destroy_obj(session, &obj);
+    destroy_obj(session, &key);
+}
+#endif
+
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
     defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
     !defined(NO_RSA) && !defined(NO_AES) && \
@@ -476,6 +544,7 @@ static int run_test(void)
 #ifndef NO_AES
         test_derived_attrs_not_settable_at_create(session);
         test_create_class_consistent(session);
+        test_rejected_update_is_atomic(session);
 #endif
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
     defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
