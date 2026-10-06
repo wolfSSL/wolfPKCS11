@@ -500,6 +500,50 @@ static void test_attr_length_range(CK_SESSION_HANDLE session)
     (void)key;
 }
 
+#ifndef NO_AES
+/* Keys cannot be marked as requiring per-use authentication, which the token
+ * does not enforce. */
+static void test_always_authenticate_rejected(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE keyType = CKK_AES;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    byte keyData[16];
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,    &keyClass, sizeof(keyClass) },
+        { CKA_KEY_TYPE, &keyType,  sizeof(keyType)  },
+        { CKA_TOKEN,    &ckFalse,  sizeof(ckFalse)  },
+        { CKA_PRIVATE,  &ckFalse,  sizeof(ckFalse)  },
+        { CKA_VALUE,    keyData,   sizeof(keyData)  },
+        { CKA_ALWAYS_AUTHENTICATE, &ckTrue, sizeof(ckTrue) },
+    };
+    CK_ULONG keyCnt = sizeof(keyTmpl) / sizeof(*keyTmpl);
+    CK_ATTRIBUTE setTrue[]  = { { CKA_ALWAYS_AUTHENTICATE, &ckTrue,  1 } };
+    CK_ATTRIBUTE setFalse[] = { { CKA_ALWAYS_AUTHENTICATE, &ckFalse, 1 } };
+
+    XMEMSET(keyData, 0x42, sizeof(keyData));
+    rv = funcList->C_CreateObject(session, keyTmpl, keyCnt, &key);
+    CHECK_RV(rv, "create key requiring per-use authentication",
+             CKR_ATTRIBUTE_VALUE_INVALID);
+    destroy_obj(session, &key);
+
+    /* Create without the attribute, then try to turn it on. */
+    rv = funcList->C_CreateObject(session, keyTmpl, keyCnt - 1, &key);
+    CHECK_RV(rv, "create key", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_SetAttributeValue(session, key, setTrue, 1);
+        CHECK_RV(rv, "set CKA_ALWAYS_AUTHENTICATE true",
+                 CKR_ATTRIBUTE_VALUE_INVALID);
+        expect_bool(session, key, CKA_ALWAYS_AUTHENTICATE, CK_FALSE,
+                    "CKA_ALWAYS_AUTHENTICATE remains false");
+        rv = funcList->C_SetAttributeValue(session, key, setFalse, 1);
+        CHECK_RV(rv, "set CKA_ALWAYS_AUTHENTICATE false", CKR_OK);
+    }
+    destroy_obj(session, &key);
+}
+#endif
+
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
     defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
     !defined(NO_RSA) && !defined(NO_AES) && \
@@ -626,6 +670,9 @@ static int run_test(void)
         test_rejected_update_is_atomic(session);
 #endif
         test_attr_length_range(session);
+#ifndef NO_AES
+        test_always_authenticate_rejected(session);
+#endif
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
     defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
     !defined(NO_RSA) && !defined(NO_AES) && \
