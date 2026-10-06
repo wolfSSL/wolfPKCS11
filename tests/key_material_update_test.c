@@ -403,6 +403,138 @@ static void test_dh_private_value_fixed(CK_SESSION_HANDLE session)
 }
 #endif
 
+#if !defined(NO_RSA) || defined(HAVE_ECC)
+/* Sign with the private key and verify with the public key. */
+static CK_RV sign_verify(CK_SESSION_HANDLE session, CK_MECHANISM_TYPE type,
+                         CK_OBJECT_HANDLE priv, CK_OBJECT_HANDLE pub)
+{
+    CK_RV rv;
+    CK_MECHANISM mech = { 0, NULL, 0 };
+    byte hash[32];
+    byte sig[512];
+    CK_ULONG sigLen = sizeof(sig);
+
+    mech.mechanism = type;
+    XMEMSET(hash, 0x5a, sizeof(hash));
+    rv = funcList->C_SignInit(session, &mech, priv);
+    if (rv == CKR_OK)
+        rv = funcList->C_Sign(session, hash, sizeof(hash), sig, &sigLen);
+    if (rv == CKR_OK)
+        rv = funcList->C_VerifyInit(session, &mech, pub);
+    if (rv == CKR_OK)
+        rv = funcList->C_Verify(session, hash, sizeof(hash), sig, sigLen);
+    return rv;
+}
+#endif
+
+/* Private components of an existing asymmetric key cannot be replaced, and
+ * the key still works after the rejected update. */
+static void test_asym_private_fixed(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS privClass = CKO_PRIVATE_KEY;
+    CK_OBJECT_CLASS pubClass = CKO_PUBLIC_KEY;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    byte other[32];
+#ifndef NO_RSA
+    CK_KEY_TYPE rsaType = CKK_RSA;
+    CK_ATTRIBUTE rsaPrivTmpl[] = {
+        { CKA_CLASS,            &privClass,        sizeof(privClass)         },
+        { CKA_KEY_TYPE,         &rsaType,          sizeof(rsaType)           },
+        { CKA_TOKEN,            &ckFalse,          sizeof(ckFalse)           },
+        { CKA_SIGN,             &ckTrue,           sizeof(ckTrue)            },
+        { CKA_MODULUS,          rsa_2048_modulus,  sizeof(rsa_2048_modulus)  },
+        { CKA_PRIVATE_EXPONENT, rsa_2048_priv_exp, sizeof(rsa_2048_priv_exp) },
+        { CKA_PRIME_1,          rsa_2048_p,        sizeof(rsa_2048_p)        },
+        { CKA_PRIME_2,          rsa_2048_q,        sizeof(rsa_2048_q)        },
+        { CKA_EXPONENT_1,       rsa_2048_dP,       sizeof(rsa_2048_dP)       },
+        { CKA_EXPONENT_2,       rsa_2048_dQ,       sizeof(rsa_2048_dQ)       },
+        { CKA_COEFFICIENT,      rsa_2048_u,        sizeof(rsa_2048_u)        },
+        { CKA_PUBLIC_EXPONENT,  rsa_2048_pub_exp,  sizeof(rsa_2048_pub_exp)  },
+    };
+    CK_ATTRIBUTE rsaPubTmpl[] = {
+        { CKA_CLASS,           &pubClass,        sizeof(pubClass)         },
+        { CKA_KEY_TYPE,        &rsaType,         sizeof(rsaType)          },
+        { CKA_TOKEN,           &ckFalse,         sizeof(ckFalse)          },
+        { CKA_VERIFY,          &ckTrue,          sizeof(ckTrue)           },
+        { CKA_MODULUS,         rsa_2048_modulus, sizeof(rsa_2048_modulus) },
+        { CKA_PUBLIC_EXPONENT, rsa_2048_pub_exp, sizeof(rsa_2048_pub_exp) },
+    };
+    CK_ATTRIBUTE setPrivExp[] = {
+        { CKA_PRIVATE_EXPONENT, other, sizeof(other) },
+    };
+#endif
+#ifdef HAVE_ECC
+    CK_KEY_TYPE ecType = CKK_EC;
+    CK_ATTRIBUTE ecPrivTmpl[] = {
+        { CKA_CLASS,     &privClass,      sizeof(privClass)      },
+        { CKA_KEY_TYPE,  &ecType,         sizeof(ecType)         },
+        { CKA_TOKEN,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SIGN,      &ckTrue,         sizeof(ckTrue)         },
+        { CKA_EC_PARAMS, ecc_p256_params, sizeof(ecc_p256_params) },
+        { CKA_VALUE,     ecc_p256_priv,   sizeof(ecc_p256_priv)  },
+    };
+    CK_ATTRIBUTE ecPubTmpl[] = {
+        { CKA_CLASS,     &pubClass,       sizeof(pubClass)       },
+        { CKA_KEY_TYPE,  &ecType,         sizeof(ecType)         },
+        { CKA_TOKEN,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_VERIFY,    &ckTrue,         sizeof(ckTrue)         },
+        { CKA_EC_PARAMS, ecc_p256_params, sizeof(ecc_p256_params) },
+        { CKA_EC_POINT,  ecc_p256_pub,    sizeof(ecc_p256_pub)   },
+    };
+    CK_ATTRIBUTE setEcValue[] = { { CKA_VALUE, other, sizeof(other) } };
+#endif
+
+    XMEMSET(other, 0x07, sizeof(other));
+#ifndef NO_RSA
+    rv = funcList->C_CreateObject(session, rsaPrivTmpl,
+                                  sizeof(rsaPrivTmpl) / sizeof(*rsaPrivTmpl),
+                                  &priv);
+    CHECK_RV(rv, "create RSA private key", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, rsaPubTmpl,
+                                      sizeof(rsaPubTmpl) / sizeof(*rsaPubTmpl),
+                                      &pub);
+        CHECK_RV(rv, "create RSA public key", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_SetAttributeValue(session, priv, setPrivExp, 1);
+        CHECK_RV(rv, "set RSA private exponent", CKR_ATTRIBUTE_READ_ONLY);
+        rv = sign_verify(session, CKM_RSA_PKCS, priv, pub);
+        CHECK_RV(rv, "RSA key still signs after rejected update", CKR_OK);
+    }
+    destroy_obj(session, &pub);
+    destroy_obj(session, &priv);
+#endif
+#ifdef HAVE_ECC
+    rv = funcList->C_CreateObject(session, ecPrivTmpl,
+                                  sizeof(ecPrivTmpl) / sizeof(*ecPrivTmpl),
+                                  &priv);
+    CHECK_RV(rv, "create EC private key", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, ecPubTmpl,
+                                      sizeof(ecPubTmpl) / sizeof(*ecPubTmpl),
+                                      &pub);
+        CHECK_RV(rv, "create EC public key", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_SetAttributeValue(session, priv, setEcValue, 1);
+        CHECK_RV(rv, "set EC private value", CKR_ATTRIBUTE_READ_ONLY);
+        rv = sign_verify(session, CKM_ECDSA, priv, pub);
+        CHECK_RV(rv, "EC key still signs after rejected update", CKR_OK);
+    }
+    destroy_obj(session, &pub);
+    destroy_obj(session, &priv);
+#endif
+    (void)rv;
+    (void)priv;
+    (void)pub;
+    (void)other;
+    (void)privClass;
+    (void)pubClass;
+}
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -425,6 +557,7 @@ static int run_test(void)
 #ifndef NO_DH
         test_dh_private_value_fixed(session);
 #endif
+        test_asym_private_fixed(session);
     }
 
     if (session != 0) {
