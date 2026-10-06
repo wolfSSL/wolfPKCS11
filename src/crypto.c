@@ -9453,58 +9453,45 @@ static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
             WP11_Object_Free(secret);
             return CKR_FUNCTION_FAILED;
         }
-        ret = (int)AddObject(session, secret, pTemplate, ulAttributeCount,
-            handle);
-        if (ret != CKR_OK) {
-            WP11_Object_Free(secret);
-            return ret;
-        }
     }
     else {
         WP11_Object_Free(secret);
-        return ret;
+        return CKR_FUNCTION_FAILED;
     }
     if (isMac) {
         ret = WP11_Object_SetAttr(secret, CKA_KEY_TYPE, (byte*)&keyType,
                                   sizeof(keyType));
-        if (ret != CKR_OK)
-            return ret;
-
-        ret = WP11_Object_SetAttr(secret, CKA_DERIVE, &ckTrue,
-                                  sizeof(CK_BBOOL));
-        if (ret != CKR_OK)
-            return ret;
-
-        ret = WP11_Object_SetAttr(secret, CKA_ENCRYPT, &ckFalse,
-                                  sizeof(CK_BBOOL));
-        if (ret != CKR_OK)
-            return ret;
-
-        ret = WP11_Object_SetAttr(secret, CKA_DECRYPT, &ckFalse,
-                                  sizeof(CK_BBOOL));
-        if (ret != CKR_OK)
-            return ret;
-
-        ret = WP11_Object_SetAttr(secret, CKA_SIGN, &ckTrue,
-                                  sizeof(CK_BBOOL));
-        if (ret != CKR_OK)
-            return ret;
-
-        ret = WP11_Object_SetAttr(secret, CKA_VERIFY, &ckTrue,
-                                  sizeof(CK_BBOOL));
-        if (ret != CKR_OK)
-            return ret;
-
-        ret = WP11_Object_SetAttr(secret, CKA_WRAP, &ckFalse,
-                                  sizeof(CK_BBOOL));
-        if (ret != CKR_OK)
-            return ret;
-
-        ret = WP11_Object_SetAttr(secret, CKA_UNWRAP, &ckFalse,
-                                  sizeof(CK_BBOOL));
-        if (ret != CKR_OK)
-            return ret;
+        if (ret == CKR_OK)
+            ret = WP11_Object_SetAttr(secret, CKA_DERIVE, &ckTrue,
+                                      sizeof(CK_BBOOL));
+        if (ret == CKR_OK)
+            ret = WP11_Object_SetAttr(secret, CKA_ENCRYPT, &ckFalse,
+                                      sizeof(CK_BBOOL));
+        if (ret == CKR_OK)
+            ret = WP11_Object_SetAttr(secret, CKA_DECRYPT, &ckFalse,
+                                      sizeof(CK_BBOOL));
+        if (ret == CKR_OK)
+            ret = WP11_Object_SetAttr(secret, CKA_SIGN, &ckTrue,
+                                      sizeof(CK_BBOOL));
+        if (ret == CKR_OK)
+            ret = WP11_Object_SetAttr(secret, CKA_VERIFY, &ckTrue,
+                                      sizeof(CK_BBOOL));
+        if (ret == CKR_OK)
+            ret = WP11_Object_SetAttr(secret, CKA_WRAP, &ckFalse,
+                                      sizeof(CK_BBOOL));
+        if (ret == CKR_OK)
+            ret = WP11_Object_SetAttr(secret, CKA_UNWRAP, &ckFalse,
+                                      sizeof(CK_BBOOL));
+        if (ret != CKR_OK) {
+            WP11_Object_Free(secret);
+            return CKR_FUNCTION_FAILED;
+        }
     }
+
+    /* Add only once the key is complete so a failure leaves no object. */
+    ret = (int)AddObject(session, secret, pTemplate, ulAttributeCount, handle);
+    if (ret != CKR_OK)
+        WP11_Object_Free(secret);
 
     return ret;
 }

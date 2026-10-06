@@ -44,6 +44,13 @@
 #include <dlfcn.h>
 #endif
 
+#if defined(WOLFSSL_HAVE_PRF) && !defined(WOLFPKCS11_NO_STORE) && \
+    !defined(_WIN32)
+    #define TLS_PERSIST_TEST
+    #include <unistd.h>
+    #include <sys/wait.h>
+#endif
+
 #include "testdata.h"
 
 #define TEST_DIR "./store/kdf_tls_derive_test"
@@ -1023,6 +1030,138 @@ cleanup:
     return result;
 }
 
+#ifdef TLS_PERSIST_TEST
+static const char persistLabel[] = "tls-key-mat-persist";
+
+static CK_RV open_user_session(CK_SESSION_HANDLE* session)
+{
+    CK_RV ret;
+
+    ret = pkcs11_init();
+    if (ret == CKR_OK) {
+        ret = funcList->C_OpenSession(slot,
+                CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL, NULL, session);
+    }
+    if (ret == CKR_OK)
+        ret = funcList->C_Login(*session, CKU_USER, userPin, userPinLen);
+    return ret;
+}
+
+/* Derive TLS key material into token keys whose template disallows signing. */
+static CK_RV derive_token_key_mat(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_TLS12_KEY_MAT_PARAMS params;
+    CK_SSL3_KEY_MAT_OUT out;
+    byte master[48];
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass)    },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType)    },
+        { CKA_TOKEN,       &ckTrue,         sizeof(ckTrue)            },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)           },
+        { CKA_SENSITIVE,   &ckFalse,        sizeof(ckFalse)           },
+        { CKA_EXTRACTABLE, &ckTrue,         sizeof(ckTrue)            },
+        { CKA_SIGN,        &ckFalse,        sizeof(ckFalse)           },
+        { CKA_ENCRYPT,     &ckTrue,         sizeof(ckTrue)            },
+        { CKA_LABEL,       (void*)persistLabel, sizeof(persistLabel) - 1 },
+    };
+
+    XMEMSET(master, 0x5c, sizeof(master));
+    ret = create_secret_base(session, CKK_GENERIC_SECRET, master,
+                             sizeof(master), &base);
+    if (ret == CKR_OK) {
+        tls_key_mat_init(&params, &out, 256, 128, 0);
+        ret = tls_key_mat_derive(session, base, &params, tmpl,
+                                 sizeof(tmpl) / sizeof(*tmpl));
+    }
+    return ret;
+}
+
+/* The MAC key usage attributes are part of the stored token object even when
+ * the process ends without C_Finalize. */
+static int test_token_mac_key_usage_persist(void)
+{
+    CK_RV ret;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE objs[8];
+    CK_ULONG found = 0;
+    CK_ULONG i;
+    CK_ULONG macKeys = 0;
+    CK_BBOOL sign;
+    CK_BBOOL encrypt;
+    CK_ATTRIBUTE findTmpl[] = {
+        { CKA_TOKEN, &ckTrue,             sizeof(ckTrue)           },
+        { CKA_LABEL, (void*)persistLabel, sizeof(persistLabel) - 1 },
+    };
+    CK_ATTRIBUTE usageTmpl[] = {
+        { CKA_SIGN,    &sign,    sizeof(CK_BBOOL) },
+        { CKA_ENCRYPT, &encrypt, sizeof(CK_BBOOL) },
+    };
+    pid_t pid;
+    int status = 0;
+    int result = 0;
+
+    printf("\n=== Testing TLS MAC key token persistence ===\n");
+
+    pid = fork();
+    if (pid == 0) {
+        /* Exit without C_Finalize so only stores made by the derive count. */
+        ret = open_user_session(&session);
+        if (ret == CKR_OK)
+            ret = derive_token_key_mat(session);
+        _exit(ret == CKR_OK ? 0 : 1);
+    }
+    if (pid < 0)
+        ret = CKR_GENERAL_ERROR;
+    else if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) ||
+             WEXITSTATUS(status) != 0)
+        ret = CKR_GENERAL_ERROR;
+    else
+        ret = CKR_OK;
+    CHECK_CKR(ret, "derive token key material in child process");
+
+    ret = open_user_session(&session);
+    CHECK_CKR(ret, "reopen token");
+
+    ret = funcList->C_FindObjectsInit(session, findTmpl,
+                                      sizeof(findTmpl) / sizeof(*findTmpl));
+    CHECK_CKR(ret, "C_FindObjectsInit");
+    ret = funcList->C_FindObjects(session, objs,
+                                  sizeof(objs) / sizeof(*objs), &found);
+    if (funcList->C_FindObjectsFinal(session) != CKR_OK && ret == CKR_OK)
+        ret = CKR_GENERAL_ERROR;
+    if (ret == CKR_OK && found != 4)
+        ret = CKR_GENERAL_ERROR;
+    CHECK_CKR(ret, "find derived token keys");
+
+    for (i = 0; i < found && ret == CKR_OK; i++) {
+        ret = funcList->C_GetAttributeValue(session, objs[i], usageTmpl,
+                                  sizeof(usageTmpl) / sizeof(*usageTmpl));
+        if (ret == CKR_OK && sign == CK_TRUE && encrypt == CK_FALSE)
+            macKeys++;
+    }
+    CHECK_CKR(ret, "read derived key usage");
+    if (macKeys != 2) {
+        fprintf(stderr, "FAIL: reloaded MAC keys with MAC usage: %lu, "
+                "expected 2\n", (unsigned long)macKeys);
+        test_failed++;
+        result = -1;
+        goto cleanup;
+    }
+    printf("PASS: reloaded MAC keys keep MAC usage\n");
+    test_passed++;
+
+cleanup:
+    if (session != CK_INVALID_HANDLE) {
+        funcList->C_Logout(session);
+        funcList->C_CloseSession(session);
+    }
+    pkcs11_final();
+    return result;
+}
+#endif /* TLS_PERSIST_TEST */
+
 static void print_results(void)
 {
     printf("\n=== Test Results ===\n");
@@ -1044,6 +1183,10 @@ int main(int argc, char* argv[])
 
     if (kdf_tls_derive_test() != 0 && test_failed == 0)
         test_failed++;
+#ifdef TLS_PERSIST_TEST
+    if (test_token_mac_key_usage_persist() != 0 && test_failed == 0)
+        test_failed++;
+#endif
 
     print_results();
 #ifndef DERIVE_TESTS
