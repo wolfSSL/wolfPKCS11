@@ -657,6 +657,39 @@ static void test_empty_date_roundtrip(CK_SESSION_HANDLE session)
     destroy_obj(session, &obj);
 }
 
+/* CKA_CERTIFICATE_CATEGORY is consumed as a full CK_ULONG. */
+static void test_certificate_category_ulong(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS certClass = CKO_CERTIFICATE;
+    CK_CERTIFICATE_TYPE certType = CKC_X_509;
+    CK_ULONG category = 2;
+    word32 shortCategory = 2;
+    byte certData[] = { 0x30, 0x82, 0x01, 0x00 };
+    CK_OBJECT_HANDLE cert = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,                &certClass, sizeof(certClass) },
+        { CKA_CERTIFICATE_TYPE,     &certType,  sizeof(certType)  },
+        { CKA_TOKEN,                &ckFalse,   sizeof(ckFalse)   },
+        { CKA_PRIVATE,              &ckFalse,   sizeof(ckFalse)   },
+        { CKA_VALUE,                certData,   sizeof(certData)  },
+        { CKA_CERTIFICATE_CATEGORY, &category,  sizeof(category)  },
+    };
+    CK_ULONG cnt = sizeof(tmpl) / sizeof(*tmpl);
+
+    rv = funcList->C_CreateObject(session, tmpl, cnt, &cert);
+    CHECK_RV(rv, "create certificate with category", CKR_OK);
+    destroy_obj(session, &cert);
+
+    if (sizeof(CK_ULONG) != sizeof(word32)) {
+        tmpl[cnt - 1].pValue = &shortCategory;
+        tmpl[cnt - 1].ulValueLen = sizeof(shortCategory);
+        rv = funcList->C_CreateObject(session, tmpl, cnt, &cert);
+        CHECK_TRUE(rv != CKR_OK, "certificate category shorter than CK_ULONG");
+        destroy_obj(session, &cert);
+    }
+}
+
 #ifdef ATTR_TEST_ALLOC_HOOK
 /* A replacement value that cannot be stored leaves the previous one. */
 static void test_failed_replace_keeps_value(CK_SESSION_HANDLE session)
@@ -829,6 +862,7 @@ static int run_test(void)
 #endif
         test_data_attr_requires_value(session);
         test_empty_date_roundtrip(session);
+        test_certificate_category_ulong(session);
 #ifdef ATTR_TEST_ALLOC_HOOK
         test_failed_replace_keeps_value(session);
 #endif

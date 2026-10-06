@@ -15132,7 +15132,7 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                                        (int)len);
             break;
         case CKA_CERTIFICATE_CATEGORY:
-            object->category = *(word32*)data;
+            object->category = (word32)*(CK_ULONG*)data;
             break;
         case CKA_PRIVATE:
             WP11_Object_SetOpFlag(object, WP11_FLAG_PRIVATE, *(CK_BBOOL*)data);
