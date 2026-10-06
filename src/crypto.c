@@ -9650,6 +9650,11 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
         return ret;
 #endif
 
+    rv = CheckPrivateLogin(session, pTemplate, ulAttributeCount,
+                           CKO_SECRET_KEY);
+    if (rv != CKR_OK)
+        return rv;
+
     switch (pMechanism->mechanism) {
 #ifdef HAVE_ECC
         case CKM_ECDH1_DERIVE: {
