@@ -4776,6 +4776,10 @@ static CK_RV wp11_C_DecryptUpdate(CK_SESSION_HANDLE hSession,
         case CKM_AES_CTR:
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CTR_DEC))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            if (!CK_ULONG_FITS_WORD32(ulEncryptedPartLen)) {
+                WP11_AesCtr_Final(session);
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
+            }
 
             if (pPart == NULL) {
                 *pulPartLen = ulEncryptedPartLen;
@@ -4784,7 +4788,8 @@ static CK_RV wp11_C_DecryptUpdate(CK_SESSION_HANDLE hSession,
             if (ulEncryptedPartLen > *pulPartLen)
                 return CKR_BUFFER_TOO_SMALL;
 
-            decPartLen = (word32)*pulPartLen;
+            /* Output is the same length as the input, which fits the buffer. */
+            decPartLen = (word32)ulEncryptedPartLen;
             ret = WP11_AesCtr_Update(pEncryptedPart, (word32)ulEncryptedPartLen,
                                      pPart, &decPartLen, session);
             if (ret == WP11_CTR_OVERFLOW_E) {
