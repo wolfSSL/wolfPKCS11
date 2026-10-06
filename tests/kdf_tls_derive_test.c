@@ -862,6 +862,63 @@ cleanup:
 }
 #endif
 
+#ifdef WOLFPKCS11_HKDF
+/* An HKDF salt key handle must refer to a symmetric secret key. */
+static int test_hkdf_salt_key_is_secret(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE salt = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    byte saltValue[16];
+    byte dataValue[64];
+    CK_ATTRIBUTE dataTmpl[] = {
+        { CKA_CLASS,   &dataClass, sizeof(dataClass) },
+        { CKA_PRIVATE, &ckFalse,   sizeof(ckFalse)   },
+        { CKA_VALUE,   dataValue,  sizeof(dataValue) },
+    };
+    CK_HKDF_PARAMS params;
+    CK_MECHANISM mech = { CKM_HKDF_DERIVE, &params, sizeof(params) };
+    int result = 0;
+
+    XMEMSET(saltValue, 0x5a, sizeof(saltValue));
+    XMEMSET(dataValue, 0xa5, sizeof(dataValue));
+    ret = create_secret_base(session, CKK_GENERIC_SECRET, baseSecret,
+                             sizeof(baseSecret), &base);
+    CHECK_CKR(ret, "create HKDF base key");
+    ret = create_secret_base(session, CKK_GENERIC_SECRET, saltValue,
+                             sizeof(saltValue), &salt);
+    CHECK_CKR(ret, "create HKDF salt key");
+
+    XMEMSET(&params, 0, sizeof(params));
+    params.bExtract = CK_TRUE;
+    params.bExpand = CK_TRUE;
+    params.prfHashMechanism = CKM_SHA256;
+    params.ulSaltType = CKF_HKDF_SALT_KEY;
+    params.hSaltKey = salt;
+    ret = derive_generic(session, &mech, base, 32, &derived);
+    CHECK_CKR(ret, "HKDF derive with secret salt key");
+    destroy_obj(session, &derived);
+    destroy_obj(session, &salt);
+
+    ret = funcList->C_CreateObject(session, dataTmpl,
+                                   sizeof(dataTmpl) / sizeof(*dataTmpl),
+                                   &salt);
+    CHECK_CKR(ret, "create data object");
+    params.hSaltKey = salt;
+    ret = derive_generic(session, &mech, base, 32, &derived);
+    CHECK_RV(ret, CKR_MECHANISM_PARAM_INVALID,
+             "HKDF salt key that is a data object rejected");
+
+cleanup:
+    destroy_obj(session, &derived);
+    destroy_obj(session, &salt);
+    destroy_obj(session, &base);
+    return result;
+}
+#endif
+
 static CK_RV pkcs11_init(void)
 {
     CK_RV ret;
@@ -973,6 +1030,10 @@ static int kdf_tls_derive_test(void)
         result = -1;
 #endif
 
+#ifdef WOLFPKCS11_HKDF
+    if (test_hkdf_salt_key_is_secret(session) != 0)
+        result = -1;
+#endif
 #ifdef NSS_EMS_WIDE_TEST
     if (test_session_hash_length_fits_word32(session) != 0)
         result = -1;
