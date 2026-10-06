@@ -1091,6 +1091,69 @@ out:
 }
 #endif
 
+#ifndef NO_SHA256
+/* A saved state that is rejected must leave the session's digest exactly as
+ * it was. */
+static void test_rejected_state_keeps_session(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_MECHANISM sha256Mech = { CKM_SHA256, NULL, 0 };
+    CK_MECHANISM_TYPE badMech;
+    byte state[1024];
+    byte bogus[1024];
+    byte after[1024];
+    CK_ULONG stateLen;
+    CK_ULONG afterLen;
+    CK_SLOT_ID slot;
+
+    printf("\n--- a rejected saved state keeps the session state ---\n");
+    rv = init_library(&slot);
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL, NULL, &session);
+    }
+    CHECK_RV(rv, "open session", CKR_OK);
+    if (rv != CKR_OK)
+        goto out;
+
+    rv = funcList->C_DigestInit(session, &sha256Mech);
+    CHECK_RV(rv, "C_DigestInit(SHA-256)", CKR_OK);
+    rv = funcList->C_DigestUpdate(session, plainMarker, sizeof(plainMarker));
+    CHECK_RV(rv, "C_DigestUpdate", CKR_OK);
+    stateLen = sizeof(state);
+    rv = funcList->C_GetOperationState(session, state, &stateLen);
+    CHECK_RV(rv, "C_GetOperationState", CKR_OK);
+    if (rv != CKR_OK)
+        goto out;
+
+    XMEMCPY(bogus, state, stateLen);
+    badMech = CKM_AES_CBC;
+    XMEMCPY(bogus, &badMech, sizeof(badMech));
+    rv = funcList->C_SetOperationState(session, bogus, stateLen, 0, 0);
+    CHECK_RV(rv, "C_SetOperationState(unsupported mechanism)",
+             CKR_SAVED_STATE_INVALID);
+    badMech = CKM_SHA256;
+    XMEMCPY(bogus, &badMech, sizeof(badMech));
+    rv = funcList->C_SetOperationState(session, bogus, sizeof(badMech) + 4, 0,
+                                       0);
+    CHECK_RV(rv, "C_SetOperationState(truncated state)",
+             CKR_SAVED_STATE_INVALID);
+
+    afterLen = sizeof(after);
+    rv = funcList->C_GetOperationState(session, after, &afterLen);
+    CHECK_RV(rv, "C_GetOperationState after rejected states", CKR_OK);
+    CHECK_TRUE(rv == CKR_OK && afterLen == stateLen &&
+               XMEMCMP(after, state, stateLen) == 0,
+               "rejected saved state leaves the digest state unchanged");
+
+out:
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
 #if defined(TRACK_ALLOCS) && !defined(NO_AES) && defined(HAVE_AESGCM) && \
     !defined(WOLFSSL_AESGCM_STREAM)
 /* Destroying the key of a multi-part AES-GCM operation must release the
@@ -1202,6 +1265,7 @@ static int run_test(void)
 #endif
 #ifndef NO_SHA256
     test_operation_state_requires_active_digest();
+    test_rejected_state_keeps_session();
 #endif
 #if defined(TRACK_ALLOCS) && !defined(NO_AES) && defined(HAVE_AESGCM) && \
     !defined(NO_SHA256)
