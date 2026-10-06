@@ -1405,7 +1405,7 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
     /* Path order:
      * 1. Environment variable WOLFPKCS11_TOKEN_PATH
      * 2. NSS store directory, if set using C_Initialize
-     * 3. Home directory with .wolfPKCS11 (or APPDIR with wolfPKCS11 for
+     * 3. Home directory with .wolfPKCS11 (or %APPDATA% with wolfPKCS11 for
      *    Windows)
      * 4. WOLFPKCS11_DEFAULT_TOKEN_PATH, if set
      */
@@ -1441,14 +1441,14 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
         const char* homeDir = NULL;
 
     #if defined(_WIN32) || defined(_MSC_VER)
-        homeDir = XGETENV("%APPDIR%");
+        homeDir = XGETENV("APPDATA");
         if (homeDir != NULL && XSTRLEN(homeDir) <= sizeof(homePath) - 13) {
             int len = XSNPRINTF(homePath, sizeof(homePath), "%s\\wolfPKCS11",
                                 homeDir);
             if (len > 0 && len < (int)sizeof(homePath)) {
                 str = homePath;
             }
-         }
+        }
     #else
         homeDir = XGETENV("HOME");
         if (homeDir != NULL && XSTRLEN(homeDir) <= sizeof(homePath) - 13) {
