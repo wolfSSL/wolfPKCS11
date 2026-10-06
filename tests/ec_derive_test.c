@@ -184,6 +184,45 @@ cleanup:
         funcList->C_DestroyObject(session, base);
     return result;
 }
+
+/* A public data length beyond any encodable EC point is a parameter error. */
+static int test_public_data_length_bound(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    CK_ECDH1_DERIVE_PARAMS params;
+    byte bigPoint[512];
+    CK_ULONG wideLen;
+    int result = 0;
+
+    ret = create_ec_base(session, CK_FALSE, CK_TRUE, &base);
+    CHECK_CKR(ret, "create EC base key");
+
+    if (sizeof(CK_ULONG) > sizeof(word32)) {
+        /* Upper bits set, low 32 bits equal to the real point length. */
+        wideLen = ((CK_ULONG)2 << 16) << 16;
+        wideLen += sizeof(ecc_p256_point);
+        ecdh_params_init(&params, ecc_p256_point, wideLen);
+        ret = ecdh_derive(session, base, &params, &derived);
+        CHECK_RV(ret, CKR_MECHANISM_PARAM_INVALID,
+                 "public data length above 32 bits rejected");
+    }
+
+    XMEMSET(bigPoint, 0, sizeof(bigPoint));
+    XMEMCPY(bigPoint, ecc_p256_point, sizeof(ecc_p256_point));
+    ecdh_params_init(&params, bigPoint, sizeof(bigPoint));
+    ret = ecdh_derive(session, base, &params, &derived);
+    CHECK_RV(ret, CKR_MECHANISM_PARAM_INVALID,
+             "oversized public data length rejected");
+
+cleanup:
+    if (derived != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, derived);
+    if (base != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, base);
+    return result;
+}
 #endif /* HAVE_ECC */
 
 static CK_RV pkcs11_init(void)
@@ -294,6 +333,8 @@ static int ec_derive_test(void)
 
 #ifdef HAVE_ECC
     if (test_null_kdf_shared_data(session) != 0)
+        result = -1;
+    if (test_public_data_length_bound(session) != 0)
         result = -1;
 #else
     printf("ECC not available, skipping ECDH derive tests\n");

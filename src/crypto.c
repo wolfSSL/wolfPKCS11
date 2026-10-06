@@ -9653,6 +9653,9 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                 return CKR_MECHANISM_PARAM_INVALID;
             if (params->ulPublicDataLen == 0)
                 return CKR_MECHANISM_PARAM_INVALID;
+            /* Largest DER-wrapped uncompressed point of a supported curve. */
+            if (params->ulPublicDataLen > (CK_ULONG)(2 * MAX_ECC_BYTES + 4))
+                return CKR_MECHANISM_PARAM_INVALID;
             if (params->kdf != CKD_NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
             if (params->pSharedData != NULL || params->ulSharedDataLen != 0)
@@ -9665,8 +9668,8 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
             XMEMSET(derivedKey, 0, keyLen);
 
             ret = WP11_EC_Derive(params->pPublicData,
-                                       (int)params->ulPublicDataLen, derivedKey,
-                                       &keyLen, obj);
+                                    (word32)params->ulPublicDataLen, derivedKey,
+                                    &keyLen, obj);
             if (ret != 0)
                 rv = CKR_FUNCTION_FAILED;
             break;
