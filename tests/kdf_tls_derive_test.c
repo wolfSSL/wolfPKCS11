@@ -54,7 +54,13 @@
     #define LEN_ABOVE_WORD32(n) ((CK_ULONG)0xFFFFFFFFUL + 1 + (CK_ULONG)(n))
 #endif
 
-#if defined(WOLFPKCS11_HKDF) && defined(WIDE_CK_ULONG)
+#if defined(WOLFSSL_HAVE_PRF) && defined(WOLFPKCS11_NSS) && \
+    defined(WIDE_CK_ULONG)
+    #define NSS_EMS_WIDE_TEST
+#endif
+
+#if (defined(WOLFPKCS11_HKDF) && defined(WIDE_CK_ULONG)) || \
+    defined(NSS_EMS_WIDE_TEST)
     #define SECRET_BASE_TESTS
 #endif
 
@@ -197,6 +203,46 @@ cleanup:
 }
 #endif
 
+#ifdef NSS_EMS_WIDE_TEST
+/* The extended master secret session hash length must not be truncated. */
+static int test_session_hash_length_fits_word32(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    byte sessionHash[32];
+    CK_VERSION version = { 3, 3 };
+    CK_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_PARAMS params;
+    CK_MECHANISM mech = { CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE, &params,
+                          sizeof(params) };
+    int result = 0;
+
+    XMEMSET(sessionHash, 0xAA, sizeof(sessionHash));
+    ret = create_secret_base(session, CKK_GENERIC_SECRET, baseSecret,
+                             sizeof(baseSecret), &base);
+    CHECK_CKR(ret, "create TLS base key");
+
+    XMEMSET(&params, 0, sizeof(params));
+    params.prfHashMechanism = CKM_SHA256;
+    params.pSessionHash = sessionHash;
+    params.ulSessionHashLen = sizeof(sessionHash);
+    params.pVersion = &version;
+    ret = derive_generic(session, &mech, base, 48, &derived);
+    CHECK_CKR(ret, "extended master secret derive");
+    destroy_obj(session, &derived);
+
+    params.ulSessionHashLen = LEN_ABOVE_WORD32(sizeof(sessionHash));
+    ret = derive_generic(session, &mech, base, 48, &derived);
+    CHECK_RV(ret, CKR_MECHANISM_PARAM_INVALID,
+             "session hash length beyond 32 bits rejected");
+
+cleanup:
+    destroy_obj(session, &derived);
+    destroy_obj(session, &base);
+    return result;
+}
+#endif
+
 static CK_RV pkcs11_init(void)
 {
     CK_RV ret;
@@ -305,6 +351,11 @@ static int kdf_tls_derive_test(void)
 
 #if defined(WOLFPKCS11_HKDF) && defined(WIDE_CK_ULONG)
     if (test_hkdf_lengths_fit_word32(session) != 0)
+        result = -1;
+#endif
+
+#ifdef NSS_EMS_WIDE_TEST
+    if (test_session_hash_length_fits_word32(session) != 0)
         result = -1;
 #endif
 
