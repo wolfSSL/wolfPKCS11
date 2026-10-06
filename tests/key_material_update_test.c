@@ -27,6 +27,7 @@
 #endif
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #ifndef WOLFSSL_USER_SETTINGS
@@ -34,6 +35,7 @@
 #endif
 #include <wolfssl/wolfcrypt/settings.h>
 #include <wolfssl/wolfcrypt/misc.h>
+#include <wolfssl/wolfcrypt/memory.h>
 
 #ifndef WOLFPKCS11_USER_SETTINGS
     #include <wolfpkcs11/options.h>
@@ -48,6 +50,33 @@
 #include "pkcs11_test_util.h"
 
 #define TEST_DIR "./store/key_material_update_test"
+
+#if defined(USE_WOLFSSL_MEMORY) && !defined(WOLFSSL_STATIC_MEMORY) && \
+    !defined(WOLFSSL_NO_MALLOC) && !defined(WOLFSSL_DEBUG_MEMORY)
+#define KMU_ALLOC_HOOK
+/* Allocation of exactly this size fails while armed. */
+#define FAIL_ALLOC_SIZE 101
+static int failAllocArmed = 0;
+
+static void* test_malloc(size_t n)
+{
+    if (failAllocArmed && n == FAIL_ALLOC_SIZE)
+        return NULL;
+    return malloc(n);
+}
+
+static void test_free(void* p)
+{
+    free(p);
+}
+
+static void* test_realloc(void* p, size_t n)
+{
+    if (failAllocArmed && n == FAIL_ALLOC_SIZE)
+        return NULL;
+    return realloc(p, n);
+}
+#endif
 
 static CK_SLOT_ID slot = 0;
 static const char* soPin = "password123456";
@@ -663,6 +692,52 @@ static void test_cert_type_update_keeps_value(CK_SESSION_HANDLE session)
     destroy_obj(session, &cert);
 }
 
+#ifdef KMU_ALLOC_HOOK
+/* A certificate value that cannot be stored leaves a consistent object, and
+ * an existing certificate's value cannot be replaced. */
+static void test_cert_value_failure_consistent(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS certClass = CKO_CERTIFICATE;
+    CK_CERTIFICATE_TYPE certType = CKC_X_509;
+    CK_OBJECT_HANDLE cert = CK_INVALID_HANDLE;
+    byte certVal[FAIL_ALLOC_SIZE];
+    byte newVal[FAIL_ALLOC_SIZE];
+    CK_ATTRIBUTE certTmpl[] = {
+        { CKA_CLASS,            &certClass, sizeof(certClass) },
+        { CKA_CERTIFICATE_TYPE, &certType,  sizeof(certType)  },
+        { CKA_TOKEN,            &ckFalse,   sizeof(ckFalse)   },
+        { CKA_PRIVATE,          &ckFalse,   sizeof(ckFalse)   },
+        { CKA_VALUE,            certVal,    sizeof(certVal)   },
+    };
+    CK_ATTRIBUTE setValue[] = { { CKA_VALUE, newVal, sizeof(newVal) } };
+
+    XMEMSET(certVal, 0x30, sizeof(certVal));
+    XMEMSET(newVal, 0x31, sizeof(newVal));
+
+    failAllocArmed = 1;
+    rv = funcList->C_CreateObject(session, certTmpl,
+                                  sizeof(certTmpl) / sizeof(*certTmpl), &cert);
+    failAllocArmed = 0;
+    CHECK_RV(rv, "certificate create out of memory", CKR_DEVICE_MEMORY);
+    destroy_obj(session, &cert);
+
+    rv = funcList->C_CreateObject(session, certTmpl,
+                                  sizeof(certTmpl) / sizeof(*certTmpl), &cert);
+    CHECK_RV(rv, "create certificate", CKR_OK);
+    if (rv == CKR_OK) {
+        failAllocArmed = 1;
+        rv = funcList->C_SetAttributeValue(session, cert, setValue, 1);
+        failAllocArmed = 0;
+        CHECK_TRUE(rv != CKR_OK, "certificate value replacement rejected");
+        CHECK_TRUE(attr_equals(session, cert, CKA_VALUE, certVal,
+                               sizeof(certVal)),
+                   "certificate value kept");
+    }
+    destroy_obj(session, &cert);
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -693,6 +768,9 @@ static int run_test(void)
         test_rsa_modulus_bits_range(session);
 #endif
         test_cert_type_update_keeps_value(session);
+#ifdef KMU_ALLOC_HOOK
+        test_cert_value_failure_consistent(session);
+#endif
     }
 
     if (session != 0) {
@@ -714,6 +792,12 @@ int main(int argc, char* argv[])
 #endif
 
     printf("=== wolfPKCS11 key material update test ===\n");
+#ifdef KMU_ALLOC_HOOK
+    if (wolfSSL_SetAllocators(test_malloc, test_free, test_realloc) != 0) {
+        fprintf(stderr, "FAIL: wolfSSL_SetAllocators\n");
+        return 1;
+    }
+#endif
     run_test();
     return pkcs11_test_summary();
 }
