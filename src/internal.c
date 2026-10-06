@@ -4135,15 +4135,15 @@ static int WP11_Object_EncodeTpmKey(WP11_Object* object, byte* keyData,
             if (keyData != NULL) {
                 if (ret <= keyDataLen) {
                     /* Write size marker for the public part */
-                    XMEMCPY(object->keyData, &pubAreaSize,
+                    XMEMCPY(keyData, &pubAreaSize,
                             sizeof(UINT16));
                     idx += sizeof(UINT16);
                     /* Write the public part with bytes aligned */
-                    XMEMCPY(object->keyData + idx, pubAreaBuffer,
+                    XMEMCPY(keyData + idx, pubAreaBuffer,
                             sizeof(UINT16) + pubAreaSize);
                     idx += sizeof(UINT16) + pubAreaSize;
                     /* Write the private part, size marker is included */
-                    XMEMCPY(object->keyData + idx, &object->tpmKey->priv,
+                    XMEMCPY(keyData + idx, &object->tpmKey->priv,
                             sizeof(UINT16) + object->tpmKey->priv.size);
                     idx += sizeof(UINT16) + object->tpmKey->priv.size;
 
