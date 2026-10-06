@@ -8866,7 +8866,7 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
  */
 static int wp11_Token_StorePass(WP11_Token* token, int tokenId)
 {
-    int ret;
+    int ret = 0;
     int i;
     void* storage = NULL;
     WP11_Object* object;
@@ -8876,7 +8876,8 @@ static int wp11_Token_StorePass(WP11_Token* token, int tokenId)
     printf("wp11_Token_Store: tokenId %d, objCnt %d\n", tokenId, token->objCnt);
 #endif
 
-    /* Reserve space for token object */
+#ifdef WOLFPKCS11_TPM_STORE
+    /* Reserve NV space for token object before the objects use it. */
     variableSz = token->userPinLen + token->soPinLen +
         (token->objCnt * FIELD_SIZE(WP11_Object, type));
     ret = wp11_storage_open(WOLFPKCS11_STORE_TOKEN, tokenId, 0, variableSz,
@@ -8885,6 +8886,7 @@ static int wp11_Token_StorePass(WP11_Token* token, int tokenId)
         ret = wp11_storage_close_write(storage, ret);
         storage = NULL;
     }
+#endif
 
     /* Store the objects */
     object = token->object;

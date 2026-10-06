@@ -217,6 +217,20 @@ static void object_record_path(CK_SLOT_ID slot, int objId, char* path,
              (unsigned long)slot, (unsigned long)objId);
 }
 
+/* Read a stored file into buf, returning its length or -1 on error. */
+static long read_store_file(const char* path, byte* buf, size_t bufSz)
+{
+    FILE* f;
+    long len;
+
+    f = fopen(path, "rb");
+    if (f == NULL)
+        return -1;
+    len = (long)fread(buf, 1, bufSz, f);
+    fclose(f);
+    return len;
+}
+
 /* Reload the token from storage and open a user session on it. */
 static CK_RV reload(CK_SLOT_ID slot, CK_SESSION_HANDLE* session)
 {
@@ -307,6 +321,53 @@ static void test_create_reports_commit_failure(void)
                    "uncommitted object is not in the token");
         CHECK_TRUE(count_label(session, "commit-first") == 1,
                    "committed object is still in the token");
+        (void)rmdir(path);
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+/* A failed token object store leaves the stored token record unchanged. */
+static void test_token_record_kept_on_failed_store(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    char path[512];
+    char tokenPath[512];
+    byte before[1024];
+    byte after[1024];
+    long beforeLen = -1;
+    long afterLen = -1;
+    int blocked = 0;
+
+    printf("\n--- token record is kept when an object store fails ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "record-first", &obj);
+        CHECK_RV(rv, "create first token object", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        snprintf(tokenPath, sizeof(tokenPath), "%s/wp11_token_%016lx",
+                 TEST_DIR, (unsigned long)slot);
+        beforeLen = read_store_file(tokenPath, before, sizeof(before));
+        CHECK_TRUE(beforeLen > 0 && beforeLen < (long)sizeof(before),
+                   "token record is stored");
+        object_record_path(slot, 1, path, sizeof(path));
+        blocked = (beforeLen > 0) && (mkdir(path, 0700) == 0);
+    }
+    if (blocked) {
+        rv = create_token_secret(session, "record-second", &obj);
+        CHECK_TRUE(rv != CKR_OK,
+                   "create fails when the object cannot be committed");
+        afterLen = read_store_file(tokenPath, after, sizeof(after));
+        CHECK_TRUE(afterLen == beforeLen &&
+                   XMEMCMP(before, after, (size_t)beforeLen) == 0,
+                   "token record is unchanged by the failed store");
         (void)rmdir(path);
     }
     close_session(session);
@@ -453,6 +514,7 @@ static int run_tests(void)
 
     test_objects_persist_across_storage_pause();
     test_create_reports_commit_failure();
+    test_token_record_kept_on_failed_store();
     test_pin_change_store_failure();
     test_init_pin_store_failure();
     test_token_reset_store_failure();
