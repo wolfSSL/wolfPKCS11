@@ -616,6 +616,87 @@ static void close_last_session_race_test(void)
 }
 #endif
 
+#ifndef SINGLE_THREADED
+#define CHURN_ROUNDS 200
+
+typedef struct churn_ctx {
+    CK_SESSION_HANDLE session;
+    CK_RV rv;
+} churn_ctx;
+
+static void* churn_session_objects(void* arg)
+{
+    churn_ctx* ctx = (churn_ctx*)arg;
+    int i;
+    CK_OBJECT_HANDLE obj;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    CK_BBOOL no = CK_FALSE;
+    byte value[4] = { 5, 6, 7, 8 };
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS, &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN, &no,        sizeof(no)        },
+        { CKA_VALUE, value,      sizeof(value)     },
+    };
+
+    for (i = 0; ctx->rv == CKR_OK && i < CHURN_ROUNDS; i++) {
+        ctx->rv = funcList->C_CreateObject(ctx->session, tmpl,
+                sizeof(tmpl) / sizeof(*tmpl), &obj);
+        if (ctx->rv == CKR_OK)
+            ctx->rv = funcList->C_DestroyObject(ctx->session, obj);
+    }
+    return NULL;
+}
+
+/* Finding session objects is safe while session objects come and go. */
+static void find_during_object_churn_test(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE found[8];
+    CK_ULONG cnt;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    CK_BBOOL no = CK_FALSE;
+    CK_ATTRIBUTE findTmpl[] = {
+        { CKA_CLASS, &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN, &no,        sizeof(no)        },
+    };
+    pthread_t thread;
+    churn_ctx ctx;
+    int i;
+
+    printf("--- find session objects while they change ---\n");
+    rv = token_setup(&slot, userPin);
+    if (rv == CKR_OK)
+        rv = open_rw(slot, &session);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv != CKR_OK) {
+        funcList->C_Finalize(NULL);
+        return;
+    }
+    ctx.session = session;
+    ctx.rv = CKR_OK;
+    if (pthread_create(&thread, NULL, churn_session_objects, &ctx) != 0) {
+        CHECK_TRUE(0, "create object churn thread");
+        funcList->C_Finalize(NULL);
+        return;
+    }
+    for (i = 0; rv == CKR_OK && i < CHURN_ROUNDS; i++) {
+        rv = funcList->C_FindObjectsInit(session, findTmpl, 2);
+        if (rv == CKR_OK) {
+            rv = funcList->C_FindObjects(session, found, 8, &cnt);
+            funcList->C_FindObjectsFinal(session);
+        }
+    }
+    pthread_join(thread, NULL);
+    CHECK_RV(rv, "find session objects concurrently", CKR_OK);
+    CHECK_RV(ctx.rv, "create and destroy session objects concurrently",
+             CKR_OK);
+    funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -636,6 +717,9 @@ static int run_test(void)
 #endif
 #if !defined(SINGLE_THREADED) && !defined(WOLFPKCS11_NO_TIME)
     concurrent_login_lockout_test();
+#endif
+#ifndef SINGLE_THREADED
+    find_during_object_churn_test();
 #endif
 #ifndef WOLFPKCS11_NO_TIME
     printf("--- C_SetPIN counts failed SO PIN checks ---\n");
