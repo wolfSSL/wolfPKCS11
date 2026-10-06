@@ -8893,9 +8893,14 @@ int WP11_Library_Init(void)
 /**
  * Finalize the globals for the library.
  * Multiple finalizations allowed.
+ *
+ * @return  0 on success.
+ * @return  BAD_MUTEX_E when locking fails.
+ * @return  Other value when storing a token fails. Cleanup is still done.
  */
-void WP11_Library_Final(void)
+int WP11_Library_Final(void)
 {
+    int ret = 0;
     int i;
     int cnt;
 
@@ -8904,7 +8909,7 @@ void WP11_Library_Final(void)
      * WP11_Lock_Free so a racing WP11_Library_IsInitialized can't observe
      * count>0, then call WP11_Lock_LockRO on a freed globalLock. */
     if (wc_LockMutex(&libraryInitLock) != 0)
-        return;
+        return BAD_MUTEX_E;
 #endif
 
     WP11_Lock_LockRW(&globalLock);
@@ -8914,13 +8919,14 @@ void WP11_Library_Final(void)
 #ifndef WOLFPKCS11_NO_STORE
         /* Store the slots. */
         for (i = 0; i < slotCnt; i++) {
-            int ret = wp11_Slot_Store(&slotList[i], i + 1);
+            int storeRet = wp11_Slot_Store(&slotList[i], i + 1);
         #ifdef DEBUG_WOLFPKCS11
-            if (ret != 0) {
-                printf("Failed to store slot %d, ret: %d\n", i + 1, ret);
+            if (storeRet != 0) {
+                printf("Failed to store slot %d, ret: %d\n", i + 1, storeRet);
             }
         #endif
-            (void)ret; /* store failure cannot be returned, so log and ignore */
+            if (ret == 0)
+                ret = storeRet;
         }
 #if !defined (WOLFPKCS11_CUSTOM_STORE) && defined(WOLFPKCS11_NSS)
         /* Serialize the free against a concurrent WP11_SetStoreDir /
@@ -8953,6 +8959,8 @@ void WP11_Library_Final(void)
 #ifdef WP11_HAVE_LIBRARY_INIT_LOCK
     wc_UnLockMutex(&libraryInitLock);
 #endif
+
+    return ret;
 }
 
 /**

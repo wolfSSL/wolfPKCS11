@@ -590,7 +590,8 @@ CK_RV C_Initialize(CK_VOID_PTR pInitArgs)
  * Finalize the Crypto-Ki library.
  *
  * @param  pReserved  [out]  Ignored.
- * @return  CKR_OK on success.
+ * @return  CKR_FUNCTION_FAILED when token state could not be stored.
+ *          CKR_OK on success.
  */
 CK_RV C_Finalize(CK_VOID_PTR pReserved)
 {
@@ -608,9 +609,7 @@ CK_RV C_Finalize(CK_VOID_PTR pReserved)
         return ret;
     }
 
-    WP11_Library_Final();
-
-    ret = CKR_OK;
+    ret = WP11_Library_Final() == 0 ? CKR_OK : CKR_FUNCTION_FAILED;
     WOLFPKCS11_LEAVE("C_Finalize", ret);
     return ret;
 }
