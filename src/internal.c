@@ -14912,22 +14912,24 @@ static int WP11_Object_SetKeyId(WP11_Object* object, unsigned char* keyId,
                                 int keyIdLen)
 {
     int ret = 0;
+    unsigned char* newId = NULL;
 
     if (keyId == NULL && keyIdLen > 0)
         return BAD_FUNC_ARG;
 
-    XFREE(object->keyId, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-    object->keyId = NULL;
-    object->keyIdLen = 0;
+    /* Build the replacement first so a failure keeps the current value. */
     if (keyIdLen > 0) {
-        object->keyId = (unsigned char*)XMALLOC(keyIdLen, NULL,
+        newId = (unsigned char*)XMALLOC(keyIdLen, NULL,
             DYNAMIC_TYPE_TMP_BUFFER);
-        if (object->keyId == NULL)
+        if (newId == NULL)
             ret = MEMORY_E;
-        if (ret == 0) {
-            XMEMCPY(object->keyId, keyId, keyIdLen);
-            object->keyIdLen = keyIdLen;
-        }
+        else
+            XMEMCPY(newId, keyId, keyIdLen);
+    }
+    if (ret == 0) {
+        XFREE(object->keyId, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        object->keyId = newId;
+        object->keyIdLen = (newId != NULL) ? keyIdLen : 0;
     }
 
     return ret;
@@ -14948,22 +14950,23 @@ static int WP11_Object_SetData(byte** attribute, int* attributeLen, byte* data,
                                 int dataLen)
 {
     int ret = 0;
+    byte* newData = NULL;
 
     if (data == NULL && dataLen > 0)
         return BAD_FUNC_ARG;
 
-    XFREE(*attribute, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-    *attribute = NULL;
-    *attributeLen = 0;
+    /* Build the replacement first so a failure keeps the current value. */
     if (dataLen > 0) {
-        *attribute = (byte*)XMALLOC(dataLen, NULL,
-            DYNAMIC_TYPE_TMP_BUFFER);
-        if (*attribute == NULL)
+        newData = (byte*)XMALLOC(dataLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (newData == NULL)
             ret = MEMORY_E;
-        if (ret == 0) {
-            XMEMCPY(*attribute, data, dataLen);
-            *attributeLen = dataLen;
-        }
+        else
+            XMEMCPY(newData, data, dataLen);
+    }
+    if (ret == 0) {
+        XFREE(*attribute, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        *attribute = newData;
+        *attributeLen = (newData != NULL) ? dataLen : 0;
     }
 
     return ret;
