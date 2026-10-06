@@ -276,6 +276,55 @@ static void test_copy_only_attrs_read_only(CK_SESSION_HANDLE session)
     destroy_obj(session, &obj);
 }
 
+#ifndef NO_AES
+/* CKA_ALWAYS_SENSITIVE and CKA_NEVER_EXTRACTABLE are derived by the token and
+ * cannot be supplied when a key is created or generated. */
+static void test_derived_attrs_not_settable_at_create(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE keyType = CKK_AES;
+    CK_ULONG keyLen = 16;
+    CK_MECHANISM mech = { CKM_AES_KEY_GEN, NULL, 0 };
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    byte keyData[16];
+    CK_ATTRIBUTE createTmpl[] = {
+        { CKA_CLASS,    &keyClass, sizeof(keyClass) },
+        { CKA_KEY_TYPE, &keyType,  sizeof(keyType)  },
+        { CKA_TOKEN,    &ckFalse,  sizeof(ckFalse)  },
+        { CKA_PRIVATE,  &ckFalse,  sizeof(ckFalse)  },
+        { CKA_VALUE,    keyData,   sizeof(keyData)  },
+        { CKA_ALWAYS_SENSITIVE, &ckTrue, sizeof(ckTrue) },
+    };
+    CK_ULONG createCnt = sizeof(createTmpl) / sizeof(*createTmpl);
+    CK_ATTRIBUTE genTmpl[] = {
+        { CKA_TOKEN,     &ckFalse, sizeof(ckFalse) },
+        { CKA_PRIVATE,   &ckFalse, sizeof(ckFalse) },
+        { CKA_VALUE_LEN, &keyLen,  sizeof(keyLen)  },
+        { CKA_NEVER_EXTRACTABLE, &ckTrue, sizeof(ckTrue) },
+    };
+    CK_ULONG genCnt = sizeof(genTmpl) / sizeof(*genTmpl);
+
+    XMEMSET(keyData, 0x5a, sizeof(keyData));
+
+    rv = funcList->C_CreateObject(session, createTmpl, createCnt, &key);
+    CHECK_RV(rv, "create key with CKA_ALWAYS_SENSITIVE",
+             CKR_ATTRIBUTE_READ_ONLY);
+    destroy_obj(session, &key);
+
+    createTmpl[createCnt - 1].type = CKA_NEVER_EXTRACTABLE;
+    rv = funcList->C_CreateObject(session, createTmpl, createCnt, &key);
+    CHECK_RV(rv, "create key with CKA_NEVER_EXTRACTABLE",
+             CKR_ATTRIBUTE_READ_ONLY);
+    destroy_obj(session, &key);
+
+    rv = funcList->C_GenerateKey(session, &mech, genTmpl, genCnt, &key);
+    CHECK_RV(rv, "generate key with CKA_NEVER_EXTRACTABLE",
+             CKR_ATTRIBUTE_READ_ONLY);
+    destroy_obj(session, &key);
+}
+#endif
+
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
     defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
     !defined(NO_RSA) && !defined(NO_AES) && \
@@ -396,6 +445,9 @@ static int run_test(void)
         test_get_attr_count_range(session);
         test_find_objects_large_max(session);
         test_copy_only_attrs_read_only(session);
+#ifndef NO_AES
+        test_derived_attrs_not_settable_at_create(session);
+#endif
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
     defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
     !defined(NO_RSA) && !defined(NO_AES) && \
