@@ -257,7 +257,7 @@ int main(int argc, char* argv[])
     (void)argc;
     (void)argv;
     printf("NSS build with a token store not configured, skipping test\n");
-    return 0;
+    return 77;
 }
 
 #endif
