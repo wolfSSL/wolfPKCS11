@@ -3210,6 +3210,11 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 WP11_Session_AbortOp(session);
                 return CKR_DATA_LEN_RANGE;
             }
+            if ((ulDataLen % AES_BLOCK_SIZE) != 0) {
+                WP11_AesCbc_EncryptFinal(session);
+                WP11_Session_SetOpInitialized(session, 0);
+                return CKR_DATA_LEN_RANGE;
+            }
 
             encDataLen = (word32)ulDataLen;
             if (pEncryptedData == NULL) {
@@ -3334,6 +3339,10 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_ECB_ENC))
                 return CKR_OPERATION_NOT_INITIALIZED;
             if (!CK_ULONG_FITS_WORD32(ulDataLen)) {
+                WP11_Session_AbortOp(session);
+                return CKR_DATA_LEN_RANGE;
+            }
+            if ((ulDataLen % AES_BLOCK_SIZE) != 0) {
                 WP11_Session_AbortOp(session);
                 return CKR_DATA_LEN_RANGE;
             }
@@ -4301,6 +4310,11 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 WP11_Session_AbortOp(session);
                 return CKR_DATA_LEN_RANGE;
             }
+            if ((ulEncryptedDataLen % AES_BLOCK_SIZE) != 0) {
+                WP11_AesCbc_DecryptFinal(session);
+                WP11_Session_SetOpInitialized(session, 0);
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
+            }
 
             decDataLen = (word32)ulEncryptedDataLen;
             if (pData == NULL) {
@@ -4438,6 +4452,10 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
             if (!CK_ULONG_FITS_WORD32(ulEncryptedDataLen)) {
                 WP11_Session_AbortOp(session);
                 return CKR_DATA_LEN_RANGE;
+            }
+            if ((ulEncryptedDataLen % AES_BLOCK_SIZE) != 0) {
+                WP11_Session_AbortOp(session);
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
             }
 
             decDataLen = (word32)ulEncryptedDataLen;
