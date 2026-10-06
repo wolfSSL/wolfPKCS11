@@ -356,6 +356,77 @@ static void test_ctr_decrypt_size_query(CK_SESSION_HANDLE session)
 }
 #endif
 
+#if !defined(NO_AES) && (defined(HAVE_AES_CBC) || defined(HAVE_AESECB))
+/* Unpadded block modes reject data that is not a whole number of blocks with
+ * the PKCS#11 length-range codes, and the failed call ends the operation. */
+static void check_block_alignment(CK_SESSION_HANDLE session,
+                                  CK_OBJECT_HANDLE key, CK_MECHANISM* mech)
+{
+    CK_RV rv;
+    byte data[32];
+    byte out[32];
+    CK_ULONG outLen;
+
+    XMEMSET(data, 0x5A, sizeof(data));
+
+    rv = funcList->C_EncryptInit(session, mech, key);
+    CHECK_RV(rv, "block align: C_EncryptInit", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    outLen = sizeof(out);
+    rv = funcList->C_Encrypt(session, data, 17, out, &outLen);
+    CHECK_RV(rv, "block align: C_Encrypt of 17 bytes", CKR_DATA_LEN_RANGE);
+    outLen = sizeof(out);
+    rv = funcList->C_Encrypt(session, data, 16, out, &outLen);
+    CHECK_RV(rv, "block align: encrypt operation ended after length error",
+             CKR_OPERATION_NOT_INITIALIZED);
+
+    rv = funcList->C_DecryptInit(session, mech, key);
+    CHECK_RV(rv, "block align: C_DecryptInit", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    outLen = sizeof(out);
+    rv = funcList->C_Decrypt(session, data, 15, out, &outLen);
+    CHECK_RV(rv, "block align: C_Decrypt of 15 bytes",
+             CKR_ENCRYPTED_DATA_LEN_RANGE);
+    outLen = sizeof(out);
+    rv = funcList->C_Decrypt(session, data, 16, out, &outLen);
+    CHECK_RV(rv, "block align: decrypt operation ended after length error",
+             CKR_OPERATION_NOT_INITIALIZED);
+}
+
+static void test_block_mode_alignment(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_MECHANISM mech;
+#ifdef HAVE_AES_CBC
+    byte iv[16];
+#endif
+
+    rv = create_aes_key(session, aes_128_key, sizeof(aes_128_key), &key);
+    CHECK_RV(rv, "block align: create AES key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+#ifdef HAVE_AES_CBC
+    XMEMSET(iv, 0x12, sizeof(iv));
+    mech.mechanism = CKM_AES_CBC;
+    mech.pParameter = iv;
+    mech.ulParameterLen = sizeof(iv);
+    printf("AES-CBC\n");
+    check_block_alignment(session, key, &mech);
+#endif
+#ifdef HAVE_AESECB
+    mech.mechanism = CKM_AES_ECB;
+    mech.pParameter = NULL;
+    mech.ulParameterLen = 0;
+    printf("AES-ECB\n");
+    check_block_alignment(session, key, &mech);
+#endif
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -380,6 +451,9 @@ static int run_test(void)
 #endif
 #if !defined(NO_AES) && defined(HAVE_AESCTR)
         test_ctr_decrypt_size_query(session);
+#endif
+#if !defined(NO_AES) && (defined(HAVE_AES_CBC) || defined(HAVE_AESECB))
+        test_block_mode_alignment(session);
 #endif
     }
 
