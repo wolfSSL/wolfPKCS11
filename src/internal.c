@@ -9057,6 +9057,8 @@ static void wp11_Slot_Logout(WP11_Slot* slot)
     WP11_Object* object;
 #endif
 
+    /* Object state is guarded by the token lock. */
+    WP11_Lock_LockRW(&slot->token.lock);
 #ifndef WOLFPKCS11_NO_STORE
     state = slot->token.loginState;
     if (state == WP11_APP_STATE_RO_USER || state == WP11_APP_STATE_RW_USER) {
@@ -9076,6 +9078,7 @@ static void wp11_Slot_Logout(WP11_Slot* slot)
     }
 #endif
     slot->token.loginState = WP11_APP_STATE_RW_PUBLIC;
+    WP11_Lock_UnlockRW(&slot->token.lock);
 }
 
 /**
@@ -10589,7 +10592,7 @@ int WP11_Session_FindInit(WP11_Session* session)
  * @return  The next object in session or token.
  */
 static WP11_Object* wp11_Session_FindNext(WP11_Session* session, int onToken,
-                                          WP11_Object* object)
+                                          WP11_Object* object, int userLoggedIn)
 {
     WP11_Object* ret = NULL;
 
@@ -10626,13 +10629,13 @@ static WP11_Object* wp11_Session_FindNext(WP11_Session* session, int onToken,
          * mode, which operates as the internal crypto module without calling
          * C_Login and enumerates private keys (e.g. certutil) from a public
          * session - matching the by-handle WP11_Object_Find check below. */
-        if ((ret->opFlag & WP11_FLAG_PRIVATE) == WP11_FLAG_PRIVATE) {
-            if (!wp11_LoginStateIsUser(
-                    session->slot->token.loginState)) {
-                object = ret;
-                ret = NULL;
-            }
+        if ((ret->opFlag & WP11_FLAG_PRIVATE) == WP11_FLAG_PRIVATE &&
+                !userLoggedIn) {
+            object = ret;
+            ret = NULL;
         }
+#else
+        (void)userLoggedIn;
 #endif
     }
 
@@ -10672,6 +10675,20 @@ static int wp11_Session_FindMatched(WP11_Session* session, WP11_Object* object)
     return ret;
 }
 
+#ifdef DEBUG_WOLFPKCS11
+static void (*wp11_findHook)(void) = NULL;
+
+/**
+ * Test hook: called by WP11_Session_Find once it has read the login state.
+ *
+ * @param  hook  [in]  Function to call, or NULL to remove the hook.
+ */
+WP11_API void WP11_Session_SetFindHook(void (*hook)(void))
+{
+    wp11_findHook = hook;
+}
+#endif
+
 /**
  * Find objects on session or token with attributes matching template.
  *
@@ -10686,12 +10703,21 @@ int WP11_Session_Find(WP11_Session* session, int onToken,
     WP11_Object* obj = NULL;
     int ret = 0;
     int i;
+    int userLoggedIn;
     CK_ATTRIBUTE* attr;
+
+    /* Slot then token lock, held across the walk so logout cannot race it. */
+    WP11_Lock_LockRO(&session->slot->lock);
+    userLoggedIn = wp11_LoginStateIsUser(session->slot->token.loginState);
+#ifdef DEBUG_WOLFPKCS11
+    if (wp11_findHook != NULL)
+        wp11_findHook();
+#endif
 
     /* Session object lists change under the token lock too. */
     WP11_Lock_LockRO(&session->slot->token.lock);
-    while (ret == 0 &&
-           (obj = wp11_Session_FindNext(session, onToken, obj)) != NULL) {
+    while (ret == 0 && (obj = wp11_Session_FindNext(session, onToken, obj,
+                                                    userLoggedIn)) != NULL) {
         for (i = 0; i < (int)ulCount; i++) {
             attr = &pTemplate[i];
             if (!WP11_Object_MatchAttr(obj, attr->type, (byte*)attr->pValue,
@@ -10704,6 +10730,7 @@ int WP11_Session_Find(WP11_Session* session, int onToken,
             ret = wp11_Session_FindMatched(session, obj);
     }
     WP11_Lock_UnlockRO(&session->slot->token.lock);
+    WP11_Lock_UnlockRO(&session->slot->lock);
 
     return ret;
 }

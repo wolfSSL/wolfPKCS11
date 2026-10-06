@@ -50,6 +50,7 @@
 
 #ifndef SINGLE_THREADED
 #include <pthread.h>
+#include <unistd.h>
 #endif
 
 #define TEST_DIR "./store/login_pin_state_test"
@@ -807,6 +808,236 @@ static void find_during_object_churn_test(void)
 }
 #endif
 
+#if !defined(SINGLE_THREADED) && !defined(WOLFPKCS11_NO_STORE) && \
+    !defined(NO_AES)
+#define FIND_LOGIN_ROUNDS 3
+
+static pthread_mutex_t findMutex = PTHREAD_MUTEX_INITIALIZER;
+static int findStop = 0;
+
+typedef struct find_ctx {
+    CK_SESSION_HANDLE session;
+    CK_RV rv;
+} find_ctx;
+
+static int find_should_stop(void)
+{
+    int stop;
+
+    pthread_mutex_lock(&findMutex);
+    stop = findStop;
+    pthread_mutex_unlock(&findMutex);
+    return stop;
+}
+
+static void find_set_stop(int stop)
+{
+    pthread_mutex_lock(&findMutex);
+    findStop = stop;
+    pthread_mutex_unlock(&findMutex);
+}
+
+static void* find_loop(void* arg)
+{
+    find_ctx* ctx = (find_ctx*)arg;
+    CK_OBJECT_HANDLE found[8];
+    CK_ULONG cnt;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS, &secretClass, sizeof(secretClass) },
+    };
+
+    while (ctx->rv == CKR_OK && !find_should_stop()) {
+        ctx->rv = funcList->C_FindObjectsInit(ctx->session, tmpl, 1);
+        if (ctx->rv == CKR_OK) {
+            ctx->rv = funcList->C_FindObjects(ctx->session, found, 8, &cnt);
+            funcList->C_FindObjectsFinal(ctx->session);
+        }
+    }
+    return NULL;
+}
+
+/* Finding objects stays well behaved while the user logs in and out, and
+ * private objects are not listed once logged out. */
+static void find_during_login_changes_test(void)
+{
+    CK_RV rv;
+    int i;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_SESSION_HANDLE findSession = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE found[8];
+    CK_ULONG cnt = 0;
+    pthread_t thread;
+    find_ctx ctx;
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &aesType,     sizeof(aesType)     },
+        { CKA_VALUE,    aesValue,     sizeof(aesValue)    },
+        { CKA_TOKEN,    &ckTrue,      sizeof(ckTrue)      },
+        { CKA_PRIVATE,  &ckTrue,      sizeof(ckTrue)      },
+    };
+    CK_ATTRIBUTE findTmpl[] = {
+        { CKA_CLASS, &secretClass, sizeof(secretClass) },
+    };
+
+    printf("--- find objects while logging in and out ---\n");
+    rv = token_setup(&slot, userPin);
+    if (rv == CKR_OK)
+        rv = open_rw(slot, &session);
+    if (rv == CKR_OK)
+        rv = open_rw(slot, &findSession);
+    if (rv == CKR_OK)
+        rv = user_login(session, userPin);
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, keyTmpl,
+                sizeof(keyTmpl) / sizeof(*keyTmpl), &obj);
+    }
+    CHECK_RV(rv, "create private token key", CKR_OK);
+    if (rv != CKR_OK) {
+        funcList->C_Finalize(NULL);
+        return;
+    }
+
+    ctx.session = findSession;
+    ctx.rv = CKR_OK;
+    find_set_stop(0);
+    if (pthread_create(&thread, NULL, find_loop, &ctx) != 0) {
+        CHECK_TRUE(0, "create find thread");
+        funcList->C_Finalize(NULL);
+        return;
+    }
+    for (i = 0; rv == CKR_OK && i < FIND_LOGIN_ROUNDS; i++) {
+        rv = funcList->C_Logout(session);
+        if (rv == CKR_OK)
+            rv = user_login(session, userPin);
+    }
+    if (rv == CKR_OK)
+        rv = funcList->C_Logout(session);
+    find_set_stop(1);
+    pthread_join(thread, NULL);
+    CHECK_RV(rv, "log in and out while finding", CKR_OK);
+    CHECK_RV(ctx.rv, "find objects concurrently", CKR_OK);
+
+    rv = funcList->C_FindObjectsInit(findSession, findTmpl, 1);
+    if (rv == CKR_OK) {
+        rv = funcList->C_FindObjects(findSession, found, 8, &cnt);
+        funcList->C_FindObjectsFinal(findSession);
+    }
+    CHECK_TRUE(rv == CKR_OK && cnt == 0,
+               "private object not listed after logout");
+    funcList->C_Finalize(NULL);
+}
+#endif
+
+#if defined(DEBUG_WOLFPKCS11) && !defined(SINGLE_THREADED) && \
+    !defined(WOLFPKCS11_NO_STORE) && !defined(WOLFPKCS11_NSS)
+#define FIND_HOOK_WAIT_MS 200
+
+static pthread_mutex_t hookMutex = PTHREAD_MUTEX_INITIALIZER;
+static CK_SESSION_HANDLE hookSession = CK_INVALID_HANDLE;
+static pthread_t hookThread;
+static int hookStarted = 0;
+static int hookLogoutDone = 0;
+static int hookLogoutBeforeWalk = 0;
+
+static int hook_logout_done(void)
+{
+    int done;
+
+    pthread_mutex_lock(&hookMutex);
+    done = hookLogoutDone;
+    pthread_mutex_unlock(&hookMutex);
+    return done;
+}
+
+static void* hook_logout(void* arg)
+{
+    (void)arg;
+    (void)funcList->C_Logout(hookSession);
+    pthread_mutex_lock(&hookMutex);
+    hookLogoutDone = 1;
+    pthread_mutex_unlock(&hookMutex);
+    return NULL;
+}
+
+/* Runs in C_FindObjectsInit between the login state read and the walk. */
+static void find_hook_logout(void)
+{
+    int i;
+
+    if (hookStarted)
+        return;
+    hookStarted = (pthread_create(&hookThread, NULL, hook_logout, NULL) == 0);
+    for (i = 0; hookStarted && i < FIND_HOOK_WAIT_MS && !hook_logout_done();
+            i++) {
+        usleep(1000);
+    }
+    hookLogoutBeforeWalk = hook_logout_done();
+}
+
+/* A logout racing a find must not let the walk list private objects. */
+static void find_with_racing_logout_test(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_SESSION_HANDLE findSession = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE found[4];
+    CK_ULONG cnt = 0;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    CK_BBOOL isTrue = CK_TRUE;
+    static byte privData[] = "private data value";
+    CK_ATTRIBUTE dataTmpl[] = {
+        { CKA_CLASS,   &dataClass, sizeof(dataClass)    },
+        { CKA_TOKEN,   &isTrue,    sizeof(isTrue)       },
+        { CKA_PRIVATE, &isTrue,    sizeof(isTrue)       },
+        { CKA_VALUE,   privData,   sizeof(privData) - 1 },
+    };
+    CK_ATTRIBUTE findTmpl[] = {
+        { CKA_CLASS, &dataClass, sizeof(dataClass) },
+    };
+
+    printf("--- find with a logout racing the object walk ---\n");
+    rv = token_setup(&slot, userPin);
+    if (rv == CKR_OK)
+        rv = open_rw(slot, &session);
+    if (rv == CKR_OK)
+        rv = open_rw(slot, &findSession);
+    if (rv == CKR_OK)
+        rv = user_login(session, userPin);
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, dataTmpl,
+                sizeof(dataTmpl) / sizeof(*dataTmpl), &obj);
+    }
+    CHECK_RV(rv, "create private token data object", CKR_OK);
+    if (rv == CKR_OK) {
+        hookSession = session;
+        hookStarted = 0;
+        hookLogoutBeforeWalk = 0;
+        pthread_mutex_lock(&hookMutex);
+        hookLogoutDone = 0;
+        pthread_mutex_unlock(&hookMutex);
+        WP11_Session_SetFindHook(find_hook_logout);
+        rv = funcList->C_FindObjectsInit(findSession, findTmpl, 1);
+        WP11_Session_SetFindHook(NULL);
+        if (hookStarted)
+            pthread_join(hookThread, NULL);
+        if (rv == CKR_OK) {
+            rv = funcList->C_FindObjects(findSession, found, 4, &cnt);
+            funcList->C_FindObjectsFinal(findSession);
+        }
+        CHECK_RV(rv, "find objects with a racing logout", CKR_OK);
+        CHECK_TRUE(hookStarted && hook_logout_done(), "racing logout ran");
+        CHECK_TRUE(!(hookLogoutBeforeWalk && cnt > 0),
+                   "walk after logout lists no private object");
+    }
+    funcList->C_Finalize(NULL);
+    cleanup_test_files();
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -830,6 +1061,14 @@ static int run_test(void)
 #endif
 #ifndef SINGLE_THREADED
     find_during_object_churn_test();
+#endif
+#if !defined(SINGLE_THREADED) && !defined(WOLFPKCS11_NO_STORE) && \
+    !defined(NO_AES)
+    find_during_login_changes_test();
+#endif
+#if defined(DEBUG_WOLFPKCS11) && !defined(SINGLE_THREADED) && \
+    !defined(WOLFPKCS11_NO_STORE) && !defined(WOLFPKCS11_NSS)
+    find_with_racing_logout_test();
 #endif
 #if defined(LOGIN_TEST_FILE_STORE) && defined(HAVE_ECC)
     logout_protects_all_objects_test();
