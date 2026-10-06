@@ -9846,7 +9846,9 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                 sizeof(CK_TLS12_KEY_MAT_PARAMS))
                 return CKR_MECHANISM_PARAM_INVALID;
             tlsParams = (CK_TLS12_KEY_MAT_PARAMS*) pMechanism->pParameter;
-            if (tlsParams->pReturnedKeyMaterial == NULL)
+            if (tlsParams->pReturnedKeyMaterial == NULL ||
+                tlsParams->RandomInfo.pClientRandom == NULL ||
+                tlsParams->RandomInfo.pServerRandom == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
 
             {
@@ -9960,7 +9962,8 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                 return CKR_MECHANISM_PARAM_INVALID;
             nssParams = (CK_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_PARAMS*)
                 pMechanism->pParameter;
-            if (!CK_ULONG_FITS_WORD32(nssParams->ulSessionHashLen))
+            if (nssParams->pSessionHash == NULL ||
+                !CK_ULONG_FITS_WORD32(nssParams->ulSessionHashLen))
                 return CKR_MECHANISM_PARAM_INVALID;
 
             keyLen = PRF_KEY_SIZE;
