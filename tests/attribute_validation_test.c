@@ -181,6 +181,39 @@ static void test_get_attr_count_range(CK_SESSION_HANDLE session)
     destroy_obj(session, &obj);
 }
 
+/* A large result array returns the matching objects rather than none. */
+static void test_find_objects_large_max(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE found = CK_INVALID_HANDLE;
+    CK_ULONG count = 0;
+    CK_ATTRIBUTE findTmpl[] = {
+        { CKA_CLASS, &dataClass,       sizeof(dataClass)     },
+        { CKA_TOKEN, &ckFalse,         sizeof(ckFalse)       },
+        { CKA_LABEL, (void*)dataLabel, sizeof(dataLabel) - 1 },
+    };
+
+    rv = create_data_object(session, &obj);
+    CHECK_RV(rv, "create data object", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_FindObjectsInit(session, findTmpl,
+                                     sizeof(findTmpl) / sizeof(*findTmpl));
+    CHECK_RV(rv, "find init", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_FindObjects(session, &found, (CK_ULONG)INT_MAX + 1,
+                                     &count);
+        CHECK_RV(rv, "find with large maximum", CKR_OK);
+        CHECK_TRUE(count == 1 && found == obj,
+                   "find with large maximum returns the object");
+        funcList->C_FindObjectsFinal(session);
+    }
+
+    destroy_obj(session, &obj);
+}
+
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
     defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
     !defined(NO_RSA) && !defined(NO_AES) && \
@@ -300,6 +333,7 @@ static int run_test(void)
         test_token_attr_is_bool(session);
         test_set_attr_count_range(session);
         test_get_attr_count_range(session);
+        test_find_objects_large_max(session);
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
     defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
     !defined(NO_RSA) && !defined(NO_AES) && \
