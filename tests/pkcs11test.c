@@ -13061,7 +13061,7 @@ static CK_RV test_aes_cmac_one_shot(CK_SESSION_HANDLE session,
         unsigned char* exp, int expLen, CK_OBJECT_HANDLE key)
 {
     CK_RV  ret = CKR_OK;
-    byte   data[72], out[8];
+    byte   data[72], out[16];
     CK_ULONG dataSz, outSz;
     CK_MECHANISM mech;
 
@@ -13081,7 +13081,7 @@ static CK_RV test_aes_cmac_one_shot(CK_SESSION_HANDLE session,
         CHECK_CKR(ret, "AES-CMAC Sign no out");
     }
     if (ret == CKR_OK) {
-        CHECK_COND(outSz == 8, ret, "AES-CMAC Sign out size");
+        CHECK_COND(outSz == 16, ret, "AES-CMAC Sign out size");
     }
     if (ret == CKR_OK) {
         outSz = 0;
@@ -13129,7 +13129,7 @@ static CK_RV test_aes_cmac_update(CK_SESSION_HANDLE session, unsigned char* exp,
         int expLen, CK_OBJECT_HANDLE key)
 {
     CK_RV  ret = CKR_OK;
-    byte   data[72], out[8];
+    byte   data[72], out[16];
     CK_ULONG dataSz, outSz;
     CK_MECHANISM mech;
     int i;
@@ -13156,7 +13156,7 @@ static CK_RV test_aes_cmac_update(CK_SESSION_HANDLE session, unsigned char* exp,
         CHECK_CKR(ret, "AES-CMAC Sign Final no out");
     }
     if (ret == CKR_OK) {
-        CHECK_COND(outSz == 8, ret, "AES-CMAC Sign Final out size");
+        CHECK_COND(outSz == 16, ret, "AES-CMAC Sign Final out size");
     }
     if (ret == CKR_OK) {
         outSz = sizeof(out);
@@ -13220,7 +13220,8 @@ static CK_RV test_aes_cmac(void* args)
     CK_RV ret;
     CK_OBJECT_HANDLE key;
     static unsigned char exp[] = {
-        0x81, 0x4f, 0x6c, 0xe5, 0x04, 0x97, 0xf9, 0x26
+        0x81, 0x4f, 0x6c, 0xe5, 0x04, 0x97, 0xf9, 0x26,
+        0x9b, 0x5b, 0xa0, 0x87, 0xe4, 0x64, 0xf4, 0xf9
     };
 
     ret = get_aes_128_key(session, NULL, 0, &key);
