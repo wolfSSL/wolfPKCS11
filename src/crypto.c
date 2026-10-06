@@ -5642,6 +5642,7 @@ static CK_RV wp11_C_SignInit(CK_SESSION_HANDLE hSession,
     init = GetInitValue(pMechanism->mechanism);
     switch (pMechanism->mechanism) {
 #ifndef NO_RSA
+    #ifdef WC_RSA_DIRECT
         case CKM_RSA_X_509:
             if (type != CKK_RSA)
                 return CKR_KEY_TYPE_INCONSISTENT;
@@ -5651,6 +5652,7 @@ static CK_RV wp11_C_SignInit(CK_SESSION_HANDLE hSession,
             }
             init = WP11_INIT_RSA_X_509_SIGN;
             break;
+    #endif
     #ifndef NO_SHA
         case CKM_SHA1_RSA_PKCS:
     #endif
@@ -6824,6 +6826,7 @@ static CK_RV wp11_C_VerifyInit(CK_SESSION_HANDLE hSession,
     init = GetInitValue(pMechanism->mechanism);
     switch (pMechanism->mechanism) {
 #ifndef NO_RSA
+    #ifdef WC_RSA_DIRECT
         case CKM_RSA_X_509:
             if (type != CKK_RSA)
                 return CKR_KEY_TYPE_INCONSISTENT;
@@ -6833,6 +6836,7 @@ static CK_RV wp11_C_VerifyInit(CK_SESSION_HANDLE hSession,
             }
             init = WP11_INIT_RSA_X_509_VERIFY;
             break;
+    #endif
     #ifndef NO_SHA
         case CKM_SHA1_RSA_PKCS:
     #endif
@@ -7834,9 +7838,11 @@ static CK_RV wp11_C_VerifyRecoverInit(CK_SESSION_HANDLE hSession,
         case CKM_RSA_PKCS:
             init = WP11_INIT_RSA_PKCS_VERIFY_RECOVER;
             break;
+#if !defined(NO_RSA) && defined(WC_RSA_DIRECT)
         case CKM_RSA_X_509:
             init = WP11_INIT_RSA_X_509_VERIFY_RECOVER;
             break;
+#endif
         default:
             return CKR_MECHANISM_INVALID;
     }
