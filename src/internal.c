@@ -8834,6 +8834,10 @@ int WP11_Library_Init(void)
 {
     int ret = 0;
     int i;
+    int lockInit = 0;
+    int cryptInit = 0;
+    int rngInit = 0;
+    int slotInitCnt = 0;
 
 #ifdef WP11_HAVE_LIBRARY_INIT_LOCK
     /* Serialize the entire init sequence: both the libraryInitCount==0
@@ -8847,8 +8851,10 @@ int WP11_Library_Init(void)
     if (libraryInitCount == 0) {
         ret = WP11_Lock_Init(&globalLock);
         if (ret == 0) {
-
+            lockInit = 1;
             ret = wolfCrypt_Init();
+            if (ret == 0)
+                cryptInit = 1;
 #ifdef WC_RNG_SEED_CB
             if (ret == 0) {
                 ret = wc_SetSeed_Cb(wc_GenerateSeed);
@@ -8865,17 +8871,33 @@ int WP11_Library_Init(void)
 #else
                 ret = wc_InitRng(&globalRandom);
 #endif
+                if (ret == 0)
+                    rngInit = 1;
             }
 
         }
         for (i = 0; (ret == 0) && (i < slotCnt); i++) {
             ret = wp11_Slot_Init(&slotList[i], i + 1);
+            if (ret == 0)
+                slotInitCnt++;
         }
 #ifndef WOLFPKCS11_NO_STORE
         for (i = 0; (ret == 0) && (i < slotCnt); i++) {
             ret = wp11_Slot_Load(&slotList[i], i + 1);
         }
 #endif
+        if (ret != 0) {
+            /* Undo partial initialization so a retry starts clean. */
+            for (i = 0; i < slotInitCnt; i++)
+                wp11_Slot_Final(&slotList[i]);
+            if (rngInit)
+                wc_FreeRng(&globalRandom);
+            if (cryptInit)
+                wolfCrypt_Cleanup();
+            if (lockInit) {
+                WP11_Lock_Free(&globalLock);
+            }
+        }
     }
     if (ret == 0) {
         WP11_Lock_LockRW(&globalLock);

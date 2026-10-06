@@ -231,6 +231,21 @@ static long read_store_file(const char* path, byte* buf, size_t bufSz)
     return len;
 }
 
+/* Replace a stored file with len bytes from buf. */
+static int write_store_file(const char* path, const byte* buf, size_t len)
+{
+    FILE* f;
+    size_t written;
+
+    f = fopen(path, "wb");
+    if (f == NULL)
+        return -1;
+    written = fwrite(buf, 1, len, f);
+    if (fclose(f) != 0 || written != len)
+        return -1;
+    return 0;
+}
+
 /* Reload the token from storage and open a user session on it. */
 static CK_RV reload(CK_SLOT_ID slot, CK_SESSION_HANDLE* session)
 {
@@ -544,6 +559,63 @@ static void test_finalize_reports_store_failure(void)
     funcList->C_Finalize(NULL);
 }
 
+/* The library initializes once an unreadable token record is repaired. */
+static void test_init_retry_after_load_failure(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    char tokenPath[512];
+    byte record[1024];
+    long recordLen = -1;
+
+    printf("\n--- library initializes after a failed initialization ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "retry-keep", &obj);
+        CHECK_RV(rv, "create token object", CKR_OK);
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+
+    if (rv == CKR_OK) {
+        snprintf(tokenPath, sizeof(tokenPath), "%s/wp11_token_%016lx",
+                 TEST_DIR, (unsigned long)slot);
+        recordLen = read_store_file(tokenPath, record, sizeof(record));
+        CHECK_TRUE(recordLen > 0 && recordLen < (long)sizeof(record),
+                   "token record is stored");
+    }
+    if (recordLen > 0) {
+        CHECK_TRUE(write_store_file(tokenPath, record, 4) == 0,
+                   "truncate the token record");
+        rv = lib_init();
+        CHECK_TRUE(rv != CKR_OK, "initialize fails on a truncated record");
+        if (rv == CKR_OK)
+            funcList->C_Finalize(NULL);
+        rv = write_store_file(tokenPath, record, (size_t)recordLen) == 0 ?
+             CKR_OK : CKR_GENERAL_ERROR;
+        if (rv == CKR_OK)
+            rv = lib_init();
+        CHECK_RV(rv, "initialize succeeds once the record is restored",
+                 CKR_OK);
+        if (rv == CKR_OK) {
+            rv = user_session(slot, &session);
+            CHECK_RV(rv, "user logs in after the retry", CKR_OK);
+        }
+        if (rv == CKR_OK) {
+            CHECK_TRUE(count_label(session, "retry-keep") == 1,
+                       "stored object is loaded after the retry");
+        }
+        close_session(session);
+        funcList->C_Finalize(NULL);
+    }
+}
+
 static int run_tests(void)
 {
     CK_RV rv;
@@ -560,6 +632,7 @@ static int run_tests(void)
     test_init_pin_store_failure();
     test_token_reset_store_failure();
     test_finalize_reports_store_failure();
+    test_init_retry_after_load_failure();
 
     clear_store_dir();
     pkcs11_unload();
