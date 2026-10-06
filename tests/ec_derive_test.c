@@ -43,6 +43,12 @@
 #include <dlfcn.h>
 #endif
 
+#if defined(HAVE_ECC) && !defined(WOLFPKCS11_NO_STORE) && !defined(_WIN32)
+    #define EC_DERIVE_PERSIST_TEST
+    #include <unistd.h>
+    #include <sys/wait.h>
+#endif
+
 #include "testdata.h"
 
 #if defined(HAVE_ECC) && !defined(SINGLE_THREADED) && \
@@ -749,6 +755,145 @@ cleanup:
     return result;
 }
 
+#ifdef EC_DERIVE_PERSIST_TEST
+static const char persistLabel[] = "ec-derive-persist";
+
+static CK_RV open_user_session(CK_SESSION_HANDLE* session)
+{
+    CK_RV ret;
+
+    ret = pkcs11_init();
+    if (ret == CKR_OK) {
+        ret = funcList->C_OpenSession(slot,
+                CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL, NULL, session);
+    }
+    if (ret == CKR_OK)
+        ret = funcList->C_Login(*session, CKU_USER, userPin, userPinLen);
+    return ret;
+}
+
+/* Derive a sensitive, non-extractable token key from a generated base key. */
+static CK_RV derive_token_key(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    CK_MECHANISM genMech = { CKM_EC_KEY_PAIR_GEN, NULL, 0 };
+    CK_ECDH1_DERIVE_PARAMS params;
+    byte point[2 * 32 + 3];
+    CK_ATTRIBUTE pointAttr = { CKA_EC_POINT, point, sizeof(point) };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_EC_PARAMS,   ecc_p256_params, sizeof(ecc_p256_params) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_SENSITIVE,   &ckTrue,         sizeof(ckTrue)          },
+        { CKA_EXTRACTABLE, &ckFalse,        sizeof(ckFalse)         },
+        { CKA_DERIVE,      &ckTrue,         sizeof(ckTrue)          },
+    };
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass)  },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType)  },
+        { CKA_TOKEN,       &ckTrue,         sizeof(ckTrue)          },
+        { CKA_SENSITIVE,   &ckTrue,         sizeof(ckTrue)          },
+        { CKA_EXTRACTABLE, &ckFalse,        sizeof(ckFalse)         },
+        { CKA_VALUE_LEN,   &secretLen,      sizeof(secretLen)       },
+        { CKA_LABEL,       (void*)persistLabel, sizeof(persistLabel) - 1 },
+    };
+
+    ret = funcList->C_GenerateKeyPair(session, &genMech, pubTmpl,
+            sizeof(pubTmpl) / sizeof(*pubTmpl), privTmpl,
+            sizeof(privTmpl) / sizeof(*privTmpl), &pub, &priv);
+    if (ret == CKR_OK)
+        ret = funcList->C_GetAttributeValue(session, pub, &pointAttr, 1);
+    if (ret == CKR_OK) {
+        ecdh_params_init(&params, point, pointAttr.ulValueLen);
+        ret = ecdh_derive_tmpl(session, priv, &params, tmpl,
+                               sizeof(tmpl) / sizeof(*tmpl), &derived);
+    }
+    return ret;
+}
+
+/* Historical protection flags of a derived token key survive a reload even
+ * when the process ends without C_Finalize. */
+static int test_token_derive_states_persist(void)
+{
+    CK_RV ret;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_ULONG found = 0;
+    CK_BBOOL alwaysSensitive = CK_FALSE;
+    CK_BBOOL neverExtractable = CK_FALSE;
+    CK_ATTRIBUTE findTmpl[] = {
+        { CKA_TOKEN, &ckTrue,             sizeof(ckTrue)           },
+        { CKA_LABEL, (void*)persistLabel, sizeof(persistLabel) - 1 },
+    };
+    CK_ATTRIBUTE stateTmpl[] = {
+        { CKA_ALWAYS_SENSITIVE,  &alwaysSensitive,  sizeof(CK_BBOOL) },
+        { CKA_NEVER_EXTRACTABLE, &neverExtractable, sizeof(CK_BBOOL) },
+    };
+    pid_t pid;
+    int status = 0;
+    int result = 0;
+
+    printf("\n=== Testing derived token key state persistence ===\n");
+
+    pid = fork();
+    if (pid == 0) {
+        /* Exit without C_Finalize so only stores made by the derive count. */
+        ret = open_user_session(&session);
+        if (ret == CKR_OK)
+            ret = derive_token_key(session);
+        _exit(ret == CKR_OK ? 0 : 1);
+    }
+    if (pid < 0)
+        ret = CKR_GENERAL_ERROR;
+    else if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) ||
+             WEXITSTATUS(status) != 0)
+        ret = CKR_GENERAL_ERROR;
+    else
+        ret = CKR_OK;
+    CHECK_CKR(ret, "derive token key in child process");
+
+    ret = open_user_session(&session);
+    CHECK_CKR(ret, "reopen token");
+
+    ret = funcList->C_FindObjectsInit(session, findTmpl,
+                                      sizeof(findTmpl) / sizeof(*findTmpl));
+    CHECK_CKR(ret, "C_FindObjectsInit");
+    ret = funcList->C_FindObjects(session, &obj, 1, &found);
+    if (funcList->C_FindObjectsFinal(session) != CKR_OK && ret == CKR_OK)
+        ret = CKR_GENERAL_ERROR;
+    if (ret == CKR_OK && found != 1)
+        ret = CKR_GENERAL_ERROR;
+    CHECK_CKR(ret, "find derived token key");
+
+    ret = funcList->C_GetAttributeValue(session, obj, stateTmpl,
+                                        sizeof(stateTmpl) / sizeof(*stateTmpl));
+    CHECK_CKR(ret, "read derived key historical flags");
+    if (alwaysSensitive != CK_TRUE || neverExtractable != CK_TRUE) {
+        fprintf(stderr, "FAIL: reloaded derived key ALWAYS_SENSITIVE=%d "
+                "NEVER_EXTRACTABLE=%d, expected both TRUE\n",
+                (int)alwaysSensitive, (int)neverExtractable);
+        test_failed++;
+        result = -1;
+        goto cleanup;
+    }
+    printf("PASS: reloaded derived key keeps its historical flags\n");
+    test_passed++;
+
+cleanup:
+    if (obj != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, obj);
+    if (session != CK_INVALID_HANDLE) {
+        funcList->C_Logout(session);
+        funcList->C_CloseSession(session);
+    }
+    pkcs11_final();
+    return result;
+}
+#endif /* EC_DERIVE_PERSIST_TEST */
+
 static void print_results(void)
 {
     printf("\n=== Test Results ===\n");
@@ -772,6 +917,10 @@ int main(int argc, char* argv[])
 
     if (ec_derive_test() != 0 && test_failed == 0)
         test_failed++;
+#ifdef EC_DERIVE_PERSIST_TEST
+    if (test_token_derive_states_persist() != 0 && test_failed == 0)
+        test_failed++;
+#endif
 
     print_results();
 #ifndef HAVE_ECC
