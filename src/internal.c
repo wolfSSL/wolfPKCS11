@@ -11233,6 +11233,7 @@ int WP11_Session_SetCbcParams(WP11_Session* session, unsigned char* iv,
                               int enc, WP11_Object* object)
 {
     int ret;
+    int aesInit = 0;
     WP11_CbcParams* cbc = &session->params.cbc;
     WP11_Data* key;
 
@@ -11248,6 +11249,8 @@ int WP11_Session_SetCbcParams(WP11_Session* session, unsigned char* iv,
 
     /* AES object on session. */
     ret = wc_AesInit(&cbc->aes, NULL, object->devId);
+    if (ret == 0)
+        aesInit = 1;
 #ifdef WOLFSSL_STM32U5_DHUK
     if (ret == 0 && object->dhukIvLen > 0) {
         ret = wc_Stm32_Aes_SetDHUK_IV(&cbc->aes, object->dhukIv,
@@ -11263,6 +11266,9 @@ int WP11_Session_SetCbcParams(WP11_Session* session, unsigned char* iv,
         if (object->onToken)
             WP11_Lock_UnlockRO(object->lock);
     }
+
+    if (ret != 0 && aesInit)
+        wc_AesFree(&cbc->aes);
 
     return ret;
 }
@@ -11301,6 +11307,8 @@ int WP11_Session_SetCtrParams(WP11_Session* session, CK_ULONG ulCounterBits,
         ret = wc_AesSetKey(&ctr->aes, key->data, key->len, cb, AES_ENCRYPTION);
         if (object->onToken)
             WP11_Lock_UnlockRO(object->lock);
+        if (ret != 0)
+            wc_AesFree(&ctr->aes);
     }
     if (ret == 0) {
         XMEMCPY(ctr->counter, cb, sizeof(ctr->counter));
@@ -11330,6 +11338,8 @@ int WP11_Session_SetAesWrapParams(WP11_Session* session, byte* iv, word32 ivLen,
                 enc ? AES_ENCRYPTION : AES_DECRYPTION);
         if (object->onToken)
             WP11_Lock_UnlockRO(object->lock);
+        if (ret != 0)
+            wc_AesFree(&wrap->aes);
     }
     if (ret == 0) {
         if (iv != NULL)
@@ -11491,6 +11501,8 @@ int WP11_Session_SetCtsParams(WP11_Session* session, unsigned char* iv,
                                          enc ? AES_ENCRYPTION : AES_DECRYPTION);
         if (object->onToken)
             WP11_Lock_UnlockRO(object->lock);
+        if (ret != 0)
+            wc_AesFree(&cts->aes);
     }
 
     return ret;
@@ -19798,6 +19810,8 @@ int WP11_Hmac_Init(CK_MECHANISM_TYPE mechanism, WP11_Object* secret,
         ret = wc_HmacSetKey(&hmac->hmac, hashType, key->data, key->len);
         if (secret->onToken)
             WP11_Lock_UnlockRO(secret->lock);
+        if (ret != 0)
+            wc_HmacFree(&hmac->hmac);
     }
 
     return ret;

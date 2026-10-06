@@ -626,6 +626,74 @@ out:
 }
 #endif
 
+#if !defined(NO_AES) && defined(HAVE_AES_CBC)
+/* A key that the cipher rejects during setup must not leave a half-built
+ * context behind, and the session must stay usable. */
+static void test_failed_key_setup_keeps_session_usable(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE aesKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE macKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE oddKey = CK_INVALID_HANDLE;
+    byte oddValue[20];
+    byte iv[16] = { 0 };
+    CK_MECHANISM cbcMech = { CKM_AES_CBC, NULL, 0 };
+    byte out[32];
+    CK_ULONG outLen;
+    CK_SLOT_ID slot;
+#ifdef TRACK_ALLOCS
+    long before = 0;
+#endif
+
+    printf("\n--- a failed key setup leaves the session usable ---\n");
+    cbcMech.pParameter = iv;
+    cbcMech.ulParameterLen = sizeof(iv);
+    XMEMSET(oddValue, 0x5A, sizeof(oddValue));
+
+    rv = init_library(&slot);
+    CHECK_RV(rv, "initialize library", CKR_OK);
+    if (rv != CKR_OK)
+        goto out;
+#ifdef TRACK_ALLOCS
+    before = liveBlocks;
+#endif
+    rv = open_with_keys(slot, &session, &aesKey, &macKey);
+    CHECK_RV(rv, "open session with keys", CKR_OK);
+    if (rv != CKR_OK)
+        goto out;
+
+    rv = create_secret(session, &aesType, oddValue, sizeof(oddValue), &oddKey);
+    if (rv != CKR_OK) {
+        printf("SKIP: token rejects AES keys of invalid length\n");
+    }
+    else {
+        rv = funcList->C_EncryptInit(session, &cbcMech, oddKey);
+        CHECK_TRUE(rv != CKR_OK, "C_EncryptInit with an unusable key fails");
+        rv = funcList->C_EncryptInit(session, &cbcMech, aesKey);
+        CHECK_RV(rv, "C_EncryptInit(AES-CBC) after failed setup", CKR_OK);
+        outLen = sizeof(out);
+        rv = funcList->C_Encrypt(session, iv, sizeof(iv), out, &outLen);
+        CHECK_RV(rv, "C_Encrypt(AES-CBC) after failed setup", CKR_OK);
+        funcList->C_DestroyObject(session, oddKey);
+    }
+
+    funcList->C_DestroyObject(session, aesKey);
+    funcList->C_DestroyObject(session, macKey);
+    funcList->C_CloseSession(session);
+    session = CK_INVALID_HANDLE;
+#ifdef TRACK_ALLOCS
+    CHECK_TRUE(liveBlocks == before,
+               "failed key setup leaves no allocation behind");
+#endif
+
+out:
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -655,6 +723,9 @@ static int run_test(void)
 #endif
 #if defined(TRACK_ALLOCS) && !defined(NO_AES) && defined(HAVE_AESGCM)
     test_gcm_reinit_releases_buffer();
+#endif
+#if !defined(NO_AES) && defined(HAVE_AES_CBC)
+    test_failed_key_setup_keeps_session_usable();
 #endif
 
     pkcs11_unload();
