@@ -1839,8 +1839,13 @@ CK_RV C_SetOperationState(CK_SESSION_HANDLE hSession,
         return rv;
     }
 
-    (void)hEncryptionKey;
-    (void)hAuthenticationKey;
+    /* Only keyless digest states can be saved, so no key is ever needed. */
+    if (hEncryptionKey != CK_INVALID_HANDLE ||
+            hAuthenticationKey != CK_INVALID_HANDLE) {
+        rv = CKR_KEY_NOT_NEEDED;
+        WOLFPKCS11_LEAVE("C_SetOperationState", rv);
+        return rv;
+    }
 
     rv = WP11_SetOperationState(session, pOperationState, ulOperationStateLen);
     WOLFPKCS11_LEAVE("C_SetOperationState", rv);

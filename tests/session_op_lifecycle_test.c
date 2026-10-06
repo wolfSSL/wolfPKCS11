@@ -1154,6 +1154,54 @@ out:
 }
 #endif
 
+#ifndef NO_SHA256
+/* Saved digest states need no key, so restoring one with a key handle is
+ * refused. */
+static void test_restore_with_key_is_refused(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE aesKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE macKey = CK_INVALID_HANDLE;
+    CK_MECHANISM sha256Mech = { CKM_SHA256, NULL, 0 };
+    byte state[1024];
+    CK_ULONG stateLen;
+    CK_SLOT_ID slot;
+
+    printf("\n--- restoring a digest state with a key is refused ---\n");
+    rv = init_library(&slot);
+    if (rv == CKR_OK)
+        rv = open_with_keys(slot, &session, &aesKey, &macKey);
+    CHECK_RV(rv, "open session with keys", CKR_OK);
+    if (rv != CKR_OK)
+        goto out;
+
+    rv = funcList->C_DigestInit(session, &sha256Mech);
+    CHECK_RV(rv, "C_DigestInit(SHA-256)", CKR_OK);
+    rv = funcList->C_DigestUpdate(session, plainMarker, sizeof(plainMarker));
+    CHECK_RV(rv, "C_DigestUpdate", CKR_OK);
+    stateLen = sizeof(state);
+    rv = funcList->C_GetOperationState(session, state, &stateLen);
+    CHECK_RV(rv, "C_GetOperationState", CKR_OK);
+    if (rv != CKR_OK)
+        goto out;
+
+    rv = funcList->C_SetOperationState(session, state, stateLen, macKey, 0);
+    CHECK_RV(rv, "C_SetOperationState with encryption key",
+             CKR_KEY_NOT_NEEDED);
+    rv = funcList->C_SetOperationState(session, state, stateLen, 0, macKey);
+    CHECK_RV(rv, "C_SetOperationState with authentication key",
+             CKR_KEY_NOT_NEEDED);
+    rv = funcList->C_SetOperationState(session, state, stateLen, 0, 0);
+    CHECK_RV(rv, "C_SetOperationState without keys", CKR_OK);
+
+out:
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
 #if defined(TRACK_ALLOCS) && !defined(NO_AES) && defined(HAVE_AESGCM) && \
     !defined(WOLFSSL_AESGCM_STREAM)
 /* Destroying the key of a multi-part AES-GCM operation must release the
@@ -1266,6 +1314,7 @@ static int run_test(void)
 #ifndef NO_SHA256
     test_operation_state_requires_active_digest();
     test_rejected_state_keeps_session();
+    test_restore_with_key_is_refused();
 #endif
 #if defined(TRACK_ALLOCS) && !defined(NO_AES) && defined(HAVE_AESGCM) && \
     !defined(NO_SHA256)
