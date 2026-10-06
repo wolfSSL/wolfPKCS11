@@ -735,6 +735,34 @@ static void test_short_private_key_record(void)
 #endif
 }
 
+#ifndef NO_DH
+static CK_RV create_dh_public_key(CK_SESSION_HANDLE session)
+{
+    CK_OBJECT_CLASS keyClass = CKO_PUBLIC_KEY;
+    CK_KEY_TYPE keyType = CKK_DH;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,    &keyClass,      sizeof(keyClass)       },
+        { CKA_KEY_TYPE, &keyType,       sizeof(keyType)        },
+        { CKA_TOKEN,    &ckTrue,        sizeof(ckTrue)         },
+        { CKA_PRIME,    dh_ffdhe2048_p, sizeof(dh_ffdhe2048_p) },
+        { CKA_BASE,     dh_ffdhe2048_g, sizeof(dh_ffdhe2048_g) },
+        { CKA_VALUE,    dh_2048_pub,    sizeof(dh_2048_pub)    },
+    };
+
+    return funcList->C_CreateObject(session, tmpl,
+        sizeof(tmpl) / sizeof(*tmpl), &obj);
+}
+
+/* A stored public key record longer than the largest supported key. */
+static void test_oversized_public_key_record(void)
+{
+    printf("\n--- oversized public key record is rejected ---\n");
+    check_damaged_key_record("oversized DH public key", create_dh_public_key,
+                             "dhkey_pub", 4096);
+}
+#endif
+
 #define LARGE_VALUE_SZ  300001
 static byte largeValue[LARGE_VALUE_SZ];
 static byte largeRead[LARGE_VALUE_SZ];
@@ -896,6 +924,9 @@ int main(int argc, char* argv[])
 #endif
     test_truncated_data_record();
     test_short_private_key_record();
+#ifndef NO_DH
+    test_oversized_public_key_record();
+#endif
 
     return pkcs11_test_summary();
 }
