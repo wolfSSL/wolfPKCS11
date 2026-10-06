@@ -38,8 +38,8 @@ extern "C" {
 #endif
 #undef DEBUG_WOLFPKCS11
 #cmakedefine DEBUG_WOLFPKCS11
-#undef SINGLE_THREADED
-#cmakedefine SINGLE_THREADED
+#undef WOLFPKCS11_SINGLE_THREADED
+#cmakedefine WOLFPKCS11_SINGLE_THREADED
 #undef NO_RSA
 #cmakedefine NO_RSA
 #undef WC_NO_RSA_OAEP

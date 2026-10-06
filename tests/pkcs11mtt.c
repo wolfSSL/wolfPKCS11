@@ -40,7 +40,8 @@
 
 #include <stdio.h>
 
-#if defined(_POSIX_THREADS) && !defined(SINGLE_THREADED)
+#if defined(_POSIX_THREADS) && !defined(SINGLE_THREADED) && \
+    !defined(WOLFPKCS11_SINGLE_THREADED)
 #include <wolfssl/wolfcrypt/misc.h>
 
 #define TEST_MULTITHREADED

@@ -442,6 +442,9 @@ WP11_API void WP11_Test_FailTokenInit(int fail);
 WP11_API void WP11_Test_StoreExitAfterRenames(int renames);
 WP11_API void WP11_Test_StoreCloseFailAfter(int closes);
 #endif
+#ifndef WOLFPKCS11_NO_STORE
+WP11_API int WP11_Test_StoreWriteFailAfter(int writes);
+#endif
 #if defined(WOLFPKCS11_TPM) && (!defined(NO_RSA) || defined(HAVE_ECC))
 WP11_API int WP11_Test_DecodeTpmKey(CK_SLOT_ID slotId, unsigned char* keyData,
     int keyDataLen);
