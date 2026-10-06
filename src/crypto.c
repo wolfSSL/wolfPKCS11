@@ -5516,6 +5516,39 @@ static int GetInitValue(CK_MECHANISM_TYPE mechanism) {
     }
 }
 
+#if !defined(NO_RSA) && defined(WC_RSA_PSS)
+/* A hashed RSA-PSS mechanism requires its own digest as the PSS hash. The MGF1
+ * hash may differ (RFC 8017) and is validated when the parameters are set. */
+static CK_RV CheckPssMechParams(CK_MECHANISM_TYPE mechanism,
+                                const CK_RSA_PKCS_PSS_PARAMS* params)
+{
+    CK_MECHANISM_TYPE hashAlg;
+
+    switch (mechanism) {
+        case CKM_SHA1_RSA_PKCS_PSS:
+            hashAlg = CKM_SHA1;
+            break;
+        case CKM_SHA224_RSA_PKCS_PSS:
+            hashAlg = CKM_SHA224;
+            break;
+        case CKM_SHA256_RSA_PKCS_PSS:
+            hashAlg = CKM_SHA256;
+            break;
+        case CKM_SHA384_RSA_PKCS_PSS:
+            hashAlg = CKM_SHA384;
+            break;
+        case CKM_SHA512_RSA_PKCS_PSS:
+            hashAlg = CKM_SHA512;
+            break;
+        default:
+            return CKR_OK;
+    }
+    if (params->hashAlg != hashAlg)
+        return CKR_MECHANISM_PARAM_INVALID;
+    return CKR_OK;
+}
+#endif
+
 /**
  * Initialize signing operation.
  *
@@ -5667,6 +5700,9 @@ static CK_RV wp11_C_SignInit(CK_SESSION_HANDLE hSession,
                 return CKR_MECHANISM_PARAM_INVALID;
 
             params = (CK_RSA_PKCS_PSS_PARAMS*)pMechanism->pParameter;
+            rv = CheckPssMechParams(pMechanism->mechanism, params);
+            if (rv != CKR_OK)
+                return rv;
             ret = WP11_Session_SetPssParams(session, params->hashAlg,
                                                 params->mgf, (int)params->sLen);
             if (ret != 0)
@@ -6840,6 +6876,9 @@ static CK_RV wp11_C_VerifyInit(CK_SESSION_HANDLE hSession,
                 return CKR_MECHANISM_PARAM_INVALID;
 
             params = (CK_RSA_PKCS_PSS_PARAMS*)pMechanism->pParameter;
+            rv = CheckPssMechParams(pMechanism->mechanism, params);
+            if (rv != CKR_OK)
+                return rv;
             ret = WP11_Session_SetPssParams(session, params->hashAlg,
                                                 params->mgf, (int)params->sLen);
             if (ret != 0)
