@@ -223,6 +223,79 @@ cleanup:
         funcList->C_DestroyObject(session, base);
     return result;
 }
+
+/* An EC point wrapped with an unsupported DER length form is not accepted. */
+static int test_unsupported_der_length_form(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    CK_ECDH1_DERIVE_PARAMS params;
+    CK_MECHANISM genMech = { CKM_EC_KEY_PAIR_GEN, NULL, 0 };
+    byte p521Params[] = { 0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x23 };
+    byte derPoint[2 * 66 + 4];
+    byte badPoint[2 * 66 + 3];
+    CK_ATTRIBUTE pointAttr = { CKA_EC_POINT, derPoint, sizeof(derPoint) };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_EC_PARAMS, p521Params, sizeof(p521Params) },
+        { CKA_PRIVATE,   &ckFalse,   sizeof(ckFalse)    },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_PRIVATE,   &ckFalse,   sizeof(ckFalse)    },
+        { CKA_SENSITIVE, &ckFalse,   sizeof(ckFalse)    },
+        { CKA_DERIVE,    &ckTrue,    sizeof(ckTrue)     },
+    };
+    int result = 0;
+
+    ret = funcList->C_GenerateKeyPair(session, &genMech, pubTmpl,
+            sizeof(pubTmpl) / sizeof(*pubTmpl), privTmpl,
+            sizeof(privTmpl) / sizeof(*privTmpl), &pub, &priv);
+    if (ret != CKR_OK) {
+        printf("SKIP: P-521 key generation unavailable (0x%lx)\n",
+               (unsigned long)ret);
+        test_skipped = 1;
+        goto cleanup;
+    }
+
+    ret = funcList->C_GetAttributeValue(session, pub, &pointAttr, 1);
+    CHECK_CKR(ret, "read P-521 EC point");
+    if (pointAttr.ulValueLen != sizeof(derPoint) || derPoint[0] != 0x04 ||
+            derPoint[1] != 0x81 || derPoint[2] != sizeof(badPoint) - 2) {
+        ret = CKR_GENERAL_ERROR;
+    }
+    CHECK_CKR(ret, "P-521 EC point is DER wrapped");
+
+    ecdh_params_init(&params, derPoint, sizeof(derPoint));
+    ret = ecdh_derive(session, priv, &params, &derived);
+    CHECK_CKR(ret, "derive with DER wrapped point");
+    funcList->C_DestroyObject(session, derived);
+    derived = CK_INVALID_HANDLE;
+
+    /* Same point with a long-form length byte that has no length octets. */
+    badPoint[0] = 0x04;
+    badPoint[1] = (byte)(sizeof(badPoint) - 2);
+    XMEMCPY(badPoint + 2, derPoint + 3, sizeof(badPoint) - 2);
+    ecdh_params_init(&params, badPoint, sizeof(badPoint));
+    ret = ecdh_derive(session, priv, &params, &derived);
+    if (ret == CKR_OK) {
+        fprintf(stderr, "FAIL: malformed DER length form accepted\n");
+        test_failed++;
+        result = -1;
+        goto cleanup;
+    }
+    printf("PASS: malformed DER length form rejected\n");
+    test_passed++;
+
+cleanup:
+    if (derived != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, derived);
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+    return result;
+}
 #endif /* HAVE_ECC */
 
 static CK_RV pkcs11_init(void)
@@ -335,6 +408,8 @@ static int ec_derive_test(void)
     if (test_null_kdf_shared_data(session) != 0)
         result = -1;
     if (test_public_data_length_bound(session) != 0)
+        result = -1;
+    if (test_unsupported_der_length_form(session) != 0)
         result = -1;
 #else
     printf("ECC not available, skipping ECDH derive tests\n");

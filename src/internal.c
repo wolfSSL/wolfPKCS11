@@ -17023,9 +17023,10 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
                 /* Not valid DER encoding, treat as raw X9.63 data */
                 x963Data = point;
                 x963Len = pointLen;
+                i = 0;
             }
         }
-        if (i < (int)pointLen) {
+        if (i > 0 && i < (int)pointLen) {
             expectedPointLen = priv->data.ecKey->dp->size * 2 + 1;
             if (pointLen > expectedPointLen) {
                 x963Len = point[i++];
@@ -17040,6 +17041,14 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
     }
 
     ret = wc_ecc_init_ex(&pubKey, NULL, priv->devId);
+    if (ret == 0 && priv->data.ecKey->dp != NULL) {
+        /* Compressed point is size + 1 bytes, uncompressed 2 * size + 1 */
+        expectedPointLen = (word32)priv->data.ecKey->dp->size + 1;
+        if (x963Len > 0 && x963Data[0] == ECC_POINT_UNCOMP)
+            expectedPointLen += (word32)priv->data.ecKey->dp->size;
+        if (x963Len != expectedPointLen)
+            ret = ECC_BAD_ARG_E;
+    }
     if (ret == 0) {
         if (priv->data.ecKey->dp) {
             ret = wc_ecc_import_x963_ex(x963Data, x963Len, &pubKey,
