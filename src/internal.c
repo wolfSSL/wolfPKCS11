@@ -18589,6 +18589,8 @@ int WP11_AesCtr_Final(WP11_Session* session)
     WP11_CtrParams* ctr = &session->params.ctr;
 
     wc_AesFree(&ctr->aes);
+    /* Older wolfSSL versions do not zeroize the key schedule in wc_AesFree. */
+    wc_ForceZero(ctr, sizeof(*ctr));
     session->init = 0;
 
     return 0;
@@ -19724,6 +19726,21 @@ int WP11_AesCts_DecryptFinal(unsigned char* dec, word32* decSz,
     session->init = 0;
 
     return ret;
+}
+
+/**
+ * Abandon an AES-CTS operation, releasing the AES object.
+ *
+ * @param  session  [in]  Session object holding Aes object.
+ */
+void WP11_AesCts_Final(WP11_Session* session)
+{
+    WP11_CtsParams* cts = &session->params.cts;
+
+    wc_AesFree(&cts->aes);
+    /* Older wolfSSL versions do not zeroize the key schedule in wc_AesFree. */
+    wc_ForceZero(cts, sizeof(*cts));
+    session->init = 0;
 }
 #endif /* HAVE_AESCTS */
 

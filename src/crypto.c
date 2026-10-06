@@ -3279,6 +3279,10 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
         case CKM_AES_CTR:
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CTR_ENC))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            if (!CK_ULONG_FITS_WORD32(ulDataLen)) {
+                WP11_AesCtr_Final(session);
+                return CKR_DATA_LEN_RANGE;
+            }
 
             if (pEncryptedData == NULL) {
                 *pulEncryptedDataLen = ulDataLen;
@@ -3379,6 +3383,10 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
         case CKM_AES_CTS:
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CTS_ENC))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            if (!CK_ULONG_FITS_WORD32(ulDataLen)) {
+                WP11_AesCts_Final(session);
+                return CKR_DATA_LEN_RANGE;
+            }
 
             encDataLen = (word32)*pulEncryptedDataLen;
             if (pEncryptedData == NULL) {
@@ -4403,6 +4411,10 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
         case CKM_AES_CTR:
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CTR_DEC))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            if (!CK_ULONG_FITS_WORD32(ulEncryptedDataLen)) {
+                WP11_AesCtr_Final(session);
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
+            }
 
             if (pData == NULL) {
                 *pulDataLen = ulEncryptedDataLen;
@@ -4503,6 +4515,10 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
         case CKM_AES_CTS:
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CTS_DEC))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            if (!CK_ULONG_FITS_WORD32(ulEncryptedDataLen)) {
+                WP11_AesCts_Final(session);
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
+            }
 
             decDataLen = (word32)*pulDataLen;
             if (pData == NULL) {

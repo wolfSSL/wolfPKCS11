@@ -808,6 +808,7 @@ WP11_LOCAL int WP11_AesCts_DecryptUpdate(unsigned char* enc, word32 encSz,
                               WP11_Session* session);
 WP11_LOCAL int WP11_AesCts_DecryptFinal(unsigned char* dec, word32* decSz,
                              WP11_Session* session);
+WP11_LOCAL void WP11_AesCts_Final(WP11_Session* session);
 
 WP11_LOCAL int WP11_Aes_Cmac_Init(WP11_Object* secret, WP11_Session* session,
         word32 sigLen);

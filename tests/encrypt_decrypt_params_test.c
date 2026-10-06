@@ -771,6 +771,89 @@ static void test_oaep_source_len_range(CK_SESSION_HANDLE session)
 }
 #endif
 
+#if !defined(NO_AES) && (defined(HAVE_AESCTR) || defined(HAVE_AESCTS))
+/* Single-part calls reject a data length the token cannot represent and end
+ * the operation instead of processing a shorter length. */
+static void check_single_part_len_range(CK_SESSION_HANDLE session,
+                                        CK_OBJECT_HANDLE key,
+                                        CK_MECHANISM* mech)
+{
+    CK_RV rv;
+    byte data[32];
+    byte out[32];
+    CK_ULONG outLen;
+    CK_ULONG wrap = ((CK_ULONG)1 << 16) << 16;
+
+    XMEMSET(data, 0x3C, sizeof(data));
+
+    rv = funcList->C_EncryptInit(session, mech, key);
+    CHECK_RV(rv, "single-part length: C_EncryptInit", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    outLen = wrap + sizeof(out);
+    rv = funcList->C_Encrypt(session, data, wrap + sizeof(data), out, &outLen);
+    CHECK_RV(rv, "single-part length: C_Encrypt rejects oversized data",
+             CKR_DATA_LEN_RANGE);
+    outLen = sizeof(out);
+    rv = funcList->C_Encrypt(session, data, sizeof(data), out, &outLen);
+    CHECK_RV(rv, "single-part length: encrypt operation ended",
+             CKR_OPERATION_NOT_INITIALIZED);
+
+    rv = funcList->C_DecryptInit(session, mech, key);
+    CHECK_RV(rv, "single-part length: C_DecryptInit", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    outLen = wrap + sizeof(out);
+    rv = funcList->C_Decrypt(session, data, wrap + sizeof(data), out, &outLen);
+    CHECK_RV(rv, "single-part length: C_Decrypt rejects oversized data",
+             CKR_ENCRYPTED_DATA_LEN_RANGE);
+    outLen = sizeof(out);
+    rv = funcList->C_Decrypt(session, data, sizeof(data), out, &outLen);
+    CHECK_RV(rv, "single-part length: decrypt operation ended",
+             CKR_OPERATION_NOT_INITIALIZED);
+}
+
+static void test_single_part_len_range(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_MECHANISM mech;
+#ifdef HAVE_AESCTR
+    CK_AES_CTR_PARAMS ctrParams;
+#endif
+#ifdef HAVE_AESCTS
+    byte iv[16];
+#endif
+
+    if ((((CK_ULONG)1 << 16) << 16) == 0)
+        return;
+
+    rv = create_aes_key(session, aes_128_key, sizeof(aes_128_key), &key);
+    CHECK_RV(rv, "single-part length: create AES key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+#ifdef HAVE_AESCTR
+    XMEMSET(&ctrParams, 0, sizeof(ctrParams));
+    ctrParams.ulCounterBits = 32;
+    XMEMSET(ctrParams.cb, 0x18, sizeof(ctrParams.cb));
+    mech.mechanism = CKM_AES_CTR;
+    mech.pParameter = &ctrParams;
+    mech.ulParameterLen = sizeof(ctrParams);
+    printf("AES-CTR\n");
+    check_single_part_len_range(session, key, &mech);
+#endif
+#ifdef HAVE_AESCTS
+    XMEMSET(iv, 0x29, sizeof(iv));
+    mech.mechanism = CKM_AES_CTS;
+    mech.pParameter = iv;
+    mech.ulParameterLen = sizeof(iv);
+    printf("AES-CTS\n");
+    check_single_part_len_range(session, key, &mech);
+#endif
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -819,6 +902,9 @@ static int run_test(void)
 #endif
 #if !defined(NO_RSA) && !defined(WC_NO_RSA_OAEP)
         run_in_session(slot, test_oaep_source_len_range);
+#endif
+#if !defined(NO_AES) && (defined(HAVE_AESCTR) || defined(HAVE_AESCTS))
+        run_in_session(slot, test_single_part_len_range);
 #endif
     }
 
