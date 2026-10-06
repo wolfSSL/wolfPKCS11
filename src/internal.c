@@ -13107,6 +13107,7 @@ int WP11_Object_SetDhKey(WP11_Object* object, unsigned char** data,
             if (len[2] > (int)sizeof(key->key))
                 ret = BAD_FUNC_ARG;
             else {
+                wc_ForceZero(key->key, sizeof(key->key));
                 XMEMCPY(key->key, data[2], len[2]);
                 key->len = (word32)len[2];
             }
