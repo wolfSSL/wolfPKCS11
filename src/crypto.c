@@ -269,7 +269,7 @@ typedef struct AttributeType {
 /* List of recognized attributes and their data type. */
 static AttributeType attrType[] = {
     { CKA_CLASS,                       ATTR_TYPE_ULONG },
-    { CKA_TOKEN,                       ATTR_TYPE_DATA  },
+    { CKA_TOKEN,                       ATTR_TYPE_BOOL  },
     { CKA_PRIVATE,                     ATTR_TYPE_BOOL  },
     { CKA_LABEL,                       ATTR_TYPE_DATA  },
     { CKA_UNIQUE_ID,                   ATTR_TYPE_DATA  },
@@ -538,8 +538,13 @@ static CK_RV CheckAttributes(CK_ATTRIBUTE* pTemplate, CK_ULONG ulCount, int set)
             if (attr->pValue == NULL && set)
                 return CKR_ATTRIBUTE_VALUE_INVALID;
             if ((attr->pValue != NULL) &&
-                (attr->ulValueLen != sizeof(CK_BBOOL)))
-                return CKR_BUFFER_TOO_SMALL;
+                (attr->ulValueLen != sizeof(CK_BBOOL))) {
+                /* Object creation reports a malformed CKA_TOKEN as invalid. */
+                if (attr->type != CKA_TOKEN)
+                    return CKR_BUFFER_TOO_SMALL;
+                if (set)
+                    return CKR_ATTRIBUTE_VALUE_INVALID;
+            }
             if (set && *(CK_BBOOL*)attr->pValue != CK_TRUE &&
                                          *(CK_BBOOL*)attr->pValue != CK_FALSE) {
                 return CKR_ATTRIBUTE_VALUE_INVALID;

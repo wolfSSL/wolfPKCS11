@@ -49,17 +49,9 @@
 
 #define TEST_DIR "./store/attribute_validation_test"
 
-#if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
-    defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
-    !defined(NO_RSA) && !defined(NO_AES) && \
-    (defined(WOLFSSL_KEY_GEN) || defined(OPENSSL_EXTRA))
-static CK_OBJECT_CLASS secretKeyClass = CKO_SECRET_KEY;
-static CK_OBJECT_CLASS privKeyClass   = CKO_PRIVATE_KEY;
-static CK_OBJECT_CLASS pubKeyClass    = CKO_PUBLIC_KEY;
-static CK_BBOOL ckTrue  = CK_TRUE;
+static CK_OBJECT_CLASS dataClass = CKO_DATA;
 static CK_BBOOL ckFalse = CK_FALSE;
-static CK_KEY_TYPE aesKeyType = CKK_AES;
-static CK_KEY_TYPE rsaKeyType = CKK_RSA;
+static const byte dataValue[] = "attribute-validation";
 
 static void destroy_obj(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE* obj)
 {
@@ -68,6 +60,76 @@ static void destroy_obj(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE* obj)
         *obj = CK_INVALID_HANDLE;
     }
 }
+
+/* Create a public, modifiable session data object. */
+static CK_RV create_data_object(CK_SESSION_HANDLE session,
+                                CK_OBJECT_HANDLE* obj)
+{
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,   &dataClass,        sizeof(dataClass)     },
+        { CKA_TOKEN,   &ckFalse,          sizeof(ckFalse)       },
+        { CKA_PRIVATE, &ckFalse,          sizeof(ckFalse)       },
+        { CKA_VALUE,   (void*)dataValue,  sizeof(dataValue) - 1 },
+    };
+
+    *obj = CK_INVALID_HANDLE;
+    return funcList->C_CreateObject(session, tmpl,
+                                    sizeof(tmpl) / sizeof(*tmpl), obj);
+}
+
+/* CKA_TOKEN is validated as a CK_BBOOL like every other boolean attribute. */
+static void test_token_attr_is_bool(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE bad = CK_INVALID_HANDLE;
+    CK_BBOOL badBool = 5;
+    byte wide[2] = { 0, 0 };
+    CK_ATTRIBUTE nullTmpl[] = { { CKA_TOKEN, NULL, sizeof(CK_BBOOL) } };
+    CK_ATTRIBUTE wideTmpl[] = { { CKA_TOKEN, wide, sizeof(wide) } };
+    CK_ATTRIBUTE badTmpl[]  = { { CKA_TOKEN, &badBool, sizeof(badBool) } };
+    CK_ATTRIBUTE createTmpl[] = {
+        { CKA_CLASS,   &dataClass,        sizeof(dataClass)     },
+        { CKA_TOKEN,   &badBool,          sizeof(badBool)       },
+        { CKA_PRIVATE, &ckFalse,          sizeof(ckFalse)       },
+        { CKA_VALUE,   (void*)dataValue,  sizeof(dataValue) - 1 },
+    };
+
+    rv = create_data_object(session, &obj);
+    CHECK_RV(rv, "create data object", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_SetAttributeValue(session, obj, nullTmpl, 1);
+    CHECK_RV(rv, "set CKA_TOKEN with NULL value", CKR_ATTRIBUTE_VALUE_INVALID);
+    rv = funcList->C_SetAttributeValue(session, obj, wideTmpl, 1);
+    CHECK_RV(rv, "set CKA_TOKEN with wrong length",
+             CKR_ATTRIBUTE_VALUE_INVALID);
+    rv = funcList->C_SetAttributeValue(session, obj, badTmpl, 1);
+    CHECK_RV(rv, "set CKA_TOKEN with non-boolean value",
+             CKR_ATTRIBUTE_VALUE_INVALID);
+
+    rv = funcList->C_CreateObject(session, createTmpl,
+                                  sizeof(createTmpl) / sizeof(*createTmpl),
+                                  &bad);
+    CHECK_RV(rv, "create object with non-boolean CKA_TOKEN",
+             CKR_ATTRIBUTE_VALUE_INVALID);
+    if (rv == CKR_OK)
+        destroy_obj(session, &bad);
+
+    destroy_obj(session, &obj);
+}
+
+#if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
+    defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
+    !defined(NO_RSA) && !defined(NO_AES) && \
+    (defined(WOLFSSL_KEY_GEN) || defined(OPENSSL_EXTRA))
+static CK_BBOOL ckTrue = CK_TRUE;
+static CK_OBJECT_CLASS secretKeyClass = CKO_SECRET_KEY;
+static CK_OBJECT_CLASS privKeyClass   = CKO_PRIVATE_KEY;
+static CK_OBJECT_CLASS pubKeyClass    = CKO_PUBLIC_KEY;
+static CK_KEY_TYPE aesKeyType = CKK_AES;
+static CK_KEY_TYPE rsaKeyType = CKK_RSA;
 
 /* An unwrap template that omits CKA_TOKEN creates session objects, including
  * the companion RSA public key. */
@@ -174,6 +236,7 @@ static int run_test(void)
     rv = pkcs11_open_session(&session);
     CHECK_RV(rv, "open session", CKR_OK);
     if (rv == CKR_OK) {
+        test_token_attr_is_bool(session);
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
     defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
     !defined(NO_RSA) && !defined(NO_AES) && \
