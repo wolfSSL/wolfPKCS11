@@ -135,6 +135,114 @@ static void test_cbc_pad_encrypt_final_len(CK_SESSION_HANDLE session)
 }
 #endif
 
+#if !defined(NO_RSA) && !defined(WC_NO_RSA_OAEP)
+static CK_RV create_rsa_keys(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE* pub,
+                             CK_OBJECT_HANDLE* priv)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS pubClass = CKO_PUBLIC_KEY;
+    CK_OBJECT_CLASS privClass = CKO_PRIVATE_KEY;
+    CK_KEY_TYPE rsaType = CKK_RSA;
+    CK_BBOOL ckTrue = CK_TRUE;
+    CK_BBOOL ckFalse = CK_FALSE;
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_CLASS,           &pubClass,        sizeof(pubClass)         },
+        { CKA_KEY_TYPE,        &rsaType,         sizeof(rsaType)          },
+        { CKA_ENCRYPT,         &ckTrue,          sizeof(ckTrue)           },
+        { CKA_MODULUS,         rsa_2048_modulus, sizeof(rsa_2048_modulus) },
+        { CKA_PUBLIC_EXPONENT, rsa_2048_pub_exp, sizeof(rsa_2048_pub_exp) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_CLASS,            &privClass,        sizeof(privClass)         },
+        { CKA_KEY_TYPE,         &rsaType,          sizeof(rsaType)           },
+        { CKA_DECRYPT,          &ckTrue,           sizeof(ckTrue)            },
+        { CKA_PRIVATE,          &ckFalse,          sizeof(ckFalse)           },
+        { CKA_SENSITIVE,        &ckFalse,          sizeof(ckFalse)           },
+        { CKA_MODULUS,          rsa_2048_modulus,  sizeof(rsa_2048_modulus)  },
+        { CKA_PRIVATE_EXPONENT, rsa_2048_priv_exp, sizeof(rsa_2048_priv_exp) },
+        { CKA_PRIME_1,          rsa_2048_p,        sizeof(rsa_2048_p)        },
+        { CKA_PRIME_2,          rsa_2048_q,        sizeof(rsa_2048_q)        },
+        { CKA_EXPONENT_1,       rsa_2048_dP,       sizeof(rsa_2048_dP)       },
+        { CKA_EXPONENT_2,       rsa_2048_dQ,       sizeof(rsa_2048_dQ)       },
+        { CKA_COEFFICIENT,      rsa_2048_u,        sizeof(rsa_2048_u)        },
+        { CKA_PUBLIC_EXPONENT,  rsa_2048_pub_exp,  sizeof(rsa_2048_pub_exp)  },
+    };
+
+    rv = funcList->C_CreateObject(session, pubTmpl,
+                                  sizeof(pubTmpl) / sizeof(*pubTmpl), pub);
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, privTmpl,
+                                      sizeof(privTmpl) / sizeof(*privTmpl),
+                                      priv);
+    }
+    return rv;
+}
+
+static void oaep_params_init(CK_RSA_PKCS_OAEP_PARAMS* params,
+                             CK_MECHANISM* mech)
+{
+    params->hashAlg = CKM_SHA256;
+    params->mgf = CKG_MGF1_SHA256;
+    params->source = CKZ_DATA_SPECIFIED;
+    params->pSourceData = NULL;
+    params->ulSourceDataLen = 0;
+    mech->mechanism = CKM_RSA_PKCS_OAEP;
+    mech->pParameter = params;
+    mech->ulParameterLen = sizeof(*params);
+}
+
+/* An OAEP encoding parameter with no source data must have zero length. */
+static void test_oaep_source_ptr_len(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_RSA_PKCS_OAEP_PARAMS params;
+    CK_MECHANISM mech;
+    byte plain[16];
+    byte enc[256];
+    byte dec[256];
+    CK_ULONG encLen;
+    CK_ULONG decLen;
+
+    XMEMSET(plain, 0x33, sizeof(plain));
+    rv = create_rsa_keys(session, &pub, &priv);
+    CHECK_RV(rv, "OAEP: create RSA keys", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    oaep_params_init(&params, &mech);
+    params.ulSourceDataLen = 1;
+    rv = funcList->C_EncryptInit(session, &mech, pub);
+    CHECK_RV(rv, "OAEP: C_EncryptInit NULL source with length",
+             CKR_MECHANISM_PARAM_INVALID);
+    rv = funcList->C_DecryptInit(session, &mech, priv);
+    CHECK_RV(rv, "OAEP: C_DecryptInit NULL source with length",
+             CKR_MECHANISM_PARAM_INVALID);
+
+    oaep_params_init(&params, &mech);
+    rv = funcList->C_EncryptInit(session, &mech, pub);
+    CHECK_RV(rv, "OAEP: C_EncryptInit empty source", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    encLen = sizeof(enc);
+    rv = funcList->C_Encrypt(session, plain, sizeof(plain), enc, &encLen);
+    CHECK_RV(rv, "OAEP: C_Encrypt empty source", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    rv = funcList->C_DecryptInit(session, &mech, priv);
+    CHECK_RV(rv, "OAEP: C_DecryptInit empty source", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    decLen = sizeof(dec);
+    rv = funcList->C_Decrypt(session, enc, encLen, dec, &decLen);
+    CHECK_RV(rv, "OAEP: C_Decrypt empty source", CKR_OK);
+    CHECK_TRUE(decLen == sizeof(plain) &&
+               XMEMCMP(dec, plain, sizeof(plain)) == 0,
+               "OAEP: empty source round-trips");
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -150,6 +258,9 @@ static int run_test(void)
     if (rv == CKR_OK) {
 #if !defined(NO_AES) && defined(HAVE_AES_CBC)
         test_cbc_pad_encrypt_final_len(session);
+#endif
+#if !defined(NO_RSA) && !defined(WC_NO_RSA_OAEP)
+        test_oaep_source_ptr_len(session);
 #endif
     }
 
