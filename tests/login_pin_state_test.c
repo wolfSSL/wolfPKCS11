@@ -250,6 +250,116 @@ static void failed_login_leaves_no_token_key_test(void)
 }
 #endif
 
+#if defined(LOGIN_TEST_FILE_STORE) && defined(HAVE_ECC)
+static char ecLabel[] = "pin-state-ec-key";
+static CK_BYTE ecP256Params[] = {
+    0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07
+};
+
+static CK_RV create_ec_key(CK_SESSION_HANDLE session)
+{
+    CK_MECHANISM mech = { CKM_EC_KEY_PAIR_GEN, NULL, 0 };
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_EC_PARAMS, ecP256Params, sizeof(ecP256Params) },
+        { CKA_VERIFY,    &ckTrue,      sizeof(ckTrue)       },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_TOKEN,   &ckTrue, sizeof(ckTrue)        },
+        { CKA_PRIVATE, &ckTrue, sizeof(ckTrue)        },
+        { CKA_SIGN,    &ckTrue, sizeof(ckTrue)        },
+        { CKA_LABEL,   ecLabel, sizeof(ecLabel) - 1   },
+    };
+
+    return funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+            sizeof(pubTmpl) / sizeof(*pubTmpl), privTmpl,
+            sizeof(privTmpl) / sizeof(*privTmpl), &pub, &priv);
+}
+
+/* Flip a byte of the stored EC private key so it no longer authenticates. */
+static int damage_stored_ec_key(void)
+{
+    FILE* f;
+    char filepath[512];
+    int id;
+    int ret = -1;
+    int c;
+
+    for (id = 0; id < 3 && ret != 0; id++) {
+        snprintf(filepath, sizeof(filepath), "%s" PATH_SEP
+                 "wp11_ecckey_priv_0000000000000001_%016x", TEST_DIR, id);
+        f = fopen(filepath, "r+b");
+        if (f == NULL)
+            continue;
+        if (fseek(f, -1, SEEK_END) == 0 && (c = fgetc(f)) != EOF &&
+                fseek(f, -1, SEEK_END) == 0 && fputc(c ^ 0xff, f) != EOF) {
+            ret = 0;
+        }
+        if (fclose(f) != 0)
+            ret = -1;
+    }
+    return ret;
+}
+
+/* Logout protects every decoded token object even when one cannot be. */
+static void logout_protects_all_objects_test(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &aesType,     sizeof(aesType)     },
+        { CKA_VALUE,    aesValue,     sizeof(aesValue)    },
+        { CKA_TOKEN,    &ckTrue,      sizeof(ckTrue)      },
+        { CKA_PRIVATE,  &ckTrue,      sizeof(ckTrue)      },
+    };
+
+    printf("--- logout protects all token objects ---\n");
+    rv = token_setup(&slot, userPin);
+    if (rv == CKR_OK)
+        rv = open_rw(slot, &session);
+    if (rv == CKR_OK)
+        rv = user_login(session, userPin);
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, keyTmpl,
+                sizeof(keyTmpl) / sizeof(*keyTmpl), &obj);
+    }
+    if (rv == CKR_OK)
+        rv = create_ec_key(session);
+    CHECK_RV(rv, "create private token keys", CKR_OK);
+    if (session != CK_INVALID_HANDLE) {
+        funcList->C_Logout(session);
+        funcList->C_CloseSession(session);
+        session = CK_INVALID_HANDLE;
+    }
+    funcList->C_Finalize(NULL);
+    if (rv != CKR_OK)
+        return;
+
+    CHECK_TRUE(damage_stored_ec_key() == 0, "damage stored EC key");
+    rv = lib_init();
+    if (rv == CKR_OK)
+        rv = open_rw(slot, &session);
+    if (rv == CKR_OK)
+        rv = user_login(session, userPin);
+    CHECK_RV(rv, "login with one undecodable object", CKR_OK);
+    if (rv == CKR_OK) {
+        CHECK_TRUE(WP11_Slot_TokenDecodedObjectCount(slot) > 0,
+                   "objects decoded while logged in");
+        funcList->C_Logout(session);
+        CHECK_TRUE(WP11_Slot_TokenDecodedObjectCount(slot) == 0,
+                   "no decoded objects left after logout");
+    }
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+    cleanup_test_files();
+}
+#endif
+
 #ifndef SINGLE_THREADED
 #define EMPTY_PIN_ROUNDS 8
 
@@ -720,6 +830,9 @@ static int run_test(void)
 #endif
 #ifndef SINGLE_THREADED
     find_during_object_churn_test();
+#endif
+#if defined(LOGIN_TEST_FILE_STORE) && defined(HAVE_ECC)
+    logout_protects_all_objects_test();
 #endif
 #ifndef WOLFPKCS11_NO_TIME
     printf("--- C_SetPIN counts failed SO PIN checks ---\n");
