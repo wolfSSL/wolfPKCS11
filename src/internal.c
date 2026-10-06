@@ -11596,7 +11596,8 @@ int WP11_Session_SetAesWrapParams(WP11_Session* session, byte* iv, word32 ivLen,
  * @param  aad      [in]  Additional authentication data.
  * @param  aadSz    [in]  Length of additional authentication data.
  * @param  tagBits  [in]  Number of bits to use as the authentication tag.
- * @return  BAD_FUNC_ARG if the IV/nonce or the tagBits are too big.
+ * @return  BAD_FUNC_ARG if the IV/nonce, AAD length or tagBits are out of
+ *          range.
  *          Other -ve value on failure.
  *          0 on success.
  */
@@ -11607,7 +11608,8 @@ int WP11_Session_SetGcmParams(WP11_Session* session, unsigned char* iv,
     int ret = 0;
     WP11_GcmParams* gcm = &session->params.gcm;
 
-    if (tagBits > 128 || ivSz < 0 || ivSz > WP11_MAX_GCM_NONCE_SZ)
+    if (tagBits < 0 || tagBits > 128 || ivSz < 0 ||
+                                    ivSz > WP11_MAX_GCM_NONCE_SZ || aadLen < 0)
         ret = BAD_FUNC_ARG;
     /* Caller-supplied IV pointer and length must agree: NULL pairs with 0
      * and only with 0, and a non-NULL buffer must come with a positive

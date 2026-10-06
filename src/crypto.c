@@ -2964,6 +2964,11 @@ static CK_RV EncryptInit(CK_SESSION_HANDLE hSession,
                 return CKR_MECHANISM_PARAM_INVALID;
 
             params = (CK_GCM_PARAMS*)pMechanism->pParameter;
+            if (params->ulIvLen > (CK_ULONG)INT_MAX ||
+                    params->ulAADLen > (CK_ULONG)INT_MAX ||
+                    params->ulTagBits > 128) {
+                return CKR_MECHANISM_PARAM_INVALID;
+            }
             ret = WP11_Session_SetGcmParams(session, params->pIv,
                                              (int)params->ulIvLen, params->pAAD,
                                              (int)params->ulAADLen,
@@ -4043,6 +4048,11 @@ static CK_RV DecryptInit(CK_SESSION_HANDLE hSession,
                 return CKR_MECHANISM_PARAM_INVALID;
 
             params = (CK_GCM_PARAMS*)pMechanism->pParameter;
+            if (params->ulIvLen > (CK_ULONG)INT_MAX ||
+                    params->ulAADLen > (CK_ULONG)INT_MAX ||
+                    params->ulTagBits > 128) {
+                return CKR_MECHANISM_PARAM_INVALID;
+            }
             ret = WP11_Session_SetGcmParams(session, params->pIv,
                                              (int)params->ulIvLen, params->pAAD,
                                              (int)params->ulAADLen,
