@@ -11666,7 +11666,7 @@ int WP11_Session_SetGcmParams(WP11_Session* session, unsigned char* iv,
  * @param  aad      [in]  Additional authentication data.
  * @param  aadSz    [in]  Length of additional authentication data.
  * @param  macSz    [in]  Length of the MAC in bytes.
- * @return  BAD_FUNC_ARG if the nonce is not 7 to 13 bytes long.
+ * @return  BAD_FUNC_ARG if the nonce, MAC or a length is out of range.
  *          Other -ve value on failure.
  *          0 on success.
  */
@@ -11679,6 +11679,11 @@ int WP11_Session_SetCcmParams(WP11_Session* session, int dataSz,
     WP11_CcmParams* ccm = &session->params.ccm;
 
     if (ivSz < CCM_NONCE_MIN_SZ || ivSz > CCM_NONCE_MAX_SZ)
+        ret = BAD_FUNC_ARG;
+    /* CCM tags are an even number of bytes from 4 to 16. */
+    if (ret == 0 && (macSz < 4 || macSz > AES_BLOCK_SIZE || (macSz & 1)))
+        ret = BAD_FUNC_ARG;
+    if (ret == 0 && (dataSz < 0 || aadSz < 0))
         ret = BAD_FUNC_ARG;
     /* Caller-supplied IV pointer and length must agree: NULL pairs with 0
      * and only with 0, and a non-NULL buffer must come with a positive

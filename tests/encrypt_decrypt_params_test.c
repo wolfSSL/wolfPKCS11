@@ -595,6 +595,96 @@ static void test_gcm_param_ranges(CK_SESSION_HANDLE session)
 }
 #endif
 
+#if !defined(NO_AES) && defined(HAVE_AESCCM)
+static void check_ccm_params_rejected(CK_SESSION_HANDLE session,
+                                      CK_OBJECT_HANDLE key, CK_MECHANISM* mech)
+{
+    CK_RV rv;
+
+    rv = funcList->C_EncryptInit(session, mech, key);
+    CHECK_RV(rv, "CCM: C_EncryptInit rejects parameter",
+             CKR_MECHANISM_PARAM_INVALID);
+    rv = funcList->C_DecryptInit(session, mech, key);
+    CHECK_RV(rv, "CCM: C_DecryptInit rejects parameter",
+             CKR_MECHANISM_PARAM_INVALID);
+}
+
+/* CK_CCM_PARAMS lengths must be in range for CCM and are rejected rather than
+ * narrowed. */
+static void test_ccm_param_ranges(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_CCM_PARAMS params;
+    CK_MECHANISM mech;
+    byte iv[13];
+    byte aad[16];
+    byte plain[16];
+    byte enc[32];
+    CK_ULONG encLen;
+    CK_ULONG wrap = ((CK_ULONG)1 << 16) << 16;
+    static const CK_ULONG badMacLens[] = { 0, 2, 5, 15, 18 };
+    int i;
+
+    XMEMSET(iv, 0x31, sizeof(iv));
+    XMEMSET(aad, 0x53, sizeof(aad));
+    XMEMSET(plain, 0x75, sizeof(plain));
+
+    rv = create_aes_key(session, aes_128_key, sizeof(aes_128_key), &key);
+    CHECK_RV(rv, "CCM: create AES key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    for (i = 0; i < (int)(sizeof(badMacLens) / sizeof(*badMacLens)); i++) {
+        printf("CCM: MAC length %lu\n", (unsigned long)badMacLens[i]);
+        ccm_params_init(&params, &mech, iv, sizeof(iv));
+        params.ulMacLen = badMacLens[i];
+        check_ccm_params_rejected(session, key, &mech);
+    }
+
+    printf("CCM: AAD length 0x80000000\n");
+    ccm_params_init(&params, &mech, iv, sizeof(iv));
+    params.pAAD = aad;
+    params.ulAADLen = 0x80000000UL;
+    check_ccm_params_rejected(session, key, &mech);
+
+    printf("CCM: data length 0x80000000\n");
+    ccm_params_init(&params, &mech, iv, sizeof(iv));
+    params.ulDataLen = 0x80000000UL;
+    check_ccm_params_rejected(session, key, &mech);
+
+    if (wrap != 0) {
+        printf("CCM: MAC length 2^32 + 4\n");
+        ccm_params_init(&params, &mech, iv, sizeof(iv));
+        params.ulMacLen = wrap + 4;
+        check_ccm_params_rejected(session, key, &mech);
+
+        printf("CCM: AAD length 2^32 + 16\n");
+        ccm_params_init(&params, &mech, iv, sizeof(iv));
+        params.pAAD = aad;
+        params.ulAADLen = wrap + sizeof(aad);
+        check_ccm_params_rejected(session, key, &mech);
+
+        printf("CCM: nonce length 2^32 + 13\n");
+        ccm_params_init(&params, &mech, iv, wrap + sizeof(iv));
+        check_ccm_params_rejected(session, key, &mech);
+    }
+
+    ccm_params_init(&params, &mech, iv, sizeof(iv));
+    params.pAAD = aad;
+    params.ulAADLen = sizeof(aad);
+    params.ulMacLen = 8;
+    rv = funcList->C_EncryptInit(session, &mech, key);
+    CHECK_RV(rv, "CCM: C_EncryptInit valid parameters", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    encLen = sizeof(enc);
+    rv = funcList->C_Encrypt(session, plain, sizeof(plain), enc, &encLen);
+    CHECK_RV(rv, "CCM: C_Encrypt valid parameters", CKR_OK);
+    CHECK_TRUE(encLen == sizeof(plain) + 8, "CCM: output carries 8-byte MAC");
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -637,6 +727,9 @@ static int run_test(void)
 #endif
 #if !defined(NO_AES) && defined(HAVE_AESGCM)
         run_in_session(slot, test_gcm_param_ranges);
+#endif
+#if !defined(NO_AES) && defined(HAVE_AESCCM)
+        run_in_session(slot, test_ccm_param_ranges);
 #endif
     }
 
