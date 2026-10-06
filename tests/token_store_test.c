@@ -209,6 +209,14 @@ static CK_ULONG count_label(CK_SESSION_HANDLE session, const char* label)
     return (rv == CKR_OK) ? foundCnt : 0;
 }
 
+/* Path of the stored record of a token object. */
+static void object_record_path(CK_SLOT_ID slot, int objId, char* path,
+                               size_t pathSz)
+{
+    snprintf(path, pathSz, "%s/wp11_obj_%016lx_%016lx", TEST_DIR,
+             (unsigned long)slot, (unsigned long)objId);
+}
+
 /* Reload the token from storage and open a user session on it. */
 static CK_RV reload(CK_SLOT_ID slot, CK_SESSION_HANDLE* session)
 {
@@ -267,6 +275,173 @@ static void test_objects_persist_across_storage_pause(void)
     funcList->C_Finalize(NULL);
 }
 
+/* A token object whose record cannot be committed is not reported created. */
+static void test_create_reports_commit_failure(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    char path[512];
+    int blocked = 0;
+
+    printf("\n--- token object creation reports a commit failure ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "commit-first", &obj);
+        CHECK_RV(rv, "create first token object", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        object_record_path(slot, 1, path, sizeof(path));
+        blocked = (mkdir(path, 0700) == 0);
+        CHECK_TRUE(blocked, "occupy the next object record path");
+    }
+    if (blocked) {
+        rv = create_token_secret(session, "commit-second", &obj);
+        CHECK_TRUE(rv != CKR_OK,
+                   "create fails when the object cannot be committed");
+        CHECK_TRUE(count_label(session, "commit-second") == 0,
+                   "uncommitted object is not in the token");
+        CHECK_TRUE(count_label(session, "commit-first") == 1,
+                   "committed object is still in the token");
+        (void)rmdir(path);
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+/* A PIN change that cannot be stored leaves the stored PIN in effect. */
+static void test_pin_change_store_failure(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    static const char* newPin = "wolfpkcs11-next";
+
+    if (geteuid() == 0) {
+        printf("\nSkipping PIN store failure test when run as root\n");
+        return;
+    }
+    printf("\n--- PIN change that cannot be stored is not applied ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK && chmod(TEST_DIR, 0500) == 0) {
+        rv = funcList->C_SetPIN(session, (CK_UTF8CHAR_PTR)userPin,
+                                (CK_ULONG)XSTRLEN(userPin),
+                                (CK_UTF8CHAR_PTR)newPin,
+                                (CK_ULONG)XSTRLEN(newPin));
+        (void)chmod(TEST_DIR, 0700);
+        CHECK_TRUE(rv != CKR_OK, "PIN change reports the store failure");
+        funcList->C_Logout(session);
+        rv = funcList->C_Login(session, CKU_USER, (CK_UTF8CHAR_PTR)userPin,
+                               (CK_ULONG)XSTRLEN(userPin));
+        CHECK_RV(rv, "stored PIN still logs in", CKR_OK);
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+/* A first user PIN that cannot be stored does not log in. */
+static void test_init_pin_store_failure(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE soSession = CK_INVALID_HANDLE;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    unsigned char label[32];
+
+    if (geteuid() == 0) {
+        printf("\nSkipping user PIN store failure test when run as root\n");
+        return;
+    }
+    printf("\n--- user PIN that cannot be stored is not applied ---\n");
+    clear_store_dir();
+    rv = lib_init();
+    if (rv == CKR_OK)
+        rv = first_slot(&slot);
+    if (rv == CKR_OK) {
+        XMEMSET(label, ' ', sizeof(label));
+        XMEMCPY(label, tokenLabel, XSTRLEN(tokenLabel));
+        rv = funcList->C_InitToken(slot, (CK_UTF8CHAR_PTR)soPin,
+                                   (CK_ULONG)XSTRLEN(soPin), label);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &soSession);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(soSession, CKU_SO, (CK_UTF8CHAR_PTR)soPin,
+                               (CK_ULONG)XSTRLEN(soPin));
+    }
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK && chmod(TEST_DIR, 0500) == 0) {
+        rv = funcList->C_InitPIN(soSession, (CK_UTF8CHAR_PTR)userPin,
+                                 (CK_ULONG)XSTRLEN(userPin));
+        (void)chmod(TEST_DIR, 0700);
+        CHECK_TRUE(rv != CKR_OK, "user PIN set reports the store failure");
+        close_session(soSession);
+        soSession = CK_INVALID_HANDLE;
+        rv = user_session(slot, &session);
+        CHECK_TRUE(rv != CKR_OK, "unstored user PIN does not log in");
+    }
+    close_session(soSession);
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+
+/* A token reset that cannot be stored leaves the stored token in effect. */
+static void test_token_reset_store_failure(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    unsigned char label[32];
+    static const char* wrongPin = "not-the-so-pin";
+
+    if (geteuid() == 0) {
+        printf("\nSkipping token reset store failure test when run as root\n");
+        return;
+    }
+    printf("\n--- token reset that cannot be stored is not applied ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "reset-keep", &obj);
+        CHECK_RV(rv, "create token object", CKR_OK);
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    XMEMSET(label, ' ', sizeof(label));
+    XMEMCPY(label, tokenLabel, XSTRLEN(tokenLabel));
+    if (rv == CKR_OK && chmod(TEST_DIR, 0500) == 0) {
+        rv = funcList->C_InitToken(slot, (CK_UTF8CHAR_PTR)soPin,
+                                   (CK_ULONG)XSTRLEN(soPin), label);
+        (void)chmod(TEST_DIR, 0700);
+        CHECK_TRUE(rv != CKR_OK, "token reset reports the store failure");
+        rv = funcList->C_InitToken(slot, (CK_UTF8CHAR_PTR)wrongPin,
+                                   (CK_ULONG)XSTRLEN(wrongPin), label);
+        CHECK_TRUE(rv != CKR_OK, "token reset still requires the SO PIN");
+        rv = user_session(slot, &session);
+        CHECK_RV(rv, "stored user PIN still logs in", CKR_OK);
+        if (rv == CKR_OK) {
+            CHECK_TRUE(count_label(session, "reset-keep") == 1,
+                       "stored token object is still present");
+        }
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
 static int run_tests(void)
 {
     CK_RV rv;
@@ -277,6 +452,10 @@ static int run_tests(void)
         return -1;
 
     test_objects_persist_across_storage_pause();
+    test_create_reports_commit_failure();
+    test_pin_change_store_failure();
+    test_init_pin_store_failure();
+    test_token_reset_store_failure();
 
     clear_store_dir();
     pkcs11_unload();

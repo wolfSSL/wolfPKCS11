@@ -2396,10 +2396,14 @@ int wolfPKCS11_Store_Open(int type, CK_ULONG id1, CK_ULONG id2, int read,
  * Closes access to location being read or written.
  * Any dynamic memory associated with the store is freed here.
  *
- * @param [in]  store  Context for operation.
+ * @param [in]  store   Context for operation.
+ * @param [in]  commit  1 to commit written data and 0 to discard it.
+ * @return  0 on success.
+ * @return  Other value when written data could not be committed.
  */
-void wolfPKCS11_Store_Close(void* store)
+static int wolfPKCS11_Store_CloseCommit(void* store, int commit)
 {
+    int ret = 0;
 #ifdef WOLFPKCS11_TPM_STORE
     WP11_TpmStore* tpmStore = (WP11_TpmStore*)store;
 #else
@@ -2413,22 +2417,27 @@ void wolfPKCS11_Store_Close(void* store)
 #ifdef WOLFPKCS11_TPM_STORE
     /* nothing to do for TPM */
     (void)tpmStore;
+    (void)commit;
 #else
     if (ctx != NULL) {
         int commitRet = 0;
 
         if (ctx->file != XBADFILE && ctx->file != NULL) {
-            XFCLOSE(ctx->file);
+            if (XFCLOSE(ctx->file) != 0 && ctx->is_write) {
+                commit = 0;
+                ret = BUFFER_E;
+            }
             ctx->file = XBADFILE;
         }
 
-        if (ctx->is_write && ctx->has_temp) {
+        if (ctx->is_write && ctx->has_temp && commit) {
         #ifdef WP11_STORE_BATCH
             if (storeBatch.active)
                 commitRet = wolfPKCS11_StoreStageTemp(ctx);
             else
         #endif
                 commitRet = wolfPKCS11_StoreCommitTemp(ctx);
+            ret = commitRet;
             if (commitRet != 0) {
             #ifdef WP11_STORE_BATCH
                 if (storeBatch.active)
@@ -2449,6 +2458,18 @@ void wolfPKCS11_Store_Close(void* store)
         XFREE(ctx, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     }
 #endif
+    return ret;
+}
+
+/**
+ * Closes access to location being read or written.
+ * Any dynamic memory associated with the store is freed here.
+ *
+ * @param [in]  store  Context for operation.
+ */
+void wolfPKCS11_Store_Close(void* store)
+{
+    (void)wolfPKCS11_Store_CloseCommit(store, 1);
 }
 
 /**
@@ -2631,6 +2652,28 @@ static int wp11_storage_remove(int type, CK_ULONG id1, CK_ULONG id2)
 static void wp11_storage_close(void* storage)
 {
     wolfPKCS11_Store_Close(storage);
+}
+
+/*
+ * Closes access to location being written, committing the data only when
+ * writing succeeded.
+ *
+ * @param [in]  storage  Context for operation.
+ * @param [in]  ret      Result of writing the data.
+ * @return  ret when writing failed.
+ * @return  Result of committing the data otherwise.
+ */
+static int wp11_storage_close_write(void* storage, int ret)
+{
+#ifdef WOLFPKCS11_CUSTOM_STORE
+    wolfPKCS11_Store_Close(storage);
+#else
+    int closeRet = wolfPKCS11_Store_CloseCommit(storage, ret == 0);
+
+    if (ret == 0)
+        ret = closeRet;
+#endif
+    return ret;
 }
 
 /**
@@ -4572,7 +4615,7 @@ static int wp11_Object_Store_Cert(WP11_Object* object, int tokenId, int objId)
         /* Write cert to storage. */
         ret = wp11_storage_write_array(storage, object->data.cert.data,
                                                          object->data.cert.len);
-        wp11_storage_close(storage);
+        ret = wp11_storage_close_write(storage, ret);
     }
 
 #ifdef WOLFSSL_MAXQ10XX_CRYPTO
@@ -4611,7 +4654,7 @@ static int wp11_Object_Store_Trust(WP11_Object* object, int tokenId, int objId)
         /* Write trust to storage. */
         ret = wp11_storage_write_array(storage,
             (unsigned char*)&object->data.trust, sizeof(WP11_Trust));
-        wp11_storage_close(storage);
+        ret = wp11_storage_close_write(storage, ret);
     }
 
     return ret;
@@ -4842,7 +4885,7 @@ static int wp11_Object_Store_Data(WP11_Object* object, int tokenId, int objId)
             object->data.genericData.objectIdLen);
     }
 
-    wp11_storage_close(storage);
+    ret = wp11_storage_close_write(storage, ret);
 
     return ret;
 }
@@ -5195,7 +5238,7 @@ static int wp11_Object_Store_RsaKey(WP11_Object* object, int tokenId, int objId)
         ret = wp11_storage_write_array(storage, object->keyData,
                                                             object->keyDataLen);
 
-        wp11_storage_close(storage);
+        ret = wp11_storage_close_write(storage, ret);
     }
 
     return ret;
@@ -5424,7 +5467,7 @@ static int wp11_Object_Store_EccKey(WP11_Object* object, int tokenId, int objId)
         ret = wp11_storage_write_array(storage, object->keyData,
                                                             object->keyDataLen);
 
-        wp11_storage_close(storage);
+        ret = wp11_storage_close_write(storage, ret);
     }
 
     return ret;
@@ -5673,7 +5716,7 @@ static int wp11_Object_Store_MldsaKey(WP11_Object* object, int tokenId,
         ret = wp11_storage_write_array(storage, object->keyData,
                                                             object->keyDataLen);
 
-        wp11_storage_close(storage);
+        ret = wp11_storage_close_write(storage, ret);
     }
 
     return ret;
@@ -6021,7 +6064,7 @@ static int wp11_Object_Store_DhKey(WP11_Object* object, int tokenId, int objId)
             ret = wp11_storage_write_array(storage, der, len);
         }
 
-        wp11_storage_close(storage);
+        ret = wp11_storage_close_write(storage, ret);
     }
     if (der != NULL) {
         XFREE(der, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -6246,7 +6289,7 @@ static int wp11_Object_Store_MlKemKey(WP11_Object* object, int tokenId,
     if (ret == 0) {
         ret = wp11_storage_write_array(storage, object->keyData,
                                        object->keyDataLen);
-        wp11_storage_close(storage);
+        ret = wp11_storage_close_write(storage, ret);
     }
 
     return ret;
@@ -6428,7 +6471,7 @@ static int wp11_Object_Store_HssKey(WP11_Object* object, int tokenId, int objId)
     if (ret == 0) {
         ret = wp11_storage_write_array(storage, object->keyData,
             object->keyDataLen);
-        wp11_storage_close(storage);
+        ret = wp11_storage_close_write(storage, ret);
     }
     return ret;
 }
@@ -6874,7 +6917,7 @@ static int wp11_Object_Store_XmssKey(WP11_Object* object, int tokenId,
     if (ret == 0) {
         ret = wp11_storage_write_array(storage, object->keyData,
             object->keyDataLen);
-        wp11_storage_close(storage);
+        ret = wp11_storage_close_write(storage, ret);
     }
     return ret;
 }
@@ -7207,7 +7250,7 @@ static int wp11_Object_Store_SymmKey(WP11_Object* object, int tokenId,
         ret = wp11_storage_write_array(storage, object->keyData,
                                                             object->keyDataLen);
 
-        wp11_storage_close(storage);
+        ret = wp11_storage_close_write(storage, ret);
     }
 
     return ret;
@@ -7510,7 +7553,7 @@ static int wp11_Object_Store_Object(WP11_Object* object, int tokenId, int objId)
         }
 #endif
 
-        wp11_storage_close(storage);
+        ret = wp11_storage_close_write(storage, ret);
     }
     return ret;
 }
@@ -8420,7 +8463,7 @@ static int wp11_Token_StorePass(WP11_Token* token, int tokenId)
     ret = wp11_storage_open(WOLFPKCS11_STORE_TOKEN, tokenId, 0, variableSz,
         &storage);
     if (ret == 0) {
-        wp11_storage_close(storage);
+        ret = wp11_storage_close_write(storage, ret);
         storage = NULL;
     }
 
@@ -8520,7 +8563,7 @@ static int wp11_Token_StorePass(WP11_Token* token, int tokenId)
             ret = wp11_storage_write_int(storage, token->nextObjId);
         }
 
-        wp11_storage_close(storage);
+        ret = wp11_storage_close_write(storage, ret);
     }
     else if (ret == NOT_AVAILABLE_E) {
         /* Not writing. */
