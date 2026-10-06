@@ -8390,9 +8390,9 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
                 token->nextObjId = 1;
                 ret = 0;
             }
-            else {
+            else if (ret == 0) {
                 ret = wp11_storage_read_int(storage, &token->nextObjId);
-                if (ret == BUFFER_E || token->nextObjId == 0) {
+                if (ret == BUFFER_E || (ret == 0 && token->nextObjId == 0)) {
                     token->nextObjId = 1;
                     ret = 0;
                 }
