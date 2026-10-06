@@ -7202,6 +7202,69 @@ static void wp11_Token_ReKeyFree(WP11_ReKeyData* reKey, int cnt)
 #endif /* !WOLFPKCS11_NO_STORE */
 
 /**
+ * Discard the decoded key material of an object, keeping its encrypted form.
+ *
+ * @param [in, out]  object  Key object.
+ */
+static void wp11_Object_Scrub(WP11_Object* object)
+{
+    switch (object->type) {
+    #ifndef NO_RSA
+        case CKK_RSA:
+            if (object->objClass == CKO_PRIVATE_KEY) {
+                wc_FreeRsaKey(object->data.rsaKey);
+                object->encoded = 1;
+            }
+            break;
+    #endif
+    #ifdef HAVE_ECC
+        case CKK_EC:
+            if (object->objClass == CKO_PRIVATE_KEY) {
+                wc_ecc_free(object->data.ecKey);
+                object->encoded = 1;
+            }
+            break;
+    #endif
+    #ifdef WOLFPKCS11_MLDSA
+        case CKK_ML_DSA:
+            if (object->objClass == CKO_PRIVATE_KEY) {
+                wc_MlDsaKey_Free(object->data.mldsaKey);
+                object->encoded = 1;
+            }
+            break;
+    #endif
+    #ifndef NO_DH
+        case CKK_DH:
+            if (object->objClass == CKO_PRIVATE_KEY) {
+                wc_ForceZero(object->data.dhKey->key, object->data.dhKey->len);
+                object->encoded = 1;
+            }
+            break;
+    #endif
+    #ifdef WOLFPKCS11_MLKEM
+        case CKK_ML_KEM:
+            if (object->objClass == CKO_PRIVATE_KEY) {
+                wc_MlKemKey_Free(object->data.mlKemKey);
+                object->encoded = 1;
+            }
+            break;
+    #endif
+    #ifndef NO_AES
+        case CKK_AES:
+    #endif
+    #ifdef WOLFPKCS11_HKDF
+        case CKK_HKDF:
+    #endif
+        case CKK_GENERIC_SECRET:
+            wc_ForceZero(object->data.symmKey->data, object->data.symmKey->len);
+            object->encoded = 1;
+            break;
+        default:
+            break;
+    }
+}
+
+/**
  * Unstore a key object to storage.
  *
  * Empties the contents of the object.
@@ -8813,6 +8876,7 @@ typedef struct WP11_UserLoginData {
 #ifndef WOLFPKCS11_NO_STORE
     byte seed[PIN_SEED_SZ];            /* Snapshot of token key seed          */
     byte key[AES_256_KEY_SIZE];        /* Token key derived from PIN          */
+    byte prevKey[AES_256_KEY_SIZE];    /* Token key before the login          */
 #endif
 } WP11_UserLoginData;
 
@@ -8840,6 +8904,10 @@ int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen)
     int pinChanged = 0;
     WP11_Token* token = &slot->token;
     int userPinLen = 0;
+#ifndef WOLFPKCS11_NO_STORE
+    WP11_Object* object;
+    WP11_Object* failed = NULL;
+#endif
 #ifdef WOLFSSL_SMALL_STACK
     WP11_UserLoginData* d;
 #else
@@ -8943,20 +9011,30 @@ int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen)
     }
     /* Worked - clear failure info. */
     else if (ret == 0) {
-    #ifndef WOLFPKCS11_NO_STORE
-        WP11_Object* object;
-    #endif
-
         token->userFailedLogin = 0;
         token->userLastFailedLogin = 0;
         token->userFailLoginTimeout = 0;
 
     #ifndef WOLFPKCS11_NO_STORE
+        XMEMCPY(d->prevKey, token->key, sizeof(d->prevKey));
         XMEMCPY(token->key, d->key, sizeof(token->key));
         object = token->object;
         while (ret == 0 && object != NULL) {
             ret = wp11_Object_Decode(object);
+            if (ret != 0)
+                failed = object;
             object = object->next;
+        }
+        if (ret != 0) {
+            /* Login failed: drop what was decoded and the key derived from
+             * the PIN. The stored ciphertext is left untouched. */
+            for (object = token->object;
+                    pinLen > 0 && object != NULL && object != failed;
+                    object = object->next) {
+                if (wp11_Object_IsEncrypted(object) && !object->encoded)
+                    wp11_Object_Scrub(object);
+            }
+            XMEMCPY(token->key, d->prevKey, sizeof(token->key));
         }
     #endif
         if (ret == 0)
@@ -9371,6 +9449,36 @@ WP11_API int WP11_Slot_TokenKeyIsZero(CK_SLOT_ID slotId)
     WP11_Lock_UnlockRO(&slot->lock);
 
     return acc == 0 ? 1 : 0;
+}
+
+/**
+ * Test hook: count the token objects whose encrypted key material is held
+ * decoded in memory.
+ *
+ * @param  slotId  [in]  Slot id (1-based, as used by the PKCS#11 API).
+ * @return  Number of decoded encrypted objects, -1 on a bad slot id.
+ */
+WP11_API int WP11_Slot_TokenDecodedObjectCount(CK_SLOT_ID slotId)
+{
+    WP11_Slot* slot = NULL;
+    int cnt = 0;
+#ifndef WOLFPKCS11_NO_STORE
+    WP11_Object* object;
+#endif
+
+    if (WP11_Slot_Get(slotId, &slot) != 0 || slot == NULL)
+        return -1;
+
+#ifndef WOLFPKCS11_NO_STORE
+    WP11_Lock_LockRO(&slot->token.lock);
+    for (object = slot->token.object; object != NULL; object = object->next) {
+        if (wp11_Object_IsEncrypted(object) && !object->encoded)
+            cnt++;
+    }
+    WP11_Lock_UnlockRO(&slot->token.lock);
+#endif
+
+    return cnt;
 }
 #endif /* DEBUG_WOLFPKCS11 */
 

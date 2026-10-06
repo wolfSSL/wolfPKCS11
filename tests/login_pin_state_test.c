@@ -53,6 +53,13 @@
 #define TEST_DIR "./store/login_pin_state_test"
 #define WOLFPKCS11_TOKEN_FILENAME "wp11_token_0000000000000001"
 
+/* These debug tests damage the default file store under TEST_DIR. */
+#if defined(DEBUG_WOLFPKCS11) && !defined(WOLFPKCS11_NO_STORE) && \
+    !defined(WOLFPKCS11_TPM_STORE) && !defined(WOLFPKCS11_CUSTOM_STORE) && \
+    !defined(WOLFPKCS11_NO_ENV) && !defined(NO_AES)
+    #define LOGIN_TEST_FILE_STORE
+#endif
+
 /* Not every helper is used in every build configuration. */
 #if defined(__GNUC__)
     #pragma GCC diagnostic push
@@ -134,8 +141,108 @@ static CK_RV user_login(CK_SESSION_HANDLE session, const char* pin)
                              (CK_ULONG)XSTRLEN(pin));
 }
 
+#if !defined(WOLFPKCS11_NO_STORE) && !defined(NO_AES)
+static CK_OBJECT_CLASS secretClass = CKO_SECRET_KEY;
+static CK_KEY_TYPE aesType = CKK_AES;
+static CK_BBOOL ckTrue = CK_TRUE;
+static byte aesValue[16] = {
+    0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+    0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff
+};
+#endif
+
 #if defined(__GNUC__)
     #pragma GCC diagnostic pop
+#endif
+
+#ifdef LOGIN_TEST_FILE_STORE
+/* DEBUG_WOLFPKCS11-only introspection hooks exported by libwolfpkcs11. */
+extern int WP11_Slot_TokenKeyIsZero(CK_SLOT_ID slotId);
+extern int WP11_Slot_TokenDecodedObjectCount(CK_SLOT_ID slotId);
+
+#define SYMMKEY_FILENAME "wp11_symmkey_0000000000000001_0000000000000000"
+
+/* Replace the oldest stored secret key with a record too short to decrypt. */
+static int truncate_stored_key(void)
+{
+    FILE* f;
+    char filepath[512];
+    static const byte shortRecord[12] = { 0x00, 0x00, 0x00, 0x08 };
+    int ret = -1;
+
+    snprintf(filepath, sizeof(filepath), "%s" PATH_SEP "%s", TEST_DIR,
+             SYMMKEY_FILENAME);
+    f = fopen(filepath, "wb");
+    if (f != NULL) {
+        if (fwrite(shortRecord, 1, sizeof(shortRecord), f) ==
+                sizeof(shortRecord)) {
+            ret = 0;
+        }
+        if (fclose(f) != 0)
+            ret = -1;
+    }
+    return ret;
+}
+
+/* A login that fails after the PIN is verified must not leave the key derived
+ * from the PIN, or any key decoded before the failure, resident in memory. */
+static void failed_login_leaves_no_token_key_test(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &aesType,     sizeof(aesType)     },
+        { CKA_VALUE,    aesValue,     sizeof(aesValue)    },
+        { CKA_TOKEN,    &ckTrue,      sizeof(ckTrue)      },
+        { CKA_PRIVATE,  &ckTrue,      sizeof(ckTrue)      },
+    };
+
+    printf("--- failed login leaves no token key ---\n");
+    rv = token_setup(&slot, userPin);
+    if (rv == CKR_OK)
+        rv = open_rw(slot, &session);
+    if (rv == CKR_OK)
+        rv = user_login(session, userPin);
+    /* Objects decode newest first, so the second key decodes before the
+     * damaged first one. */
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, keyTmpl,
+                sizeof(keyTmpl) / sizeof(*keyTmpl), &obj);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, keyTmpl,
+                sizeof(keyTmpl) / sizeof(*keyTmpl), &obj);
+    }
+    CHECK_RV(rv, "create private token keys", CKR_OK);
+    if (session != CK_INVALID_HANDLE) {
+        funcList->C_Logout(session);
+        funcList->C_CloseSession(session);
+        session = CK_INVALID_HANDLE;
+    }
+    funcList->C_Finalize(NULL);
+    if (rv != CKR_OK)
+        return;
+
+    CHECK_TRUE(truncate_stored_key() == 0, "replace stored key record");
+    rv = lib_init();
+    if (rv == CKR_OK)
+        rv = open_rw(slot, &session);
+    CHECK_RV(rv, "reload token", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = user_login(session, userPin);
+        CHECK_TRUE(rv != CKR_OK, "login fails on undecodable token object");
+        CHECK_TRUE(WP11_Slot_TokenKeyIsZero(slot) == 1,
+                   "token key is clear after failed login");
+        CHECK_TRUE(WP11_Slot_TokenDecodedObjectCount(slot) == 0,
+                   "no decoded keys left after failed login");
+        funcList->C_CloseSession(session);
+    }
+    funcList->C_Finalize(NULL);
+    cleanup_test_files();
+}
 #endif
 
 #ifndef SINGLE_THREADED
@@ -255,6 +362,9 @@ static int run_test(void)
 
 #ifndef SINGLE_THREADED
     empty_pin_change_requires_login_test();
+#endif
+#ifdef LOGIN_TEST_FILE_STORE
+    failed_login_leaves_no_token_key_test();
 #endif
 
     pkcs11_unload();
