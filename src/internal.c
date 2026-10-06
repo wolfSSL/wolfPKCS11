@@ -11885,6 +11885,9 @@ int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
 {
     int ret = BAD_FUNC_ARG;
     WP11_Object* obj;
+#ifndef WOLFPKCS11_NSS
+    word32 opFlag = 0;
+#endif
 #ifdef WOLFPKCS11_NSS
     WP11_Session* scan;
 #endif
@@ -11906,6 +11909,9 @@ int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
         obj = session->object;
         while (obj != NULL) {
             if (obj->handle == objHandle) {
+            #ifndef WOLFPKCS11_NSS
+                opFlag = obj->opFlag;
+            #endif
                 ret = 0;
                 break;
             }
@@ -11936,6 +11942,9 @@ int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
         obj = session->slot->token.object;
         while (obj != NULL) {
             if (obj->handle == objHandle) {
+            #ifndef WOLFPKCS11_NSS
+                opFlag = obj->opFlag;
+            #endif
                 ret = 0;
                 break;
             }
@@ -11944,12 +11953,14 @@ int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
         WP11_Lock_UnlockRO(&session->slot->token.lock);
     }
 
-    if (ret == 0 && obj != NULL && (obj->handle == objHandle)) {
+    /* The flags were captured under the token lock: the object may be freed
+     * by a concurrent destroy once the lock is released. */
+    if (ret == 0 && obj != NULL) {
 #ifndef WOLFPKCS11_NSS
         /* Enforce CKA_PRIVATE: reject private objects from public sessions.
          * Skipped in NSS mode because NSS operates as the internal crypto
          * module without calling C_Login. */
-        if ((obj->opFlag & WP11_FLAG_PRIVATE) == WP11_FLAG_PRIVATE) {
+        if ((opFlag & WP11_FLAG_PRIVATE) == WP11_FLAG_PRIVATE) {
             int loginState;
             WP11_Lock_LockRO(&session->slot->lock);
             loginState = session->slot->token.loginState;
