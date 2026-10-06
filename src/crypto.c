@@ -909,7 +909,7 @@ static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
  * @param  obj        [in]  Object to set value against.
  * @param  pTemplate  [in]  Template of attributes set against object.
  * @param  ulCount    [in]  Number of attribute triplets in template.
- * @return  CKR_ARGUMENTS_BAD when pTemplate is NULL.
+ * @return  CKR_ARGUMENTS_BAD when pTemplate is NULL or ulCount is too large.
  *          CKR_SESSION_READ_ONLY when the session cannot modify objects.
  *          CKR_ATTRIBUTE_TYPE_INVALID if the attribute type is not supported.
  *          CKR_ATTRIBUTE_VALUE_INVALID if value is not valid for data type.
@@ -941,7 +941,7 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
     byte roCur[sizeof(CK_ULONG)];
     CK_ULONG roCurLen;
 
-    if (pTemplate == NULL)
+    if (pTemplate == NULL || ulCount > (CK_ULONG)INT_MAX)
         return CKR_ARGUMENTS_BAD;
     /* Only require R/W session for token objects */
     if (!WP11_Session_IsRW(session) && WP11_Object_OnToken(obj))
