@@ -854,6 +854,68 @@ static void test_single_part_len_range(CK_SESSION_HANDLE session)
 }
 #endif
 
+#if !defined(NO_AES) && defined(HAVE_AES_KEYWRAP)
+/* Key unwrap rejects a ciphertext length the token cannot represent and ends
+ * the operation instead of unwrapping a shorter length. */
+static void test_key_wrap_decrypt_len_range(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_MECHANISM mech;
+    byte plain[16];
+    byte wrapped[24];
+    byte out[32];
+    CK_ULONG wrappedLen;
+    CK_ULONG outLen;
+    CK_ULONG wrap = ((CK_ULONG)1 << 16) << 16;
+    static const CK_MECHANISM_TYPE mechs[] = {
+        CKM_AES_KEY_WRAP, CKM_AES_KEY_WRAP_PAD
+    };
+    int i;
+
+    if (wrap == 0)
+        return;
+
+    XMEMSET(plain, 0x6B, sizeof(plain));
+    rv = create_aes_key(session, aes_128_key, sizeof(aes_128_key), &key);
+    CHECK_RV(rv, "key unwrap length: create AES key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    for (i = 0; i < (int)(sizeof(mechs) / sizeof(*mechs)); i++) {
+        mech.mechanism = mechs[i];
+        mech.pParameter = NULL;
+        mech.ulParameterLen = 0;
+        printf("key unwrap length: mechanism 0x%lx\n", (unsigned long)mechs[i]);
+
+        rv = funcList->C_EncryptInit(session, &mech, key);
+        CHECK_RV(rv, "key unwrap length: C_EncryptInit", CKR_OK);
+        if (rv != CKR_OK)
+            continue;
+        wrappedLen = sizeof(wrapped);
+        rv = funcList->C_Encrypt(session, plain, sizeof(plain), wrapped,
+                                 &wrappedLen);
+        CHECK_RV(rv, "key unwrap length: C_Encrypt", CKR_OK);
+        if (rv != CKR_OK)
+            continue;
+
+        rv = funcList->C_DecryptInit(session, &mech, key);
+        CHECK_RV(rv, "key unwrap length: C_DecryptInit", CKR_OK);
+        if (rv != CKR_OK)
+            continue;
+        outLen = sizeof(out);
+        rv = funcList->C_Decrypt(session, wrapped, wrap + wrappedLen, out,
+                                 &outLen);
+        CHECK_RV(rv, "key unwrap length: C_Decrypt rejects oversized length",
+                 CKR_ENCRYPTED_DATA_LEN_RANGE);
+        outLen = sizeof(out);
+        rv = funcList->C_Decrypt(session, wrapped, wrappedLen, out, &outLen);
+        CHECK_RV(rv, "key unwrap length: decrypt operation ended",
+                 CKR_OPERATION_NOT_INITIALIZED);
+    }
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -905,6 +967,9 @@ static int run_test(void)
 #endif
 #if !defined(NO_AES) && (defined(HAVE_AESCTR) || defined(HAVE_AESCTS))
         run_in_session(slot, test_single_part_len_range);
+#endif
+#if !defined(NO_AES) && defined(HAVE_AES_KEYWRAP)
+        run_in_session(slot, test_key_wrap_decrypt_len_range);
 #endif
     }
 
