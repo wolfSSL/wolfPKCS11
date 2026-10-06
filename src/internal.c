@@ -5044,6 +5044,9 @@ static int wp11_Object_Decode_DhKey(WP11_Object* object)
         if (ret == 0)
             object->data.dhKey->len = object->keyDataLen - AES_BLOCK_SIZE;
     }
+    else if (object->keyDataLen > WP11_MAX_DH_KEY_SZ) {
+        ret = BUFFER_E;
+    }
     else {
         XMEMCPY(object->data.dhKey->key, object->keyData, object->keyDataLen);
         object->data.dhKey->len = object->keyDataLen;
