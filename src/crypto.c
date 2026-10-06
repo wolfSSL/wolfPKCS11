@@ -2093,7 +2093,7 @@ CK_RV C_GetObjectSize(CK_SESSION_HANDLE hSession,
  * @param  ulCount    [in]  Number of attribute triplets in template.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_ARGUMENTS_BAD when pTemplate is NULL.
+ *          CKR_ARGUMENTS_BAD when pTemplate is NULL or ulCount is too large.
  *          CKR_OBJECT_HANDLE_INVALID when handle is not to a valid object.
  *          CKR_ATTRIBUTE_TYPE_INVALID if the attribute type is not supported
  *          or not valid for the object.
@@ -2133,7 +2133,7 @@ static CK_RV wp11_C_GetAttributeValue(CK_SESSION_HANDLE hSession,
         WOLFPKCS11_LEAVE("C_GetAttributeValue", rv);
         return rv;
     }
-    if (pTemplate == NULL) {
+    if (pTemplate == NULL || ulCount > (CK_ULONG)INT_MAX) {
         rv = CKR_ARGUMENTS_BAD;
         WOLFPKCS11_LEAVE("C_GetAttributeValue", rv);
         return rv;
