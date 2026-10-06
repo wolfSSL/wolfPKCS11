@@ -26,6 +26,7 @@
     #include <wolfpkcs11/config.h>
 #endif
 
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -52,6 +53,22 @@
 static CK_OBJECT_CLASS dataClass = CKO_DATA;
 static CK_BBOOL ckFalse = CK_FALSE;
 static const byte dataValue[] = "attribute-validation";
+static const byte dataLabel[] = "attribute-validation-label";
+static const byte newLabel[]  = "replaced";
+
+/* Check that the object's CKA_LABEL is exactly the expected bytes. */
+static void expect_label(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE obj,
+                         const byte* expect, CK_ULONG expectLen,
+                         const char* name)
+{
+    CK_RV rv;
+    byte buf[64];
+    CK_ATTRIBUTE attr = { CKA_LABEL, buf, sizeof(buf) };
+
+    rv = funcList->C_GetAttributeValue(session, obj, &attr, 1);
+    CHECK_TRUE(rv == CKR_OK && attr.ulValueLen == expectLen &&
+               XMEMCMP(buf, expect, expectLen) == 0, name);
+}
 
 static void destroy_obj(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE* obj)
 {
@@ -69,6 +86,7 @@ static CK_RV create_data_object(CK_SESSION_HANDLE session,
         { CKA_CLASS,   &dataClass,        sizeof(dataClass)     },
         { CKA_TOKEN,   &ckFalse,          sizeof(ckFalse)       },
         { CKA_PRIVATE, &ckFalse,          sizeof(ckFalse)       },
+        { CKA_LABEL,   (void*)dataLabel,  sizeof(dataLabel) - 1 },
         { CKA_VALUE,   (void*)dataValue,  sizeof(dataValue) - 1 },
     };
 
@@ -116,6 +134,30 @@ static void test_token_attr_is_bool(CK_SESSION_HANDLE session)
              CKR_ATTRIBUTE_VALUE_INVALID);
     if (rv == CKR_OK)
         destroy_obj(session, &bad);
+
+    destroy_obj(session, &obj);
+}
+
+/* Attribute counts beyond what the library can index are rejected rather
+ * than treated as an empty template. */
+static void test_set_attr_count_range(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE setTmpl[] = {
+        { CKA_LABEL, (void*)newLabel, sizeof(newLabel) - 1 },
+    };
+
+    rv = create_data_object(session, &obj);
+    CHECK_RV(rv, "create data object", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_SetAttributeValue(session, obj, setTmpl,
+                                       (CK_ULONG)INT_MAX + 1);
+    CHECK_RV(rv, "set attributes with oversized count", CKR_ARGUMENTS_BAD);
+    expect_label(session, obj, dataLabel, sizeof(dataLabel) - 1,
+                 "label unchanged after oversized count");
 
     destroy_obj(session, &obj);
 }
@@ -237,6 +279,7 @@ static int run_test(void)
     CHECK_RV(rv, "open session", CKR_OK);
     if (rv == CKR_OK) {
         test_token_attr_is_bool(session);
+        test_set_attr_count_range(session);
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
     defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
     !defined(NO_RSA) && !defined(NO_AES) && \
