@@ -483,6 +483,63 @@ static void tls_mac_verify_session_close_test(CK_SLOT_ID slot)
 }
 #endif
 
+#ifdef HAVE_ECC
+static CK_OBJECT_CLASS ecPubClass = CKO_PUBLIC_KEY;
+static CK_KEY_TYPE ecKeyType = CKK_EC;
+
+/* An ECDSA signature whose length is not 2 * order size is out of range. */
+static void ecdsa_sig_len_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_ECDSA, NULL, 0 };
+    byte hash[32];
+    byte sig[65];
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_CLASS,     &ecPubClass,     sizeof(ecPubClass)      },
+        { CKA_KEY_TYPE,  &ecKeyType,      sizeof(ecKeyType)       },
+        { CKA_VERIFY,    &ckTrue,         sizeof(ckTrue)          },
+        { CKA_PRIVATE,   &ckFalse,        sizeof(ckFalse)         },
+        { CKA_EC_PARAMS, ecc_p256_params, sizeof(ecc_p256_params) },
+        { CKA_EC_POINT,  ecc_p256_pub,    sizeof(ecc_p256_pub)    },
+    };
+
+    XMEMSET(hash, 0x3c, sizeof(hash));
+    XMEMSET(sig, 0x01, sizeof(sig));
+    rv = funcList->C_CreateObject(session, pubTmpl,
+                                  sizeof(pubTmpl) / sizeof(*pubTmpl), &pub);
+    CHECK_RV(rv, "create EC public key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_VerifyInit(session, &mech, pub);
+    CHECK_RV(rv, "C_VerifyInit(ECDSA, short signature)", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_Verify(session, hash, sizeof(hash), sig, 63);
+        CHECK_RV(rv, "C_Verify(ECDSA, short signature)",
+                 CKR_SIGNATURE_LEN_RANGE);
+    }
+
+    rv = funcList->C_VerifyInit(session, &mech, pub);
+    CHECK_RV(rv, "C_VerifyInit(ECDSA, long signature)", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_Verify(session, hash, sizeof(hash), sig, 65);
+        CHECK_RV(rv, "C_Verify(ECDSA, long signature)",
+                 CKR_SIGNATURE_LEN_RANGE);
+    }
+
+    rv = funcList->C_VerifyInit(session, &mech, pub);
+    CHECK_RV(rv, "C_VerifyInit(ECDSA, wrong signature)", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_Verify(session, hash, sizeof(hash), sig, 64);
+        CHECK_RV(rv, "C_Verify(ECDSA, wrong signature)",
+                 CKR_SIGNATURE_INVALID);
+    }
+
+    funcList->C_DestroyObject(session, pub);
+}
+#endif
+
 static CK_RV token_init(CK_SLOT_ID* slot)
 {
     CK_RV rv;
@@ -560,6 +617,9 @@ static int run_test(void)
         tls_mac_sign_final_retry_test(session);
         tls_mac_verify_multipart_test(session);
         tls_mac_verify_session_close_test(slot);
+#endif
+#ifdef HAVE_ECC
+        ecdsa_sig_len_test(session);
 #endif
     }
 

@@ -9512,7 +9512,7 @@ static CK_RV ecdsa_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE privKey,
     if (ret == CKR_OK) {
         outSz = 1;
         ret = funcList->C_Verify(session, hash, hashSz, out, outSz);
-        CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED, "ECDSA Verify bad sig");
+        CHECK_CKR_FAIL(ret, CKR_SIGNATURE_LEN_RANGE, "ECDSA Verify bad sig");
     }
 
     /* Test digests */
@@ -9578,7 +9578,7 @@ static CK_RV ecdsa_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE privKey,
         if (ret == CKR_OK) {
             outSz = 1;
             ret = funcList->C_Verify(session, data, dataSz, out, outSz);
-            CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED, "ECDSA Verify bad sig");
+            CHECK_CKR_FAIL(ret, CKR_SIGNATURE_LEN_RANGE, "ECDSA Verify bad sig");
         }
     }
 

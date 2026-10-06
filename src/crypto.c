@@ -7304,6 +7304,10 @@ static CK_RV wp11_C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 return CKR_OPERATION_NOT_INITIALIZED;
             if (!WP11_Session_IsHashOpInitialized(session, (int)mechanism))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            if (ulSignatureLen != (CK_ULONG)WP11_Ec_SigLen(obj)) {
+                WP11_Session_AbortOp(session);
+                return CKR_SIGNATURE_LEN_RANGE;
+            }
 
             if (hash_type != WC_HASH_TYPE_NONE) {
                 if (wc_Hash(hash_type, pData, (word32)ulDataLen, digest,
