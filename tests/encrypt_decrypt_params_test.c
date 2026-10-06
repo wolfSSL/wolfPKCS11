@@ -977,6 +977,94 @@ static void test_gcm_decrypt_final_large_len(CK_SESSION_HANDLE session)
 }
 #endif
 
+#if !defined(NO_AES) && (defined(HAVE_AES_CBC) || defined(HAVE_AESGCM) || \
+                         defined(HAVE_AESCTS))
+/* C_EncryptFinal accepts an output buffer length that does not fit in 32 bits
+ * and reports the bytes it wrote. */
+static void check_encrypt_final_large_len(CK_SESSION_HANDLE session,
+                                          CK_OBJECT_HANDLE key,
+                                          CK_MECHANISM* mech,
+                                          CK_ULONG dataLen, CK_ULONG encTotal)
+{
+    CK_RV rv;
+    byte plain[32];
+    byte enc[64];
+    CK_ULONG updLen;
+    CK_ULONG lastLen;
+    CK_ULONG wrap = ((CK_ULONG)1 << 16) << 16;
+
+    XMEMSET(plain, 0x7A, sizeof(plain));
+
+    rv = funcList->C_EncryptInit(session, mech, key);
+    CHECK_RV(rv, "encrypt final length: C_EncryptInit", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    updLen = sizeof(enc);
+    rv = funcList->C_EncryptUpdate(session, plain, dataLen, enc, &updLen);
+    CHECK_RV(rv, "encrypt final length: C_EncryptUpdate", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    lastLen = wrap;
+    rv = funcList->C_EncryptFinal(session, enc + updLen, &lastLen);
+    CHECK_RV(rv, "encrypt final length: C_EncryptFinal with large buffer "
+             "length", CKR_OK);
+    CHECK_TRUE(rv == CKR_OK && updLen + lastLen == encTotal,
+               "encrypt final length: reports bytes written");
+    if (rv == CKR_BUFFER_TOO_SMALL) {
+        /* End the still-active operation so the next mechanism can start. */
+        lastLen = sizeof(enc) - updLen;
+        (void)funcList->C_EncryptFinal(session, enc + updLen, &lastLen);
+    }
+}
+
+static void test_encrypt_final_large_len(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_MECHANISM mech;
+#if defined(HAVE_AES_CBC) || defined(HAVE_AESCTS)
+    byte iv[16];
+#endif
+#ifdef HAVE_AESGCM
+    CK_GCM_PARAMS params;
+    byte gcmIv[12];
+    byte aad[16];
+#endif
+
+    if ((((CK_ULONG)1 << 16) << 16) == 0)
+        return;
+
+    rv = create_aes_key(session, aes_128_key, sizeof(aes_128_key), &key);
+    CHECK_RV(rv, "encrypt final length: create AES key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+#ifdef HAVE_AES_CBC
+    XMEMSET(iv, 0x13, sizeof(iv));
+    mech.mechanism = CKM_AES_CBC_PAD;
+    mech.pParameter = iv;
+    mech.ulParameterLen = sizeof(iv);
+    printf("AES-CBC-PAD\n");
+    check_encrypt_final_large_len(session, key, &mech, 20, 32);
+#endif
+#ifdef HAVE_AESGCM
+    XMEMSET(gcmIv, 0x24, sizeof(gcmIv));
+    XMEMSET(aad, 0x35, sizeof(aad));
+    gcm_params_init(&params, &mech, gcmIv, aad);
+    printf("AES-GCM\n");
+    check_encrypt_final_large_len(session, key, &mech, 16, 32);
+#endif
+#ifdef HAVE_AESCTS
+    XMEMSET(iv, 0x46, sizeof(iv));
+    mech.mechanism = CKM_AES_CTS;
+    mech.pParameter = iv;
+    mech.ulParameterLen = sizeof(iv);
+    printf("AES-CTS\n");
+    check_encrypt_final_large_len(session, key, &mech, 20, 20);
+#endif
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -1034,6 +1122,10 @@ static int run_test(void)
 #endif
 #if !defined(NO_AES) && defined(HAVE_AESGCM)
         run_in_session(slot, test_gcm_decrypt_final_large_len);
+#endif
+#if !defined(NO_AES) && (defined(HAVE_AES_CBC) || defined(HAVE_AESGCM) || \
+                         defined(HAVE_AESCTS))
+        run_in_session(slot, test_encrypt_final_large_len);
 #endif
     }
 
