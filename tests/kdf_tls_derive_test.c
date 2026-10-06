@@ -588,6 +588,50 @@ cleanup:
 }
 #endif
 
+#ifdef WOLFSSL_HAVE_PRF
+/* An unsupported protocol version is a mechanism parameter error. */
+static int test_tls_master_version_param(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    CK_VERSION version = { 3, 3 };
+    CK_TLS12_MASTER_KEY_DERIVE_PARAMS params;
+    CK_MECHANISM mech = { CKM_TLS12_MASTER_KEY_DERIVE, &params,
+                          sizeof(params) };
+    byte preMaster[48];
+    int result = 0;
+
+    XMEMSET(preMaster, 0x33, sizeof(preMaster));
+    preMaster[0] = 3;
+    preMaster[1] = 3;
+    ret = create_secret_base(session, CKK_GENERIC_SECRET, preMaster,
+                             sizeof(preMaster), &base);
+    CHECK_CKR(ret, "create TLS pre-master secret");
+
+    XMEMSET(&params, 0, sizeof(params));
+    params.RandomInfo.pClientRandom = clientRandom;
+    params.RandomInfo.ulClientRandomLen = sizeof(clientRandom);
+    params.RandomInfo.pServerRandom = serverRandom;
+    params.RandomInfo.ulServerRandomLen = sizeof(serverRandom);
+    params.pVersion = &version;
+    params.prfHashMechanism = CKM_SHA256;
+    ret = derive_generic(session, &mech, base, 48, &derived);
+    CHECK_CKR(ret, "TLS 1.2 master secret derive");
+    destroy_obj(session, &derived);
+
+    version.minor = 1;
+    ret = derive_generic(session, &mech, base, 48, &derived);
+    CHECK_RV(ret, CKR_MECHANISM_PARAM_INVALID,
+             "TLS master secret derive with other version rejected");
+
+cleanup:
+    destroy_obj(session, &derived);
+    destroy_obj(session, &base);
+    return result;
+}
+#endif
+
 static CK_RV pkcs11_init(void)
 {
     CK_RV ret;
@@ -726,6 +770,10 @@ static int kdf_tls_derive_test(void)
 
 #ifdef WOLFSSL_HAVE_PRF
     if (test_tls_randoms_required(session) != 0)
+        result = -1;
+#endif
+#ifdef WOLFSSL_HAVE_PRF
+    if (test_tls_master_version_param(session) != 0)
         result = -1;
 #endif
 #if defined(WOLFSSL_HAVE_PRF) && defined(WOLFPKCS11_NSS)
