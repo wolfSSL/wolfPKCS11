@@ -2026,8 +2026,9 @@ static CK_RV test_object(void* args)
         { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
     };
     CK_ULONG tmplOnTokenCnt = sizeof(tmplOnToken) / sizeof(*tmplOnToken);
+    static byte copyLabel[] = "copy";
     CK_ATTRIBUTE copyTmpl[] = {
-        { CKA_VALUE,             keyData,           sizeof(keyData)           },
+        { CKA_LABEL,             copyLabel,         sizeof(copyLabel)-1       },
     };
     CK_ULONG copyTmplCnt = sizeof(copyTmpl) / sizeof(*copyTmpl);
     CK_ULONG count;
@@ -2456,10 +2457,22 @@ static CK_RV test_copy_object_deep_copy(void* args)
         }
     }
 
-    /* Test 3: Verify independence (deep copy) by modifying original object */
+    /* Test 3: Verify independence (deep copy) by modifying original object.
+     * Key material is read-only after creation, so modify CKA_ID instead. */
+    if (ret == CKR_OK) {
+        CK_ATTRIBUTE modifyValueTmpl[] = {
+            { CKA_VALUE,             modifiedKeyData,
+              sizeof(modifiedKeyData)   },
+        };
+
+        ret = funcList->C_SetAttributeValue(session, originalObj,
+                                            modifyValueTmpl, 1);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_READ_ONLY,
+                       "Modify original object key value is read-only");
+    }
     if (ret == CKR_OK) {
         CK_ATTRIBUTE modifyOriginalTmpl[] = {
-            { CKA_VALUE,             modifiedKeyData,
+            { CKA_ID,                modifiedKeyData,
               sizeof(modifiedKeyData)   },
         };
         CK_ULONG modifyOriginalTmplCnt = sizeof(modifyOriginalTmpl) /
@@ -2472,45 +2485,44 @@ static CK_RV test_copy_object_deep_copy(void* args)
     }
 
     if (ret == CKR_OK) {
-        /* Get the modified original object's value */
-        XMEMSET(origValue, 0, sizeof(origValue));
-        getOriginalAttrs[0].pValue = origValue;
-        getOriginalAttrs[0].ulValueLen = sizeof(origValue);
+        /* Get the modified original object's ID */
+        XMEMSET(origId, 0, sizeof(origId));
+        getOriginalAttrs[1].pValue = origId;
+        getOriginalAttrs[1].ulValueLen = sizeof(origId);
 
         ret = funcList->C_GetAttributeValue(session, originalObj,
-                                            getOriginalAttrs, 1);
-        CHECK_CKR(ret, "Get modified original object value");
+                                            &getOriginalAttrs[1], 1);
+        CHECK_CKR(ret, "Get modified original object ID");
     }
 
     if (ret == CKR_OK) {
-        /* Get the copied object's value (should be unchanged) */
-        XMEMSET(copiedValue, 0, sizeof(copiedValue));
-        getCopiedAttrs[0].pValue = copiedValue;
-        getCopiedAttrs[0].ulValueLen = sizeof(copiedValue);
+        /* Get the copied object's ID (should be unchanged) */
+        XMEMSET(copiedId, 0, sizeof(copiedId));
+        getCopiedAttrs[1].pValue = copiedId;
+        getCopiedAttrs[1].ulValueLen = sizeof(copiedId);
 
-        ret = funcList->C_GetAttributeValue(session, copiedObj, getCopiedAttrs,
-                                            1);
-        CHECK_CKR(ret, "Get copied object value after original "
+        ret = funcList->C_GetAttributeValue(session, copiedObj,
+                                            &getCopiedAttrs[1], 1);
+        CHECK_CKR(ret, "Get copied object ID after original "
                        "modification");
     }
 
     if (ret == CKR_OK) {
-        /* Verify original object has modified value */
-        if (getOriginalAttrs[0].ulValueLen != sizeof(modifiedKeyData) ||
-            XMEMCMP(origValue, modifiedKeyData,
+        /* Verify original object has modified ID */
+        if (getOriginalAttrs[1].ulValueLen != sizeof(modifiedKeyData) ||
+            XMEMCMP(origId, modifiedKeyData,
                     sizeof(modifiedKeyData)) != 0) {
             ret = -1;
-            CHECK_CKR(ret, "Original object should have modified value");
+            CHECK_CKR(ret, "Original object should have modified ID");
         }
     }
 
     if (ret == CKR_OK) {
-        /* Verify copied object still has original value (proving deep copy) */
-        if (getCopiedAttrs[0].ulValueLen != sizeof(keyData) ||
-            XMEMCMP(copiedValue, keyData,
-                    sizeof(keyData)) != 0) {
+        /* Verify copied object still has original ID (proving deep copy) */
+        if (getCopiedAttrs[1].ulValueLen != sizeof(keyId) ||
+            XMEMCMP(copiedId, keyId, sizeof(keyId)) != 0) {
             ret = -1;
-            CHECK_CKR(ret, "Copied object should retain original value "
+            CHECK_CKR(ret, "Copied object should retain original ID "
                            "(deep copy test)");
         }
     }
@@ -17378,8 +17390,9 @@ static CK_RV test_create_session_obj_ro_session(void* args)
     CK_ULONG tmplOnTokenCnt = sizeof(tmplOnToken) / sizeof(*tmplOnToken);
     CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE, objOnToken = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE copyObj = CK_INVALID_HANDLE, copyBad = CK_INVALID_HANDLE;
+    static byte copyLabel[] = "copy";
     CK_ATTRIBUTE copyTmpl[] = {
-        { CKA_VALUE,             keyData,           sizeof(keyData)           },
+        { CKA_LABEL,             copyLabel,         sizeof(copyLabel)-1       },
     };
     CK_ULONG copyTmplCnt = sizeof(copyTmpl) / sizeof(*copyTmpl);
     char newLabel[] = "updated";

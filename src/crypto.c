@@ -1149,6 +1149,23 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
         }
     }
 
+    /* Key components and a certificate's value are fixed once the object
+     * exists (PKCS#11 v2.40 sec 4.6.3, 4.8). */
+    if (!newObject && objClass != CKO_DATA
+#ifdef WOLFPKCS11_NSS
+            && objClass != CKO_NSS_TRUST
+#endif
+            ) {
+        for (i = 0; i < cnt; i++) {
+            if (objClass == CKO_CERTIFICATE && attrs[i] != CKA_VALUE)
+                continue;
+            for (j = 0; j < (int)ulCount; j++) {
+                if (attrs[i] == pTemplate[j].type)
+                    return CKR_ATTRIBUTE_READ_ONLY;
+            }
+        }
+    }
+
     /* Validate the whole template before any setter runs so a rejected
      * update leaves the object unchanged. */
     for (i = 0; i < (int)ulCount; i++) {

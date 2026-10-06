@@ -239,8 +239,9 @@ static CK_RV test_object(void* args)
         { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
     };
     CK_ULONG tmplOnTokenCnt = sizeof(tmplOnToken) / sizeof(*tmplOnToken);
+    static byte copyLabel[] = "copy";
     CK_ATTRIBUTE copyTmpl[] = {
-        { CKA_VALUE,             keyData,           sizeof(keyData)           },
+        { CKA_LABEL,             copyLabel,         sizeof(copyLabel)-1       },
     };
     CK_ULONG copyTmplCnt = sizeof(copyTmpl) / sizeof(*copyTmpl);
     CK_ULONG count;
