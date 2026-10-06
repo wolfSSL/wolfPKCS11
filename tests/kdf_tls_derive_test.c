@@ -59,8 +59,12 @@
     #define NSS_EMS_WIDE_TEST
 #endif
 
+#if !defined(NO_AES) && defined(HAVE_AES_CBC) && defined(WIDE_CK_ULONG)
+    #define AES_CBC_WIDE_TEST
+#endif
+
 #if (defined(WOLFPKCS11_HKDF) && defined(WIDE_CK_ULONG)) || \
-    defined(NSS_EMS_WIDE_TEST)
+    defined(NSS_EMS_WIDE_TEST) || defined(AES_CBC_WIDE_TEST)
     #define SECRET_BASE_TESTS
 #endif
 
@@ -107,12 +111,20 @@ static CK_BBOOL ckFalse = CK_FALSE;
 
 #ifdef SECRET_BASE_TESTS
 
+/* Not every SECRET_BASE_TESTS configuration uses the shared secret. */
+#if defined(__GNUC__)
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wunused-variable"
+#endif
 static byte baseSecret[32] = {
     0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b,
     0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b,
     0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b,
     0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b
 };
+#if defined(__GNUC__)
+    #pragma GCC diagnostic pop
+#endif
 
 /* Session secret key of the given type usable as a derive base. */
 static CK_RV create_secret_base(CK_SESSION_HANDLE session, CK_KEY_TYPE type,
@@ -310,6 +322,44 @@ cleanup:
 }
 #endif
 
+#ifdef AES_CBC_WIDE_TEST
+/* The AES-CBC encrypt-data length must be representable in 32 bits. */
+static int test_aes_cbc_data_length_fits_word32(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    byte key[sizeof(aes_cbc_key)];
+    byte plain[sizeof(aes_cbc_plain)];
+    CK_AES_CBC_ENCRYPT_DATA_PARAMS params;
+    CK_MECHANISM mech = { CKM_AES_CBC_ENCRYPT_DATA, &params, sizeof(params) };
+    int result = 0;
+
+    XMEMCPY(key, aes_cbc_key, sizeof(key));
+    XMEMCPY(plain, aes_cbc_plain, sizeof(plain));
+    ret = create_secret_base(session, CKK_AES, key, sizeof(key), &base);
+    CHECK_CKR(ret, "create AES base key");
+
+    XMEMSET(&params, 0, sizeof(params));
+    XMEMCPY(params.iv, aes_cbc_iv, sizeof(params.iv));
+    params.pData = plain;
+    params.length = sizeof(plain);
+    ret = derive_generic(session, &mech, base, sizeof(plain), &derived);
+    CHECK_CKR(ret, "AES-CBC encrypt-data derive");
+    destroy_obj(session, &derived);
+
+    params.length = LEN_ABOVE_WORD32(sizeof(plain));
+    ret = derive_generic(session, &mech, base, sizeof(plain), &derived);
+    CHECK_RV(ret, CKR_MECHANISM_PARAM_INVALID,
+             "AES-CBC data length beyond 32 bits rejected");
+
+cleanup:
+    destroy_obj(session, &derived);
+    destroy_obj(session, &base);
+    return result;
+}
+#endif
+
 static CK_RV pkcs11_init(void)
 {
     CK_RV ret;
@@ -428,6 +478,11 @@ static int kdf_tls_derive_test(void)
 
 #ifndef NO_DH
     if (test_dh_public_length_bound(session) != 0)
+        result = -1;
+#endif
+
+#ifdef AES_CBC_WIDE_TEST
+    if (test_aes_cbc_data_length_fits_word32(session) != 0)
         result = -1;
 #endif
 

@@ -9813,7 +9813,7 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                     sizeof(CK_AES_CBC_ENCRYPT_DATA_PARAMS))
                 return CKR_MECHANISM_PARAM_INVALID;
             params = (CK_AES_CBC_ENCRYPT_DATA_PARAMS*)pMechanism->pParameter;
-            if (params->length % 16)
+            if (!CK_ULONG_FITS_WORD32(params->length) || params->length % 16)
                 return CKR_MECHANISM_PARAM_INVALID;
 
             keyLen = (word32)params->length;
