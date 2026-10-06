@@ -16288,6 +16288,7 @@ int WP11_Rsa_Sign(unsigned char* in, word32 inLen, unsigned char* sig,
 
     if (priv->onToken)
         WP11_Lock_UnlockRO(priv->lock);
+    wc_ForceZero(data, sizeof(data));
 
     return ret;
 }
