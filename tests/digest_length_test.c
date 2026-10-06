@@ -286,6 +286,41 @@ static void hmac_input_len_range_test(CK_SESSION_HANDLE session)
 
     funcList->C_DestroyObject(session, key);
 }
+
+/* A multi-part MAC verify takes the signature length in full. */
+static void verify_final_sig_len_range_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_SHA256_HMAC, NULL, 0 };
+    byte data[16];
+    byte mac[32];
+    CK_ULONG macLen = sizeof(mac);
+
+    XMEMSET(data, 0x65, sizeof(data));
+    rv = create_hmac_key(session, &key);
+    CHECK_RV(rv, "create HMAC key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_SignInit(session, &mech, key);
+    if (rv == CKR_OK)
+        rv = funcList->C_Sign(session, data, sizeof(data), mac, &macLen);
+    CHECK_RV(rv, "C_Sign(SHA256 HMAC) reference MAC", CKR_OK);
+
+    rv = funcList->C_VerifyInit(session, &mech, key);
+    CHECK_RV(rv, "C_VerifyInit(SHA256 HMAC)", CKR_OK);
+    rv = funcList->C_VerifyUpdate(session, data, sizeof(data));
+    CHECK_RV(rv, "C_VerifyUpdate(SHA256 HMAC)", CKR_OK);
+    rv = funcList->C_VerifyFinal(session, mac, big_len(macLen));
+    CHECK_RV(rv, "C_VerifyFinal(HMAC) rejects a length above 32 bits",
+             CKR_SIGNATURE_LEN_RANGE);
+    rv = funcList->C_VerifyFinal(session, mac, macLen);
+    CHECK_RV(rv, "C_VerifyFinal(HMAC) length error ends the operation",
+             CKR_OPERATION_NOT_INITIALIZED);
+
+    funcList->C_DestroyObject(session, key);
+}
 #endif
 #endif /* !NO_SHA256 */
 
@@ -339,6 +374,55 @@ static void rsa_input_len_range_test(CK_SESSION_HANDLE session)
 
     funcList->C_DestroyObject(session, priv);
     funcList->C_DestroyObject(session, pub);
+}
+#endif
+
+#if !defined(NO_AES) && defined(HAVE_AESCMAC)
+static CK_OBJECT_CLASS aesKeyClass = CKO_SECRET_KEY;
+static CK_KEY_TYPE aesKeyType = CKK_AES;
+
+/* A multi-part CMAC verify takes the signature length in full. */
+static void cmac_verify_final_sig_len_range_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_AES_CMAC, NULL, 0 };
+    byte data[16];
+    byte mac[16];
+    CK_ULONG macLen = sizeof(mac);
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,    &aesKeyClass, sizeof(aesKeyClass) },
+        { CKA_KEY_TYPE, &aesKeyType,  sizeof(aesKeyType)  },
+        { CKA_SIGN,     &ckTrue,      sizeof(ckTrue)      },
+        { CKA_VERIFY,   &ckTrue,      sizeof(ckTrue)      },
+        { CKA_PRIVATE,  &ckFalse,     sizeof(ckFalse)     },
+        { CKA_VALUE,    aes_128_key,  sizeof(aes_128_key) },
+    };
+
+    XMEMSET(data, 0x66, sizeof(data));
+    rv = funcList->C_CreateObject(session, keyTmpl,
+                                  sizeof(keyTmpl) / sizeof(*keyTmpl), &key);
+    CHECK_RV(rv, "create AES key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_SignInit(session, &mech, key);
+    if (rv == CKR_OK)
+        rv = funcList->C_Sign(session, data, sizeof(data), mac, &macLen);
+    CHECK_RV(rv, "C_Sign(AES CMAC) reference MAC", CKR_OK);
+
+    rv = funcList->C_VerifyInit(session, &mech, key);
+    CHECK_RV(rv, "C_VerifyInit(AES CMAC)", CKR_OK);
+    rv = funcList->C_VerifyUpdate(session, data, sizeof(data));
+    CHECK_RV(rv, "C_VerifyUpdate(AES CMAC)", CKR_OK);
+    rv = funcList->C_VerifyFinal(session, mac, big_len(macLen));
+    CHECK_RV(rv, "C_VerifyFinal(CMAC) rejects a length above 32 bits",
+             CKR_SIGNATURE_LEN_RANGE);
+    rv = funcList->C_VerifyFinal(session, mac, macLen);
+    CHECK_RV(rv, "C_VerifyFinal(CMAC) length error ends the operation",
+             CKR_OPERATION_NOT_INITIALIZED);
+
+    funcList->C_DestroyObject(session, key);
 }
 #endif
 
@@ -417,10 +501,14 @@ static int run_test(void)
             digest_input_len_range_test(session);
 #if !defined(NO_HMAC)
             hmac_input_len_range_test(session);
+            verify_final_sig_len_range_test(session);
 #endif
 #endif
 #ifndef NO_RSA
             rsa_input_len_range_test(session);
+#endif
+#if !defined(NO_AES) && defined(HAVE_AESCMAC)
+            cmac_verify_final_sig_len_range_test(session);
 #endif
         }
     }
