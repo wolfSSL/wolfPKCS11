@@ -1474,14 +1474,14 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
     int nameLen)
 {
     int ret = 0;
-#ifndef WOLFPKCS11_NO_ENV
     const char* str = NULL;
-#endif
     /* Reserve enough space in the final filename for suffixes such as
      * "/wp11_rsakey_priv_%016lx_%016lx" (47 chars worst-case).
      */
     enum { WP11_STORE_SUFFIX_RESERVE = 48 };
+#ifndef WOLFPKCS11_NO_ENV
     char homePath[256];
+#endif
 #ifdef WP11_HAVE_STORE_DIR_LOCK
     char storeDirCopy[WP11_STORE_MAX_PATH];
 #endif
@@ -1521,6 +1521,7 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
     }
 #endif
 
+#ifndef WOLFPKCS11_NO_ENV
     if (str == NULL) {
         const char* homeDir = NULL;
 
@@ -1544,6 +1545,7 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
         }
     #endif
     }
+#endif
 
 #ifdef WOLFPKCS11_DEFAULT_TOKEN_PATH
     if (str == NULL) {
