@@ -17008,8 +17008,10 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
     WC_RNG rng;
 #endif
 
-    if (priv->onToken)
-        WP11_Lock_LockRO(priv->lock);
+    /* Exclusive: the temporary RNG is stored in the shared key. */
+    if (priv->onToken) {
+        WP11_Lock_LockRW(priv->lock);
+    }
 
     /* Check if the point data is DER-encoded (starts with OCTET STRING tag) */
     if (pointLen >= 3 && point[0] == ASN_OCTET_STRING) {
@@ -17111,12 +17113,14 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
         }
 #if defined(ECC_TIMING_RESISTANT) && (!defined(HAVE_FIPS) || \
     (defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION > 2)))
+        (void)wc_ecc_set_rng(priv->data.ecKey, NULL);
         Rng_Free(&rng);
 #endif
     }
 
-    if (priv->onToken)
-        WP11_Lock_UnlockRO(priv->lock);
+    if (priv->onToken) {
+        WP11_Lock_UnlockRW(priv->lock);
+    }
 
     wc_ecc_free(&pubKey);
 
