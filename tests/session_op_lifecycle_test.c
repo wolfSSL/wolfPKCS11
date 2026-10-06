@@ -916,6 +916,50 @@ out:
 }
 #endif
 
+#if defined(TRACK_ALLOCS) && defined(WOLFSSL_HAVE_PRF) && !defined(NO_SHA256)
+/* Closing a session in the middle of a one-shot MAC must release, scrubbed,
+ * the input accumulated so far. */
+static void test_mac_input_released_on_close(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE aesKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE macKey = CK_INVALID_HANDLE;
+    CK_SLOT_ID slot;
+    long before;
+    int hit;
+
+    printf("\n--- closing a session releases accumulated MAC input ---\n");
+    rv = init_library(&slot);
+    CHECK_RV(rv, "initialize library", CKR_OK);
+    if (rv != CKR_OK)
+        goto out;
+    before = liveBlocks;
+    rv = open_with_keys(slot, &session, &aesKey, &macKey);
+    CHECK_RV(rv, "open session with keys", CKR_OK);
+    if (rv != CKR_OK)
+        goto out;
+
+    rv = tls_mac_sign_init(session, macKey);
+    CHECK_RV(rv, "C_SignInit(TLS MAC)", CKR_OK);
+    rv = funcList->C_SignUpdate(session, plainMarker, sizeof(plainMarker));
+    CHECK_RV(rv, "C_SignUpdate(TLS MAC)", CKR_OK);
+
+    watch_start(plainMarker, sizeof(plainMarker));
+    funcList->C_CloseSession(session);
+    hit = watch_stop();
+    session = CK_INVALID_HANDLE;
+    CHECK_TRUE(!hit, "closed session scrubs accumulated MAC input");
+    CHECK_TRUE(liveBlocks == before,
+               "closed session leaves no allocation behind");
+
+out:
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
 #if defined(TRACK_ALLOCS) && !defined(NO_AES) && defined(HAVE_AESGCM) && \
     !defined(WOLFSSL_AESGCM_STREAM)
 /* Destroying the key of a multi-part AES-GCM operation must release the
@@ -1023,6 +1067,7 @@ static int run_test(void)
 #if defined(TRACK_ALLOCS) && defined(WOLFSSL_HAVE_PRF) && !defined(NO_SHA256)
     test_mac_input_scrubbed_on_release();
     test_mac_input_grows_linearly();
+    test_mac_input_released_on_close();
 #endif
 
     pkcs11_unload();
