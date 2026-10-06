@@ -65,3 +65,51 @@ jobs:
         #- name: Run Wrap Test
         #  working-directory: ${{env.GITHUB_WORKSPACE}}
         #  run: wolfpkcs11\IDE\VisualStudio\Debug\x64\pkcs11test.exe
+
+  # The solution above enables wolfTPM, so its tests cannot run on the CI
+  # runners. Build with CMake and MSVC without wolfTPM instead and run
+  # token_path_test, which covers the Windows default token path
+  # (%APPDATA%\wolfPKCS11).
+  cmake-token-path:
+
+    runs-on: windows-latest
+
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+        - name: Pull wolfPKCS11
+          uses: actions/checkout@v4
+          with:
+            path: wolfpkcs11
+
+        - name: Pull wolfSSL
+          uses: actions/checkout@v4
+          with:
+            repository: wolfssl/wolfssl
+            path: wolfssl
+
+        - name: Build wolfSSL
+          working-directory: wolfssl
+          run: |
+            cmake -B build -DCMAKE_INSTALL_PREFIX="$(cygpath -m "$GITHUB_WORKSPACE/install")" \
+                -DBUILD_SHARED_LIBS=OFF -DWOLFSSL_EXAMPLES=no -DWOLFSSL_CRYPT_TESTS=no \
+                -DWOLFSSL_KEYGEN=yes -DWOLFSSL_RSA_PSS=yes -DWOLFSSL_HKDF=yes \
+                -DWOLFSSL_MD5=yes -DWOLFSSL_SHA224=yes -DWOLFSSL_SHA3=yes \
+                -DWOLFSSL_PWDBASED=yes -DWOLFSSL_PUBLIC_MP=yes -DWOLFSSL_WC_RSA_DIRECT=yes
+            cmake --build build --config Release
+            cmake --install build --config Release
+
+        - name: Build token_path_test
+          working-directory: wolfpkcs11
+          run: |
+            cmake -B build -DCMAKE_PREFIX_PATH="$(cygpath -m "$GITHUB_WORKSPACE/install")" \
+                -DBUILD_SHARED_LIBS=OFF -DWOLFPKCS11_PBKDF2=yes -DWOLFPKCS11_EXAMPLES=no
+            cmake --build build --config Release --target token_path_test
+
+        - name: Run token_path_test
+          working-directory: wolfpkcs11
+          run: ctest --test-dir build -C Release -R '^token_path_test$' --no-tests=error --output-on-failure

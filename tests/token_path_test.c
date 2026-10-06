@@ -47,6 +47,7 @@
 
 #ifdef _WIN32
     #include <direct.h>
+    #include <io.h>
     #include <windows.h>
     #define MKDIR(path) _mkdir(path)
     #define ACCESS _access
