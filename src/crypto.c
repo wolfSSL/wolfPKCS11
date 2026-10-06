@@ -54,6 +54,12 @@
 
 #define PRF_KEY_SIZE            48
 
+/* Derive mechanisms that build their output into a secret key object. */
+#if defined(HAVE_ECC) || !defined(NO_DH) || defined(WOLFPKCS11_HKDF) || \
+    (!defined(NO_AES) && defined(HAVE_AES_CBC)) || defined(WOLFSSL_HAVE_PRF)
+    #define WP11_DERIVE_SECRET_KEY
+#endif
+
 /* Check that a CK_ULONG value fits in word32 with room for overhead such as
  * authentication tags, key wrap blocks, or padding. On LP64 platforms CK_ULONG
  * is 64-bit but wolfCrypt functions use word32/int for lengths. */
@@ -599,8 +605,7 @@ static CK_RV SetInitialStates(WP11_Object* key)
     return rv;
 }
 
-#if defined(HAVE_ECC) || !defined(NO_DH) || defined(WOLFPKCS11_HKDF) || \
-    (!defined(NO_AES) && defined(HAVE_AES_CBC))
+#ifdef WP11_DERIVE_SECRET_KEY
 /* PKCS#11 derive rules: the historical flags also need the base key's. */
 static CK_RV SetDerivedStates(WP11_Object* key, CK_BBOOL baseAlwaysSensitive,
                               CK_BBOOL baseNeverExtractable)
@@ -9358,7 +9363,7 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
     return rv;
 }
 
-#if defined(HAVE_ECC) || !defined(NO_DH)
+#ifdef WP11_DERIVE_SECRET_KEY
 /**
  * Determine the key length of the object.
  *
@@ -9382,7 +9387,7 @@ static int SymmKeyLen(WP11_Object* obj, word32 len, CK_ULONG* symmKeyLen)
 
     switch (WP11_Object_GetType(obj)) {
         case CKK_AES:
-#ifdef WOLFPKCS11_NSS
+#if defined(WOLFPKCS11_NSS) && !defined(NO_AES)
             /* This is the only wrapping mechanism that we support. NSS chooses
              * the wrapping mechanism from the list in wrapMechanismList in
              * PK11_GetBestWrapMechanism. Unfortunately this relies on a default
@@ -9593,7 +9598,7 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
     CK_RV rv = CKR_OK;
     WP11_Session* session;
     WP11_Object* obj = NULL;
-#if defined(HAVE_ECC) || !defined(NO_DH) || defined(WOLFPKCS11_HKDF)
+#ifdef WP11_DERIVE_SECRET_KEY
     byte* derivedKey = NULL;
     word32 keyLen;
     CK_ULONG symmKeyLen;
@@ -9606,8 +9611,7 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
     CK_ULONG bLen;
 #endif
 #endif
-#if defined(HAVE_ECC) || !defined(NO_DH) || defined(WOLFPKCS11_HKDF) || \
-    (!defined(NO_AES) && defined(HAVE_AES_CBC))
+#ifdef WP11_DERIVE_SECRET_KEY
     CK_BBOOL baseAlwaysSensitive = CK_FALSE;
     CK_BBOOL baseNeverExtractable = CK_FALSE;
     CK_ULONG histLen;
@@ -9982,11 +9986,9 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
             return CKR_MECHANISM_INVALID;
     }
 
-#if defined(HAVE_ECC) || !defined(NO_DH) || defined(WOLFPKCS11_HKDF) || \
-    (!defined(NO_AES) && defined(HAVE_AES_CBC))
+#ifdef WP11_DERIVE_SECRET_KEY
     if ((ret == 0) && (derivedKey != NULL)) {
-#if (defined(HAVE_ECC) || !defined(NO_DH) || defined(WOLFPKCS11_HKDF)) && \
-    !defined(WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT)
+#ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
         /* F-4533: read the base key's protection bits while `obj' still
          * refers to it, before CreateObject reuses `obj' for the new key. */
         bLen = sizeof(CK_BBOOL);
@@ -10008,8 +10010,7 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
         rv = CreateObject(session, pTemplate, ulAttributeCount, &obj);
         if (rv == CKR_OK) {
             /* obj now refers to the newly created derived key. */
-#if (defined(HAVE_ECC) || !defined(NO_DH) || defined(WOLFPKCS11_HKDF)) && \
-    !defined(WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT)
+#ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
             /* F-4533: PKCS#11 v3.0 5.5.5 - a derived key must be at least as
              * protected as its base key. Force the inherited attributes after
              * the caller template has been applied so a weaker template
