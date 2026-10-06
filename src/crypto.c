@@ -9931,7 +9931,7 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                     return CKR_MECHANISM_PARAM_INVALID;
                 if ((prfParams->pVersion->major != 3) ||
                     (prfParams->pVersion->minor != 3))
-                    return CKR_MECHANISM_INVALID;
+                    return CKR_MECHANISM_PARAM_INVALID;
             }
 
             keyLen = PRF_KEY_SIZE;

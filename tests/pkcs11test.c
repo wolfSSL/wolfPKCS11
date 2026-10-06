@@ -16538,7 +16538,7 @@ static CK_RV test_derive_tls12_master_key(void* args) {
         ret = funcList->C_DeriveKey(session, &mechanism, hBaseKey,
                                     derivedKeyTemplate,
                                     ulDerivedKeyTemplateCount, &hDerivedKey);
-        CHECK_CKR_FAIL(ret, CKR_MECHANISM_INVALID, "Invalid version");
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID, "Invalid version");
         version.major = 3;
     }
 
