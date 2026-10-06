@@ -14611,10 +14611,9 @@ static int GetEcbCheckValue(WP11_Object* secret, byte* dataOut,
     CK_ULONG* outLen)
 {
     int ret;
-    byte* hash;
-    byte* input;
-    word32 inLen;
-    WP11_Data* key = secret->data.symmKey;
+    byte input[AES_BLOCK_SIZE];
+    byte block[AES_BLOCK_SIZE];
+    word32 blockLen = AES_BLOCK_SIZE;
 
     if (dataOut == NULL) {
         if (outLen != NULL) {
@@ -14629,27 +14628,17 @@ static int GetEcbCheckValue(WP11_Object* secret, byte* dataOut,
         return BUFFER_E;
     }
 
-    hash = XMALLOC(key->len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-    if (!hash)
-        return MEMORY_E;
-    input = XMALLOC(key->len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-    if (input == NULL) {
-        XFREE(hash, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        return MEMORY_E;
-    }
-    inLen = key->len;
-    XMEMSET(input, 0, inLen);
-
-    ret = WP11_AesEcb_Encrypt(input, inLen, hash, &inLen, secret,
+    XMEMSET(input, 0, sizeof(input));
+    ret = WP11_AesEcb_Encrypt(input, sizeof(input), block, &blockLen, secret,
         secret->session);
 
     if (ret == 0) {
-        XMEMCPY(dataOut, hash, PKCS11_CHECK_VALUE_SIZE);
+        XMEMCPY(dataOut, block, PKCS11_CHECK_VALUE_SIZE);
         *outLen = PKCS11_CHECK_VALUE_SIZE;
     }
 
-    XFREE(hash, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-    XFREE(input, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    /* The full encrypted zero block is key material (e.g. the GHASH key). */
+    wc_ForceZero(block, sizeof(block));
 
     if (ret != 0)
         return CKR_FUNCTION_FAILED;
