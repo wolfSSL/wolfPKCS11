@@ -359,6 +359,13 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #define WP11_MAX_SYM_KEY_SZ            64
 #endif
 
+/* Maximum size of storage for generated/derived DH key. */
+#ifdef WOLFPKCS11_NSS
+#define WP11_MAX_DH_KEY_SZ             (8192/8)
+#else
+#define WP11_MAX_DH_KEY_SZ             (4096/8)
+#endif
+
 /* Login failure constants. */
 #ifndef WP11_MAX_LOGIN_FAILS_SO
 #define WP11_MAX_LOGIN_FAILS_SO        3
