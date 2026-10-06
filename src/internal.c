@@ -8403,15 +8403,17 @@ int WP11_Slot_TokenReset(WP11_Slot* slot, char* pin, int pinLen, char* label)
     /* Zeroizes token. */
     token = &slot->token;
     wp11_Token_Final(token);
-    wp11_Token_Init(token, label);
+    ret = wp11_Token_Init(token, label);
     /* C_InitToken is the canonical provisioning step. Mark the token as
      * initialized here rather than in wp11_Token_Init so a fresh slot stays
      * UNKNOWN until either init or load (Fenrir 3407). */
-    token->state = WP11_TOKEN_STATE_INITIALIZED;
+    if (ret == 0)
+        token->state = WP11_TOKEN_STATE_INITIALIZED;
     WP11_Lock_UnlockRW(&slot->lock);
 
     /* Locking used in setting SO PIN. */
-    ret = WP11_Slot_SetSOPin(slot, pin, pinLen);
+    if (ret == 0)
+        ret = WP11_Slot_SetSOPin(slot, pin, pinLen);
 
     return ret;
 }
