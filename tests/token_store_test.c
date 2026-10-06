@@ -749,6 +749,59 @@ static void test_create_object_out_of_memory(void)
 }
 #endif
 
+/* A token record from before the trailing fields were added still loads. */
+static void test_load_record_without_trailing_fields(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    char tokenPath[512];
+    byte record[1024];
+    long recordLen = -1;
+    long dropLen;
+
+    printf("\n--- token record without trailing fields loads ---\n");
+    for (dropLen = 4; dropLen <= 8; dropLen += 4) {
+        rv = token_setup(&slot);
+        CHECK_RV(rv, "token setup", CKR_OK);
+        if (rv == CKR_OK)
+            rv = user_session(slot, &session);
+        if (rv == CKR_OK) {
+            rv = create_token_secret(session, "legacy-keep", &obj);
+            CHECK_RV(rv, "create token object", CKR_OK);
+        }
+        close_session(session);
+        session = CK_INVALID_HANDLE;
+        funcList->C_Finalize(NULL);
+        if (rv == CKR_OK) {
+            snprintf(tokenPath, sizeof(tokenPath), "%s/wp11_token_%016lx",
+                     TEST_DIR, (unsigned long)slot);
+            recordLen = read_store_file(tokenPath, record, sizeof(record));
+            CHECK_TRUE(recordLen > dropLen && recordLen < (long)sizeof(record),
+                       "token record is stored");
+        }
+        if (rv == CKR_OK && recordLen > dropLen) {
+            CHECK_TRUE(write_store_file(tokenPath, record,
+                                        (size_t)(recordLen - dropLen)) == 0,
+                       "drop trailing token record fields");
+            rv = lib_init();
+            CHECK_RV(rv, "initialize with the shorter record", CKR_OK);
+            if (rv == CKR_OK) {
+                rv = user_session(slot, &session);
+                CHECK_RV(rv, "user logs in", CKR_OK);
+            }
+            if (rv == CKR_OK) {
+                CHECK_TRUE(count_label(session, "legacy-keep") == 1,
+                           "stored object is loaded");
+            }
+            close_session(session);
+            session = CK_INVALID_HANDLE;
+            funcList->C_Finalize(NULL);
+        }
+    }
+}
+
 static int run_tests(void)
 {
     CK_RV rv;
@@ -768,6 +821,7 @@ static int run_tests(void)
     test_init_retry_after_load_failure();
     test_destroy_reports_unstore_failure();
     test_destroy_unstored_object();
+    test_load_record_without_trailing_fields();
 #ifdef TEST_ALLOC_FAILURE
     test_create_object_out_of_memory();
 #endif
