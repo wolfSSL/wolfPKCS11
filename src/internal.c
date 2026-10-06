@@ -10595,15 +10595,11 @@ static WP11_Object* wp11_Session_FindNext(WP11_Session* session, int onToken,
          * C_Login and enumerates private keys (e.g. certutil) from a public
          * session - matching the by-handle WP11_Object_Find check below. */
         if ((ret->opFlag & WP11_FLAG_PRIVATE) == WP11_FLAG_PRIVATE) {
-            if (!onToken)
-                WP11_Lock_LockRO(&session->slot->token.lock);
             if (!wp11_LoginStateIsUser(
                     session->slot->token.loginState)) {
                 object = ret;
                 ret = NULL;
             }
-            if (!onToken)
-                WP11_Lock_UnlockRO(&session->slot->token.lock);
         }
 #endif
     }
@@ -10660,8 +10656,8 @@ int WP11_Session_Find(WP11_Session* session, int onToken,
     int i;
     CK_ATTRIBUTE* attr;
 
-    if (onToken)
-        WP11_Lock_LockRO(&session->slot->token.lock);
+    /* Session object lists change under the token lock too. */
+    WP11_Lock_LockRO(&session->slot->token.lock);
     while (ret == 0 &&
            (obj = wp11_Session_FindNext(session, onToken, obj)) != NULL) {
         for (i = 0; i < (int)ulCount; i++) {
@@ -10675,8 +10671,7 @@ int WP11_Session_Find(WP11_Session* session, int onToken,
         if (i == (int)ulCount)
             ret = wp11_Session_FindMatched(session, obj);
     }
-    if (onToken)
-        WP11_Lock_UnlockRO(&session->slot->token.lock);
+    WP11_Lock_UnlockRO(&session->slot->token.lock);
 
     return ret;
 }
