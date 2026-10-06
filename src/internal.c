@@ -166,7 +166,12 @@
 /* Determine object id from object handle. */
 #define OBJ_HANDLE_OBJ_ID(h)           ((h) & 0xfffffff)
 
-#ifdef SINGLE_THREADED
+/* SINGLE_THREADED alters wolfSSL struct layouts; only wolfSSL sets it. */
+#if defined(SINGLE_THREADED) || defined(WOLFPKCS11_SINGLE_THREADED)
+    #define WP11_NO_LOCKING
+#endif
+
+#ifdef WP11_NO_LOCKING
 /* Disable locking. */
 typedef int WP11_Lock;
 
@@ -648,7 +653,7 @@ static int libraryInitCount = 0;
 /* Lock for globals including global random. */
 static WP11_Lock globalLock;
 
-#if !defined(SINGLE_THREADED) && defined(WOLFSSL_MUTEX_INITIALIZER) && \
+#if !defined(WP11_NO_LOCKING) && defined(WOLFSSL_MUTEX_INITIALIZER) && \
     defined(WOLFSSL_MUTEX_INITIALIZER_CLAUSE)
 /* Permanently-live mutex that serializes WP11_Library_Init,
  * WP11_Library_Final, and WP11_Library_IsInitialized. Needed because
@@ -668,7 +673,7 @@ static wolfSSL_Mutex libraryInitLock
 #define WP11_HAVE_LIBRARY_INIT_LOCK
 #endif
 
-#if !defined(SINGLE_THREADED) && defined(WOLFSSL_MUTEX_INITIALIZER) && \
+#if !defined(WP11_NO_LOCKING) && defined(WOLFSSL_MUTEX_INITIALIZER) && \
     defined(WOLFSSL_MUTEX_INITIALIZER_CLAUSE) && \
     !defined(WOLFPKCS11_TPM_STORE) && defined(WOLFPKCS11_NSS)
 /* Permanently-live leaf mutex serializing the module-global storeDir, which
@@ -683,7 +688,7 @@ static wolfSSL_Mutex storeDirLock
 #endif
 
 
-#ifndef SINGLE_THREADED
+#ifndef WP11_NO_LOCKING
 /**
  * Initialize a lock.
  *
@@ -1134,6 +1139,10 @@ typedef struct WP11_TpmStore {
     WOLFTPM2_DEV* dev;
     WOLFTPM2_NV nv;
     word32 offset;
+    byte* buf;          /* write record staged until commit, follows context */
+    word32 bufSz;
+    word32 nvIndex;
+    int writeFailed;
 } WP11_TpmStore;
 static WP11_TpmStore tpmStores[1]; /* maximum of 1 open store */
 
@@ -2202,9 +2211,7 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
     WP11_Slot* slot = &slotList[0];
     WP11_TpmStore* tpmStore = &tpmStores[0];
     word32 nvIndex;
-    word32 nvAttributes;
     int maxSz;
-    WOLFTPM2_HANDLE parent;
 #else
     WP11_FileStoreCtx* ctx = NULL;
     char name[WP11_STORE_MAX_PATH] = "\0";
@@ -2223,7 +2230,6 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
 #endif
 
 #ifdef WOLFPKCS11_TPM_STORE
-    XMEMSET(&parent, 0, sizeof(parent));
     XMEMSET(tpmStore, 0, sizeof(*tpmStore));
     tpmStore->dev = &slot->tpmDev;
 
@@ -2234,39 +2240,26 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
     if (maxSz <= 0) {
         ret = NOT_AVAILABLE_E;
     }
-    if (ret == 0) {
-        TPMS_NV_PUBLIC nvPublic;
-        XMEMSET(&nvPublic, 0, sizeof(nvPublic));
-
-        /* Get NV attributes */
-        parent.hndl = WOLFPKCS11_TPM_AUTH_TYPE;
-        (void)wolfTPM2_GetNvAttributesTemplate(parent.hndl, &nvAttributes);
-
-        /* If write check if handle is large enough */
-        if (!read) {
-            ret = wolfTPM2_NVReadPublic(tpmStore->dev, nvIndex, &nvPublic);
-            if (ret == 0 && nvPublic.dataSize < maxSz) {
-                /* NV is not large enough, delete and re-create */
-                printf("Expanding TPM NV Handle 0x%x: %d -> %d\n",
-                    nvIndex, nvPublic.dataSize, maxSz);
-
-                ret = wolfTPM2_NVDeleteAuth(tpmStore->dev, &parent, nvIndex);
-                if (ret != 0) {
-                    printf("Error %d (%s) removing NV handle 0x%x: \n",
-                        ret, wolfTPM2_GetRCString(ret), nvIndex);
-                }
-            }
-        }
+    if (ret == 0 && read) {
         /* Try and open handle */
         ret = wolfTPM2_NVOpen(tpmStore->dev, &tpmStore->nv, nvIndex, NULL, 0);
         if (ret != 0) {
-            if (!read) {
-                ret = wolfTPM2_NVCreateAuth(tpmStore->dev, &parent,
-                    &tpmStore->nv, nvIndex, nvAttributes, maxSz, NULL, 0);
-            }
-            else {
-                ret = NOT_AVAILABLE_E; /* read for handle that doesn't exist */
-            }
+            ret = NOT_AVAILABLE_E; /* read for handle that doesn't exist */
+        }
+    }
+    else if (ret == 0) {
+        /* Stage the record in its own context, NV is only touched on commit */
+        tpmStore = (WP11_TpmStore*)XMALLOC(sizeof(*tpmStore) + (size_t)maxSz,
+            NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (tpmStore == NULL) {
+            ret = MEMORY_E;
+        }
+        else {
+            XMEMSET(tpmStore, 0, sizeof(*tpmStore));
+            tpmStore->dev = &slot->tpmDev;
+            tpmStore->buf = (byte*)(tpmStore + 1);
+            tpmStore->bufSz = (word32)maxSz;
+            tpmStore->nvIndex = nvIndex;
         }
     }
     if (ret == 0) {
@@ -2396,6 +2389,83 @@ int wolfPKCS11_Store_Open(int type, CK_ULONG id1, CK_ULONG id2, int read,
     return wolfPKCS11_Store_OpenSz(type, id1, id2, read, 0, store);
 }
 
+#ifdef WOLFPKCS11_TPM_STORE
+/**
+ * Writes the staged record to its NV index, growing the index when needed.
+ *
+ * @param [in]  tpmStore  TPM store context holding the staged record.
+ * @return  0 on success.
+ * @return  Other value when the record could not be written.
+ */
+static int wolfPKCS11_Store_TpmCommit(WP11_TpmStore* tpmStore)
+{
+    int ret;
+    int create = 0;
+    word32 nvAttributes = 0;
+    word32 readSz;
+    WOLFTPM2_HANDLE parent;
+    TPMS_NV_PUBLIC nvPublic;
+
+    XMEMSET(&parent, 0, sizeof(parent));
+    XMEMSET(&nvPublic, 0, sizeof(nvPublic));
+    parent.hndl = WOLFPKCS11_TPM_AUTH_TYPE;
+
+    ret = wolfTPM2_GetNvAttributesTemplate(parent.hndl, &nvAttributes);
+    if (ret == 0 && wolfTPM2_NVReadPublic(tpmStore->dev, tpmStore->nvIndex,
+            &nvPublic) != 0) {
+        /* No NV index holds this record yet. */
+        create = 1;
+    }
+    else if (ret == 0 && nvPublic.dataSize < tpmStore->bufSz) {
+        /* NV is not large enough, delete and re-create */
+        printf("Expanding TPM NV Handle 0x%x: %d -> %d\n",
+            tpmStore->nvIndex, (int)nvPublic.dataSize, (int)tpmStore->bufSz);
+        create = 1;
+        if (tpmStore->offset == 0) {
+            /* Nothing staged, so carry the stored record into the new index */
+            ret = wolfTPM2_NVOpen(tpmStore->dev, &tpmStore->nv,
+                tpmStore->nvIndex, NULL, 0);
+            if (ret == 0) {
+                ret = wolfTPM2_SetAuthHandle(tpmStore->dev, 0,
+                    &tpmStore->nv.handle);
+            }
+            if (ret == 0) {
+                readSz = nvPublic.dataSize;
+                ret = wolfTPM2_NVReadAuth(tpmStore->dev, &tpmStore->nv,
+                    tpmStore->nvIndex, tpmStore->buf, &readSz, 0);
+                if (ret == 0)
+                    tpmStore->offset = readSz;
+            }
+            if (ret == TPM_RC_NV_UNINITIALIZED)
+                ret = 0;
+        }
+        if (ret == 0) {
+            ret = wolfTPM2_NVDeleteAuth(tpmStore->dev, &parent,
+                tpmStore->nvIndex);
+            if (ret != 0) {
+                printf("Error %d (%s) removing NV handle 0x%x: \n",
+                    ret, wolfTPM2_GetRCString(ret), tpmStore->nvIndex);
+            }
+        }
+    }
+
+    if (ret == 0 && create) {
+        ret = wolfTPM2_NVCreateAuth(tpmStore->dev, &parent, &tpmStore->nv,
+            tpmStore->nvIndex, nvAttributes, tpmStore->bufSz, NULL, 0);
+    }
+    else if (ret == 0 && tpmStore->offset > 0) {
+        ret = wolfTPM2_NVOpen(tpmStore->dev, &tpmStore->nv, tpmStore->nvIndex,
+            NULL, 0);
+    }
+    if (ret == 0 && tpmStore->offset > 0) {
+        /* wolfTPM splits this into as few maximum sized NV writes as fit */
+        ret = wolfTPM2_NVWriteAuth(tpmStore->dev, &tpmStore->nv,
+            tpmStore->nv.handle.hndl, tpmStore->buf, tpmStore->offset, 0);
+    }
+    return ret;
+}
+#endif
+
 /**
  * Closes access to location being read or written.
  * Any dynamic memory associated with the store is freed here.
@@ -2410,6 +2480,7 @@ static int wolfPKCS11_Store_CloseCommit(void* store, int commit)
     int ret = 0;
 #ifdef WOLFPKCS11_TPM_STORE
     WP11_TpmStore* tpmStore = (WP11_TpmStore*)store;
+    size_t ctxSz;
 #else
     WP11_FileStoreCtx* ctx = (WP11_FileStoreCtx*)store;
 #endif
@@ -2419,9 +2490,17 @@ static int wolfPKCS11_Store_CloseCommit(void* store, int commit)
 #endif
 
 #ifdef WOLFPKCS11_TPM_STORE
-    /* nothing to do for TPM */
-    (void)tpmStore;
-    (void)commit;
+    if (tpmStore != NULL && tpmStore->buf != NULL) {
+        if (tpmStore->writeFailed) {
+            ret = BUFFER_E;
+        }
+        else if (commit) {
+            ret = wolfPKCS11_Store_TpmCommit(tpmStore);
+        }
+        ctxSz = sizeof(*tpmStore) + tpmStore->bufSz;
+        wc_ForceZero(tpmStore, ctxSz);
+        XFREE(tpmStore, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    }
 #else
     if (ctx != NULL) {
         int commitRet = 0;
@@ -2580,11 +2659,16 @@ int wolfPKCS11_Store_Write(void* store, unsigned char* buffer, int len)
 #endif
 
 #ifdef WOLFPKCS11_TPM_STORE
-    ret = wolfTPM2_NVWriteAuth(tpmStore->dev, &tpmStore->nv,
-        tpmStore->nv.handle.hndl, buffer, len, tpmStore->offset);
-    if (ret == 0) {
-        tpmStore->offset += len;
-        ret = len;
+    if (tpmStore != NULL) {
+        if (tpmStore->buf == NULL || buffer == NULL || len < 0 ||
+                (word32)len > tpmStore->bufSz - tpmStore->offset) {
+            tpmStore->writeFailed = 1;
+        }
+        else {
+            XMEMCPY(tpmStore->buf + tpmStore->offset, buffer, (size_t)len);
+            tpmStore->offset += (word32)len;
+            ret = len;
+        }
     }
 #else
     if (ctx != NULL && ctx->file != XBADFILE && ctx->file != NULL) {
@@ -2735,6 +2819,24 @@ static int wp11_storage_read(void* storage, unsigned char* buffer, int len)
     return ret;
 }
 
+#ifdef DEBUG_WOLFPKCS11
+static int storeWriteFailAfter = -1;
+
+/**
+ * Test hook: make storage writes fail after a number of them succeed.
+ * Exposed only in debug builds so a test can interrupt a record mid-write.
+ *
+ * @param  writes  [in]  Writes that succeed before every later write fails,
+ *                       or -1 to stop failing writes.
+ * @return  0 always.
+ */
+WP11_API int WP11_Test_StoreWriteFailAfter(int writes)
+{
+    storeWriteFailAfter = writes;
+    return 0;
+}
+#endif
+
 /**
  * Writes a specific number of bytes from buffer.
  *
@@ -2748,6 +2850,13 @@ static int wp11_storage_write(void* storage, unsigned char* buffer, int len)
 {
     int ret = 0;
     unsigned char* p = buffer;
+
+#ifdef DEBUG_WOLFPKCS11
+    if (storeWriteFailAfter == 0)
+        return BUFFER_E;
+    if (storeWriteFailAfter > 0)
+        storeWriteFailAfter--;
+#endif
 
     /* Keep writing until no data written, error or all written. */
     while (len > 0) {

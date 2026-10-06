@@ -52,6 +52,14 @@
 #if !defined(WOLFPKCS11_NO_STORE) && !defined(WOLFPKCS11_TPM_STORE) && \
     !defined(WOLFPKCS11_CUSTOM_STORE) && !defined(WOLFPKCS11_NO_ENV) && \
     !defined(WOLFPKCS11_USER_ENV) && !defined(_WIN32)
+    #define TOKEN_STORE_FILE_TEST
+#elif defined(WOLFPKCS11_TPM_STORE) && defined(DEBUG_WOLFPKCS11) && \
+    !defined(WOLFPKCS11_NO_ENV) && !defined(WOLFPKCS11_USER_ENV) && \
+    !defined(_WIN32)
+    #define TOKEN_STORE_TPM_TEST
+#endif
+
+#if defined(TOKEN_STORE_FILE_TEST) || defined(TOKEN_STORE_TPM_TEST)
 
 #include <dirent.h>
 #include <sys/stat.h>
@@ -68,8 +76,8 @@ static CK_BBOOL ckTrue = CK_TRUE;
 static CK_BBOOL ckFalse = CK_FALSE;
 static byte keyData[16] = { 0 };
 
-#if !defined(WOLFSSL_STATIC_MEMORY) && !defined(WOLFSSL_DEBUG_MEMORY) && \
-    !defined(NO_WOLFSSL_MEMORY)
+#if defined(TOKEN_STORE_FILE_TEST) && !defined(WOLFSSL_STATIC_MEMORY) && \
+    !defined(WOLFSSL_DEBUG_MEMORY) && !defined(NO_WOLFSSL_MEMORY)
 #define TEST_ALLOC_FAILURE
 static int failAllocs = 0;
 
@@ -93,6 +101,7 @@ static void* test_realloc(void* p, size_t n)
 }
 #endif
 
+#ifdef TOKEN_STORE_FILE_TEST
 static void clear_store_dir(void)
 {
     DIR* dir;
@@ -115,6 +124,7 @@ static void clear_store_dir(void)
     }
     closedir(dir);
 }
+#endif
 
 static CK_RV lib_init(void)
 {
@@ -146,7 +156,9 @@ static CK_RV token_setup(CK_SLOT_ID* slot)
     CK_SESSION_HANDLE soSession = CK_INVALID_HANDLE;
     unsigned char label[32];
 
+#ifdef TOKEN_STORE_FILE_TEST
     clear_store_dir();
+#endif
     rv = lib_init();
     if (rv == CKR_OK)
         rv = first_slot(slot);
@@ -234,6 +246,7 @@ static CK_ULONG count_label(CK_SESSION_HANDLE session, const char* label)
     return (rv == CKR_OK) ? foundCnt : 0;
 }
 
+#ifdef TOKEN_STORE_FILE_TEST
 /* Path of the stored record of a token object. */
 static void object_record_path(CK_SLOT_ID slot, int objId, char* path,
                                size_t pathSz)
@@ -801,6 +814,118 @@ static void test_load_record_without_trailing_fields(void)
         }
     }
 }
+#endif /* TOKEN_STORE_FILE_TEST */
+
+#ifdef TOKEN_STORE_TPM_TEST
+/* Debug-only hook exported by libwolfpkcs11. */
+extern int WP11_Test_StoreWriteFailAfter(int writes);
+
+#define MAX_STORE_WRITES 500
+
+/* Reload the token from what storage holds after storing was made to fail. */
+static CK_RV reload_stored(CK_SLOT_ID slot, CK_SESSION_HANDLE* session)
+{
+    CK_RV rv;
+
+    (void)funcList->C_Finalize(NULL);
+    (void)WP11_Test_StoreWriteFailAfter(-1);
+    rv = lib_init();
+    if (rv == CKR_OK)
+        rv = user_session(slot, session);
+    return rv;
+}
+
+/* An object create that fails at any storage write keeps the stored token. */
+static void test_interrupted_create_keeps_stored_token(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    int writes;
+    int intact = 1;
+
+    printf("\n--- interrupted object create keeps the stored token ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "tpm-keep", &obj);
+        CHECK_RV(rv, "create stored token object", CKR_OK);
+    }
+    for (writes = 0; intact && rv == CKR_OK && writes < MAX_STORE_WRITES;
+         writes++) {
+        (void)WP11_Test_StoreWriteFailAfter(writes);
+        rv = create_token_secret(session, "tpm-new", &obj);
+        if (rv == CKR_OK) {
+            (void)WP11_Test_StoreWriteFailAfter(-1);
+            break;
+        }
+        close_session(session);
+        session = CK_INVALID_HANDLE;
+        rv = reload_stored(slot, &session);
+        if (rv != CKR_OK || count_label(session, "tpm-keep") != 1 ||
+                count_label(session, "tpm-new") != 0) {
+            printf("Stored token changed by a store failing after %d "
+                   "writes\n", writes);
+            intact = 0;
+        }
+    }
+    CHECK_TRUE(intact, "stored token is intact after each failed create");
+    CHECK_TRUE(rv == CKR_OK && writes < MAX_STORE_WRITES,
+               "create succeeds once storing works");
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+/* A PIN change that fails at any storage write keeps the stored PIN. */
+static void test_interrupted_pin_change_keeps_stored_pin(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    int writes;
+    int intact = 1;
+    static const char* newPin = "wolfpkcs11-next";
+
+    printf("\n--- interrupted PIN change keeps the stored PIN ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "tpm-pin-keep", &obj);
+        CHECK_RV(rv, "create stored token object", CKR_OK);
+    }
+    for (writes = 0; intact && rv == CKR_OK && writes < MAX_STORE_WRITES;
+         writes++) {
+        (void)WP11_Test_StoreWriteFailAfter(writes);
+        rv = funcList->C_SetPIN(session, (CK_UTF8CHAR_PTR)userPin,
+                                (CK_ULONG)XSTRLEN(userPin),
+                                (CK_UTF8CHAR_PTR)newPin,
+                                (CK_ULONG)XSTRLEN(newPin));
+        if (rv == CKR_OK) {
+            (void)WP11_Test_StoreWriteFailAfter(-1);
+            break;
+        }
+        close_session(session);
+        session = CK_INVALID_HANDLE;
+        rv = reload_stored(slot, &session);
+        if (rv != CKR_OK || count_label(session, "tpm-pin-keep") != 1) {
+            printf("Stored token changed by a store failing after %d "
+                   "writes\n", writes);
+            intact = 0;
+        }
+    }
+    CHECK_TRUE(intact, "stored PIN logs in after each failed PIN change");
+    CHECK_TRUE(rv == CKR_OK && writes < MAX_STORE_WRITES,
+               "PIN change succeeds once storing works");
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+#endif /* TOKEN_STORE_TPM_TEST */
 
 static int run_tests(void)
 {
@@ -811,6 +936,7 @@ static int run_tests(void)
     if (rv != CKR_OK)
         return -1;
 
+#ifdef TOKEN_STORE_FILE_TEST
     test_objects_persist_across_storage_pause();
     test_create_reports_commit_failure();
     test_token_record_kept_on_failed_store();
@@ -827,6 +953,10 @@ static int run_tests(void)
 #endif
 
     clear_store_dir();
+#else
+    test_interrupted_create_keeps_stored_token();
+    test_interrupted_pin_change_keeps_stored_pin();
+#endif
     pkcs11_unload();
     return 0;
 }
@@ -856,7 +986,8 @@ int main(int argc, char* argv[])
 {
     (void)argc;
     (void)argv;
-    printf("Token store test requires the file-backed store, skipping\n");
+    printf("Token store test requires the file-backed store or a debug "
+           "TPM store, skipping\n");
     return 77;
 }
 

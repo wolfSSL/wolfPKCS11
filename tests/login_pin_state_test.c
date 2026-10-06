@@ -48,7 +48,11 @@
 #include "testdata.h"
 #include "pkcs11_test_util.h"
 
-#ifndef SINGLE_THREADED
+#if !defined(SINGLE_THREADED) && !defined(WOLFPKCS11_SINGLE_THREADED)
+    #define LOGIN_TEST_THREADS
+#endif
+
+#ifdef LOGIN_TEST_THREADS
 #include <pthread.h>
 #include <unistd.h>
 #endif
@@ -361,7 +365,7 @@ static void logout_protects_all_objects_test(void)
 }
 #endif
 
-#ifndef SINGLE_THREADED
+#ifdef LOGIN_TEST_THREADS
 #define EMPTY_PIN_ROUNDS 8
 
 static pthread_mutex_t infoMutex = PTHREAD_MUTEX_INITIALIZER;
@@ -510,7 +514,7 @@ static void set_pin_lockout(CK_USER_TYPE type, const char* pin, int maxFails,
 }
 #endif
 
-#if !defined(SINGLE_THREADED) && !defined(WOLFPKCS11_NO_TIME)
+#if defined(LOGIN_TEST_THREADS) && !defined(WOLFPKCS11_NO_TIME)
 #define LOCKOUT_THREADS 6
 #define LOCKOUT_ROUNDS 4
 
@@ -636,7 +640,7 @@ static void concurrent_login_lockout_test(void)
 }
 #endif
 
-#ifndef SINGLE_THREADED
+#ifdef LOGIN_TEST_THREADS
 #define CLOSE_OPEN_ROUNDS 10
 
 static pthread_mutex_t openMutex = PTHREAD_MUTEX_INITIALIZER;
@@ -727,7 +731,7 @@ static void close_last_session_race_test(void)
 }
 #endif
 
-#ifndef SINGLE_THREADED
+#ifdef LOGIN_TEST_THREADS
 #define CHURN_ROUNDS 200
 
 typedef struct churn_ctx {
@@ -808,7 +812,7 @@ static void find_during_object_churn_test(void)
 }
 #endif
 
-#if !defined(SINGLE_THREADED) && !defined(WOLFPKCS11_NO_STORE) && \
+#if defined(LOGIN_TEST_THREADS) && !defined(WOLFPKCS11_NO_STORE) && \
     !defined(NO_AES)
 #define FIND_LOGIN_ROUNDS 3
 
@@ -1043,7 +1047,7 @@ static void logout_drops_private_session_objects_test(void)
 }
 #endif
 
-#if defined(DEBUG_WOLFPKCS11) && !defined(SINGLE_THREADED) && \
+#if defined(DEBUG_WOLFPKCS11) && defined(LOGIN_TEST_THREADS) && \
     !defined(WOLFPKCS11_NO_STORE) && !defined(WOLFPKCS11_NSS)
 #define FIND_HOOK_WAIT_MS 200
 
@@ -1160,29 +1164,29 @@ static int run_test(void)
     if (rv != CKR_OK)
         return -1;
 
-#ifndef SINGLE_THREADED
+#ifdef LOGIN_TEST_THREADS
     empty_pin_change_requires_login_test();
 #endif
 #ifdef LOGIN_TEST_FILE_STORE
     failed_login_leaves_no_token_key_test();
 #endif
-#ifndef SINGLE_THREADED
+#ifdef LOGIN_TEST_THREADS
     close_last_session_race_test();
 #endif
 #ifndef WOLFPKCS11_NSS
     logout_drops_private_session_objects_test();
 #endif
-#if !defined(SINGLE_THREADED) && !defined(WOLFPKCS11_NO_TIME)
+#if defined(LOGIN_TEST_THREADS) && !defined(WOLFPKCS11_NO_TIME)
     concurrent_login_lockout_test();
 #endif
-#ifndef SINGLE_THREADED
+#ifdef LOGIN_TEST_THREADS
     find_during_object_churn_test();
 #endif
-#if !defined(SINGLE_THREADED) && !defined(WOLFPKCS11_NO_STORE) && \
+#if defined(LOGIN_TEST_THREADS) && !defined(WOLFPKCS11_NO_STORE) && \
     !defined(NO_AES)
     find_during_login_changes_test();
 #endif
-#if defined(DEBUG_WOLFPKCS11) && !defined(SINGLE_THREADED) && \
+#if defined(DEBUG_WOLFPKCS11) && defined(LOGIN_TEST_THREADS) && \
     !defined(WOLFPKCS11_NO_STORE) && !defined(WOLFPKCS11_NSS)
     find_with_racing_logout_test();
 #endif
