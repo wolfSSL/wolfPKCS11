@@ -10680,6 +10680,26 @@ static int wp11_mech_reads_key(CK_MECHANISM_TYPE mechanism)
 }
 
 /**
+ * Check whether the session holds operation state of the given category, even
+ * when the key the operation reads was destroyed.
+ *
+ * @param  session     [in]  Session object.
+ * @param  opCategory  [in]  Operation category (WP11_OP_*).
+ * @return  1 when an operation of the category is initialized.
+ *          0 otherwise.
+ */
+int WP11_Session_IsOpCategoryInit(WP11_Session* session, int opCategory)
+{
+    int currentInit;
+
+    if (session->init == 0)
+        return 0;
+
+    currentInit = session->init & ~WP11_INIT_DIGEST_MASK;
+    return wp11_init_get_op_category(currentInit) == opCategory;
+}
+
+/**
  * Check whether the session has an active operation of the given category.
  * Per PKCS#11 spec, only operations of the same type block re-initialization.
  *
@@ -10690,16 +10710,11 @@ static int wp11_mech_reads_key(CK_MECHANISM_TYPE mechanism)
  */
 int WP11_Session_IsOpCategoryActive(WP11_Session* session, int opCategory)
 {
-    int currentInit;
-
-    if (session->init == 0)
-        return 0;
     /* The key of this operation was destroyed so it can no longer run. */
     if (session->curr == NULL && wp11_mech_reads_key(session->mechanism))
         return 0;
 
-    currentInit = session->init & ~WP11_INIT_DIGEST_MASK;
-    return wp11_init_get_op_category(currentInit) == opCategory;
+    return WP11_Session_IsOpCategoryInit(session, opCategory);
 }
 
 int WP11_Session_UpdateData(WP11_Session *session, byte *data, word32 dataLen)
