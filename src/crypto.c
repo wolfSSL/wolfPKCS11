@@ -9418,7 +9418,9 @@ static int SymmKeyLen(WP11_Object* obj, word32 len, CK_ULONG* symmKeyLen)
 #ifdef WOLFSSL_HAVE_PRF
 static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
                          CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulAttributeCount,
-                         CK_BBOOL isMac, CK_OBJECT_HANDLE* handle)
+                         CK_BBOOL isMac, CK_BBOOL baseAlwaysSensitive,
+                         CK_BBOOL baseNeverExtractable,
+                         CK_OBJECT_HANDLE* handle)
 {
     WP11_Object* secret = NULL;
     int ret;
@@ -9441,6 +9443,12 @@ static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
         secretKeyData[1] = ptr + (length - symmKeyLen);
         secretKeyLen[1] = symmKeyLen;
         ret = WP11_Object_SetSecretKey(secret, secretKeyData, secretKeyLen);
+        if (ret != CKR_OK) {
+            WP11_Object_Free(secret);
+            return CKR_FUNCTION_FAILED;
+        }
+        ret = (int)SetDerivedStates(secret, baseAlwaysSensitive,
+                                    baseNeverExtractable);
         if (ret != CKR_OK) {
             WP11_Object_Free(secret);
             return CKR_FUNCTION_FAILED;
@@ -9504,7 +9512,9 @@ static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
 static int Tls12_Extract_Keys(WP11_Session* session,
                             CK_TLS12_KEY_MAT_PARAMS* tlsParams,
                             CK_ATTRIBUTE_PTR pTemplate,
-                            CK_ULONG ulAttributeCount, byte* derivedKey)
+                            CK_ULONG ulAttributeCount, byte* derivedKey,
+                            CK_BBOOL baseAlwaysSensitive,
+                            CK_BBOOL baseNeverExtractable)
 {
     int ret = 0;
     unsigned char* ptr = derivedKey;
@@ -9517,7 +9527,8 @@ static int Tls12_Extract_Keys(WP11_Session* session,
     /* Client MAC key */
     length = tlsParams->ulMacSizeInBits / 8;
     ret = SetKeyExtract(session, ptr, length, pTemplate,
-            ulAttributeCount, CK_TRUE,
+            ulAttributeCount, CK_TRUE, baseAlwaysSensitive,
+            baseNeverExtractable,
             &tlsParams->pReturnedKeyMaterial->hClientMacSecret);
     if (ret != 0) {
         return ret;
@@ -9525,7 +9536,8 @@ static int Tls12_Extract_Keys(WP11_Session* session,
     ptr += length;
     /* Server MAC key */
     ret = SetKeyExtract(session, ptr, length, pTemplate,
-            ulAttributeCount, CK_TRUE,
+            ulAttributeCount, CK_TRUE, baseAlwaysSensitive,
+            baseNeverExtractable,
             &tlsParams->pReturnedKeyMaterial->hServerMacSecret);
     if (ret != 0) {
         return ret;
@@ -9534,7 +9546,8 @@ static int Tls12_Extract_Keys(WP11_Session* session,
     /* Client key */
     length = tlsParams->ulKeySizeInBits / 8;
     ret = SetKeyExtract(session, ptr, length, pTemplate,
-            ulAttributeCount, CK_FALSE,
+            ulAttributeCount, CK_FALSE, baseAlwaysSensitive,
+            baseNeverExtractable,
             &tlsParams->pReturnedKeyMaterial->hClientKey);
     if (ret != 0) {
         return ret;
@@ -9542,7 +9555,8 @@ static int Tls12_Extract_Keys(WP11_Session* session,
     ptr += length;
     /* Server key */
     ret = SetKeyExtract(session, ptr, length, pTemplate,
-            ulAttributeCount, CK_FALSE,
+            ulAttributeCount, CK_FALSE, baseAlwaysSensitive,
+            baseNeverExtractable,
             &tlsParams->pReturnedKeyMaterial->hServerKey);
     if (ret != 0) {
         return ret;
@@ -9900,9 +9914,20 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                                                "key expansion", 13,
                                                derivedKey, keyLen, CK_FALSE,
                                                obj);
-            if (ret == 0)
+            if (ret == 0) {
+                histLen = sizeof(CK_BBOOL);
+                if (WP11_Object_GetAttr(obj, CKA_ALWAYS_SENSITIVE,
+                                        &baseAlwaysSensitive, &histLen) != 0)
+                    baseAlwaysSensitive = CK_FALSE;
+                histLen = sizeof(CK_BBOOL);
+                if (WP11_Object_GetAttr(obj, CKA_NEVER_EXTRACTABLE,
+                                        &baseNeverExtractable, &histLen) != 0)
+                    baseNeverExtractable = CK_FALSE;
                 ret = Tls12_Extract_Keys(session, tlsParams, pTemplate,
-                                         ulAttributeCount, derivedKey);
+                                         ulAttributeCount, derivedKey,
+                                         baseAlwaysSensitive,
+                                         baseNeverExtractable);
+            }
 
             /* Freeing here so that we don't attempt to generate a key at the
              * end of the function */
