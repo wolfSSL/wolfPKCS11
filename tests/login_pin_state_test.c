@@ -547,6 +547,9 @@ static int run_test(void)
     printf("--- C_SetPIN counts failed SO PIN checks ---\n");
     set_pin_lockout(CKU_SO, soPin, WP11_MAX_LOGIN_FAILS_SO,
                     "SO C_SetPIN locked after failures");
+    printf("--- C_SetPIN counts failed user PIN checks ---\n");
+    set_pin_lockout(CKU_USER, userPin, WP11_MAX_LOGIN_FAILS_USER,
+                    "user C_SetPIN locked after failures");
 #endif
 
     pkcs11_unload();

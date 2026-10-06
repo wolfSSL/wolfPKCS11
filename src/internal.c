@@ -9185,7 +9185,8 @@ static void wp11_Token_RestoreUserPinState(WP11_Token* token,
  * memory and a store of the previous state is attempted.
  *
  * @return  PIN_NOT_SET_E when the old PIN is supplied and no user PIN is set.
- *          PIN_INVALID_E when the old PIN is supplied and is incorrect.
+ *          PIN_INVALID_E when the old PIN is supplied and is incorrect or the
+ *          user is locked out.
  *          BAD_STATE_E when the user PIN changed during the operation.
  *          MEMORY_E when dynamic memory allocation fails.
  *          -ve value when generating random, hashing PIN, re-encrypting or
@@ -9206,6 +9207,11 @@ static int wp11_Slot_SetUserPin(WP11_Slot* slot, char* oldPin, int oldPinLen,
     WP11_ReKeyData* reKey = NULL;
     int reKeyCnt = 0;
 #endif
+#ifndef WOLFPKCS11_NO_TIME
+    time_t now = 0;
+    time_t allowed;
+    int oldPinRet = BAD_STATE_E;
+#endif
 
 #ifdef WOLFSSL_SMALL_STACK
     d = (WP11_SetUserPinData*)XMALLOC(sizeof(*d), NULL,
@@ -9214,10 +9220,29 @@ static int wp11_Slot_SetUserPin(WP11_Slot* slot, char* oldPin, int oldPinLen,
         return MEMORY_E;
 #endif
 
-    /* Snapshot the current PIN state. */
-    WP11_Lock_LockRO(&slot->lock);
-    if (oldPin != NULL && !(token->tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET))
+#ifndef WOLFPKCS11_NO_TIME
+    if (oldPin != NULL && wc_GetTime(&now, sizeof(now)) != 0)
+        ret = PIN_INVALID_E;
+#endif
+
+    /* Snapshot the current PIN state. Write lock: the lockout check below may
+     * reset the failure count. */
+    WP11_Lock_LockRW(&slot->lock);
+    if (ret == 0 && oldPin != NULL &&
+            !(token->tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET)) {
         ret = PIN_NOT_SET_E;
+    }
+#ifndef WOLFPKCS11_NO_TIME
+    /* A wrong old PIN counts toward the user login lockout. */
+    if (ret == 0 && oldPin != NULL &&
+            token->userFailedLogin >= WP11_MAX_LOGIN_FAILS_USER) {
+        allowed = token->userLastFailedLogin + token->userFailLoginTimeout;
+        if (allowed < now)
+            token->userFailedLogin = 0;
+        else
+            ret = PIN_INVALID_E;
+    }
+#endif
     XMEMCPY(d->prev.userPinSeed, token->userPinSeed,
             sizeof(d->prev.userPinSeed));
     XMEMCPY(d->prev.userPin, token->userPin, sizeof(d->prev.userPin));
@@ -9238,7 +9263,7 @@ static int wp11_Slot_SetUserPin(WP11_Slot* slot, char* oldPin, int oldPinLen,
     #endif
         WP11_Lock_UnlockRW(&token->rngLock);
     }
-    WP11_Lock_UnlockRO(&slot->lock);
+    WP11_Lock_UnlockRW(&slot->lock);
 
     /* Costly Operations done out of lock. */
     if (ret == 0 && oldPin != NULL) {
@@ -9249,6 +9274,9 @@ static int wp11_Slot_SetUserPin(WP11_Slot* slot, char* oldPin, int oldPinLen,
                                               d->prev.userPinLen)) {
             ret = PIN_INVALID_E;
         }
+    #ifndef WOLFPKCS11_NO_TIME
+        oldPinRet = ret;
+    #endif
     }
     if (ret == 0) {
         ret = HashPIN(pin, pinLen, d->userPinSeed, sizeof(d->userPinSeed),
@@ -9268,6 +9296,22 @@ static int wp11_Slot_SetUserPin(WP11_Slot* slot, char* oldPin, int oldPinLen,
     /* Lock order: slot then token. */
     WP11_Lock_LockRW(&slot->lock);
     WP11_Lock_LockRW(&token->lock);
+#ifndef WOLFPKCS11_NO_TIME
+    /* Concurrent failures must not push the count past the limit. */
+    if (oldPinRet == PIN_INVALID_E &&
+            token->userFailedLogin < WP11_MAX_LOGIN_FAILS_USER) {
+        token->userFailedLogin++;
+        if (token->userFailedLogin == WP11_MAX_LOGIN_FAILS_USER) {
+            token->userLastFailedLogin = now;
+            token->userFailLoginTimeout += WP11_USER_LOGIN_FAIL_TIMEOUT;
+        }
+    }
+    else if (oldPinRet == 0) {
+        token->userFailedLogin = 0;
+        token->userLastFailedLogin = 0;
+        token->userFailLoginTimeout = 0;
+    }
+#endif
     if (ret == 0 && oldPin != NULL) {
         if (XMEMCMP(d->prev.userPinSeed, token->userPinSeed,
                     sizeof(d->prev.userPinSeed)) != 0) {
@@ -9346,7 +9390,8 @@ int WP11_Slot_SetUserPin(WP11_Slot* slot, char* pin, int pinLen)
  * @param  pin        [in]  PIN to set.
  * @param  pinLen     [in]  Length of PIN.
  * @return  PIN_NOT_SET_E when no user PIN is set.
- *          PIN_INVALID_E when the current PIN is incorrect.
+ *          PIN_INVALID_E when the current PIN is incorrect or the user is
+ *          locked out.
  *          BAD_STATE_E when the user PIN changed during the operation.
  *          -ve value when generating random, hashing PIN or re-encrypting
  *          fails.
