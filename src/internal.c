@@ -8126,7 +8126,7 @@ static void wp11_Token_Final(WP11_Token* token)
     Rng_Free(&token->rng);
     WP11_Lock_Free(&token->rngLock);
     WP11_Lock_Free(&token->lock);
-    XMEMSET(token, 0, sizeof(*token));
+    wc_ForceZero(token, sizeof(*token));
 }
 
 #ifndef WOLFPKCS11_NO_STORE
