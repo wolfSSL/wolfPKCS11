@@ -616,6 +616,114 @@ cleanup:
     }
     return result;
 }
+
+static CK_RV read_states(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE obj,
+                         CK_BBOOL* alwaysSensitive, CK_BBOOL* neverExtractable)
+{
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_ALWAYS_SENSITIVE,  alwaysSensitive,  sizeof(CK_BBOOL) },
+        { CKA_NEVER_EXTRACTABLE, neverExtractable, sizeof(CK_BBOOL) },
+    };
+
+    return funcList->C_GetAttributeValue(session, obj, tmpl,
+                                         sizeof(tmpl) / sizeof(*tmpl));
+}
+
+/* A derived key is only always-sensitive / never-extractable when its base
+ * key has those historical properties too. */
+static int test_derived_states_follow_base(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    CK_ECDH1_DERIVE_PARAMS params;
+    CK_MECHANISM genMech = { CKM_EC_KEY_PAIR_GEN, NULL, 0 };
+    CK_BBOOL alwaysSensitive = 0xAA;
+    CK_BBOOL neverExtractable = 0xAA;
+    byte point[2 * 32 + 3];
+    CK_ATTRIBUTE pointAttr = { CKA_EC_POINT, point, sizeof(point) };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_EC_PARAMS,   ecc_p256_params, sizeof(ecc_p256_params) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_SENSITIVE,   &ckTrue,         sizeof(ckTrue)          },
+        { CKA_EXTRACTABLE, &ckFalse,        sizeof(ckFalse)         },
+        { CKA_DERIVE,      &ckTrue,         sizeof(ckTrue)          },
+    };
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass)  },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType)  },
+        { CKA_SENSITIVE,   &ckTrue,         sizeof(ckTrue)          },
+        { CKA_EXTRACTABLE, &ckFalse,        sizeof(ckFalse)         },
+        { CKA_VALUE_LEN,   &secretLen,      sizeof(secretLen)       },
+    };
+    int result = 0;
+
+    /* An imported key was never always-sensitive or never-extractable. */
+    ret = create_ec_base(session, CK_TRUE, CK_FALSE, &base);
+    CHECK_CKR(ret, "create imported EC base key");
+    ret = read_states(session, base, &alwaysSensitive, &neverExtractable);
+    CHECK_CKR(ret, "read imported base historical flags");
+    if (alwaysSensitive != CK_FALSE || neverExtractable != CK_FALSE)
+        ret = CKR_GENERAL_ERROR;
+    CHECK_CKR(ret, "imported base historical flags are FALSE");
+
+    ecdh_params_init(&params, ecc_p256_point, sizeof(ecc_p256_point));
+    ret = ecdh_derive_tmpl(session, base, &params, tmpl,
+                           sizeof(tmpl) / sizeof(*tmpl), &derived);
+    CHECK_CKR(ret, "derive from imported base key");
+    ret = read_states(session, derived, &alwaysSensitive, &neverExtractable);
+    CHECK_CKR(ret, "read derived historical flags");
+    if (alwaysSensitive != CK_FALSE || neverExtractable != CK_FALSE) {
+        fprintf(stderr, "FAIL: derived from imported base: "
+                "ALWAYS_SENSITIVE=%d NEVER_EXTRACTABLE=%d, expected FALSE\n",
+                (int)alwaysSensitive, (int)neverExtractable);
+        test_failed++;
+        result = -1;
+        goto cleanup;
+    }
+    printf("PASS: derived key does not claim history its base lacks\n");
+    test_passed++;
+    funcList->C_DestroyObject(session, derived);
+    derived = CK_INVALID_HANDLE;
+    funcList->C_DestroyObject(session, base);
+    base = CK_INVALID_HANDLE;
+
+    /* A generated sensitive, non-extractable key passes its history on. */
+    ret = funcList->C_GenerateKeyPair(session, &genMech, pubTmpl,
+            sizeof(pubTmpl) / sizeof(*pubTmpl), privTmpl,
+            sizeof(privTmpl) / sizeof(*privTmpl), &pub, &base);
+    CHECK_CKR(ret, "generate EC base key");
+    ret = funcList->C_GetAttributeValue(session, pub, &pointAttr, 1);
+    CHECK_CKR(ret, "read generated EC point");
+
+    ecdh_params_init(&params, point, pointAttr.ulValueLen);
+    ret = ecdh_derive_tmpl(session, base, &params, tmpl,
+                           sizeof(tmpl) / sizeof(*tmpl), &derived);
+    CHECK_CKR(ret, "derive from generated base key");
+    ret = read_states(session, derived, &alwaysSensitive, &neverExtractable);
+    CHECK_CKR(ret, "read derived historical flags");
+    if (alwaysSensitive != CK_TRUE || neverExtractable != CK_TRUE) {
+        fprintf(stderr, "FAIL: derived from generated base: "
+                "ALWAYS_SENSITIVE=%d NEVER_EXTRACTABLE=%d, expected TRUE\n",
+                (int)alwaysSensitive, (int)neverExtractable);
+        test_failed++;
+        result = -1;
+        goto cleanup;
+    }
+    printf("PASS: derived key keeps history its base has\n");
+    test_passed++;
+
+cleanup:
+    if (derived != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, derived);
+    if (base != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, base);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+    return result;
+}
 #endif /* HAVE_ECC */
 
 static CK_RV pkcs11_init(void)
@@ -740,6 +848,8 @@ static int ec_derive_test(void)
         result = -1;
 #endif
     if (test_private_derive_requires_login(session) != 0)
+        result = -1;
+    if (test_derived_states_follow_base(session) != 0)
         result = -1;
 #else
     printf("ECC not available, skipping ECDH derive tests\n");

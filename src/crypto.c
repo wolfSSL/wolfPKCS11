@@ -599,6 +599,38 @@ static CK_RV SetInitialStates(WP11_Object* key)
     return rv;
 }
 
+#if defined(HAVE_ECC) || !defined(NO_DH) || defined(WOLFPKCS11_HKDF) || \
+    (!defined(NO_AES) && defined(HAVE_AES_CBC))
+/* PKCS#11 derive rules: the historical flags also need the base key's. */
+static CK_RV SetDerivedStates(WP11_Object* key, CK_BBOOL baseAlwaysSensitive,
+                              CK_BBOOL baseNeverExtractable)
+{
+    CK_RV rv;
+    CK_BBOOL getVar = CK_FALSE;
+    CK_BBOOL state;
+    CK_ULONG getVarLen = sizeof(CK_BBOOL);
+
+    rv = WP11_Object_GetAttr(key, CKA_SENSITIVE, &getVar, &getVarLen);
+    if (rv == CKR_OK) {
+        state = (baseAlwaysSensitive == CK_TRUE && getVar == CK_TRUE) ?
+                CK_TRUE : CK_FALSE;
+        rv = WP11_Object_SetAttr(key, CKA_ALWAYS_SENSITIVE, &state,
+                                 sizeof(CK_BBOOL));
+    }
+    if (rv == CKR_OK) {
+        getVarLen = sizeof(CK_BBOOL);
+        rv = WP11_Object_GetAttr(key, CKA_EXTRACTABLE, &getVar, &getVarLen);
+    }
+    if (rv == CKR_OK) {
+        state = (baseNeverExtractable == CK_TRUE && getVar == CK_FALSE) ?
+                CK_TRUE : CK_FALSE;
+        rv = WP11_Object_SetAttr(key, CKA_NEVER_EXTRACTABLE, &state,
+                                 sizeof(CK_BBOOL));
+    }
+    return rv;
+}
+#endif
+
 static CK_RV TemplateHasAttribute(CK_ATTRIBUTE_TYPE type,
         CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount)
 {
@@ -9574,6 +9606,12 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
     CK_ULONG bLen;
 #endif
 #endif
+#if defined(HAVE_ECC) || !defined(NO_DH) || defined(WOLFPKCS11_HKDF) || \
+    (!defined(NO_AES) && defined(HAVE_AES_CBC))
+    CK_BBOOL baseAlwaysSensitive = CK_FALSE;
+    CK_BBOOL baseNeverExtractable = CK_FALSE;
+    CK_ULONG histLen;
+#endif
 
     WOLFPKCS11_ENTER("C_DeriveKey");
     #ifdef DEBUG_WOLFPKCS11
@@ -9943,6 +9981,14 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                                 &bLen) != 0)
             baseExtractable = CK_TRUE;
 #endif
+        histLen = sizeof(CK_BBOOL);
+        if (WP11_Object_GetAttr(obj, CKA_ALWAYS_SENSITIVE,
+                                &baseAlwaysSensitive, &histLen) != 0)
+            baseAlwaysSensitive = CK_FALSE;
+        histLen = sizeof(CK_BBOOL);
+        if (WP11_Object_GetAttr(obj, CKA_NEVER_EXTRACTABLE,
+                                &baseNeverExtractable, &histLen) != 0)
+            baseNeverExtractable = CK_FALSE;
         rv = CreateObject(session, pTemplate, ulAttributeCount, &obj);
         if (rv == CKR_OK) {
             /* obj now refers to the newly created derived key. */
@@ -9984,7 +10030,8 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                 }
                 if (ret == 0) {
                     /* Set before AddObject so a token store has them. */
-                    rv = SetInitialStates(obj);
+                    rv = SetDerivedStates(obj, baseAlwaysSensitive,
+                                          baseNeverExtractable);
                     if (rv == CKR_OK) {
                         rv = AddObject(session, obj, pTemplate,
                                         ulAttributeCount, phKey);
