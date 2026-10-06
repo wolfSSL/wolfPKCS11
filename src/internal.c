@@ -3494,14 +3494,25 @@ static void wp11_Object_Decode_Cert(WP11_Object* object)
  * Trust is not encrypted.
  *
  * @param [in, out]  object  Trust object.
+ * @return  0 on success.
+ * @return  BUFFER_E when the stored trust data is not the expected size.
  */
-static void wp11_Object_Decode_Trust(WP11_Object* object)
+static int wp11_Object_Decode_Trust(WP11_Object* object)
 {
+    int ret = 0;
+
     if (object->keyData != NULL) {
-        XMEMCPY((unsigned char*)&object->data.trust, object->keyData,
-            object->keyDataLen);
+        if (object->keyDataLen != (int)sizeof(WP11_Trust)) {
+            ret = BUFFER_E;
+        }
+        else {
+            XMEMCPY((unsigned char*)&object->data.trust, object->keyData,
+                object->keyDataLen);
+        }
     }
-    object->encoded = 0;
+    object->encoded = (ret != 0);
+
+    return ret;
 }
 #endif
 
@@ -3568,7 +3579,11 @@ static int wp11_Object_Load_Trust(WP11_Object* object, int tokenId, int objId)
         ret = wp11_storage_read_alloc_array(storage, &object->keyData,
             &object->keyDataLen);
         wp11_storage_close(storage);
-        wp11_Object_Decode_Trust(object);
+        /* An empty record would leave the trust zeroed but decoded. */
+        if (ret == 0 && object->keyData == NULL)
+            ret = BUFFER_E;
+        if (ret == 0)
+            ret = wp11_Object_Decode_Trust(object);
     }
 
     return ret;
@@ -6945,8 +6960,7 @@ static int wp11_Object_Decode(WP11_Object* object)
     }
 #ifdef WOLFPKCS11_NSS
     else if (object->objClass == CKO_NSS_TRUST) {
-        wp11_Object_Decode_Trust(object);
-        ret = 0;
+        ret = wp11_Object_Decode_Trust(object);
     }
 #endif
     else if (object->objClass == CKO_DATA) {
