@@ -560,6 +560,72 @@ out:
 }
 #endif
 
+#if defined(TRACK_ALLOCS) && !defined(NO_AES) && defined(HAVE_AESGCM)
+/* Re-initializing AES-GCM must release, scrubbed, any data a previous GCM
+ * operation left buffered on the session. */
+static void test_gcm_reinit_releases_buffer(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE aesKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE macKey = CK_INVALID_HANDLE;
+    CK_GCM_PARAMS gcmParams;
+    CK_MECHANISM gcmMech = { CKM_AES_GCM, &gcmParams, sizeof(gcmParams) };
+    byte out[64];
+    CK_ULONG outLen;
+    CK_SLOT_ID slot;
+    long before;
+    int hit;
+
+    printf("\n--- GCM re-init releases buffered data ---\n");
+    XMEMSET(&gcmParams, 0, sizeof(gcmParams));
+    gcmParams.pIv = gcmIv;
+    gcmParams.ulIvLen = sizeof(gcmIv);
+    gcmParams.ulIvBits = sizeof(gcmIv) * 8;
+    gcmParams.ulTagBits = 128;
+
+    rv = init_library(&slot);
+    CHECK_RV(rv, "initialize library", CKR_OK);
+    if (rv != CKR_OK)
+        goto out;
+    before = liveBlocks;
+    rv = open_with_keys(slot, &session, &aesKey, &macKey);
+    CHECK_RV(rv, "open session with keys", CKR_OK);
+    if (rv != CKR_OK)
+        goto out;
+
+    rv = funcList->C_EncryptInit(session, &gcmMech, aesKey);
+    CHECK_RV(rv, "C_EncryptInit(AES-GCM)", CKR_OK);
+    outLen = sizeof(out);
+    rv = funcList->C_EncryptUpdate(session, plainMarker, sizeof(plainMarker),
+                                   out, &outLen);
+    CHECK_RV(rv, "C_EncryptUpdate(AES-GCM)", CKR_OK);
+    outLen = sizeof(out);
+    rv = funcList->C_Encrypt(session, gcmIv, sizeof(gcmIv), out, &outLen);
+    CHECK_RV(rv, "C_Encrypt(AES-GCM) ends the operation", CKR_OK);
+
+    watch_start(plainMarker, sizeof(plainMarker));
+    rv = funcList->C_EncryptInit(session, &gcmMech, aesKey);
+    hit = watch_stop();
+    CHECK_RV(rv, "C_EncryptInit(AES-GCM) again", CKR_OK);
+    CHECK_TRUE(!hit, "GCM re-init scrubs buffered data before release");
+
+    rv = funcList->C_DestroyObject(session, aesKey);
+    CHECK_RV(rv, "C_DestroyObject(AES)", CKR_OK);
+    rv = funcList->C_DestroyObject(session, macKey);
+    CHECK_RV(rv, "C_DestroyObject(HMAC)", CKR_OK);
+    funcList->C_CloseSession(session);
+    session = CK_INVALID_HANDLE;
+    CHECK_TRUE(liveBlocks == before,
+               "GCM re-init leaves no allocation behind");
+
+out:
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -586,6 +652,9 @@ static int run_test(void)
 #if defined(TRACK_ALLOCS) && !defined(NO_AES) && defined(HAVE_AES_CBC) && \
     !defined(NO_SHA256)
     test_failed_operation_scrubs_state();
+#endif
+#if defined(TRACK_ALLOCS) && !defined(NO_AES) && defined(HAVE_AESGCM)
+    test_gcm_reinit_releases_buffer();
 #endif
 
     pkcs11_unload();

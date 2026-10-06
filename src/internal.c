@@ -11379,6 +11379,14 @@ int WP11_Session_SetGcmParams(WP11_Session* session, unsigned char* iv,
         if (session->mechanism == CKM_AES_GCM && gcm->aad != NULL) {
             XFREE(gcm->aad, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         }
+        if (session->mechanism == CKM_AES_GCM && gcm->enc != NULL) {
+            wc_ForceZero(gcm->enc, (word32)gcm->encSz);
+            XFREE(gcm->enc, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        }
+#ifdef WOLFSSL_AESGCM_STREAM
+        if (session->mechanism == CKM_AES_GCM && gcm->streamInit)
+            wc_AesFree(&gcm->aes);
+#endif
         XMEMSET(gcm, 0, sizeof(*gcm));
         if (ivSz > 0)
             XMEMCPY(gcm->iv, iv, ivSz);
