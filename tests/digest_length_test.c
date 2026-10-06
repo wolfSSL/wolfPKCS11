@@ -58,6 +58,59 @@ static const char tokenLabel[] = "digest-length";
 static CK_BBOOL ckTrue = CK_TRUE;
 static CK_BBOOL ckFalse = CK_FALSE;
 
+#if !defined(NO_SHA256) || !defined(NO_RSA) || \
+    (!defined(NO_AES) && defined(HAVE_AESCMAC))
+/* A length above the 32-bit range whose low 32 bits equal small. */
+static CK_ULONG big_len(CK_ULONG small)
+{
+    return (((CK_ULONG)1 << 16) << 16) | small;
+}
+#endif
+
+#ifndef NO_RSA
+static CK_OBJECT_CLASS privKeyClass = CKO_PRIVATE_KEY;
+static CK_OBJECT_CLASS pubKeyClass = CKO_PUBLIC_KEY;
+static CK_KEY_TYPE rsaKeyType = CKK_RSA;
+
+static CK_RV create_rsa_keys(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE* priv,
+                             CK_OBJECT_HANDLE* pub)
+{
+    CK_RV rv;
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_CLASS,            &privKeyClass,     sizeof(privKeyClass)      },
+        { CKA_KEY_TYPE,         &rsaKeyType,       sizeof(rsaKeyType)        },
+        { CKA_SIGN,             &ckTrue,           sizeof(ckTrue)            },
+        { CKA_DECRYPT,          &ckTrue,           sizeof(ckTrue)            },
+        { CKA_PRIVATE,          &ckFalse,          sizeof(ckFalse)           },
+        { CKA_MODULUS,          rsa_2048_modulus,  sizeof(rsa_2048_modulus)  },
+        { CKA_PRIVATE_EXPONENT, rsa_2048_priv_exp, sizeof(rsa_2048_priv_exp) },
+        { CKA_PRIME_1,          rsa_2048_p,        sizeof(rsa_2048_p)        },
+        { CKA_PRIME_2,          rsa_2048_q,        sizeof(rsa_2048_q)        },
+        { CKA_EXPONENT_1,       rsa_2048_dP,       sizeof(rsa_2048_dP)       },
+        { CKA_EXPONENT_2,       rsa_2048_dQ,       sizeof(rsa_2048_dQ)       },
+        { CKA_COEFFICIENT,      rsa_2048_u,        sizeof(rsa_2048_u)        },
+        { CKA_PUBLIC_EXPONENT,  rsa_2048_pub_exp,  sizeof(rsa_2048_pub_exp)  },
+    };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_CLASS,           &pubKeyClass,     sizeof(pubKeyClass)      },
+        { CKA_KEY_TYPE,        &rsaKeyType,      sizeof(rsaKeyType)       },
+        { CKA_VERIFY,          &ckTrue,          sizeof(ckTrue)           },
+        { CKA_ENCRYPT,         &ckTrue,          sizeof(ckTrue)           },
+        { CKA_PRIVATE,         &ckFalse,         sizeof(ckFalse)          },
+        { CKA_MODULUS,         rsa_2048_modulus, sizeof(rsa_2048_modulus) },
+        { CKA_PUBLIC_EXPONENT, rsa_2048_pub_exp, sizeof(rsa_2048_pub_exp) },
+    };
+
+    rv = funcList->C_CreateObject(session, privTmpl,
+                                  sizeof(privTmpl) / sizeof(*privTmpl), priv);
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, pubTmpl,
+                                      sizeof(pubTmpl) / sizeof(*pubTmpl), pub);
+    }
+    return rv;
+}
+#endif
+
 #ifndef NO_SHA256
 static CK_MECHANISM sha256Mech = { CKM_SHA256, NULL, 0 };
 
@@ -127,7 +180,167 @@ static void digest_requires_init_test(CK_SESSION_HANDLE session)
     funcList->C_DestroyObject(session, key);
 #endif
 }
+
+/* Digest input lengths that do not fit in 32 bits are rejected. */
+static void digest_input_len_range_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    byte data[16];
+    byte hash[32];
+    CK_ULONG hashLen = sizeof(hash);
+
+    XMEMSET(data, 0x62, sizeof(data));
+    rv = funcList->C_DigestInit(session, &sha256Mech);
+    CHECK_RV(rv, "C_DigestInit(SHA256)", CKR_OK);
+    rv = funcList->C_Digest(session, data, big_len(sizeof(data)), hash,
+                            &hashLen);
+    CHECK_RV(rv, "C_Digest rejects a length above 32 bits",
+             CKR_DATA_LEN_RANGE);
+    hashLen = sizeof(hash);
+    rv = funcList->C_Digest(session, data, sizeof(data), hash, &hashLen);
+    CHECK_RV(rv, "C_Digest length error ends the operation",
+             CKR_OPERATION_NOT_INITIALIZED);
+
+    rv = funcList->C_DigestInit(session, &sha256Mech);
+    CHECK_RV(rv, "C_DigestInit(SHA256) for update", CKR_OK);
+    rv = funcList->C_DigestUpdate(session, data, big_len(sizeof(data)));
+    CHECK_RV(rv, "C_DigestUpdate rejects a length above 32 bits",
+             CKR_DATA_LEN_RANGE);
+    hashLen = sizeof(hash);
+    rv = funcList->C_DigestFinal(session, hash, &hashLen);
+    CHECK_RV(rv, "C_DigestUpdate length error ends the operation",
+             CKR_OPERATION_NOT_INITIALIZED);
+}
+
+#if !defined(NO_HMAC)
+/* MAC input and signature lengths that do not fit in 32 bits are rejected. */
+static void hmac_input_len_range_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_SHA256_HMAC, NULL, 0 };
+    byte data[16];
+    byte mac[32];
+    CK_ULONG macLen = sizeof(mac);
+
+    XMEMSET(data, 0x63, sizeof(data));
+    rv = create_hmac_key(session, &key);
+    CHECK_RV(rv, "create HMAC key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_SignInit(session, &mech, key);
+    CHECK_RV(rv, "C_SignInit(SHA256 HMAC)", CKR_OK);
+    rv = funcList->C_Sign(session, data, sizeof(data), mac, &macLen);
+    CHECK_RV(rv, "C_Sign(SHA256 HMAC)", CKR_OK);
+
+    rv = funcList->C_SignInit(session, &mech, key);
+    CHECK_RV(rv, "C_SignInit(SHA256 HMAC) for long data", CKR_OK);
+    macLen = sizeof(mac);
+    rv = funcList->C_Sign(session, data, big_len(sizeof(data)), mac, &macLen);
+    CHECK_RV(rv, "C_Sign rejects a length above 32 bits", CKR_DATA_LEN_RANGE);
+    macLen = sizeof(mac);
+    rv = funcList->C_Sign(session, data, sizeof(data), mac, &macLen);
+    CHECK_RV(rv, "C_Sign length error ends the operation",
+             CKR_OPERATION_NOT_INITIALIZED);
+
+    rv = funcList->C_SignInit(session, &mech, key);
+    CHECK_RV(rv, "C_SignInit(SHA256 HMAC) for update", CKR_OK);
+    rv = funcList->C_SignUpdate(session, data, big_len(sizeof(data)));
+    CHECK_RV(rv, "C_SignUpdate rejects a length above 32 bits",
+             CKR_DATA_LEN_RANGE);
+    macLen = sizeof(mac);
+    rv = funcList->C_SignFinal(session, mac, &macLen);
+    CHECK_RV(rv, "C_SignUpdate length error ends the operation",
+             CKR_OPERATION_NOT_INITIALIZED);
+
+    macLen = sizeof(mac);
+    rv = funcList->C_SignInit(session, &mech, key);
+    if (rv == CKR_OK)
+        rv = funcList->C_Sign(session, data, sizeof(data), mac, &macLen);
+    CHECK_RV(rv, "C_Sign(SHA256 HMAC) reference MAC", CKR_OK);
+
+    rv = funcList->C_VerifyInit(session, &mech, key);
+    CHECK_RV(rv, "C_VerifyInit(SHA256 HMAC)", CKR_OK);
+    rv = funcList->C_Verify(session, data, big_len(sizeof(data)), mac, macLen);
+    CHECK_RV(rv, "C_Verify rejects a data length above 32 bits",
+             CKR_DATA_LEN_RANGE);
+    rv = funcList->C_Verify(session, data, sizeof(data), mac, macLen);
+    CHECK_RV(rv, "C_Verify length error ends the operation",
+             CKR_OPERATION_NOT_INITIALIZED);
+
+    rv = funcList->C_VerifyInit(session, &mech, key);
+    CHECK_RV(rv, "C_VerifyInit(SHA256 HMAC) for long signature", CKR_OK);
+    rv = funcList->C_Verify(session, data, sizeof(data), mac, big_len(macLen));
+    CHECK_RV(rv, "C_Verify rejects a signature length above 32 bits",
+             CKR_SIGNATURE_LEN_RANGE);
+
+    rv = funcList->C_VerifyInit(session, &mech, key);
+    CHECK_RV(rv, "C_VerifyInit(SHA256 HMAC) for update", CKR_OK);
+    rv = funcList->C_VerifyUpdate(session, data, big_len(sizeof(data)));
+    CHECK_RV(rv, "C_VerifyUpdate rejects a length above 32 bits",
+             CKR_DATA_LEN_RANGE);
+    rv = funcList->C_VerifyFinal(session, mac, macLen);
+    CHECK_RV(rv, "C_VerifyUpdate length error ends the operation",
+             CKR_OPERATION_NOT_INITIALIZED);
+
+    funcList->C_DestroyObject(session, key);
+}
+#endif
 #endif /* !NO_SHA256 */
+
+#ifndef NO_RSA
+/* RSA encrypt and decrypt input lengths that do not fit in 32 bits are
+ * rejected. */
+static void rsa_input_len_range_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_RSA_PKCS, NULL, 0 };
+    byte data[16];
+    byte enc[2048 / 8];
+    byte dec[2048 / 8];
+    CK_ULONG encLen = sizeof(enc);
+    CK_ULONG decLen = sizeof(dec);
+
+    XMEMSET(data, 0x64, sizeof(data));
+    rv = create_rsa_keys(session, &priv, &pub);
+    CHECK_RV(rv, "create RSA key pair", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_EncryptInit(session, &mech, pub);
+    CHECK_RV(rv, "C_EncryptInit(RSA PKCS)", CKR_OK);
+    rv = funcList->C_Encrypt(session, data, big_len(sizeof(data)), enc,
+                             &encLen);
+    CHECK_RV(rv, "C_Encrypt(RSA PKCS) rejects a length above 32 bits",
+             CKR_DATA_LEN_RANGE);
+    encLen = sizeof(enc);
+    rv = funcList->C_Encrypt(session, data, sizeof(data), enc, &encLen);
+    CHECK_RV(rv, "C_Encrypt(RSA PKCS) length error ends the operation",
+             CKR_OPERATION_NOT_INITIALIZED);
+
+    encLen = sizeof(enc);
+    rv = funcList->C_EncryptInit(session, &mech, pub);
+    if (rv == CKR_OK)
+        rv = funcList->C_Encrypt(session, data, sizeof(data), enc, &encLen);
+    CHECK_RV(rv, "C_Encrypt(RSA PKCS)", CKR_OK);
+
+    rv = funcList->C_DecryptInit(session, &mech, priv);
+    CHECK_RV(rv, "C_DecryptInit(RSA PKCS)", CKR_OK);
+    rv = funcList->C_Decrypt(session, enc, big_len(encLen), dec, &decLen);
+    CHECK_RV(rv, "C_Decrypt(RSA PKCS) rejects a length above 32 bits",
+             CKR_ENCRYPTED_DATA_LEN_RANGE);
+    decLen = sizeof(dec);
+    rv = funcList->C_Decrypt(session, enc, encLen, dec, &decLen);
+    CHECK_RV(rv, "C_Decrypt(RSA PKCS) length error ends the operation",
+             CKR_OPERATION_NOT_INITIALIZED);
+
+    funcList->C_DestroyObject(session, priv);
+    funcList->C_DestroyObject(session, pub);
+}
+#endif
 
 static CK_RV token_init(CK_SLOT_ID* slot)
 {
@@ -199,6 +412,17 @@ static int run_test(void)
 #ifndef NO_SHA256
         digest_requires_init_test(session);
 #endif
+        if (sizeof(CK_ULONG) > sizeof(word32)) {
+#ifndef NO_SHA256
+            digest_input_len_range_test(session);
+#if !defined(NO_HMAC)
+            hmac_input_len_range_test(session);
+#endif
+#endif
+#ifndef NO_RSA
+            rsa_input_len_range_test(session);
+#endif
+        }
     }
 
     if (session != 0) {

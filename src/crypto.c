@@ -66,6 +66,8 @@
 #define CK_ULONG_MAX_OVERHEAD  ((CK_ULONG)64)
 #define CK_ULONG_FITS_WORD32(v) \
     ((v) <= (CK_ULONG)0xFFFFFFFF - CK_ULONG_MAX_OVERHEAD)
+/* For lengths passed straight to a word32 parameter with no overhead added. */
+#define CK_ULONG_IS_WORD32(v)  ((CK_ULONG)(word32)(v) == (v))
 
 /* RFC 5869 limits HKDF-Expand output to 255 * HashLen octets. Cap the
  * requested output length to the largest such value across supported digests
@@ -3155,6 +3157,10 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
         case CKM_RSA_X_509:
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_RSA_X_509_ENC))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            if (!CK_ULONG_FITS_WORD32(ulDataLen)) {
+                WP11_Session_AbortOp(session);
+                return CKR_DATA_LEN_RANGE;
+            }
 
             encDataLen = WP11_Rsa_KeyLen(obj);
             if (pEncryptedData == NULL) {
@@ -3174,6 +3180,10 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
         case CKM_RSA_PKCS:
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_RSA_PKCS_ENC))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            if (!CK_ULONG_FITS_WORD32(ulDataLen)) {
+                WP11_Session_AbortOp(session);
+                return CKR_DATA_LEN_RANGE;
+            }
 
             encDataLen = WP11_Rsa_KeyLen(obj);
             if (pEncryptedData == NULL) {
@@ -3195,6 +3205,10 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             if (!WP11_Session_IsOpInitialized(session,
                                                  WP11_INIT_RSA_PKCS_OAEP_ENC)) {
                 return CKR_OPERATION_NOT_INITIALIZED;
+            }
+            if (!CK_ULONG_FITS_WORD32(ulDataLen)) {
+                WP11_Session_AbortOp(session);
+                return CKR_DATA_LEN_RANGE;
             }
 
             encDataLen = WP11_Rsa_KeyLen(obj);
@@ -4293,6 +4307,10 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
         case CKM_RSA_X_509:
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_RSA_X_509_DEC))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            if (!CK_ULONG_FITS_WORD32(ulEncryptedDataLen)) {
+                WP11_Session_AbortOp(session);
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
+            }
 
             decDataLen = WP11_Rsa_KeyLen(obj);
             if (pData == NULL) {
@@ -4313,6 +4331,10 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
         case CKM_RSA_PKCS:
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_RSA_PKCS_DEC))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            if (!CK_ULONG_FITS_WORD32(ulEncryptedDataLen)) {
+                WP11_Session_AbortOp(session);
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
+            }
 
             decDataLen = WP11_Rsa_KeyLen(obj);
             if (pData == NULL) {
@@ -4335,6 +4357,10 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
             if (!WP11_Session_IsOpInitialized(session,
                                                  WP11_INIT_RSA_PKCS_OAEP_DEC)) {
                 return CKR_OPERATION_NOT_INITIALIZED;
+            }
+            if (!CK_ULONG_FITS_WORD32(ulEncryptedDataLen)) {
+                WP11_Session_AbortOp(session);
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
             }
 
             decDataLen = WP11_Rsa_KeyLen(obj);
@@ -5201,6 +5227,10 @@ CK_RV C_Digest(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
         return CKR_ARGUMENTS_BAD;
     if (!WP11_Session_IsOpInitialized(session, WP11_INIT_DIGEST))
         return CKR_OPERATION_NOT_INITIALIZED;
+    if (!CK_ULONG_IS_WORD32(ulDataLen)) {
+        WP11_Session_AbortOp(session);
+        return CKR_DATA_LEN_RANGE;
+    }
 
     hashLen = (word32)*pulDigestLen;
     ret = WP11_Digest_Single(pData, (word32)ulDataLen, pDigest, &hashLen,
@@ -5254,6 +5284,10 @@ CK_RV C_DigestUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
         return CKR_ARGUMENTS_BAD;
     if (!WP11_Session_IsOpInitialized(session, WP11_INIT_DIGEST))
         return CKR_OPERATION_NOT_INITIALIZED;
+    if (!CK_ULONG_IS_WORD32(ulPartLen)) {
+        WP11_Session_AbortOp(session);
+        return CKR_DATA_LEN_RANGE;
+    }
 
     ret = WP11_Digest_Update(pPart, (word32)ulPartLen, session);
 
@@ -5980,6 +6014,12 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
     WP11_Session_GetObject(session, &obj);
     if (obj == NULL)
         return CKR_OPERATION_NOT_INITIALIZED;
+    if (!CK_ULONG_FITS_WORD32(ulDataLen)) {
+        if (!WP11_Session_IsOpCategoryActive(session, WP11_OP_SIGN))
+            return CKR_OPERATION_NOT_INITIALIZED;
+        WP11_Session_AbortOp(session);
+        return CKR_DATA_LEN_RANGE;
+    }
 
     mechanism = WP11_Session_GetMechanism(session);
     switch (mechanism) {
@@ -6356,6 +6396,12 @@ static CK_RV wp11_C_SignUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
     WP11_Session_GetObject(session, &obj);
     if (obj == NULL)
         return CKR_OPERATION_NOT_INITIALIZED;
+    if (!CK_ULONG_FITS_WORD32(ulPartLen)) {
+        if (!WP11_Session_IsOpCategoryActive(session, WP11_OP_SIGN))
+            return CKR_OPERATION_NOT_INITIALIZED;
+        WP11_Session_AbortOp(session);
+        return CKR_DATA_LEN_RANGE;
+    }
 
     mechanism = WP11_Session_GetMechanism(session);
     switch (mechanism) {
@@ -7183,6 +7229,15 @@ static CK_RV wp11_C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
     WP11_Session_GetObject(session, &obj);
     if (obj == NULL)
         return CKR_OPERATION_NOT_INITIALIZED;
+    if (!CK_ULONG_FITS_WORD32(ulDataLen) ||
+            !CK_ULONG_FITS_WORD32(ulSignatureLen)) {
+        if (!WP11_Session_IsOpCategoryActive(session, WP11_OP_VERIFY))
+            return CKR_OPERATION_NOT_INITIALIZED;
+        WP11_Session_AbortOp(session);
+        if (!CK_ULONG_FITS_WORD32(ulDataLen))
+            return CKR_DATA_LEN_RANGE;
+        return CKR_SIGNATURE_LEN_RANGE;
+    }
 
     mechanism = WP11_Session_GetMechanism(session);
     switch (mechanism) {
@@ -7531,6 +7586,12 @@ static CK_RV wp11_C_VerifyUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
     WP11_Session_GetObject(session, &obj);
     if (obj == NULL)
         return CKR_OPERATION_NOT_INITIALIZED;
+    if (!CK_ULONG_FITS_WORD32(ulPartLen)) {
+        if (!WP11_Session_IsOpCategoryActive(session, WP11_OP_VERIFY))
+            return CKR_OPERATION_NOT_INITIALIZED;
+        WP11_Session_AbortOp(session);
+        return CKR_DATA_LEN_RANGE;
+    }
 
     mechanism = WP11_Session_GetMechanism(session);
     switch (mechanism) {
