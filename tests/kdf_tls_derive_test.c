@@ -64,8 +64,8 @@
 #endif
 
 #if (defined(WOLFPKCS11_HKDF) && defined(WIDE_CK_ULONG)) || \
-    defined(NSS_EMS_WIDE_TEST) || defined(AES_CBC_WIDE_TEST) || \
-    defined(WOLFSSL_HAVE_PRF)
+    defined(NSS_EMS_WIDE_TEST) || defined(WOLFSSL_HAVE_PRF) || \
+    (!defined(NO_AES) && defined(HAVE_AES_CBC))
     #define SECRET_BASE_TESTS
 #endif
 
@@ -474,6 +474,47 @@ cleanup:
 }
 #endif
 
+#if !defined(NO_AES) && defined(HAVE_AES_CBC)
+/* AES-CBC encrypt-data derives the CBC encryption of the data. */
+static int test_aes_cbc_encrypt_data_value(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    byte key[sizeof(aes_cbc_key)];
+    byte plain[sizeof(aes_cbc_plain)];
+    byte value[sizeof(aes_cbc_cipher)];
+    CK_ATTRIBUTE valueAttr = { CKA_VALUE, value, sizeof(value) };
+    CK_AES_CBC_ENCRYPT_DATA_PARAMS params;
+    CK_MECHANISM mech = { CKM_AES_CBC_ENCRYPT_DATA, &params, sizeof(params) };
+    int result = 0;
+
+    XMEMCPY(key, aes_cbc_key, sizeof(key));
+    XMEMCPY(plain, aes_cbc_plain, sizeof(plain));
+    ret = create_secret_base(session, CKK_AES, key, sizeof(key), &base);
+    CHECK_CKR(ret, "create AES base key");
+
+    XMEMSET(&params, 0, sizeof(params));
+    XMEMCPY(params.iv, aes_cbc_iv, sizeof(params.iv));
+    params.pData = plain;
+    params.length = sizeof(plain);
+    ret = derive_generic(session, &mech, base, sizeof(plain), &derived);
+    CHECK_CKR(ret, "AES-CBC encrypt-data derive");
+
+    ret = funcList->C_GetAttributeValue(session, derived, &valueAttr, 1);
+    CHECK_CKR(ret, "read derived key value");
+    if (valueAttr.ulValueLen != sizeof(aes_cbc_cipher) ||
+            XMEMCMP(value, aes_cbc_cipher, sizeof(aes_cbc_cipher)) != 0)
+        ret = CKR_GENERAL_ERROR;
+    CHECK_CKR(ret, "derived key is the CBC encryption of the data");
+
+cleanup:
+    destroy_obj(session, &derived);
+    destroy_obj(session, &base);
+    return result;
+}
+#endif
+
 static CK_RV pkcs11_init(void)
 {
     CK_RV ret;
@@ -602,6 +643,11 @@ static int kdf_tls_derive_test(void)
 
 #ifdef WOLFSSL_HAVE_PRF
     if (test_tls_key_sizes_byte_aligned(session) != 0)
+        result = -1;
+#endif
+
+#if !defined(NO_AES) && defined(HAVE_AES_CBC)
+    if (test_aes_cbc_encrypt_data_value(session) != 0)
         result = -1;
 #endif
 
