@@ -533,6 +533,7 @@ struct WP11_Session {
 
     byte* data;                        /* Held data for one-shot mechs        */
     word32 dataSz;                     /* Size of held data                   */
+    word32 dataCap;                    /* Allocated size of held data         */
 
     int devId;
     WP11_Session* next;                /* Next session for slot               */
@@ -10704,31 +10705,36 @@ int WP11_Session_UpdateData(WP11_Session *session, byte *data, word32 dataLen)
 {
     int ret = 0;
     byte* tmp;
+    word32 cap;
 
     /* Guard the cumulative word32 sum against silent wrap that would lead to
      * a tiny allocation followed by an oversized XMEMCPY past it. */
     if (dataLen > (word32)0xFFFFFFFFu - session->dataSz)
         return MEMORY_E;
 
-#ifdef XREALLOC
-    tmp = (byte*)XREALLOC(session->data, session->dataSz + dataLen, NULL,
-            DYNAMIC_TYPE_TMP_BUFFER);
-    if (tmp == NULL)
-        ret = MEMORY_E;
-#else
-    tmp = (byte*)XMALLOC(session->dataSz + dataLen, NULL,
-            DYNAMIC_TYPE_TMP_BUFFER);
-    if (tmp == NULL)
-        ret = MEMORY_E;
-    if (ret == 0) {
-        if (session->data != NULL)
-            XMEMCPY(tmp, session->data, session->dataSz);
-        XFREE(session->data, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    if (session->data == NULL || dataLen > session->dataCap - session->dataSz) {
+        /* Doubling keeps the copying linear in the total input. */
+        cap = session->dataSz + dataLen;
+        if (session->dataCap <= (word32)0x7FFFFFFFu &&
+                cap < session->dataCap * 2) {
+            cap = session->dataCap * 2;
+        }
+        /* Grow by copying so the old buffer can be scrubbed before freeing. */
+        tmp = (byte*)XMALLOC(cap, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (tmp == NULL)
+            ret = MEMORY_E;
+        if (ret == 0) {
+            if (session->data != NULL) {
+                XMEMCPY(tmp, session->data, session->dataSz);
+                wc_ForceZero(session->data, session->dataCap);
+            }
+            XFREE(session->data, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            session->data = tmp;
+            session->dataCap = cap;
+        }
     }
-#endif /* !XREALLOC */
 
     if (ret == 0) {
-        session->data = tmp;
         XMEMCPY(session->data + session->dataSz, data, dataLen);
         session->dataSz += dataLen;
     }
@@ -10744,9 +10750,12 @@ void WP11_Session_GetData(WP11_Session *session, byte** data, word32* dataLen)
 
 void WP11_Session_FreeData(WP11_Session *session)
 {
+    if (session->data != NULL)
+        wc_ForceZero(session->data, session->dataCap);
     XFREE(session->data, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     session->data = NULL;
     session->dataSz = 0;
+    session->dataCap = 0;
     session->init = 0;
 }
 

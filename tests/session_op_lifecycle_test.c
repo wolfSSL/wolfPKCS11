@@ -98,6 +98,7 @@ static byte plainMarker[32] = {
 #define ALLOC_HDR_SZ 16
 
 static long liveBlocks = 0;
+static long allocCount = 0;
 static const byte* watchData = NULL;
 static size_t watchLen = 0;
 static int watchHit = 0;
@@ -126,6 +127,7 @@ static void* track_malloc(size_t sz)
     XMEMSET(p, 0, sz + ALLOC_HDR_SZ);
     XMEMCPY(p, &sz, sizeof(sz));
     liveBlocks++;
+    allocCount++;
     return p + ALLOC_HDR_SZ;
 }
 
@@ -822,6 +824,98 @@ out:
 }
 #endif
 
+#if defined(TRACK_ALLOCS) && defined(WOLFSSL_HAVE_PRF) && !defined(NO_SHA256)
+static CK_RV tls_mac_sign_init(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE key)
+{
+    CK_TLS_MAC_PARAMS params;
+    CK_MECHANISM mech = { CKM_TLS_MAC, &params, sizeof(params) };
+
+    params.prfHashMechanism = CKM_SHA256;
+    params.ulMacLength = 12;
+    params.ulServerOrClient = 1;
+    return funcList->C_SignInit(session, &mech, key);
+}
+
+/* Input accumulated for a one-shot MAC must be scrubbed whenever its buffer
+ * is grown or released. */
+static void test_mac_input_scrubbed_on_release(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE aesKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE macKey = CK_INVALID_HANDLE;
+    byte sig[64];
+    CK_ULONG sigLen;
+    CK_SLOT_ID slot;
+    int hit;
+
+    printf("\n--- accumulated MAC input is scrubbed ---\n");
+    rv = init_library(&slot);
+    if (rv == CKR_OK)
+        rv = open_with_keys(slot, &session, &aesKey, &macKey);
+    CHECK_RV(rv, "open session with keys", CKR_OK);
+    if (rv != CKR_OK)
+        goto out;
+
+    rv = tls_mac_sign_init(session, macKey);
+    CHECK_RV(rv, "C_SignInit(TLS MAC)", CKR_OK);
+    rv = funcList->C_SignUpdate(session, plainMarker, sizeof(plainMarker));
+    CHECK_RV(rv, "C_SignUpdate(TLS MAC)", CKR_OK);
+    watch_start(plainMarker, sizeof(plainMarker));
+    rv = funcList->C_SignUpdate(session, plainMarker, sizeof(plainMarker));
+    CHECK_RV(rv, "C_SignUpdate(TLS MAC) again", CKR_OK);
+    sigLen = sizeof(sig);
+    rv = funcList->C_SignFinal(session, sig, &sigLen);
+    hit = watch_stop();
+    CHECK_RV(rv, "C_SignFinal(TLS MAC)", CKR_OK);
+    CHECK_TRUE(!hit, "MAC input is scrubbed when its buffer is released");
+
+out:
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+
+#define MAC_SMALL_PARTS 1024
+
+/* Many one-byte MAC parts must not reallocate the buffered input each time. */
+static void test_mac_input_grows_linearly(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE aesKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE macKey = CK_INVALID_HANDLE;
+    byte part = 0x5a;
+    CK_SLOT_ID slot;
+    long allocs;
+    int i;
+
+    printf("\n--- many small MAC parts grow the input buffer linearly ---\n");
+    rv = init_library(&slot);
+    if (rv == CKR_OK)
+        rv = open_with_keys(slot, &session, &aesKey, &macKey);
+    CHECK_RV(rv, "open session with keys", CKR_OK);
+    if (rv != CKR_OK)
+        goto out;
+
+    rv = tls_mac_sign_init(session, macKey);
+    CHECK_RV(rv, "C_SignInit(TLS MAC)", CKR_OK);
+    allocs = allocCount;
+    for (i = 0; rv == CKR_OK && i < MAC_SMALL_PARTS; i++)
+        rv = funcList->C_SignUpdate(session, &part, 1);
+    allocs = allocCount - allocs;
+    CHECK_RV(rv, "one-byte C_SignUpdate(TLS MAC) parts", CKR_OK);
+    if (allocs > 64)
+        fprintf(stderr, "  %ld allocations for %d parts\n", allocs, i);
+    CHECK_TRUE(allocs <= 64, "buffered MAC input is not reallocated per part");
+
+out:
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
 #if defined(TRACK_ALLOCS) && !defined(NO_AES) && defined(HAVE_AESGCM) && \
     !defined(WOLFSSL_AESGCM_STREAM)
 /* Destroying the key of a multi-part AES-GCM operation must release the
@@ -925,6 +1019,10 @@ static int run_test(void)
 #if defined(TRACK_ALLOCS) && !defined(NO_AES) && defined(HAVE_AESGCM) && \
     !defined(WOLFSSL_AESGCM_STREAM)
     test_destroyed_gcm_key_releases_input();
+#endif
+#if defined(TRACK_ALLOCS) && defined(WOLFSSL_HAVE_PRF) && !defined(NO_SHA256)
+    test_mac_input_scrubbed_on_release();
+    test_mac_input_grows_linearly();
 #endif
 
     pkcs11_unload();
