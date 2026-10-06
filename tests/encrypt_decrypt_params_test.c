@@ -1154,6 +1154,72 @@ static void test_encrypt_update_len_range(CK_SESSION_HANDLE session)
 }
 #endif
 
+#if !defined(NO_AES) && defined(HAVE_AESCTR)
+/* Multi-part AES-CTR decryption rejects a part length the token cannot
+ * represent and accepts an output buffer length that does not fit in 32 bits. */
+static void test_ctr_decrypt_update_len(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_AES_CTR_PARAMS params;
+    CK_MECHANISM mech;
+    byte data[32];
+    byte out[32];
+    CK_ULONG partLen;
+    CK_ULONG wrap = ((CK_ULONG)1 << 16) << 16;
+
+    if (wrap == 0)
+        return;
+
+    XMEMSET(&params, 0, sizeof(params));
+    params.ulCounterBits = 32;
+    XMEMSET(params.cb, 0x9B, sizeof(params.cb));
+    XMEMSET(data, 0xAC, sizeof(data));
+    mech.mechanism = CKM_AES_CTR;
+    mech.pParameter = &params;
+    mech.ulParameterLen = sizeof(params);
+
+    rv = create_aes_key(session, aes_128_key, sizeof(aes_128_key), &key);
+    CHECK_RV(rv, "CTR decrypt update: create AES key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_DecryptInit(session, &mech, key);
+    CHECK_RV(rv, "CTR decrypt update: C_DecryptInit", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    partLen = wrap + sizeof(out);
+    rv = funcList->C_DecryptUpdate(session, data, wrap + sizeof(data), out,
+                                   &partLen);
+    CHECK_RV(rv, "CTR decrypt update: rejects oversized part",
+             CKR_ENCRYPTED_DATA_LEN_RANGE);
+    partLen = sizeof(out);
+    rv = funcList->C_DecryptUpdate(session, data, sizeof(data), out, &partLen);
+    CHECK_RV(rv, "CTR decrypt update: operation ended",
+             CKR_OPERATION_NOT_INITIALIZED);
+    if (rv == CKR_OK) {
+        /* End the still-active operation so the next check can start. */
+        partLen = sizeof(out);
+        (void)funcList->C_DecryptFinal(session, out, &partLen);
+    }
+
+    rv = funcList->C_DecryptInit(session, &mech, key);
+    CHECK_RV(rv, "CTR decrypt update: C_DecryptInit", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    partLen = wrap + 8;
+    rv = funcList->C_DecryptUpdate(session, data, 16, out, &partLen);
+    CHECK_RV(rv, "CTR decrypt update: large output buffer length", CKR_OK);
+    CHECK_TRUE(rv == CKR_OK && partLen == 16,
+               "CTR decrypt update: reports bytes written");
+    if (rv == CKR_OK) {
+        partLen = sizeof(out);
+        rv = funcList->C_DecryptFinal(session, out, &partLen);
+        CHECK_RV(rv, "CTR decrypt update: C_DecryptFinal", CKR_OK);
+    }
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -1219,6 +1285,9 @@ static int run_test(void)
 #if !defined(NO_AES) && (defined(HAVE_AESCTR) || defined(HAVE_AESGCM) || \
                          defined(HAVE_AESCTS))
         run_in_session(slot, test_encrypt_update_len_range);
+#endif
+#if !defined(NO_AES) && defined(HAVE_AESCTR)
+        run_in_session(slot, test_ctr_decrypt_update_len);
 #endif
     }
 
