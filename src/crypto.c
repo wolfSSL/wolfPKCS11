@@ -10042,7 +10042,7 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
             }
             else {
                 WP11_Object_Free(obj);
-                rv = ret;
+                rv = CKR_FUNCTION_FAILED;
             }
         }
     }
