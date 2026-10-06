@@ -45,6 +45,12 @@
 
 #include "testdata.h"
 
+#if defined(HAVE_ECC) && !defined(SINGLE_THREADED) && \
+    !defined(WOLFPKCS11_SINGLE_THREADED)
+    #define EC_DERIVE_THREAD_TEST
+    #include <pthread.h>
+#endif
+
 #define TEST_DIR "./store/ec_derive_test"
 
 static int test_passed = 0;
@@ -340,6 +346,191 @@ cleanup:
         funcList->C_DestroyObject(session, base);
     return result;
 }
+
+/* Repeated derives with one base key leave it usable and give one secret. */
+static int test_repeated_derive_same_key(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    CK_ECDH1_DERIVE_PARAMS params;
+    byte secret[sizeof(ecc_secret_256)];
+    CK_ATTRIBUTE valAttr = { CKA_VALUE, secret, sizeof(secret) };
+    int i;
+    int result = 0;
+
+    ret = create_ec_base(session, CK_FALSE, CK_TRUE, &base);
+    CHECK_CKR(ret, "create EC base key");
+
+    ecdh_params_init(&params, ecc_p256_point, sizeof(ecc_p256_point));
+    for (i = 0; i < 3; i++) {
+        ret = ecdh_derive(session, base, &params, &derived);
+        CHECK_CKR(ret, "repeated derive with one base key");
+        XMEMSET(secret, 0, sizeof(secret));
+        valAttr.ulValueLen = sizeof(secret);
+        ret = funcList->C_GetAttributeValue(session, derived, &valAttr, 1);
+        CHECK_CKR(ret, "read derived secret");
+        if (valAttr.ulValueLen != sizeof(ecc_secret_256) ||
+                XMEMCMP(secret, ecc_secret_256, sizeof(secret)) != 0) {
+            ret = CKR_GENERAL_ERROR;
+        }
+        CHECK_CKR(ret, "derived secret matches expected value");
+        ret = funcList->C_DestroyObject(session, derived);
+        derived = CK_INVALID_HANDLE;
+        CHECK_CKR(ret, "destroy derived secret");
+    }
+
+cleanup:
+    if (derived != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, derived);
+    if (base != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, base);
+    return result;
+}
+
+#ifdef EC_DERIVE_THREAD_TEST
+#define DERIVE_THREADS     2
+#define DERIVES_PER_THREAD 200
+
+typedef struct DeriveCtx {
+    CK_OBJECT_HANDLE base;
+    int failures;
+} DeriveCtx;
+
+static pthread_mutex_t deriveGateLock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t deriveGateCond = PTHREAD_COND_INITIALIZER;
+static int deriveGateReady = 0;
+static int deriveGateOpen = 0;
+
+/* Hold each worker until every worker has arrived so their derives overlap. */
+static void derive_gate_wait(void)
+{
+    if (pthread_mutex_lock(&deriveGateLock) == 0) {
+        deriveGateReady++;
+        (void)pthread_cond_broadcast(&deriveGateCond);
+        while (!deriveGateOpen) {
+            if (pthread_cond_wait(&deriveGateCond, &deriveGateLock) != 0)
+                break;
+        }
+        (void)pthread_mutex_unlock(&deriveGateLock);
+    }
+}
+
+static int derive_gate_open(int workers)
+{
+    int ret;
+
+    ret = pthread_mutex_lock(&deriveGateLock);
+    if (ret == 0) {
+        while (ret == 0 && deriveGateReady < workers)
+            ret = pthread_cond_wait(&deriveGateCond, &deriveGateLock);
+        deriveGateOpen = 1;
+        if (pthread_cond_broadcast(&deriveGateCond) != 0)
+            ret = -1;
+        if (pthread_mutex_unlock(&deriveGateLock) != 0)
+            ret = -1;
+    }
+    return ret;
+}
+
+static void* derive_worker(void* arg)
+{
+    DeriveCtx* ctx = (DeriveCtx*)arg;
+    CK_RV ret;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived;
+    CK_ECDH1_DERIVE_PARAMS params;
+    byte secret[sizeof(ecc_secret_256)];
+    CK_ATTRIBUTE valAttr = { CKA_VALUE, secret, sizeof(secret) };
+    int i;
+
+    derive_gate_wait();
+    ret = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                  NULL, NULL, &session);
+    if (ret != CKR_OK) {
+        ctx->failures = DERIVES_PER_THREAD;
+        return NULL;
+    }
+
+    ecdh_params_init(&params, ecc_p256_point, sizeof(ecc_p256_point));
+    for (i = 0; i < DERIVES_PER_THREAD; i++) {
+        derived = CK_INVALID_HANDLE;
+        ret = ecdh_derive(session, ctx->base, &params, &derived);
+        if (ret == CKR_OK) {
+            valAttr.ulValueLen = sizeof(secret);
+            ret = funcList->C_GetAttributeValue(session, derived, &valAttr, 1);
+        }
+        if (ret == CKR_OK && (valAttr.ulValueLen != sizeof(ecc_secret_256) ||
+                XMEMCMP(secret, ecc_secret_256, sizeof(secret)) != 0)) {
+            ret = CKR_GENERAL_ERROR;
+        }
+        if (derived != CK_INVALID_HANDLE && ret == CKR_OK)
+            ret = funcList->C_DestroyObject(session, derived);
+        else if (derived != CK_INVALID_HANDLE)
+            (void)funcList->C_DestroyObject(session, derived);
+        if (ret != CKR_OK)
+            ctx->failures++;
+    }
+
+    if (funcList->C_CloseSession(session) != CKR_OK)
+        ctx->failures++;
+    return NULL;
+}
+
+/* Derives that share one token key run concurrently and all succeed. */
+static int test_concurrent_derive_same_key(CK_SESSION_HANDLE session)
+{
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,       &privKeyClass,   sizeof(privKeyClass)    },
+        { CKA_KEY_TYPE,    &eccKeyType,     sizeof(eccKeyType)      },
+        { CKA_TOKEN,       &ckTrue,         sizeof(ckTrue)          },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)         },
+        { CKA_SENSITIVE,   &ckFalse,        sizeof(ckFalse)         },
+        { CKA_EXTRACTABLE, &ckTrue,         sizeof(ckTrue)          },
+        { CKA_DERIVE,      &ckTrue,         sizeof(ckTrue)          },
+        { CKA_EC_PARAMS,   ecc_p256_params, sizeof(ecc_p256_params) },
+        { CKA_VALUE,       ecc_p256_priv,   sizeof(ecc_p256_priv)   },
+    };
+    pthread_t threads[DERIVE_THREADS];
+    DeriveCtx ctx[DERIVE_THREADS];
+    int started = 0;
+    int failures = 0;
+    int i;
+    int result = 0;
+
+    ret = funcList->C_CreateObject(session, tmpl,
+                                   sizeof(tmpl) / sizeof(*tmpl), &base);
+    CHECK_CKR(ret, "create EC token base key");
+
+    for (i = 0; i < DERIVE_THREADS; i++) {
+        ctx[i].base = base;
+        ctx[i].failures = 0;
+        if (pthread_create(&threads[i], NULL, derive_worker, &ctx[i]) != 0)
+            break;
+        started++;
+    }
+    if (derive_gate_open(started) != 0)
+        failures++;
+    for (i = 0; i < started; i++) {
+        if (pthread_join(threads[i], NULL) != 0)
+            failures++;
+        failures += ctx[i].failures;
+    }
+    if (started != DERIVE_THREADS || failures != 0) {
+        fprintf(stderr, "%d of %d concurrent derives failed\n", failures,
+                DERIVE_THREADS * DERIVES_PER_THREAD);
+        ret = CKR_GENERAL_ERROR;
+    }
+    CHECK_CKR(ret, "concurrent derives with one token key all succeed");
+
+cleanup:
+    if (base != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, base);
+    return result;
+}
+#endif /* EC_DERIVE_THREAD_TEST */
 #endif /* HAVE_ECC */
 
 static CK_RV pkcs11_init(void)
@@ -457,6 +648,12 @@ static int ec_derive_test(void)
         result = -1;
     if (test_der_length_within_public_data(session) != 0)
         result = -1;
+    if (test_repeated_derive_same_key(session) != 0)
+        result = -1;
+#ifdef EC_DERIVE_THREAD_TEST
+    if (test_concurrent_derive_same_key(session) != 0)
+        result = -1;
+#endif
 #else
     printf("ECC not available, skipping ECDH derive tests\n");
     test_skipped = 1;
