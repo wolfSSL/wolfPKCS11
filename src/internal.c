@@ -18707,6 +18707,10 @@ static int wp11_AesGcm_BufferAppend(WP11_GcmParams* gcm, unsigned char* data,
 {
     unsigned char* newBuf;
 
+    /* The cached length is an int; never let it grow past INT_MAX. */
+    if (dataSz > (word32)(INT_MAX - gcm->encSz))
+        return BAD_FUNC_ARG;
+
 #ifdef XREALLOC
     newBuf = (unsigned char*)XREALLOC(gcm->enc, gcm->encSz + dataSz, NULL,
                                       DYNAMIC_TYPE_TMP_BUFFER);

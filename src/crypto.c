@@ -3649,7 +3649,9 @@ static CK_RV wp11_C_EncryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
         case CKM_AES_GCM:
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_GCM_ENC))
                 return CKR_OPERATION_NOT_INITIALIZED;
-            if (!CK_ULONG_FITS_WORD32(ulPartLen)) {
+            if (!CK_ULONG_FITS_WORD32(ulPartLen) ||
+                ulPartLen > (CK_ULONG)(INT_MAX -
+                                       WP11_AesGcm_EncDataLen(session))) {
                 WP11_AesGcm_Final(session);
                 return CKR_DATA_LEN_RANGE;
             }
