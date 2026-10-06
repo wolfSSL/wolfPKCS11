@@ -881,6 +881,23 @@ static void ecdsa_sig_len_test(CK_SESSION_HANDLE session)
 }
 #endif
 
+#ifdef WOLFSSL_MAXQ10XX_CRYPTO
+/* Signing with the pre-provisioned device key requires a user login. */
+static void maxq_device_key_login_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_MECHANISM mech = { CKM_ECDSA, NULL, 0 };
+
+    rv = funcList->C_Logout(session);
+    CHECK_RV(rv, "C_Logout", CKR_OK);
+    rv = funcList->C_SignInit(session, &mech, 0);
+    CHECK_RV(rv, "C_SignInit(device key, no login)", CKR_USER_NOT_LOGGED_IN);
+    rv = funcList->C_Login(session, CKU_USER, (CK_UTF8CHAR_PTR)userPin,
+                           (CK_ULONG)XSTRLEN(userPin));
+    CHECK_RV(rv, "user login again", CKR_OK);
+}
+#endif
+
 static CK_RV token_init(CK_SLOT_ID* slot)
 {
     CK_RV rv;
@@ -975,6 +992,9 @@ static int run_test(void)
 #endif
 #if !defined(NO_HMAC) && !defined(NO_SHA256)
         hmac_len_param_test(session);
+#endif
+#ifdef WOLFSSL_MAXQ10XX_CRYPTO
+        maxq_device_key_login_test(session);
 #endif
     }
 

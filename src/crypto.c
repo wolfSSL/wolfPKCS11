@@ -5609,6 +5609,12 @@ static CK_RV wp11_C_SignInit(CK_SESSION_HANDLE hSession,
         if (pMechanism->pParameter != NULL || pMechanism->ulParameterLen != 0) {
             return CKR_MECHANISM_PARAM_INVALID;
         }
+        /* The pre-provisioned key is private, so require a user login. */
+        if (!WP11_Slot_IsUserLoggedIn(WP11_Session_GetSlot(session))) {
+            rv = CKR_USER_NOT_LOGGED_IN;
+            WOLFPKCS11_LEAVE("C_SignInit", rv);
+            return rv;
+        }
 
         if (WP11_Session_IsOpCategoryActive(session, WP11_OP_SIGN)) {
             rv = CKR_OPERATION_ACTIVE;
