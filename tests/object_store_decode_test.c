@@ -79,7 +79,8 @@ static byte dataValue[] = "stored data object value";
 
 static const char* storeKinds[] = {
     "obj", "data", "symmkey", "rsakey_priv", "rsakey_pub", "ecckey_priv",
-    "ecckey_pub", "dhkey_priv", "dhkey_pub", "cert", "trust"
+    "ecckey_pub", "dhkey_priv", "dhkey_pub", "cert", "trust", "mldsakey_priv",
+    "mldsakey_pub"
 };
 
 #if defined(USE_WOLFSSL_MEMORY) && !defined(WOLFSSL_STATIC_MEMORY) && \
@@ -549,6 +550,191 @@ static void test_truncated_data_record(void)
     cleanup_test_files();
 }
 
+/* Replace the first length-prefixed array in a stored key record with newLen
+ * bytes, keeping the rest of the record unchanged. */
+static int rewrite_first_array(const char* path, word32 newLen)
+{
+    static byte data[MAX_FILE_SZ];
+    static byte out[MAX_FILE_SZ];
+    size_t sz = 0;
+    word32 oldLen;
+    size_t tail;
+
+    if (read_file(path, data, sizeof(data), &sz) != 0 || sz < 4)
+        return -1;
+    oldLen = get_be32(data);
+    if (oldLen > sz - 4 || 4 + (size_t)newLen + (sz - 4 - oldLen) > sizeof(out))
+        return -1;
+    tail = sz - 4 - oldLen;
+    put_be32(out, newLen);
+    XMEMSET(out + 4, 0x5A, newLen);
+    XMEMCPY(out + 4, data + 4, (newLen < oldLen) ? newLen : oldLen);
+    XMEMCPY(out + 4 + newLen, data + 4 + oldLen, tail);
+    return write_file(path, out, 4 + newLen + tail);
+}
+
+/* Loading may succeed but logging in must reject the damaged key record. */
+static int child_login_rejected(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    int res = CHILD_FAIL;
+
+    if (pkcs11_load() != CKR_OK)
+        return CHILD_SETUP;
+    rv = init_slot(&slot);
+    if (rv != CKR_OK)
+        return CHILD_PASS;
+    rv = open_session(slot, 1, &session);
+    if (rv != CKR_OK)
+        res = CHILD_PASS;
+    (void)funcList->C_Finalize(NULL);
+    return res;
+}
+
+static void check_damaged_key_record(const char* name, create_fn create,
+                                     const char* kind, word32 newLen)
+{
+    CK_RV rv;
+    char path[256];
+    char msg[128];
+    int res = CHILD_SETUP;
+
+    rv = store_objects(create);
+    (void)snprintf(msg, sizeof(msg), "store %s", name);
+    CHECK_RV(rv, msg, CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    if (find_store_file(kind, path, sizeof(path)) == 0 &&
+            rewrite_first_array(path, newLen) == 0) {
+        res = run_in_child(child_login_rejected);
+    }
+    (void)snprintf(msg, sizeof(msg), "damaged %s record is rejected", name);
+    CHECK_TRUE(res == CHILD_PASS, msg);
+    cleanup_test_files();
+}
+
+#ifndef NO_DH
+static CK_RV create_dh_private_key(CK_SESSION_HANDLE session)
+{
+    CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
+    CK_KEY_TYPE keyType = CKK_DH;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,    &keyClass,      sizeof(keyClass)       },
+        { CKA_KEY_TYPE, &keyType,       sizeof(keyType)        },
+        { CKA_TOKEN,    &ckTrue,        sizeof(ckTrue)         },
+        { CKA_PRIVATE,  &ckTrue,        sizeof(ckTrue)         },
+        { CKA_DERIVE,   &ckTrue,        sizeof(ckTrue)         },
+        { CKA_PRIME,    dh_ffdhe2048_p, sizeof(dh_ffdhe2048_p) },
+        { CKA_BASE,     dh_ffdhe2048_g, sizeof(dh_ffdhe2048_g) },
+        { CKA_VALUE,    dh_2048_priv,   sizeof(dh_2048_priv)   },
+    };
+
+    return funcList->C_CreateObject(session, tmpl,
+        sizeof(tmpl) / sizeof(*tmpl), &obj);
+}
+#endif
+
+#ifdef HAVE_ECC
+static CK_RV create_ecc_private_key(CK_SESSION_HANDLE session)
+{
+    CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
+    CK_KEY_TYPE keyType = CKK_EC;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,     &keyClass,       sizeof(keyClass)        },
+        { CKA_KEY_TYPE,  &keyType,        sizeof(keyType)         },
+        { CKA_TOKEN,     &ckTrue,         sizeof(ckTrue)          },
+        { CKA_PRIVATE,   &ckTrue,         sizeof(ckTrue)          },
+        { CKA_SIGN,      &ckTrue,         sizeof(ckTrue)          },
+        { CKA_EC_PARAMS, ecc_p256_params, sizeof(ecc_p256_params) },
+        { CKA_VALUE,     ecc_p256_priv,   sizeof(ecc_p256_priv)   },
+    };
+
+    return funcList->C_CreateObject(session, tmpl,
+        sizeof(tmpl) / sizeof(*tmpl), &obj);
+}
+#endif
+
+#ifndef NO_RSA
+static CK_RV create_rsa_private_key(CK_SESSION_HANDLE session)
+{
+    CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
+    CK_KEY_TYPE keyType = CKK_RSA;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,            &keyClass,         sizeof(keyClass)          },
+        { CKA_KEY_TYPE,         &keyType,          sizeof(keyType)           },
+        { CKA_TOKEN,            &ckTrue,           sizeof(ckTrue)            },
+        { CKA_PRIVATE,          &ckTrue,           sizeof(ckTrue)            },
+        { CKA_SIGN,             &ckTrue,           sizeof(ckTrue)            },
+        { CKA_MODULUS,          rsa_2048_modulus,  sizeof(rsa_2048_modulus)  },
+        { CKA_PUBLIC_EXPONENT,  rsa_2048_pub_exp,  sizeof(rsa_2048_pub_exp)  },
+        { CKA_PRIVATE_EXPONENT, rsa_2048_priv_exp, sizeof(rsa_2048_priv_exp) },
+        { CKA_PRIME_1,          rsa_2048_p,        sizeof(rsa_2048_p)        },
+        { CKA_PRIME_2,          rsa_2048_q,        sizeof(rsa_2048_q)        },
+        { CKA_EXPONENT_1,       rsa_2048_dP,       sizeof(rsa_2048_dP)       },
+        { CKA_EXPONENT_2,       rsa_2048_dQ,       sizeof(rsa_2048_dQ)       },
+        { CKA_COEFFICIENT,      rsa_2048_u,        sizeof(rsa_2048_u)        },
+    };
+
+    return funcList->C_CreateObject(session, tmpl,
+        sizeof(tmpl) / sizeof(*tmpl), &obj);
+}
+#endif
+
+#ifdef WOLFPKCS11_MLDSA
+static CK_RV create_mldsa_key_pair(CK_SESSION_HANDLE session)
+{
+    CK_MECHANISM mech = { CKM_ML_DSA_KEY_PAIR_GEN, NULL, 0 };
+    CK_ULONG paramSet = CKP_ML_DSA_44;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_PARAMETER_SET, &paramSet, sizeof(paramSet) },
+        { CKA_VERIFY,        &ckTrue,   sizeof(ckTrue)   },
+        { CKA_TOKEN,         &ckTrue,   sizeof(ckTrue)   },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_SIGN,          &ckTrue,   sizeof(ckTrue)   },
+        { CKA_TOKEN,         &ckTrue,   sizeof(ckTrue)   },
+    };
+
+    return funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+        sizeof(pubTmpl) / sizeof(*pubTmpl), privTmpl,
+        sizeof(privTmpl) / sizeof(*privTmpl), &pub, &priv);
+}
+#endif
+
+/* A stored private key record shorter than its authentication tag, or
+ * longer than the key it decrypts into. */
+static void test_short_private_key_record(void)
+{
+    printf("\n--- short private key record is rejected ---\n");
+#ifndef NO_DH
+    check_damaged_key_record("DH private key", create_dh_private_key,
+                             "dhkey_priv", 8);
+    check_damaged_key_record("tag-only DH private key", create_dh_private_key,
+                             "dhkey_priv", 16);
+    check_damaged_key_record("oversized DH private key",
+                             create_dh_private_key, "dhkey_priv", 4096 + 16);
+#endif
+#ifdef HAVE_ECC
+    check_damaged_key_record("tag-only ECC private key",
+                             create_ecc_private_key, "ecckey_priv", 16);
+#endif
+#ifndef NO_RSA
+    check_damaged_key_record("tag-only RSA private key",
+                             create_rsa_private_key, "rsakey_priv", 16);
+#endif
+#ifdef WOLFPKCS11_MLDSA
+    check_damaged_key_record("tag-only ML-DSA private key",
+                             create_mldsa_key_pair, "mldsakey_priv", 16);
+#endif
+}
+
 #define LARGE_VALUE_SZ  300001
 static byte largeValue[LARGE_VALUE_SZ];
 static byte largeRead[LARGE_VALUE_SZ];
@@ -709,6 +895,7 @@ int main(int argc, char* argv[])
     test_large_stored_value_peak();
 #endif
     test_truncated_data_record();
+    test_short_private_key_record();
 
     return pkcs11_test_summary();
 }
