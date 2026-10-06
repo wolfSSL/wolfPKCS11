@@ -296,6 +296,50 @@ cleanup:
         funcList->C_DestroyObject(session, pub);
     return result;
 }
+
+/* The DER length of a wrapped point must fit in the supplied public data. */
+static int test_der_length_within_public_data(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    CK_ECDH1_DERIVE_PARAMS params;
+    byte wrapped[3 + sizeof(ecc_p256_point)];
+    int result = 0;
+
+    ret = create_ec_base(session, CK_FALSE, CK_TRUE, &base);
+    CHECK_CKR(ret, "create EC base key");
+
+    wrapped[0] = 0x04;
+    wrapped[1] = 0x81;
+    wrapped[2] = (byte)sizeof(ecc_p256_point);
+    XMEMCPY(wrapped + 3, ecc_p256_point, sizeof(ecc_p256_point));
+
+    ecdh_params_init(&params, wrapped, sizeof(wrapped));
+    ret = ecdh_derive(session, base, &params, &derived);
+    CHECK_CKR(ret, "derive with complete DER wrapped point");
+    funcList->C_DestroyObject(session, derived);
+    derived = CK_INVALID_HANDLE;
+
+    /* Declared length runs past the end of the supplied public data. */
+    ecdh_params_init(&params, wrapped, sizeof(wrapped) - 2);
+    ret = ecdh_derive(session, base, &params, &derived);
+    if (ret == CKR_OK) {
+        fprintf(stderr, "FAIL: truncated DER wrapped point accepted\n");
+        test_failed++;
+        result = -1;
+        goto cleanup;
+    }
+    printf("PASS: truncated DER wrapped point rejected\n");
+    test_passed++;
+
+cleanup:
+    if (derived != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, derived);
+    if (base != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, base);
+    return result;
+}
 #endif /* HAVE_ECC */
 
 static CK_RV pkcs11_init(void)
@@ -410,6 +454,8 @@ static int ec_derive_test(void)
     if (test_public_data_length_bound(session) != 0)
         result = -1;
     if (test_unsupported_der_length_form(session) != 0)
+        result = -1;
+    if (test_der_length_within_public_data(session) != 0)
         result = -1;
 #else
     printf("ECC not available, skipping ECDH derive tests\n");
