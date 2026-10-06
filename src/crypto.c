@@ -5862,7 +5862,7 @@ static CK_RV wp11_C_SignInit(CK_SESSION_HANDLE hSession,
                                               pMechanism->ulParameterLen != 0) {
                 return CKR_MECHANISM_PARAM_INVALID;
             }
-            ret = WP11_Aes_Cmac_Init(obj, session, AES_BLOCK_SIZE/2);
+            ret = WP11_Aes_Cmac_Init(obj, session, AES_BLOCK_SIZE);
             if (ret != 0)
                 return CKR_FUNCTION_FAILED;
             init = WP11_INIT_AES_CMAC_SIGN;
@@ -7054,7 +7054,7 @@ static CK_RV wp11_C_VerifyInit(CK_SESSION_HANDLE hSession,
                                               pMechanism->ulParameterLen != 0) {
                 return CKR_MECHANISM_PARAM_INVALID;
             }
-            ret = WP11_Aes_Cmac_Init(obj, session, AES_BLOCK_SIZE/2);
+            ret = WP11_Aes_Cmac_Init(obj, session, AES_BLOCK_SIZE);
             if (ret != 0)
                 return CKR_FUNCTION_FAILED;
             init = WP11_INIT_AES_CMAC_VERIFY;

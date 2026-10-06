@@ -180,6 +180,95 @@ static void pss_hash_binding_test(CK_SESSION_HANDLE session)
 }
 #endif
 
+#if !defined(NO_AES) && defined(HAVE_AESCMAC)
+static CK_OBJECT_CLASS secretKeyClass = CKO_SECRET_KEY;
+static CK_KEY_TYPE aesKeyType = CKK_AES;
+
+/* RFC 4493 AES-CMAC example 2. */
+static byte cmacKey[16] = {
+    0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6,
+    0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c
+};
+static byte cmacMsg[16] = {
+    0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96,
+    0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93, 0x17, 0x2a
+};
+static byte cmacTag[16] = {
+    0x07, 0x0a, 0x16, 0xb4, 0x6b, 0x4d, 0x41, 0x44,
+    0xf7, 0x9b, 0xdd, 0x9d, 0xd0, 0x4a, 0x28, 0x7c
+};
+
+/* CKM_AES_CMAC produces and checks the full AES block as its MAC. */
+static void aes_cmac_full_block_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_AES_CMAC, NULL, 0 };
+    byte mac[32];
+    CK_ULONG macLen;
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,    &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE, &aesKeyType,     sizeof(aesKeyType)     },
+        { CKA_SIGN,     &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VERIFY,   &ckTrue,         sizeof(ckTrue)         },
+        { CKA_PRIVATE,  &ckFalse,        sizeof(ckFalse)        },
+        { CKA_VALUE,    cmacKey,         sizeof(cmacKey)        },
+    };
+
+    rv = funcList->C_CreateObject(session, keyTmpl,
+                                  sizeof(keyTmpl) / sizeof(*keyTmpl), &key);
+    CHECK_RV(rv, "create AES key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_SignInit(session, &mech, key);
+    CHECK_RV(rv, "C_SignInit(AES-CMAC)", CKR_OK);
+    if (rv == CKR_OK) {
+        macLen = 0;
+        rv = funcList->C_Sign(session, cmacMsg, sizeof(cmacMsg), NULL, &macLen);
+        CHECK_RV(rv, "C_Sign(AES-CMAC, length query)", CKR_OK);
+        CHECK_TRUE(macLen == sizeof(cmacTag), "AES-CMAC length is one block");
+        macLen = sizeof(mac);
+        rv = funcList->C_Sign(session, cmacMsg, sizeof(cmacMsg), mac, &macLen);
+        CHECK_RV(rv, "C_Sign(AES-CMAC)", CKR_OK);
+        CHECK_TRUE(macLen == sizeof(cmacTag) &&
+                   XMEMCMP(mac, cmacTag, sizeof(cmacTag)) == 0,
+                   "AES-CMAC matches the full known-answer tag");
+    }
+
+    rv = funcList->C_SignInit(session, &mech, key);
+    CHECK_RV(rv, "C_SignInit(AES-CMAC multi-part)", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_SignUpdate(session, cmacMsg, sizeof(cmacMsg));
+        CHECK_RV(rv, "C_SignUpdate(AES-CMAC)", CKR_OK);
+        macLen = sizeof(mac);
+        rv = funcList->C_SignFinal(session, mac, &macLen);
+        CHECK_RV(rv, "C_SignFinal(AES-CMAC)", CKR_OK);
+        CHECK_TRUE(macLen == sizeof(cmacTag) &&
+                   XMEMCMP(mac, cmacTag, sizeof(cmacTag)) == 0,
+                   "multi-part AES-CMAC matches the full known-answer tag");
+    }
+
+    rv = funcList->C_VerifyInit(session, &mech, key);
+    CHECK_RV(rv, "C_VerifyInit(AES-CMAC)", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_Verify(session, cmacMsg, sizeof(cmacMsg), cmacTag,
+                                sizeof(cmacTag));
+        CHECK_RV(rv, "C_Verify(AES-CMAC, full tag)", CKR_OK);
+    }
+
+    rv = funcList->C_VerifyInit(session, &mech, key);
+    CHECK_RV(rv, "C_VerifyInit(AES-CMAC, half tag)", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_Verify(session, cmacMsg, sizeof(cmacMsg), cmacTag,
+                                sizeof(cmacTag) / 2);
+        CHECK_TRUE(rv != CKR_OK, "C_Verify(AES-CMAC) rejects a half-block tag");
+    }
+
+    funcList->C_DestroyObject(session, key);
+}
+#endif
+
 static CK_RV token_init(CK_SLOT_ID* slot)
 {
     CK_RV rv;
@@ -249,6 +338,9 @@ static int run_test(void)
     if (rv == CKR_OK) {
 #if !defined(NO_RSA) && defined(WC_RSA_PSS) && !defined(NO_SHA256)
         pss_hash_binding_test(session);
+#endif
+#if !defined(NO_AES) && defined(HAVE_AESCMAC)
+        aes_cmac_full_block_test(session);
 #endif
     }
 
