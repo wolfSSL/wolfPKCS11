@@ -4215,11 +4215,14 @@ static int wp11_Object_Decode_RsaKey(WP11_Object* object)
     else
 #endif
     if (object->objClass == CKO_PRIVATE_KEY) {
-        unsigned char* der;
+        unsigned char* der = NULL;
         int len = object->keyDataLen - AES_BLOCK_SIZE;
 
-        der = (unsigned char*)XMALLOC(len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        if (der == NULL) {
+        if (object->keyDataLen <= AES_BLOCK_SIZE)
+            ret = BAD_FUNC_ARG;
+        if (ret == 0)
+            der = (unsigned char*)XMALLOC(len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (ret == 0 && der == NULL) {
             ret = MEMORY_E;
         }
         if (ret == 0) {
@@ -4563,11 +4566,14 @@ static int wp11_Object_Decode_EccKey(WP11_Object* object)
     else
 #endif
     if (object->objClass == CKO_PRIVATE_KEY) {
-        unsigned char* der;
+        unsigned char* der = NULL;
         int len = object->keyDataLen - AES_BLOCK_SIZE;
 
-        der = (unsigned char*)XMALLOC(len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        if (der == NULL) {
+        if (object->keyDataLen <= AES_BLOCK_SIZE)
+            ret = BAD_FUNC_ARG;
+        if (ret == 0)
+            der = (unsigned char*)XMALLOC(len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (ret == 0 && der == NULL) {
             ret = MEMORY_E;
         }
         if (ret == 0) {
@@ -4803,11 +4809,14 @@ static int wp11_Object_Decode_MldsaKey(WP11_Object* object)
     int ret = 0;
 
     if (object->objClass == CKO_PRIVATE_KEY) {
-        unsigned char* der;
+        unsigned char* der = NULL;
         int len = object->keyDataLen - AES_BLOCK_SIZE;
 
-        der = (unsigned char*)XMALLOC(len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        if (der == NULL) {
+        if (object->keyDataLen <= AES_BLOCK_SIZE)
+            ret = BAD_FUNC_ARG;
+        if (ret == 0)
+            der = (unsigned char*)XMALLOC(len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (ret == 0 && der == NULL) {
             ret = MEMORY_E;
         }
         if (ret == 0) {
@@ -5020,11 +5029,18 @@ static int wp11_Object_Decode_DhKey(WP11_Object* object)
     int ret = 0;
 
     if (object->objClass == CKO_PRIVATE_KEY) {
-        ret = wp11_DecryptData(object->data.dhKey->key, object->keyData,
-                                    object->keyDataLen - AES_BLOCK_SIZE,
-                                    object->slot->token.key,
-                                    sizeof(object->slot->token.key), object->iv,
-                                    sizeof(object->iv), object->devId);
+        if (object->keyDataLen <= AES_BLOCK_SIZE)
+            ret = BAD_FUNC_ARG;
+        else if (object->keyDataLen - AES_BLOCK_SIZE > WP11_MAX_DH_KEY_SZ)
+            ret = BUFFER_E;
+        if (ret == 0) {
+            ret = wp11_DecryptData(object->data.dhKey->key, object->keyData,
+                                        object->keyDataLen - AES_BLOCK_SIZE,
+                                        object->slot->token.key,
+                                        sizeof(object->slot->token.key),
+                                        object->iv, sizeof(object->iv),
+                                        object->devId);
+        }
         if (ret == 0)
             object->data.dhKey->len = object->keyDataLen - AES_BLOCK_SIZE;
     }
