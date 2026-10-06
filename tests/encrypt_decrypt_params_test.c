@@ -916,6 +916,67 @@ static void test_key_wrap_decrypt_len_range(CK_SESSION_HANDLE session)
 }
 #endif
 
+#if !defined(NO_AES) && defined(HAVE_AESGCM)
+/* C_DecryptFinal accepts any output buffer length that is large enough,
+ * including lengths that do not fit in 32 bits. */
+static void test_gcm_decrypt_final_large_len(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_GCM_PARAMS params;
+    CK_MECHANISM mech;
+    byte iv[12];
+    byte aad[16];
+    byte plain[16];
+    byte enc[32];
+    byte dec[32];
+    CK_ULONG encLen;
+    CK_ULONG partLen;
+    CK_ULONG lastLen;
+    CK_ULONG wrap = ((CK_ULONG)1 << 16) << 16;
+
+    if (wrap == 0)
+        return;
+
+    XMEMSET(iv, 0x2D, sizeof(iv));
+    XMEMSET(aad, 0x4E, sizeof(aad));
+    XMEMSET(plain, 0x6F, sizeof(plain));
+
+    rv = create_aes_key(session, aes_128_key, sizeof(aes_128_key), &key);
+    CHECK_RV(rv, "GCM final length: create AES key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    gcm_params_init(&params, &mech, iv, aad);
+    rv = funcList->C_EncryptInit(session, &mech, key);
+    CHECK_RV(rv, "GCM final length: C_EncryptInit", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    encLen = sizeof(enc);
+    rv = funcList->C_Encrypt(session, plain, sizeof(plain), enc, &encLen);
+    CHECK_RV(rv, "GCM final length: C_Encrypt", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_DecryptInit(session, &mech, key);
+    CHECK_RV(rv, "GCM final length: C_DecryptInit", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    partLen = sizeof(dec);
+    rv = funcList->C_DecryptUpdate(session, enc, encLen, dec, &partLen);
+    CHECK_RV(rv, "GCM final length: C_DecryptUpdate", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    lastLen = wrap;
+    rv = funcList->C_DecryptFinal(session, dec, &lastLen);
+    CHECK_RV(rv, "GCM final length: C_DecryptFinal with large buffer length",
+             CKR_OK);
+    CHECK_TRUE(rv == CKR_OK && lastLen == sizeof(plain) &&
+               XMEMCMP(dec, plain, sizeof(plain)) == 0,
+               "GCM final length: plaintext recovered");
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -970,6 +1031,9 @@ static int run_test(void)
 #endif
 #if !defined(NO_AES) && defined(HAVE_AES_KEYWRAP)
         run_in_session(slot, test_key_wrap_decrypt_len_range);
+#endif
+#if !defined(NO_AES) && defined(HAVE_AESGCM)
+        run_in_session(slot, test_gcm_decrypt_final_large_len);
 #endif
     }
 
