@@ -476,6 +476,90 @@ out:
 }
 #endif
 
+#if defined(TRACK_ALLOCS) && !defined(NO_AES) && defined(HAVE_AES_CBC) && \
+    !defined(NO_SHA256)
+static int finalize_watched(CK_SESSION_HANDLE session)
+{
+    funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+    return watch_stop();
+}
+
+/* An operation that ends on an error must release and scrub its keyed and
+ * buffered state, just as a completed operation does. */
+static void test_failed_operation_scrubs_state(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE aesKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE macKey = CK_INVALID_HANDLE;
+    byte iv[16] = { 0 };
+    CK_MECHANISM cbcMech = { CKM_AES_CBC, NULL, 0 };
+    CK_MECHANISM sha256Mech = { CKM_SHA256, NULL, 0 };
+    CK_ULONG bigLen = (CK_ULONG)0xFFFFFFFFUL;
+    byte out[64];
+    CK_ULONG outLen;
+    CK_SLOT_ID slot;
+    int i;
+
+    printf("\n--- an operation ending on error scrubs its state ---\n");
+    cbcMech.pParameter = iv;
+    cbcMech.ulParameterLen = sizeof(iv);
+    if (sizeof(CK_ULONG) <= sizeof(word32)) {
+        printf("SKIP: lengths beyond 32 bits need a 64-bit CK_ULONG\n");
+        return;
+    }
+    bigLen += 16;
+
+    for (i = 0; i < 2; i++) {
+        rv = init_library(&slot);
+        if (rv == CKR_OK)
+            rv = open_with_keys(slot, &session, &aesKey, &macKey);
+        CHECK_RV(rv, "open session with keys", CKR_OK);
+        if (rv != CKR_OK)
+            goto out;
+        rv = funcList->C_EncryptInit(session, &cbcMech, aesKey);
+        CHECK_RV(rv, "C_EncryptInit(AES-CBC)", CKR_OK);
+        outLen = sizeof(out);
+        /* Watch from the failing call: it may free the state itself. */
+        watch_start(aesKeyValue, sizeof(aesKeyValue));
+        if (i == 0) {
+            rv = funcList->C_EncryptUpdate(session, out, bigLen, out, &outLen);
+            CHECK_RV(rv, "C_EncryptUpdate(oversized)", CKR_DATA_LEN_RANGE);
+        }
+        else {
+            rv = funcList->C_Encrypt(session, out, bigLen, out, &outLen);
+            CHECK_RV(rv, "C_Encrypt(oversized)", CKR_DATA_LEN_RANGE);
+        }
+        CHECK_TRUE(!finalize_watched(session),
+                   "failed AES operation leaves no key schedule behind");
+        session = CK_INVALID_HANDLE;
+    }
+
+    rv = init_library(&slot);
+    if (rv == CKR_OK)
+        rv = open_with_keys(slot, &session, &aesKey, &macKey);
+    CHECK_RV(rv, "open session with keys", CKR_OK);
+    if (rv != CKR_OK)
+        goto out;
+    rv = funcList->C_DigestInit(session, &sha256Mech);
+    CHECK_RV(rv, "C_DigestInit(SHA-256)", CKR_OK);
+    rv = funcList->C_DigestUpdate(session, plainMarker, sizeof(plainMarker));
+    CHECK_RV(rv, "C_DigestUpdate", CKR_OK);
+    watch_start(plainMarker, sizeof(plainMarker));
+    rv = funcList->C_DigestKey(session, CK_INVALID_HANDLE);
+    CHECK_RV(rv, "C_DigestKey(invalid handle)", CKR_OBJECT_HANDLE_INVALID);
+    CHECK_TRUE(!finalize_watched(session),
+               "failed digest leaves no buffered input behind");
+    session = CK_INVALID_HANDLE;
+
+out:
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -498,6 +582,10 @@ static int run_test(void)
 #endif
 #if !defined(NO_AES) && defined(HAVE_AES_CBC) && defined(HAVE_ECC)
     test_rejected_init_keeps_active_operation();
+#endif
+#if defined(TRACK_ALLOCS) && !defined(NO_AES) && defined(HAVE_AES_CBC) && \
+    !defined(NO_SHA256)
+    test_failed_operation_scrubs_state();
 #endif
 
     pkcs11_unload();
