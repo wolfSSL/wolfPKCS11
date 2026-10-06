@@ -2445,6 +2445,7 @@ static int wp11_storage_write_array(void* storage,
  * @param [in]       len     Length of data to read.
  * @return  0 on success.
  * @return  BUFFER_E to indicate failure.
+ * @return  ASN_PARSE_E when the stored length is negative.
  * @return  MEMORY_E when dynamic memory allocation fails.
  */
 static int wp11_storage_read_alloc_array(void* storage,
@@ -2454,6 +2455,11 @@ static int wp11_storage_read_alloc_array(void* storage,
 
     /* Read length of array. */
     ret = wp11_storage_read_int(storage, len);
+    if (ret == 0 && *len < 0) {
+        *len = 0;
+        /* Not BUFFER_E, which callers accept as an older record's end. */
+        ret = ASN_PARSE_E;
+    }
     if (ret == 0 && *len > 0) {
         /* Allocate buffer to hold data. */
         *buffer = (unsigned char*)XMALLOC(*len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
