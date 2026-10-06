@@ -12895,6 +12895,11 @@ int WP11_Object_SetEcKey(WP11_Object* object, unsigned char** data,
     if (ret == 0) {
         if (ret == 0 && data[0] != NULL)
             ret = EcSetParams(key, data[0], (int)len[0]);
+        /* Key material is only meaningful on a known curve. */
+        if (ret == 0 && key->dp == NULL &&
+                (data[1] != NULL || data[2] != NULL)) {
+            ret = BAD_FUNC_ARG;
+        }
         if (ret == 0 && data[1] != NULL) {
             key->type = ECC_PRIVATEKEY_ONLY;
 #if defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION <= 5)

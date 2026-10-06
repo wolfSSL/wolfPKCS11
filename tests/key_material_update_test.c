@@ -535,6 +535,57 @@ static void test_asym_private_fixed(CK_SESSION_HANDLE session)
     (void)pubClass;
 }
 
+#ifdef HAVE_ECC
+/* EC key material is only accepted together with the curve, and an existing
+ * key's point cannot be replaced. */
+static void test_ec_point_needs_curve(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS pubClass = CKO_PUBLIC_KEY;
+    CK_OBJECT_CLASS privClass = CKO_PRIVATE_KEY;
+    CK_KEY_TYPE ecType = CKK_EC;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_CLASS,     &pubClass,       sizeof(pubClass)        },
+        { CKA_KEY_TYPE,  &ecType,         sizeof(ecType)          },
+        { CKA_TOKEN,     &ckFalse,        sizeof(ckFalse)         },
+        { CKA_EC_POINT,  ecc_p256_pub,    sizeof(ecc_p256_pub)    },
+        { CKA_EC_PARAMS, ecc_p256_params, sizeof(ecc_p256_params) },
+    };
+    CK_ATTRIBUTE privNoCurve[] = {
+        { CKA_CLASS,     &privClass,      sizeof(privClass)       },
+        { CKA_KEY_TYPE,  &ecType,         sizeof(ecType)          },
+        { CKA_TOKEN,     &ckFalse,        sizeof(ckFalse)         },
+        { CKA_VALUE,     ecc_p256_priv,   sizeof(ecc_p256_priv)   },
+    };
+    CK_ATTRIBUTE setPoint[] = {
+        { CKA_EC_POINT, ecc_p256_pub, sizeof(ecc_p256_pub) },
+    };
+
+    /* Leave out CKA_EC_PARAMS. */
+    rv = funcList->C_CreateObject(session, pubTmpl, 4, &key);
+    CHECK_TRUE(rv != CKR_OK, "EC public key without curve rejected");
+    destroy_obj(session, &key);
+    rv = funcList->C_CreateObject(session, privNoCurve,
+                                  sizeof(privNoCurve) / sizeof(*privNoCurve),
+                                  &key);
+    CHECK_TRUE(rv != CKR_OK, "EC private key without curve rejected");
+    destroy_obj(session, &key);
+
+    rv = funcList->C_CreateObject(session, pubTmpl,
+                                  sizeof(pubTmpl) / sizeof(*pubTmpl), &key);
+    CHECK_RV(rv, "create EC public key", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_SetAttributeValue(session, key, setPoint, 1);
+        CHECK_RV(rv, "set EC point on existing key", CKR_ATTRIBUTE_READ_ONLY);
+        CHECK_TRUE(attr_equals(session, key, CKA_EC_PARAMS, ecc_p256_params,
+                               sizeof(ecc_p256_params)),
+                   "EC curve unchanged");
+    }
+    destroy_obj(session, &key);
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -558,6 +609,9 @@ static int run_test(void)
         test_dh_private_value_fixed(session);
 #endif
         test_asym_private_fixed(session);
+#ifdef HAVE_ECC
+        test_ec_point_needs_curve(session);
+#endif
     }
 
     if (session != 0) {
