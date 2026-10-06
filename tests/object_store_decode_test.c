@@ -940,6 +940,173 @@ static void test_large_stored_value_peak(void)
 }
 #endif
 
+#ifdef HAVE_ALLOC_TRACKING
+#define MAX_TRACKED     8192
+
+typedef struct TrackedAlloc {
+    void* ptr;
+    size_t sz;
+} TrackedAlloc;
+
+static TrackedAlloc tracked[MAX_TRACKED];
+static const byte* secretNeedle = NULL;
+static size_t secretNeedleSz = 0;
+static int secretFreed = 0;
+
+static void track_add(void* ptr, size_t sz)
+{
+    int i;
+
+    for (i = 0; ptr != NULL && i < MAX_TRACKED; i++) {
+        if (tracked[i].ptr == NULL) {
+            tracked[i].ptr = ptr;
+            tracked[i].sz = sz;
+            break;
+        }
+    }
+}
+
+static int track_find(void* ptr)
+{
+    int i;
+
+    for (i = 0; ptr != NULL && i < MAX_TRACKED; i++) {
+        if (tracked[i].ptr == ptr)
+            return i;
+    }
+    return -1;
+}
+
+static int holds_secret(const byte* buf, size_t sz)
+{
+    size_t i;
+
+    for (i = 0; sz >= secretNeedleSz && i <= sz - secretNeedleSz; i++) {
+        if (XMEMCMP(buf + i, secretNeedle, secretNeedleSz) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+static void* scan_malloc(size_t sz)
+{
+    void* ptr = malloc(sz);
+
+    /* Zeroed so a scan only sees bytes the library wrote. */
+    if (ptr != NULL)
+        XMEMSET(ptr, 0, sz);
+    track_add(ptr, sz);
+    return ptr;
+}
+
+static void scan_free(void* ptr)
+{
+    int i = track_find(ptr);
+
+    if (i >= 0) {
+        if (holds_secret((const byte*)ptr, tracked[i].sz))
+            secretFreed++;
+        tracked[i].ptr = NULL;
+    }
+    free(ptr);
+}
+
+static void* scan_realloc(void* ptr, size_t sz)
+{
+    int i = track_find(ptr);
+    int oldKnown = (ptr == NULL || i >= 0);
+    size_t oldSz = (i >= 0) ? tracked[i].sz : 0;
+    void* newPtr = realloc(ptr, sz);
+
+    if (newPtr != NULL) {
+        if (i >= 0)
+            tracked[i].ptr = NULL;
+        if (oldKnown && sz > oldSz)
+            XMEMSET((byte*)newPtr + oldSz, 0, sz - oldSz);
+        track_add(newPtr, sz);
+    }
+    return newPtr;
+}
+
+/* Logging in with a stored private key that fails authentication must not
+ * release decrypted key material to the heap. */
+static int child_no_key_material_freed(void)
+{
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+
+    if (wolfSSL_SetAllocators(scan_malloc, scan_free, scan_realloc) != 0)
+        return CHILD_SETUP;
+    if (pkcs11_load() != CKR_OK)
+        return CHILD_SETUP;
+    if (init_slot(&slot) == CKR_OK) {
+        (void)open_session(slot, 1, &session);
+        (void)funcList->C_Finalize(NULL);
+    }
+    if (secretFreed != 0) {
+        fprintf(stderr, "  %d freed buffer(s) held key material\n",
+                secretFreed);
+        return CHILD_FAIL;
+    }
+    return CHILD_PASS;
+}
+
+/* Flip the last byte of the first length-prefixed array (the GCM tag). */
+static int corrupt_first_array_tag(const char* path)
+{
+    static byte data[MAX_FILE_SZ];
+    size_t sz = 0;
+    word32 len;
+
+    if (read_file(path, data, sizeof(data), &sz) != 0 || sz < 4)
+        return -1;
+    len = get_be32(data);
+    if (len == 0 || len > sz - 4)
+        return -1;
+    data[4 + len - 1] ^= 0x01;
+    return write_file(path, data, sz);
+}
+
+static void check_failed_decrypt_scrubbed(const char* name, create_fn create,
+                                          const char* kind,
+                                          const byte* secret, size_t secretSz)
+{
+    CK_RV rv;
+    char path[256];
+    char msg[128];
+    int res = CHILD_SETUP;
+
+    rv = store_objects(create);
+    (void)snprintf(msg, sizeof(msg), "store %s", name);
+    CHECK_RV(rv, msg, CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    secretNeedle = secret;
+    secretNeedleSz = secretSz;
+    if (find_store_file(kind, path, sizeof(path)) == 0 &&
+            corrupt_first_array_tag(path) == 0) {
+        res = run_in_child(child_no_key_material_freed);
+    }
+    (void)snprintf(msg, sizeof(msg),
+                   "%s buffer is cleared after failed decrypt", name);
+    CHECK_TRUE(res == CHILD_PASS, msg);
+    cleanup_test_files();
+}
+
+static void test_failed_decrypt_scrubbed(void)
+{
+    printf("\n--- private key buffer cleared after failed decrypt ---\n");
+#ifdef HAVE_ECC
+    check_failed_decrypt_scrubbed("ECC private key", create_ecc_private_key,
+        "ecckey_priv", ecc_p256_priv, sizeof(ecc_p256_priv));
+#endif
+#ifndef NO_RSA
+    check_failed_decrypt_scrubbed("RSA private key", create_rsa_private_key,
+        "rsakey_priv", rsa_2048_priv_exp, 32);
+#endif
+}
+#endif
+
 int main(int argc, char* argv[])
 {
     (void)argc;
@@ -963,6 +1130,9 @@ int main(int argc, char* argv[])
 #endif
 #ifdef WOLFPKCS11_NSS
     test_trust_record_length();
+#endif
+#ifdef HAVE_ALLOC_TRACKING
+    test_failed_decrypt_scrubbed();
 #endif
 
     return pkcs11_test_summary();
