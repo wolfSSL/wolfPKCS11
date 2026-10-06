@@ -4249,16 +4249,20 @@ static int wp11_Object_Decode_RsaKey(WP11_Object* object)
         if (ret == 0) {
             /* Decode RSA private key. */
             ret = wc_RsaPrivateKeyDecode(der, &idx, key, len);
-            wc_ForceZero(der, len);
         }
-        if (der != NULL)
+        if (der != NULL) {
+            wc_ForceZero(der, len);
             XFREE(der, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        }
     }
     else {
         /* Decode RSA public key. */
         ret = wc_RsaPublicKeyDecode(object->keyData, &idx, key,
                                                             object->keyDataLen);
     }
+    /* Drop partially decoded components and the init before a retry. */
+    if (ret != 0)
+        wc_FreeRsaKey(key);
     object->encoded = (ret != 0);
 
     return ret;
@@ -4605,16 +4609,20 @@ static int wp11_Object_Decode_EccKey(WP11_Object* object)
         if (ret == 0) {
             /* Decode ECC private key. */
             ret = wc_EccPrivateKeyDecode(der, &idx, key, len);
-            wc_ForceZero(der, len);
         }
-        if (der != NULL)
+        if (der != NULL) {
+            wc_ForceZero(der, len);
             XFREE(der, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        }
     }
     else {
         /* Decode ECC public key. */
         ret = wc_EccPublicKeyDecode(object->keyData, &idx, key,
                                                             object->keyDataLen);
     }
+    /* Drop partially decoded components and the init before a retry. */
+    if (ret != 0)
+        wc_ecc_free(key);
     object->encoded = (ret != 0);
 
     return ret;
@@ -4862,10 +4870,11 @@ static int wp11_Object_Decode_MldsaKey(WP11_Object* object)
                 ret = MldsaKeyTryDecode(object->data.mldsaKey, WC_ML_DSA_87,
                                         der, len, object->objClass);
             }
-            wc_ForceZero(der, len);
         }
-        if (der != NULL)
+        if (der != NULL) {
+            wc_ForceZero(der, len);
             XFREE(der, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        }
     }
     else {
         /* Decode ML-DSA public key. */
