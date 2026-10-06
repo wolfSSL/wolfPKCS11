@@ -64,7 +64,8 @@
 #endif
 
 #if (defined(WOLFPKCS11_HKDF) && defined(WIDE_CK_ULONG)) || \
-    defined(NSS_EMS_WIDE_TEST) || defined(AES_CBC_WIDE_TEST)
+    defined(NSS_EMS_WIDE_TEST) || defined(AES_CBC_WIDE_TEST) || \
+    defined(WOLFSSL_HAVE_PRF)
     #define SECRET_BASE_TESTS
 #endif
 
@@ -360,6 +361,119 @@ cleanup:
 }
 #endif
 
+#ifdef WOLFSSL_HAVE_PRF
+static byte clientRandom[32] = {
+    0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68,
+    0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f, 0x70,
+    0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78,
+    0x79, 0x7a, 0x7b, 0x7c, 0x7d, 0x7e, 0x7f, 0x80
+};
+static byte serverRandom[32] = {
+    0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48,
+    0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50,
+    0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58,
+    0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f, 0x60
+};
+
+static void tls_key_mat_init(CK_TLS12_KEY_MAT_PARAMS* params,
+                             CK_SSL3_KEY_MAT_OUT* out, CK_ULONG macBits,
+                             CK_ULONG keyBits, CK_ULONG ivBits)
+{
+    XMEMSET(out, 0, sizeof(*out));
+    out->hClientMacSecret = CK_INVALID_HANDLE;
+    out->hServerMacSecret = CK_INVALID_HANDLE;
+    out->hClientKey = CK_INVALID_HANDLE;
+    out->hServerKey = CK_INVALID_HANDLE;
+    XMEMSET(params, 0, sizeof(*params));
+    params->ulMacSizeInBits = macBits;
+    params->ulKeySizeInBits = keyBits;
+    params->ulIVSizeInBits = ivBits;
+    params->bIsExport = CK_FALSE;
+    params->RandomInfo.pClientRandom = clientRandom;
+    params->RandomInfo.ulClientRandomLen = sizeof(clientRandom);
+    params->RandomInfo.pServerRandom = serverRandom;
+    params->RandomInfo.ulServerRandomLen = sizeof(serverRandom);
+    params->pReturnedKeyMaterial = out;
+    params->prfHashMechanism = CKM_SHA256;
+}
+
+static CK_RV tls_key_mat_derive(CK_SESSION_HANDLE session,
+                                CK_OBJECT_HANDLE base,
+                                CK_TLS12_KEY_MAT_PARAMS* params,
+                                CK_ATTRIBUTE* tmpl, CK_ULONG cnt)
+{
+    CK_MECHANISM mech;
+    CK_ATTRIBUTE defTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckFalse,        sizeof(ckFalse)        },
+        { CKA_EXTRACTABLE, &ckTrue,         sizeof(ckTrue)         },
+    };
+
+    if (tmpl == NULL) {
+        tmpl = defTmpl;
+        cnt = sizeof(defTmpl) / sizeof(*defTmpl);
+    }
+    mech.mechanism = CKM_TLS12_KEY_AND_MAC_DERIVE;
+    mech.pParameter = params;
+    mech.ulParameterLen = sizeof(*params);
+
+    return funcList->C_DeriveKey(session, &mech, base, tmpl, cnt, NULL);
+}
+
+static void destroy_key_mat(CK_SESSION_HANDLE session,
+                            CK_SSL3_KEY_MAT_OUT* out)
+{
+    destroy_obj(session, &out->hClientMacSecret);
+    destroy_obj(session, &out->hServerMacSecret);
+    destroy_obj(session, &out->hClientKey);
+    destroy_obj(session, &out->hServerKey);
+}
+
+/* Every TLS key material size must be a whole number of bytes. */
+static int test_tls_key_sizes_byte_aligned(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_TLS12_KEY_MAT_PARAMS params;
+    CK_SSL3_KEY_MAT_OUT out;
+    byte ivClient[16];
+    byte ivServer[16];
+    byte master[48];
+    int result = 0;
+
+    XMEMSET(master, 0x5c, sizeof(master));
+    tls_key_mat_init(&params, &out, 256, 128, 128);
+    ret = create_secret_base(session, CKK_GENERIC_SECRET, master,
+                             sizeof(master), &base);
+    CHECK_CKR(ret, "create TLS master secret");
+
+    out.pIVClient = ivClient;
+    out.pIVServer = ivServer;
+    ret = tls_key_mat_derive(session, base, &params, NULL, 0);
+    CHECK_CKR(ret, "TLS key and MAC derive");
+    destroy_key_mat(session, &out);
+
+    tls_key_mat_init(&params, &out, 4, 4, 0);
+    ret = tls_key_mat_derive(session, base, &params, NULL, 0);
+    CHECK_RV(ret, CKR_MECHANISM_PARAM_INVALID,
+             "TLS MAC and key sizes not whole bytes rejected");
+
+    tls_key_mat_init(&params, &out, 256, 128, 4);
+    out.pIVClient = ivClient;
+    out.pIVServer = ivServer;
+    ret = tls_key_mat_derive(session, base, &params, NULL, 0);
+    CHECK_RV(ret, CKR_MECHANISM_PARAM_INVALID,
+             "TLS IV size not whole bytes rejected");
+
+cleanup:
+    destroy_key_mat(session, &out);
+    destroy_obj(session, &base);
+    return result;
+}
+#endif
+
 static CK_RV pkcs11_init(void)
 {
     CK_RV ret;
@@ -483,6 +597,11 @@ static int kdf_tls_derive_test(void)
 
 #ifdef AES_CBC_WIDE_TEST
     if (test_aes_cbc_data_length_fits_word32(session) != 0)
+        result = -1;
+#endif
+
+#ifdef WOLFSSL_HAVE_PRF
+    if (test_tls_key_sizes_byte_aligned(session) != 0)
         result = -1;
 #endif
 
