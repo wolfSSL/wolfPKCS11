@@ -1065,6 +1065,95 @@ static void test_encrypt_final_large_len(CK_SESSION_HANDLE session)
 }
 #endif
 
+#if !defined(NO_AES) && (defined(HAVE_AESCTR) || defined(HAVE_AESGCM) || \
+                         defined(HAVE_AESCTS))
+/* Multi-part encryption rejects a part length the token cannot represent and
+ * ends the operation instead of encrypting a shorter part. */
+static void check_encrypt_update_len_range(CK_SESSION_HANDLE session,
+                                           CK_OBJECT_HANDLE key,
+                                           CK_MECHANISM* mech)
+{
+    CK_RV rv;
+    byte data[32];
+    byte out[64];
+    CK_ULONG outLen;
+    CK_ULONG wrap = ((CK_ULONG)1 << 16) << 16;
+
+    XMEMSET(data, 0x5D, sizeof(data));
+
+    rv = funcList->C_EncryptInit(session, mech, key);
+    CHECK_RV(rv, "encrypt update length: C_EncryptInit", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    outLen = wrap + sizeof(out);
+    rv = funcList->C_EncryptUpdate(session, data, wrap + sizeof(data), out,
+                                   &outLen);
+    CHECK_RV(rv, "encrypt update length: C_EncryptUpdate rejects oversized "
+             "part", CKR_DATA_LEN_RANGE);
+    outLen = sizeof(out);
+    rv = funcList->C_EncryptUpdate(session, data, sizeof(data), out, &outLen);
+    CHECK_RV(rv, "encrypt update length: operation ended",
+             CKR_OPERATION_NOT_INITIALIZED);
+    if (rv == CKR_OK) {
+        /* End the still-active operation so the next mechanism can start. */
+        outLen = sizeof(out);
+        (void)funcList->C_EncryptFinal(session, out, &outLen);
+    }
+}
+
+static void test_encrypt_update_len_range(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_MECHANISM mech;
+#ifdef HAVE_AESCTR
+    CK_AES_CTR_PARAMS ctrParams;
+#endif
+#ifdef HAVE_AESGCM
+    CK_GCM_PARAMS gcmParams;
+    byte gcmIv[12];
+    byte aad[16];
+#endif
+#ifdef HAVE_AESCTS
+    byte iv[16];
+#endif
+
+    if ((((CK_ULONG)1 << 16) << 16) == 0)
+        return;
+
+    rv = create_aes_key(session, aes_128_key, sizeof(aes_128_key), &key);
+    CHECK_RV(rv, "encrypt update length: create AES key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+#ifdef HAVE_AESCTR
+    XMEMSET(&ctrParams, 0, sizeof(ctrParams));
+    ctrParams.ulCounterBits = 32;
+    XMEMSET(ctrParams.cb, 0x57, sizeof(ctrParams.cb));
+    mech.mechanism = CKM_AES_CTR;
+    mech.pParameter = &ctrParams;
+    mech.ulParameterLen = sizeof(ctrParams);
+    printf("AES-CTR\n");
+    check_encrypt_update_len_range(session, key, &mech);
+#endif
+#ifdef HAVE_AESGCM
+    XMEMSET(gcmIv, 0x68, sizeof(gcmIv));
+    XMEMSET(aad, 0x79, sizeof(aad));
+    gcm_params_init(&gcmParams, &mech, gcmIv, aad);
+    printf("AES-GCM\n");
+    check_encrypt_update_len_range(session, key, &mech);
+#endif
+#ifdef HAVE_AESCTS
+    XMEMSET(iv, 0x8A, sizeof(iv));
+    mech.mechanism = CKM_AES_CTS;
+    mech.pParameter = iv;
+    mech.ulParameterLen = sizeof(iv);
+    printf("AES-CTS\n");
+    check_encrypt_update_len_range(session, key, &mech);
+#endif
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -1126,6 +1215,10 @@ static int run_test(void)
 #if !defined(NO_AES) && (defined(HAVE_AES_CBC) || defined(HAVE_AESGCM) || \
                          defined(HAVE_AESCTS))
         run_in_session(slot, test_encrypt_final_large_len);
+#endif
+#if !defined(NO_AES) && (defined(HAVE_AESCTR) || defined(HAVE_AESGCM) || \
+                         defined(HAVE_AESCTS))
+        run_in_session(slot, test_encrypt_update_len_range);
 #endif
     }
 
