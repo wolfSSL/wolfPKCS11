@@ -236,6 +236,48 @@ static void rsa_x509_big_modulus_verify_test(CK_SESSION_HANDLE session)
 }
 #endif
 
+#if !defined(NO_RSA) && !defined(WC_RSA_DIRECT)
+/* Without raw RSA support, raw RSA sign and verify are refused at init. */
+static void rsa_x509_unsupported_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_RSA_X_509, NULL, 0 };
+    CK_MECHANISM_INFO info;
+    CK_SESSION_INFO sessInfo;
+
+    rv = create_rsa_keys(session, &priv, &pub);
+    CHECK_RV(rv, "create RSA key pair", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_SignInit(session, &mech, priv);
+    CHECK_RV(rv, "C_SignInit(RSA X.509) without raw RSA",
+             CKR_MECHANISM_INVALID);
+    rv = funcList->C_VerifyInit(session, &mech, pub);
+    CHECK_RV(rv, "C_VerifyInit(RSA X.509) without raw RSA",
+             CKR_MECHANISM_INVALID);
+    rv = funcList->C_VerifyRecoverInit(session, &mech, pub);
+    CHECK_RV(rv, "C_VerifyRecoverInit(RSA X.509) without raw RSA",
+             CKR_MECHANISM_INVALID);
+
+    rv = funcList->C_GetSessionInfo(session, &sessInfo);
+    CHECK_RV(rv, "C_GetSessionInfo", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_GetMechanismInfo(sessInfo.slotID, CKM_RSA_X_509,
+                                          &info);
+        CHECK_RV(rv, "C_GetMechanismInfo(RSA X.509)", CKR_OK);
+        CHECK_TRUE(rv == CKR_OK && (info.flags & (CKF_SIGN | CKF_VERIFY |
+                   CKF_VERIFY_RECOVER)) == 0,
+                   "RSA X.509 does not advertise sign or verify");
+    }
+
+    funcList->C_DestroyObject(session, priv);
+    funcList->C_DestroyObject(session, pub);
+}
+#endif
+
 #if !defined(NO_RSA) && defined(WC_RSA_PSS) && !defined(NO_SHA256)
 /* A hashed RSA-PSS mechanism fixes the PSS hash to its own digest; any valid
  * MGF1 hash is accepted. */
@@ -914,6 +956,9 @@ static int run_test(void)
         rsa_x509_verify_block_test(session);
         rsa_x509_big_modulus_sign_test(session);
         rsa_x509_big_modulus_verify_test(session);
+#endif
+#if !defined(NO_RSA) && !defined(WC_RSA_DIRECT)
+        rsa_x509_unsupported_test(session);
 #endif
 #if !defined(NO_AES) && defined(HAVE_AESCMAC)
         aes_cmac_full_block_test(session);
