@@ -970,6 +970,12 @@ static CK_RV CheckAttributeUpdate(WP11_Session* session, WP11_Object* obj,
             WP11_Session_GetState(session) != WP11_APP_STATE_RW_SO) {
         return CKR_ATTRIBUTE_READ_ONLY;
     }
+    /* Context-specific login is not supported, so per-use authentication
+     * could not be enforced. */
+    if (attr->type == CKA_ALWAYS_AUTHENTICATE &&
+            *(CK_BBOOL*)attr->pValue == CK_TRUE) {
+        return CKR_ATTRIBUTE_VALUE_INVALID;
+    }
     /* The type-specific storage was allocated for the creation class. */
     if (newObject && attr->type == CKA_CLASS &&
             *(CK_OBJECT_CLASS*)attr->pValue != objClass) {
