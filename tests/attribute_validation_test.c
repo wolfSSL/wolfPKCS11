@@ -162,6 +162,25 @@ static void test_set_attr_count_range(CK_SESSION_HANDLE session)
     destroy_obj(session, &obj);
 }
 
+static void test_get_attr_count_range(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    byte buf[64];
+    CK_ATTRIBUTE getTmpl[] = { { CKA_LABEL, buf, sizeof(buf) } };
+
+    rv = create_data_object(session, &obj);
+    CHECK_RV(rv, "create data object", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_GetAttributeValue(session, obj, getTmpl,
+                                       (CK_ULONG)INT_MAX + 1);
+    CHECK_RV(rv, "get attributes with oversized count", CKR_ARGUMENTS_BAD);
+
+    destroy_obj(session, &obj);
+}
+
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
     defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
     !defined(NO_RSA) && !defined(NO_AES) && \
@@ -280,6 +299,7 @@ static int run_test(void)
     if (rv == CKR_OK) {
         test_token_attr_is_bool(session);
         test_set_attr_count_range(session);
+        test_get_attr_count_range(session);
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
     defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
     !defined(NO_RSA) && !defined(NO_AES) && \
