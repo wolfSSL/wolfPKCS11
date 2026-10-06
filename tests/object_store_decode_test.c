@@ -75,6 +75,7 @@ static byte soPin[] = "password123456";
 static byte userPin[] = "wolfpkcs11-test";
 static CK_BBOOL ckTrue = CK_TRUE;
 static CK_BBOOL ckFalse = CK_FALSE;
+static byte dataValue[] = "stored data object value";
 
 static const char* storeKinds[] = {
     "obj", "data", "symmkey", "rsakey_priv", "rsakey_pub", "ecckey_priv",
@@ -370,13 +371,12 @@ static CK_RV create_data_object(CK_SESSION_HANDLE session)
     CK_OBJECT_CLASS dataClass = CKO_DATA;
     CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
     static byte app[] = "wolfpkcs11";
-    static byte value[] = "stored data object value";
     CK_ATTRIBUTE tmpl[] = {
         { CKA_CLASS,       &dataClass, sizeof(dataClass) },
         { CKA_TOKEN,       &ckTrue,    sizeof(ckTrue)    },
         { CKA_PRIVATE,     &ckFalse,   sizeof(ckFalse)   },
         { CKA_APPLICATION, app,        sizeof(app) - 1   },
-        { CKA_VALUE,       value,      sizeof(value) - 1 },
+        { CKA_VALUE,       dataValue,  sizeof(dataValue) - 1 },
     };
 
     return funcList->C_CreateObject(session, tmpl,
@@ -476,6 +476,76 @@ static void test_negative_attribute_length(void)
     }
     CHECK_TRUE(res == CHILD_PASS,
                "negative stored attribute length is not loaded");
+    cleanup_test_files();
+}
+
+static int truncate_file(const char* path, size_t keep)
+{
+    static byte data[MAX_FILE_SZ];
+    size_t sz = 0;
+
+    if (read_file(path, data, sizeof(data), &sz) != 0 || sz <= keep)
+        return -1;
+    return write_file(path, data, keep);
+}
+
+/* Either the token refuses to load or the data object reads back its full
+ * stored value. */
+static int child_data_value_intact(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_ULONG count = 0;
+    CK_ATTRIBUTE findTmpl[] = {
+        { CKA_CLASS, &dataClass, sizeof(dataClass) },
+    };
+    byte value[64];
+    CK_ATTRIBUTE attr = { CKA_VALUE, value, sizeof(value) };
+    int res = CHILD_FAIL;
+
+    if (pkcs11_load() != CKR_OK)
+        return CHILD_SETUP;
+    rv = init_slot(&slot);
+    if (rv != CKR_OK)
+        return CHILD_PASS;
+
+    rv = open_session(slot, 0, &session);
+    if (rv == CKR_OK)
+        rv = funcList->C_FindObjectsInit(session, findTmpl, 1);
+    if (rv == CKR_OK)
+        rv = funcList->C_FindObjects(session, &obj, 1, &count);
+    if (rv == CKR_OK)
+        rv = funcList->C_FindObjectsFinal(session);
+    if (rv == CKR_OK && count == 1)
+        rv = funcList->C_GetAttributeValue(session, obj, &attr, 1);
+    if (rv == CKR_OK && count == 1 &&
+            attr.ulValueLen == sizeof(dataValue) - 1 &&
+            XMEMCMP(value, dataValue, sizeof(dataValue) - 1) == 0) {
+        res = CHILD_PASS;
+    }
+    (void)funcList->C_Finalize(NULL);
+    return res;
+}
+
+static void test_truncated_data_record(void)
+{
+    CK_RV rv;
+    char path[256];
+    int res = CHILD_SETUP;
+
+    printf("\n--- truncated data object record is not loaded ---\n");
+    rv = store_objects(create_data_object);
+    CHECK_RV(rv, "store data object", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    if (find_store_file("data", path, sizeof(path)) == 0 &&
+            truncate_file(path, 2) == 0) {
+        res = run_in_child(child_data_value_intact);
+    }
+    CHECK_TRUE(res == CHILD_PASS, "truncated data object record is rejected");
     cleanup_test_files();
 }
 
@@ -638,6 +708,7 @@ int main(int argc, char* argv[])
 #ifdef HAVE_ALLOC_TRACKING
     test_large_stored_value_peak();
 #endif
+    test_truncated_data_record();
 
     return pkcs11_test_summary();
 }

@@ -3596,7 +3596,7 @@ static int wp11_Object_Load_Data(WP11_Object* object, int tokenId, int objId)
 {
     int ret;
     void* storage = NULL;
-    int tempLen;
+    int tempLen = 0;
 
     /* Open access to data. */
     ret = wp11_storage_open_readonly(WOLFPKCS11_STORE_DATA, tokenId, objId,
@@ -3605,7 +3605,8 @@ static int wp11_Object_Load_Data(WP11_Object* object, int tokenId, int objId)
         ret = wp11_storage_read_alloc_array(storage,
             &object->data.genericData.data,
             &tempLen);
-        object->data.genericData.dataLen = (word32)tempLen;
+        if (ret == 0)
+            object->data.genericData.dataLen = (word32)tempLen;
     }
 
     /* Read application length and application. */
@@ -3613,7 +3614,8 @@ static int wp11_Object_Load_Data(WP11_Object* object, int tokenId, int objId)
         ret = wp11_storage_read_alloc_array(storage,
             &object->data.genericData.application,
             &tempLen);
-        object->data.genericData.applicationLen = (word32)tempLen;
+        if (ret == 0)
+            object->data.genericData.applicationLen = (word32)tempLen;
     }
 
     /* Read object ID length and object ID. */
@@ -3621,7 +3623,8 @@ static int wp11_Object_Load_Data(WP11_Object* object, int tokenId, int objId)
         ret = wp11_storage_read_alloc_array(storage,
             &object->data.genericData.objectId,
             &tempLen);
-        object->data.genericData.objectIdLen = (word32)tempLen;
+        if (ret == 0)
+            object->data.genericData.objectIdLen = (word32)tempLen;
     }
 
     wp11_storage_close(storage);
