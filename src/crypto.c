@@ -7741,6 +7741,12 @@ static CK_RV wp11_C_VerifyFinal(CK_SESSION_HANDLE hSession,
     WP11_Session_GetObject(session, &obj);
     if (obj == NULL)
         return CKR_OPERATION_NOT_INITIALIZED;
+    if (!CK_ULONG_FITS_WORD32(ulSignatureLen)) {
+        if (!WP11_Session_IsOpCategoryActive(session, WP11_OP_VERIFY))
+            return CKR_OPERATION_NOT_INITIALIZED;
+        WP11_Session_AbortOp(session);
+        return CKR_SIGNATURE_LEN_RANGE;
+    }
 
     mechanism = WP11_Session_GetMechanism(session);
     switch (mechanism) {
