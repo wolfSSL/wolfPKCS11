@@ -9983,8 +9983,12 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                     rv = CKR_FUNCTION_FAILED;
                 }
                 if (ret == 0) {
-                    rv = AddObject(session, obj, pTemplate,
-                                    ulAttributeCount, phKey);
+                    /* Set before AddObject so a token store has them. */
+                    rv = SetInitialStates(obj);
+                    if (rv == CKR_OK) {
+                        rv = AddObject(session, obj, pTemplate,
+                                        ulAttributeCount, phKey);
+                    }
                     if (rv != CKR_OK)
                         WP11_Object_Free(obj);
                 }
@@ -9994,10 +9998,6 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                 rv = ret;
             }
         }
-    }
-
-    if ((rv == CKR_OK) && (derivedKey != NULL)) {
-        rv = SetInitialStates(obj);
     }
 
     if (derivedKey != NULL) {
