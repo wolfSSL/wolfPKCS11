@@ -274,7 +274,7 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
     if (cnt == WP11_MAX_LOGIN_FAILS_SO - 1)
         pInfo->flags |= CKF_SO_PIN_FINAL_TRY;
 #ifndef WOLFPKCS11_NO_TIME
-    else if (cnt == WP11_MAX_LOGIN_FAILS_SO && now < expire)
+    else if (cnt >= WP11_MAX_LOGIN_FAILS_SO && now < expire)
         pInfo->flags |= CKF_SO_PIN_LOCKED;
 #endif
 
@@ -287,7 +287,7 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
     if (cnt == WP11_MAX_LOGIN_FAILS_USER - 1)
         pInfo->flags |= CKF_USER_PIN_FINAL_TRY;
 #ifndef WOLFPKCS11_NO_TIME
-    else if (cnt == WP11_MAX_LOGIN_FAILS_USER && now < expire)
+    else if (cnt >= WP11_MAX_LOGIN_FAILS_USER && now < expire)
         pInfo->flags |= CKF_USER_PIN_LOCKED;
 #endif
 
