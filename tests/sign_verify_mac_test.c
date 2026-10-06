@@ -149,6 +149,8 @@ static void rsa_x509_verify_block_test(CK_SESSION_HANDLE session)
 static byte bigMod[BIG_MOD_SZ];
 static byte bigHalf[BIG_MOD_SZ / 2];
 static byte bigSig[BIG_MOD_SZ];
+/* Just over the maximum, so the math library can still use the key. */
+#define BIG_VERIFY_MOD_SZ  ((RSA_MAX_SIZE / 8) + 8)
 
 /* Raw RSA fails cleanly for a key larger than the supported modulus size. */
 static void rsa_x509_big_modulus_sign_test(CK_SESSION_HANDLE session)
@@ -192,6 +194,45 @@ static void rsa_x509_big_modulus_sign_test(CK_SESSION_HANDLE session)
         CHECK_TRUE(1, "C_SignInit(RSA X.509) rejects oversized key");
     }
     funcList->C_DestroyObject(session, priv);
+}
+
+/* Raw RSA verify fails cleanly for a key larger than the supported size. */
+static void rsa_x509_big_modulus_verify_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_RSA_X_509, NULL, 0 };
+    byte data[32];
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_CLASS,           &pubKeyClass,     sizeof(pubKeyClass)      },
+        { CKA_KEY_TYPE,        &rsaKeyType,      sizeof(rsaKeyType)       },
+        { CKA_VERIFY,          &ckTrue,          sizeof(ckTrue)           },
+        { CKA_PRIVATE,         &ckFalse,         sizeof(ckFalse)          },
+        { CKA_MODULUS,         bigMod,           BIG_VERIFY_MOD_SZ        },
+        { CKA_PUBLIC_EXPONENT, rsa_2048_pub_exp, sizeof(rsa_2048_pub_exp) },
+    };
+
+    XMEMSET(bigMod, 0xa5, sizeof(bigMod));
+    XMEMSET(bigSig, 0x01, sizeof(bigSig));
+    XMEMSET(data, 0x11, sizeof(data));
+    rv = funcList->C_CreateObject(session, pubTmpl,
+                                  sizeof(pubTmpl) / sizeof(*pubTmpl), &pub);
+    if (rv != CKR_OK) {
+        CHECK_TRUE(1, "oversized RSA public key rejected at import");
+        return;
+    }
+
+    rv = funcList->C_VerifyInit(session, &mech, pub);
+    if (rv == CKR_OK) {
+        rv = funcList->C_Verify(session, data, sizeof(data), bigSig,
+                                BIG_VERIFY_MOD_SZ);
+        CHECK_TRUE(rv != CKR_OK,
+                   "C_Verify(RSA X.509) fails for oversized key");
+    }
+    else {
+        CHECK_TRUE(1, "C_VerifyInit(RSA X.509) rejects oversized key");
+    }
+    funcList->C_DestroyObject(session, pub);
 }
 #endif
 
@@ -872,6 +913,7 @@ static int run_test(void)
 #if !defined(NO_RSA) && defined(WC_RSA_DIRECT)
         rsa_x509_verify_block_test(session);
         rsa_x509_big_modulus_sign_test(session);
+        rsa_x509_big_modulus_verify_test(session);
 #endif
 #if !defined(NO_AES) && defined(HAVE_AESCMAC)
         aes_cmac_full_block_test(session);
