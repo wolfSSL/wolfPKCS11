@@ -2452,6 +2452,35 @@ CK_RV C_FindObjectsFinal(CK_SESSION_HANDLE hSession)
 }
 
 
+#ifdef WOLFPKCS11_PKCS11_V3_0
+/**
+ * Terminate the active operation of a kind, as requested by calling an Init
+ * function with a NULL mechanism.
+ *
+ * @param  session     [in]  Session object.
+ * @param  opCategory  [in]  Operation category (WP11_OP_*).
+ * @param  recover     [in]  Whether the kind is verification with recovery.
+ * @return  CKR_OK as releasing an operation cannot fail.
+ */
+static CK_RV CancelOperation(WP11_Session* session, int opCategory,
+                             int recover)
+{
+    int recoverActive;
+
+    recoverActive = WP11_Session_IsOpInitialized(session,
+                                WP11_INIT_RSA_PKCS_VERIFY_RECOVER) ||
+                    WP11_Session_IsOpInitialized(session,
+                                WP11_INIT_RSA_X_509_VERIFY_RECOVER);
+    /* Not IsOpCategoryActive: an op whose key was destroyed still holds
+     * state that must be released. */
+    if (WP11_Session_IsOpCategoryInit(session, opCategory) &&
+            recoverActive == recover) {
+        WP11_Session_AbortOp(session);
+    }
+    return CKR_OK;
+}
+#endif
+
 static CK_RV EncryptInit(CK_SESSION_HANDLE hSession,
                     CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey,
                     byte skipOpCheck)
@@ -2481,7 +2510,11 @@ static CK_RV EncryptInit(CK_SESSION_HANDLE hSession,
         return rv;
     }
     if (pMechanism == NULL) {
+#ifdef WOLFPKCS11_PKCS11_V3_0
+        rv = CancelOperation(session, WP11_OP_ENCRYPT, 0);
+#else
         rv = CKR_ARGUMENTS_BAD;
+#endif
         WOLFPKCS11_LEAVE("C_EncryptInit", rv);
         return rv;
     }
@@ -2736,7 +2769,8 @@ static CK_RV EncryptInit(CK_SESSION_HANDLE hSession,
  * @param  hKey        [in]  Handle to key object.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_ARGUMENTS_BAD when pMechanism is NULL.
+ *          CKR_ARGUMENTS_BAD when pMechanism is NULL; PKCS#11 v3.0 builds
+ *          instead cancel the active operation and return CKR_OK.
  *          CKR_OBJECT_HANDLE_INVALID when key object handle is not valid.
  *          CKR_KEY_TYPE_INCONSISTENT when the key type is not valid for the
  *          mechanism (operation).
@@ -3581,8 +3615,13 @@ static CK_RV DecryptInit(CK_SESSION_HANDLE hSession,
     }
     if (WP11_Session_Get(hSession, &session) != 0)
         return CKR_SESSION_HANDLE_INVALID;
-    if (pMechanism == NULL)
+    if (pMechanism == NULL) {
+#ifdef WOLFPKCS11_PKCS11_V3_0
+        return CancelOperation(session, WP11_OP_DECRYPT, 0);
+#else
         return CKR_ARGUMENTS_BAD;
+#endif
+    }
 
     ret = WP11_Object_Find(session, hKey, &obj);
     if (ret != 0)
@@ -3823,7 +3862,8 @@ static CK_RV DecryptInit(CK_SESSION_HANDLE hSession,
  * @param  hKey        [in]  Handle to key object.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_ARGUMENTS_BAD when pMechanism is NULL.
+ *          CKR_ARGUMENTS_BAD when pMechanism is NULL; PKCS#11 v3.0 builds
+ *          instead cancel the active operation and return CKR_OK.
  *          CKR_OBJECT_HANDLE_INVALID when key object handle is not valid.
  *          CKR_KEY_TYPE_INCONSISTENT when the key type is not valid for the
  *          mechanism (operation).
@@ -4674,7 +4714,8 @@ CK_RV C_DecryptFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastPart,
  * @param  pMechanism  [in]  Type of operation to perform with parameters.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_ARGUMENTS_BAD when pMechanism is NULL.
+ *          CKR_ARGUMENTS_BAD when pMechanism is NULL; PKCS#11 v3.0 builds
+ *          instead cancel the active operation and return CKR_OK.
  *          CKR_MECHANISM_INVALID when the mechanism is not supported with this
  *          type of operation.
  */
@@ -4704,7 +4745,11 @@ CK_RV C_DigestInit(CK_SESSION_HANDLE hSession,
         return rv;
     }
     if (pMechanism == NULL) {
+#ifdef WOLFPKCS11_PKCS11_V3_0
+        rv = CancelOperation(session, WP11_OP_DIGEST, 0);
+#else
         rv = CKR_ARGUMENTS_BAD;
+#endif
         WOLFPKCS11_LEAVE("C_DigestInit", rv);
         return rv;
     }
@@ -5103,7 +5148,8 @@ static int GetInitValue(CK_MECHANISM_TYPE mechanism) {
  * @param  hKey        [in]  Handle to key object.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_ARGUMENTS_BAD when pMechanism is NULL.
+ *          CKR_ARGUMENTS_BAD when pMechanism is NULL; PKCS#11 v3.0 builds
+ *          instead cancel the active operation and return CKR_OK.
  *          CKR_OBJECT_HANDLE_INVALID when key object handle is not valid.
  *          CKR_KEY_TYPE_INCONSISTENT when the key type is not valid for the
  *          mechanism (operation).
@@ -5138,8 +5184,13 @@ static CK_RV wp11_C_SignInit(CK_SESSION_HANDLE hSession,
     }
     if (WP11_Session_Get(hSession, &session) != 0)
         return CKR_SESSION_HANDLE_INVALID;
-    if (pMechanism == NULL)
+    if (pMechanism == NULL) {
+#ifdef WOLFPKCS11_PKCS11_V3_0
+        return CancelOperation(session, WP11_OP_SIGN, 0);
+#else
         return CKR_ARGUMENTS_BAD;
+#endif
+    }
 
     ret = WP11_Object_Find(session, hKey, &obj);
 #ifdef WOLFSSL_MAXQ10XX_CRYPTO
@@ -6282,7 +6333,8 @@ CK_RV C_SignRecover(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
  * @param  hKey        [in]  Handle to key object.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_ARGUMENTS_BAD when pMechanism is NULL.
+ *          CKR_ARGUMENTS_BAD when pMechanism is NULL; PKCS#11 v3.0 builds
+ *          instead cancel the active operation and return CKR_OK.
  *          CKR_OBJECT_HANDLE_INVALID when key object handle is not valid.
  *          CKR_KEY_TYPE_INCONSISTENT when the key type is not valid for the
  *          mechanism (operation).
@@ -6322,7 +6374,11 @@ static CK_RV wp11_C_VerifyInit(CK_SESSION_HANDLE hSession,
         return rv;
     }
     if (pMechanism == NULL) {
+#ifdef WOLFPKCS11_PKCS11_V3_0
+        rv = CancelOperation(session, WP11_OP_VERIFY, 0);
+#else
         rv = CKR_ARGUMENTS_BAD;
+#endif
         WOLFPKCS11_LEAVE("C_VerifyInit", rv);
         return rv;
     }
@@ -7248,7 +7304,8 @@ CK_RV C_VerifyFinal(CK_SESSION_HANDLE hSession,
  * @param  hKey        [in]  Handle to key object.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_ARGUMENTS_BAD when pMechanism is NULL.
+ *          CKR_ARGUMENTS_BAD when pMechanism is NULL; PKCS#11 v3.0 builds
+ *          instead cancel the active operation and return CKR_OK.
  *          CKR_OBJECT_HANDLE_INVALID when key object handle is not valid.
  *          CKR_MECHANISM_INVALID when the mechanism is not supported with this
  *          type of operation.
@@ -7281,7 +7338,11 @@ static CK_RV wp11_C_VerifyRecoverInit(CK_SESSION_HANDLE hSession,
         return rv;
     }
     if (pMechanism == NULL) {
+#ifdef WOLFPKCS11_PKCS11_V3_0
+        rv = CancelOperation(session, WP11_OP_VERIFY, 1);
+#else
         rv = CKR_ARGUMENTS_BAD;
+#endif
         WOLFPKCS11_LEAVE("C_VerifyRecoverInit", rv);
         return rv;
     }

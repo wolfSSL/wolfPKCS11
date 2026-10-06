@@ -200,7 +200,7 @@ static CK_RV create_secret(CK_SESSION_HANDLE session, CK_KEY_TYPE* type,
                                     sizeof(tmpl) / sizeof(*tmpl), key);
 }
 
-#if !defined(NO_RSA) && (!defined(WC_NO_RSA_OAEP) || defined(WC_RSA_PSS))
+#ifndef NO_RSA
 static CK_RV create_rsa_public(CK_SESSION_HANDLE session,
                                CK_OBJECT_HANDLE* key)
 {
@@ -211,6 +211,7 @@ static CK_RV create_rsa_public(CK_SESSION_HANDLE session,
         { CKA_KEY_TYPE,        &rsaType,         sizeof(rsaType)         },
         { CKA_ENCRYPT,         &ckTrue,          sizeof(ckTrue)          },
         { CKA_VERIFY,          &ckTrue,          sizeof(ckTrue)          },
+        { CKA_VERIFY_RECOVER,  &ckTrue,          sizeof(ckTrue)          },
         { CKA_TOKEN,           &ckFalse,         sizeof(ckFalse)         },
         { CKA_MODULUS,         rsa_2048_modulus, sizeof(rsa_2048_modulus) },
         { CKA_PUBLIC_EXPONENT, rsa_2048_pub_exp, sizeof(rsa_2048_pub_exp) },
@@ -1202,6 +1203,216 @@ out:
 }
 #endif
 
+#if defined(WOLFPKCS11_PKCS11_V3_0) && !defined(NO_AES) && \
+    defined(HAVE_AES_CBC) && !defined(NO_HMAC) && !defined(NO_SHA256)
+/* An Init call with a NULL mechanism terminates the active operation of that
+ * kind only, and a new operation of the same kind can then start. */
+static void test_null_mechanism_cancels_operation(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE aesKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE macKey = CK_INVALID_HANDLE;
+    byte iv[16] = { 0 };
+    CK_MECHANISM cbcMech = { CKM_AES_CBC, NULL, 0 };
+    CK_MECHANISM hmacMech = { CKM_SHA256_HMAC, NULL, 0 };
+    CK_MECHANISM sha256Mech = { CKM_SHA256, NULL, 0 };
+#ifndef NO_RSA
+    CK_OBJECT_HANDLE rsaKey = CK_INVALID_HANDLE;
+    CK_MECHANISM rsaMech = { CKM_RSA_PKCS, NULL, 0 };
+#endif
+#if defined(TRACK_ALLOCS) && defined(HAVE_AESGCM)
+    CK_GCM_PARAMS gcmParams;
+    CK_MECHANISM gcmMech = { CKM_AES_GCM, &gcmParams, sizeof(gcmParams) };
+    long before;
+#endif
+    byte out[64];
+    CK_ULONG outLen;
+    CK_SLOT_ID slot;
+
+    printf("\n--- a NULL mechanism cancels the active operation ---\n");
+    cbcMech.pParameter = iv;
+    cbcMech.ulParameterLen = sizeof(iv);
+
+    rv = init_library(&slot);
+    if (rv == CKR_OK)
+        rv = open_with_keys(slot, &session, &aesKey, &macKey);
+    CHECK_RV(rv, "open session with keys", CKR_OK);
+    if (rv != CKR_OK)
+        goto out;
+
+    rv = funcList->C_EncryptInit(session, &cbcMech, aesKey);
+    CHECK_RV(rv, "C_EncryptInit(AES-CBC)", CKR_OK);
+    rv = funcList->C_EncryptInit(session, NULL, aesKey);
+    CHECK_RV(rv, "C_EncryptInit(NULL) cancels", CKR_OK);
+    outLen = sizeof(out);
+    rv = funcList->C_EncryptUpdate(session, plainMarker, 16, out, &outLen);
+    CHECK_RV(rv, "C_EncryptUpdate after cancel",
+             CKR_OPERATION_NOT_INITIALIZED);
+    rv = funcList->C_EncryptInit(session, &cbcMech, aesKey);
+    CHECK_RV(rv, "C_EncryptInit(AES-CBC) after cancel", CKR_OK);
+    rv = funcList->C_EncryptInit(session, NULL, aesKey);
+    CHECK_RV(rv, "C_EncryptInit(NULL) cancels again", CKR_OK);
+
+    rv = funcList->C_DecryptInit(session, &cbcMech, aesKey);
+    CHECK_RV(rv, "C_DecryptInit(AES-CBC)", CKR_OK);
+    rv = funcList->C_DecryptInit(session, NULL, aesKey);
+    CHECK_RV(rv, "C_DecryptInit(NULL) cancels", CKR_OK);
+    outLen = sizeof(out);
+    rv = funcList->C_DecryptUpdate(session, plainMarker, 16, out, &outLen);
+    CHECK_RV(rv, "C_DecryptUpdate after cancel",
+             CKR_OPERATION_NOT_INITIALIZED);
+
+    rv = funcList->C_SignInit(session, &hmacMech, macKey);
+    CHECK_RV(rv, "C_SignInit(HMAC)", CKR_OK);
+    rv = funcList->C_SignInit(session, NULL, macKey);
+    CHECK_RV(rv, "C_SignInit(NULL) cancels", CKR_OK);
+    rv = funcList->C_SignUpdate(session, plainMarker, 16);
+    CHECK_RV(rv, "C_SignUpdate after cancel", CKR_OPERATION_NOT_INITIALIZED);
+
+    rv = funcList->C_VerifyInit(session, &hmacMech, macKey);
+    CHECK_RV(rv, "C_VerifyInit(HMAC)", CKR_OK);
+#ifndef NO_RSA
+    rv = funcList->C_VerifyRecoverInit(session, NULL, macKey);
+    CHECK_RV(rv, "C_VerifyRecoverInit(NULL) with a verify active", CKR_OK);
+    rv = funcList->C_VerifyUpdate(session, plainMarker, 16);
+    CHECK_RV(rv, "verify survives cancel of verify-recover", CKR_OK);
+#endif
+    rv = funcList->C_VerifyInit(session, NULL, macKey);
+    CHECK_RV(rv, "C_VerifyInit(NULL) cancels", CKR_OK);
+    rv = funcList->C_VerifyUpdate(session, plainMarker, 16);
+    CHECK_RV(rv, "C_VerifyUpdate after cancel",
+             CKR_OPERATION_NOT_INITIALIZED);
+
+#ifndef NO_RSA
+    rv = create_rsa_public(session, &rsaKey);
+    CHECK_RV(rv, "C_CreateObject(RSA public)", CKR_OK);
+    rv = funcList->C_VerifyRecoverInit(session, &rsaMech, rsaKey);
+    CHECK_RV(rv, "C_VerifyRecoverInit(RSA)", CKR_OK);
+    rv = funcList->C_VerifyInit(session, NULL, rsaKey);
+    CHECK_RV(rv, "C_VerifyInit(NULL) with a verify-recover active", CKR_OK);
+    rv = funcList->C_VerifyRecoverInit(session, &rsaMech, rsaKey);
+    CHECK_RV(rv, "verify-recover survives cancel of verify",
+             CKR_OPERATION_ACTIVE);
+    rv = funcList->C_VerifyRecoverInit(session, NULL, rsaKey);
+    CHECK_RV(rv, "C_VerifyRecoverInit(NULL) cancels", CKR_OK);
+    rv = funcList->C_VerifyRecoverInit(session, &rsaMech, rsaKey);
+    CHECK_RV(rv, "C_VerifyRecoverInit(RSA) after cancel", CKR_OK);
+    rv = funcList->C_VerifyRecoverInit(session, NULL, rsaKey);
+    CHECK_RV(rv, "C_VerifyRecoverInit(NULL) cancels again", CKR_OK);
+#endif
+
+    rv = funcList->C_DigestInit(session, &sha256Mech);
+    CHECK_RV(rv, "C_DigestInit(SHA-256)", CKR_OK);
+    rv = funcList->C_EncryptInit(session, NULL, aesKey);
+    CHECK_RV(rv, "C_EncryptInit(NULL) with only a digest active", CKR_OK);
+    rv = funcList->C_DigestUpdate(session, plainMarker, 16);
+    CHECK_RV(rv, "digest survives cancel of another kind", CKR_OK);
+    rv = funcList->C_DigestInit(session, NULL);
+    CHECK_RV(rv, "C_DigestInit(NULL) cancels", CKR_OK);
+    rv = funcList->C_DigestUpdate(session, plainMarker, 16);
+    CHECK_RV(rv, "C_DigestUpdate after cancel",
+             CKR_OPERATION_NOT_INITIALIZED);
+
+#if defined(TRACK_ALLOCS) && defined(HAVE_AESGCM)
+    XMEMSET(&gcmParams, 0, sizeof(gcmParams));
+    gcmParams.pIv = gcmIv;
+    gcmParams.ulIvLen = sizeof(gcmIv);
+    gcmParams.ulIvBits = sizeof(gcmIv) * 8;
+    gcmParams.pAAD = gcmAad;
+    gcmParams.ulAADLen = sizeof(gcmAad);
+    gcmParams.ulTagBits = 128;
+    before = liveBlocks;
+    rv = funcList->C_EncryptInit(session, &gcmMech, aesKey);
+    CHECK_RV(rv, "C_EncryptInit(AES-GCM with AAD)", CKR_OK);
+    rv = funcList->C_EncryptInit(session, NULL, aesKey);
+    CHECK_RV(rv, "C_EncryptInit(NULL) cancels AES-GCM", CKR_OK);
+    CHECK_TRUE(liveBlocks == before,
+               "cancelled operation leaves no allocation behind");
+#endif
+
+out:
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
+#if defined(WOLFPKCS11_PKCS11_V3_0) && !defined(NO_AES) && defined(HAVE_AESGCM)
+/* A NULL mechanism must still cancel, and release, an operation whose key
+ * was destroyed while the operation held buffered data. */
+static void test_null_mechanism_cancels_after_key_destroyed(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE aesKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE macKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE tmpKey = CK_INVALID_HANDLE;
+    CK_GCM_PARAMS gcmParams;
+    CK_MECHANISM gcmMech = { CKM_AES_GCM, &gcmParams, sizeof(gcmParams) };
+    byte out[64];
+    CK_ULONG outLen;
+    CK_SLOT_ID slot;
+#ifdef TRACK_ALLOCS
+    long before;
+    int hit;
+#endif
+
+    printf("\n--- a NULL mechanism cancels an operation with a destroyed key "
+           "---\n");
+    XMEMSET(&gcmParams, 0, sizeof(gcmParams));
+    gcmParams.pIv = gcmIv;
+    gcmParams.ulIvLen = sizeof(gcmIv);
+    gcmParams.ulIvBits = sizeof(gcmIv) * 8;
+    gcmParams.ulTagBits = 128;
+
+    rv = init_library(&slot);
+    if (rv == CKR_OK)
+        rv = open_with_keys(slot, &session, &aesKey, &macKey);
+    CHECK_RV(rv, "open session with keys", CKR_OK);
+    if (rv != CKR_OK)
+        goto out;
+
+#ifdef TRACK_ALLOCS
+    before = liveBlocks;
+#endif
+    rv = create_secret(session, &aesType, aesKeyValue, sizeof(aesKeyValue),
+                       &tmpKey);
+    CHECK_RV(rv, "C_CreateObject(AES)", CKR_OK);
+    rv = funcList->C_EncryptInit(session, &gcmMech, tmpKey);
+    CHECK_RV(rv, "C_EncryptInit(AES-GCM)", CKR_OK);
+    outLen = sizeof(out);
+    rv = funcList->C_EncryptUpdate(session, plainMarker, sizeof(plainMarker),
+                                   out, &outLen);
+    CHECK_RV(rv, "C_EncryptUpdate(AES-GCM)", CKR_OK);
+    rv = funcList->C_DestroyObject(session, tmpKey);
+    CHECK_RV(rv, "C_DestroyObject(active AES-GCM key)", CKR_OK);
+
+#ifdef TRACK_ALLOCS
+    watch_start(plainMarker, sizeof(plainMarker));
+#endif
+    rv = funcList->C_EncryptInit(session, NULL, 0);
+    CHECK_RV(rv, "C_EncryptInit(NULL) after key destroyed", CKR_OK);
+#ifdef TRACK_ALLOCS
+    hit = watch_stop();
+    CHECK_TRUE(!hit, "cancel scrubs buffered plaintext before release");
+    CHECK_TRUE(liveBlocks == before,
+               "cancel releases the operation of a destroyed key");
+#endif
+
+    rv = funcList->C_EncryptInit(session, &gcmMech, aesKey);
+    CHECK_RV(rv, "C_EncryptInit(AES-GCM) with another key", CKR_OK);
+    outLen = sizeof(out);
+    rv = funcList->C_Encrypt(session, plainMarker, 16, out, &outLen);
+    CHECK_RV(rv, "C_Encrypt(AES-GCM) with another key", CKR_OK);
+
+out:
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
 #if defined(TRACK_ALLOCS) && !defined(NO_AES) && defined(HAVE_AESGCM) && \
     !defined(WOLFSSL_AESGCM_STREAM)
 /* Destroying the key of a multi-part AES-GCM operation must release the
@@ -1315,6 +1526,13 @@ static int run_test(void)
     test_operation_state_requires_active_digest();
     test_rejected_state_keeps_session();
     test_restore_with_key_is_refused();
+#endif
+#if defined(WOLFPKCS11_PKCS11_V3_0) && !defined(NO_AES) && \
+    defined(HAVE_AES_CBC) && !defined(NO_HMAC) && !defined(NO_SHA256)
+    test_null_mechanism_cancels_operation();
+#endif
+#if defined(WOLFPKCS11_PKCS11_V3_0) && !defined(NO_AES) && defined(HAVE_AESGCM)
+    test_null_mechanism_cancels_after_key_destroyed();
 #endif
 #if defined(TRACK_ALLOCS) && !defined(NO_AES) && defined(HAVE_AESGCM) && \
     !defined(NO_SHA256)
