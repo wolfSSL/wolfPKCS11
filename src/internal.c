@@ -4370,6 +4370,8 @@ static int wp11_Object_Encode_RsaKey(WP11_Object* object)
     }
 
     if (ret != 0) {
+        if (object->keyData != NULL)
+            wc_ForceZero(object->keyData, object->keyDataLen);
         XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         object->keyData = NULL;
         object->keyDataLen = 0;
@@ -4711,6 +4713,8 @@ static int wp11_Object_Encode_EccKey(WP11_Object* object)
     }
 
     if (ret != 0) {
+        if (object->keyData != NULL)
+            wc_ForceZero(object->keyData, object->keyDataLen);
         XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         object->keyData = NULL;
         object->keyDataLen = 0;
@@ -4961,6 +4965,8 @@ static int wp11_Object_Encode_MldsaKey(WP11_Object* object)
     }
 
     if (ret != 0) {
+        if (object->keyData != NULL)
+            wc_ForceZero(object->keyData, object->keyDataLen);
         XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         object->keyData = NULL;
         object->keyDataLen = 0;
