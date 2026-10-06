@@ -16383,6 +16383,8 @@ int WP11_Rsa_Verify(unsigned char* sig, word32 sigLen, unsigned char* in,
 {
     byte decSig[RSA_MAX_SIZE / 8];
     word32 decSigLen;
+    word32 i;
+    byte lead = 0;
     int ret = 0;
 
     *stat = 0;
@@ -16404,8 +16406,13 @@ int WP11_Rsa_Verify(unsigned char* sig, word32 sigLen, unsigned char* in,
     if (ret > 0)
         ret = 0;
 
-    if (ret == 0)
-        *stat = WP11_ConstantCompare(in, decSig + (decSigLen - inLen), inLen);
+    if (ret == 0) {
+        /* The recovered block must be the data left padded with zeros. */
+        for (i = 0; i < decSigLen - inLen; i++)
+            lead |= decSig[i];
+        *stat = WP11_ConstantCompare(in, decSig + (decSigLen - inLen), inLen) &
+                (lead == 0);
+    }
 
     return ret;
 }
