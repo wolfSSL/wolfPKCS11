@@ -623,6 +623,46 @@ static void test_rsa_modulus_bits_range(CK_SESSION_HANDLE session)
 }
 #endif
 
+/* Restating the certificate type keeps the certificate value, and the type
+ * cannot be changed. */
+static void test_cert_type_update_keeps_value(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS certClass = CKO_CERTIFICATE;
+    CK_CERTIFICATE_TYPE certType = CKC_X_509;
+    CK_OBJECT_HANDLE cert = CK_INVALID_HANDLE;
+    byte certVal[48];
+    CK_ATTRIBUTE certTmpl[] = {
+        { CKA_CLASS,            &certClass, sizeof(certClass) },
+        { CKA_CERTIFICATE_TYPE, &certType,  sizeof(certType)  },
+        { CKA_TOKEN,            &ckFalse,   sizeof(ckFalse)   },
+        { CKA_PRIVATE,          &ckFalse,   sizeof(ckFalse)   },
+        { CKA_VALUE,            certVal,    sizeof(certVal)   },
+    };
+    CK_ATTRIBUTE setType[] = {
+        { CKA_CERTIFICATE_TYPE, &certType, sizeof(certType) },
+    };
+    CK_CERTIFICATE_TYPE otherType = CKC_X_509_ATTR_CERT;
+    CK_ATTRIBUTE setOtherType[] = {
+        { CKA_CERTIFICATE_TYPE, &otherType, sizeof(otherType) },
+    };
+
+    XMEMSET(certVal, 0x30, sizeof(certVal));
+    rv = funcList->C_CreateObject(session, certTmpl,
+                                  sizeof(certTmpl) / sizeof(*certTmpl), &cert);
+    CHECK_RV(rv, "create certificate", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_SetAttributeValue(session, cert, setType, 1);
+        CHECK_RV(rv, "set certificate type", CKR_OK);
+        CHECK_TRUE(attr_equals(session, cert, CKA_VALUE, certVal,
+                               sizeof(certVal)),
+                   "certificate value kept after type update");
+        rv = funcList->C_SetAttributeValue(session, cert, setOtherType, 1);
+        CHECK_RV(rv, "change certificate type", CKR_ATTRIBUTE_READ_ONLY);
+    }
+    destroy_obj(session, &cert);
+}
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -652,6 +692,7 @@ static int run_test(void)
 #if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN)
         test_rsa_modulus_bits_range(session);
 #endif
+        test_cert_type_update_keeps_value(session);
     }
 
     if (session != 0) {
