@@ -2195,6 +2195,40 @@ CK_RV C_GetAttributeValue(CK_SESSION_HANDLE hSession,
     return rv;
 }
 
+/* PKCS#11 v2.40 sec 4.4: CKA_TOKEN, CKA_PRIVATE and CKA_MODIFIABLE can only be
+ * changed by C_CopyObject. Restating the current value is allowed. Malformed
+ * values are left for CheckAttributes to report. */
+static CK_RV CheckCopyOnlyAttributes(WP11_Object* obj,
+                                     CK_ATTRIBUTE_PTR pTemplate,
+                                     CK_ULONG ulCount)
+{
+    CK_RV rv = CKR_OK;
+    CK_ATTRIBUTE* attr;
+    CK_ULONG i;
+    CK_BBOOL cur;
+    CK_ULONG curLen;
+
+    for (i = 0; rv == CKR_OK && i < ulCount; i++) {
+        attr = &pTemplate[i];
+        if (attr->type != CKA_TOKEN && attr->type != CKA_PRIVATE &&
+                attr->type != CKA_MODIFIABLE) {
+            continue;
+        }
+        if (attr->pValue == NULL || attr->ulValueLen != sizeof(CK_BBOOL) ||
+                (*(CK_BBOOL*)attr->pValue != CK_TRUE &&
+                 *(CK_BBOOL*)attr->pValue != CK_FALSE)) {
+            continue;
+        }
+        curLen = sizeof(cur);
+        if (WP11_Object_GetAttr(obj, attr->type, &cur, &curLen) != 0 ||
+                cur != *(CK_BBOOL*)attr->pValue) {
+            rv = CKR_ATTRIBUTE_READ_ONLY;
+        }
+    }
+
+    return rv;
+}
+
 /**
  * Set the values of the attributes into the object.
  *
@@ -2204,7 +2238,7 @@ CK_RV C_GetAttributeValue(CK_SESSION_HANDLE hSession,
  * @param  ulCount    [in]  Number of attribute triplets in template.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_ARGUMENTS_BAD when pTemplate is NULL.
+ *          CKR_ARGUMENTS_BAD when pTemplate is NULL or ulCount is too large.
  *          CKR_SESSION_READ_ONLY when the session cannot modify objects.
  *          CKR_OBJECT_HANDLE_INVALID when handle is not to a valid object.
  *          CKR_ATTRIBUTE_TYPE_INVALID if the attribute type is not supported.
@@ -2245,7 +2279,7 @@ static CK_RV wp11_C_SetAttributeValue(CK_SESSION_HANDLE hSession,
         WOLFPKCS11_LEAVE("C_SetAttributeValue", rv);
         return rv;
     }
-    if (pTemplate == NULL) {
+    if (pTemplate == NULL || ulCount > (CK_ULONG)INT_MAX) {
         rv = CKR_ARGUMENTS_BAD;
         WOLFPKCS11_LEAVE("C_SetAttributeValue", rv);
         return rv;
@@ -2275,7 +2309,9 @@ static CK_RV wp11_C_SetAttributeValue(CK_SESSION_HANDLE hSession,
         return rv;
     }
 
-    rv = SetAttributeValue(session, obj, pTemplate, ulCount, CK_FALSE);
+    rv = CheckCopyOnlyAttributes(obj, pTemplate, ulCount);
+    if (rv == CKR_OK)
+        rv = SetAttributeValue(session, obj, pTemplate, ulCount, CK_FALSE);
     WOLFPKCS11_LEAVE("C_SetAttributeValue", rv);
     return rv;
 }

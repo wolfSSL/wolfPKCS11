@@ -51,6 +51,7 @@
 #define TEST_DIR "./store/attribute_validation_test"
 
 static CK_OBJECT_CLASS dataClass = CKO_DATA;
+static CK_BBOOL ckTrue  = CK_TRUE;
 static CK_BBOOL ckFalse = CK_FALSE;
 static const byte dataValue[] = "attribute-validation";
 static const byte dataLabel[] = "attribute-validation-label";
@@ -68,6 +69,19 @@ static void expect_label(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE obj,
     rv = funcList->C_GetAttributeValue(session, obj, &attr, 1);
     CHECK_TRUE(rv == CKR_OK && attr.ulValueLen == expectLen &&
                XMEMCMP(buf, expect, expectLen) == 0, name);
+}
+
+/* Check that a boolean attribute of the object has the expected value. */
+static void expect_bool(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE obj,
+                        CK_ATTRIBUTE_TYPE type, CK_BBOOL expect,
+                        const char* name)
+{
+    CK_RV rv;
+    CK_BBOOL val = (CK_BBOOL)!expect;
+    CK_ATTRIBUTE attr = { type, &val, sizeof(val) };
+
+    rv = funcList->C_GetAttributeValue(session, obj, &attr, 1);
+    CHECK_TRUE(rv == CKR_OK && val == expect, name);
 }
 
 static void destroy_obj(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE* obj)
@@ -214,11 +228,58 @@ static void test_find_objects_large_max(CK_SESSION_HANDLE session)
     destroy_obj(session, &obj);
 }
 
+/* CKA_TOKEN, CKA_PRIVATE and CKA_MODIFIABLE only change through
+ * C_CopyObject; C_SetAttributeValue may only restate the current value. */
+static void test_copy_only_attrs_read_only(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE copy = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE tokenTmpl[]  = { { CKA_TOKEN,      &ckTrue,  1 } };
+    CK_ATTRIBUTE privTmpl[]   = { { CKA_PRIVATE,    &ckTrue,  1 } };
+    CK_ATTRIBUTE modTmpl[]    = { { CKA_MODIFIABLE, &ckFalse, 1 } };
+    CK_ATTRIBUTE sameTmpl[] = {
+        { CKA_TOKEN,      &ckFalse, 1 },
+        { CKA_PRIVATE,    &ckFalse, 1 },
+        { CKA_MODIFIABLE, &ckTrue,  1 },
+    };
+
+    rv = create_data_object(session, &obj);
+    CHECK_RV(rv, "create data object", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_SetAttributeValue(session, obj, tokenTmpl, 1);
+    CHECK_RV(rv, "set CKA_TOKEN after creation", CKR_ATTRIBUTE_READ_ONLY);
+    rv = funcList->C_SetAttributeValue(session, obj, privTmpl, 1);
+    CHECK_RV(rv, "set CKA_PRIVATE after creation", CKR_ATTRIBUTE_READ_ONLY);
+    rv = funcList->C_SetAttributeValue(session, obj, modTmpl, 1);
+    CHECK_RV(rv, "set CKA_MODIFIABLE after creation",
+             CKR_ATTRIBUTE_READ_ONLY);
+    expect_bool(session, obj, CKA_TOKEN, CK_FALSE, "CKA_TOKEN unchanged");
+    expect_bool(session, obj, CKA_PRIVATE, CK_FALSE, "CKA_PRIVATE unchanged");
+    expect_bool(session, obj, CKA_MODIFIABLE, CK_TRUE,
+                "CKA_MODIFIABLE unchanged");
+
+    rv = funcList->C_SetAttributeValue(session, obj, sameTmpl,
+                                       sizeof(sameTmpl) / sizeof(*sameTmpl));
+    CHECK_RV(rv, "restate current CKA_TOKEN/PRIVATE/MODIFIABLE", CKR_OK);
+
+    rv = funcList->C_CopyObject(session, obj, modTmpl, 1, &copy);
+    CHECK_RV(rv, "copy with CKA_MODIFIABLE changed", CKR_OK);
+    if (rv == CKR_OK) {
+        expect_bool(session, copy, CKA_MODIFIABLE, CK_FALSE,
+                    "copy has CKA_MODIFIABLE false");
+    }
+
+    destroy_obj(session, &copy);
+    destroy_obj(session, &obj);
+}
+
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
     defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
     !defined(NO_RSA) && !defined(NO_AES) && \
     (defined(WOLFSSL_KEY_GEN) || defined(OPENSSL_EXTRA))
-static CK_BBOOL ckTrue = CK_TRUE;
 static CK_OBJECT_CLASS secretKeyClass = CKO_SECRET_KEY;
 static CK_OBJECT_CLASS privKeyClass   = CKO_PRIVATE_KEY;
 static CK_OBJECT_CLASS pubKeyClass    = CKO_PUBLIC_KEY;
@@ -334,6 +395,7 @@ static int run_test(void)
         test_set_attr_count_range(session);
         test_get_attr_count_range(session);
         test_find_objects_large_max(session);
+        test_copy_only_attrs_read_only(session);
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
     defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
     !defined(NO_RSA) && !defined(NO_AES) && \
