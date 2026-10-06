@@ -4364,7 +4364,7 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CTR_DEC))
                 return CKR_OPERATION_NOT_INITIALIZED;
 
-            if (pEncryptedData == NULL) {
+            if (pData == NULL) {
                 *pulDataLen = ulEncryptedDataLen;
                 return CKR_OK;
             }

@@ -300,6 +300,62 @@ static void test_ccm_nonce_len(CK_SESSION_HANDLE session)
 }
 #endif
 
+#if !defined(NO_AES) && defined(HAVE_AESCTR)
+/* A NULL output buffer to C_Decrypt is a length query that leaves the
+ * operation active. */
+static void test_ctr_decrypt_size_query(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_AES_CTR_PARAMS params;
+    CK_MECHANISM mech;
+    byte plain[32];
+    byte enc[32];
+    byte dec[32];
+    CK_ULONG encLen;
+    CK_ULONG decLen;
+
+    XMEMSET(&params, 0, sizeof(params));
+    params.ulCounterBits = 32;
+    XMEMSET(params.cb, 0x66, sizeof(params.cb));
+    XMEMSET(plain, 0x77, sizeof(plain));
+    mech.mechanism = CKM_AES_CTR;
+    mech.pParameter = &params;
+    mech.ulParameterLen = sizeof(params);
+
+    rv = create_aes_key(session, aes_128_key, sizeof(aes_128_key), &key);
+    CHECK_RV(rv, "CTR: create AES key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_EncryptInit(session, &mech, key);
+    CHECK_RV(rv, "CTR: C_EncryptInit", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    encLen = sizeof(enc);
+    rv = funcList->C_Encrypt(session, plain, sizeof(plain), enc, &encLen);
+    CHECK_RV(rv, "CTR: C_Encrypt", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_DecryptInit(session, &mech, key);
+    CHECK_RV(rv, "CTR: C_DecryptInit", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    decLen = 0;
+    rv = funcList->C_Decrypt(session, enc, encLen, NULL, &decLen);
+    CHECK_RV(rv, "CTR: C_Decrypt length query", CKR_OK);
+    CHECK_TRUE(decLen == encLen, "CTR: length query reports plaintext size");
+
+    decLen = sizeof(dec);
+    rv = funcList->C_Decrypt(session, enc, encLen, dec, &decLen);
+    CHECK_RV(rv, "CTR: C_Decrypt after length query", CKR_OK);
+    CHECK_TRUE(decLen == sizeof(plain) &&
+               XMEMCMP(dec, plain, sizeof(plain)) == 0,
+               "CTR: decrypt after length query round-trips");
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -321,6 +377,9 @@ static int run_test(void)
 #endif
 #if !defined(NO_AES) && defined(HAVE_AESCCM)
         test_ccm_nonce_len(session);
+#endif
+#if !defined(NO_AES) && defined(HAVE_AESCTR)
+        test_ctr_decrypt_size_query(session);
 #endif
     }
 
