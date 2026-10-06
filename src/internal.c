@@ -4321,7 +4321,10 @@ static int wp11_Object_Encode_RsaKey(WP11_Object* object)
     }
 
 #ifdef WOLFPKCS11_TPM
-    ret = WP11_Object_EncodeTpmKey(object, object->keyData, object->keyDataLen);
+    if (ret == 0) {
+        ret = WP11_Object_EncodeTpmKey(object, object->keyData,
+            object->keyDataLen);
+    }
     if (ret > 0) {
         ret = 0;
     }
@@ -4663,7 +4666,10 @@ static int wp11_Object_Encode_EccKey(WP11_Object* object)
     }
 
 #ifdef WOLFPKCS11_TPM
-    ret = WP11_Object_EncodeTpmKey(object, object->keyData, object->keyDataLen);
+    if (ret == 0) {
+        ret = WP11_Object_EncodeTpmKey(object, object->keyData,
+            object->keyDataLen);
+    }
     if (ret > 0) {
         ret = 0;
     }
