@@ -13428,7 +13428,6 @@ int WP11_Object_SetCert(WP11_Object* object, unsigned char** data,
         WP11_Lock_LockRW(object->lock);
 
     cert = &object->data.cert;
-    cert->len = 0;
 
     /* First item is certificate type */
     if (ret == 0 && data[0] != NULL && len[0] != (int)sizeof(CK_ULONG))

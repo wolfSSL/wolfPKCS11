@@ -996,6 +996,7 @@ static CK_RV CheckAttributeUpdate(WP11_Session* session, WP11_Object* obj,
      * is a no-op. */
     if (!newObject && (attr->type == CKA_CLASS ||
                        attr->type == CKA_KEY_TYPE ||
+                       attr->type == CKA_CERTIFICATE_TYPE ||
                        attr->type == CKA_LOCAL ||
                        attr->type == CKA_KEY_GEN_MECHANISM ||
                        attr->type == CKA_ALWAYS_SENSITIVE ||
