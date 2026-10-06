@@ -325,6 +325,34 @@ static void test_derived_attrs_not_settable_at_create(CK_SESSION_HANDLE session)
 }
 #endif
 
+#ifndef NO_AES
+/* A creation template must name one object class; a conflicting duplicate is
+ * rejected rather than overriding the class the object was built for. */
+static void test_create_class_consistent(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE keyType = CKK_AES;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    byte keyData[16];
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,    &keyClass,  sizeof(keyClass)  },
+        { CKA_KEY_TYPE, &keyType,   sizeof(keyType)   },
+        { CKA_TOKEN,    &ckFalse,   sizeof(ckFalse)   },
+        { CKA_PRIVATE,  &ckFalse,   sizeof(ckFalse)   },
+        { CKA_VALUE,    keyData,    sizeof(keyData)   },
+        { CKA_CLASS,    &dataClass, sizeof(dataClass) },
+    };
+
+    XMEMSET(keyData, 0x3c, sizeof(keyData));
+    rv = funcList->C_CreateObject(session, tmpl, sizeof(tmpl) / sizeof(*tmpl),
+                                  &key);
+    CHECK_RV(rv, "create key with conflicting CKA_CLASS",
+             CKR_TEMPLATE_INCONSISTENT);
+    destroy_obj(session, &key);
+}
+#endif
+
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
     defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
     !defined(NO_RSA) && !defined(NO_AES) && \
@@ -447,6 +475,7 @@ static int run_test(void)
         test_copy_only_attrs_read_only(session);
 #ifndef NO_AES
         test_derived_attrs_not_settable_at_create(session);
+        test_create_class_consistent(session);
 #endif
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && \
     defined(HAVE_AES_KEYWRAP) && !defined(WOLFPKCS11_NO_STORE) && \
