@@ -4807,6 +4807,12 @@ static CK_RV wp11_C_DecryptUpdate(CK_SESSION_HANDLE hSession,
         case CKM_AES_GCM:
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_GCM_DEC))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            if (!CK_ULONG_FITS_WORD32(ulEncryptedPartLen) ||
+                ulEncryptedPartLen > (CK_ULONG)(INT_MAX -
+                                     WP11_AesGcm_EncDataLen(session))) {
+                WP11_AesGcm_Final(session);
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
+            }
 
             *pulPartLen = 0;
             if (pPart == NULL)

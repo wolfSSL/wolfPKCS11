@@ -26,6 +26,7 @@
     #include <wolfpkcs11/config.h>
 #endif
 
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -1220,6 +1221,80 @@ static void test_ctr_decrypt_update_len(CK_SESSION_HANDLE session)
 }
 #endif
 
+#if !defined(NO_AES) && defined(HAVE_AESGCM)
+/* Multi-part AES-GCM decryption rejects a part that does not fit in 32 bits or
+ * would grow the buffered ciphertext past INT_MAX, and ends the operation. */
+static void check_gcm_decrypt_update_rejected(CK_SESSION_HANDLE session,
+                                              byte* data, CK_ULONG dataLen,
+                                              CK_ULONG badLen)
+{
+    CK_RV rv;
+    byte out[64];
+    CK_ULONG partLen;
+
+    partLen = sizeof(out);
+    rv = funcList->C_DecryptUpdate(session, data, badLen, out, &partLen);
+    CHECK_RV(rv, "GCM decrypt update: rejects part length",
+             CKR_ENCRYPTED_DATA_LEN_RANGE);
+    partLen = sizeof(out);
+    rv = funcList->C_DecryptUpdate(session, data, dataLen, out, &partLen);
+    CHECK_RV(rv, "GCM decrypt update: operation ended",
+             CKR_OPERATION_NOT_INITIALIZED);
+    if (rv == CKR_OK) {
+        /* End the still-active operation so the next check can start. */
+        partLen = sizeof(out);
+        (void)funcList->C_DecryptFinal(session, out, &partLen);
+    }
+}
+
+static void test_gcm_decrypt_update_len_range(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_GCM_PARAMS params;
+    CK_MECHANISM mech;
+    byte iv[12];
+    byte aad[16];
+    byte data[32];
+    byte out[32];
+    CK_ULONG partLen;
+    CK_ULONG wrap = ((CK_ULONG)1 << 16) << 16;
+
+    XMEMSET(iv, 0xBD, sizeof(iv));
+    XMEMSET(aad, 0xCE, sizeof(aad));
+    XMEMSET(data, 0xDF, sizeof(data));
+
+    rv = create_aes_key(session, aes_128_key, sizeof(aes_128_key), &key);
+    CHECK_RV(rv, "GCM decrypt update: create AES key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    gcm_params_init(&params, &mech, iv, aad);
+
+    if (wrap != 0) {
+        printf("GCM decrypt update: part length 2^32 + 32\n");
+        rv = funcList->C_DecryptInit(session, &mech, key);
+        CHECK_RV(rv, "GCM decrypt update: C_DecryptInit", CKR_OK);
+        if (rv == CKR_OK) {
+            check_gcm_decrypt_update_rejected(session, data, sizeof(data),
+                                              wrap + sizeof(data));
+        }
+    }
+
+    printf("GCM decrypt update: buffered length past INT_MAX\n");
+    rv = funcList->C_DecryptInit(session, &mech, key);
+    CHECK_RV(rv, "GCM decrypt update: C_DecryptInit", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    partLen = sizeof(out);
+    rv = funcList->C_DecryptUpdate(session, data, sizeof(data), out, &partLen);
+    CHECK_RV(rv, "GCM decrypt update: first part", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    check_gcm_decrypt_update_rejected(session, data, sizeof(data),
+                                      (CK_ULONG)INT_MAX - sizeof(data) + 1);
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -1288,6 +1363,9 @@ static int run_test(void)
 #endif
 #if !defined(NO_AES) && defined(HAVE_AESCTR)
         run_in_session(slot, test_ctr_decrypt_update_len);
+#endif
+#if !defined(NO_AES) && defined(HAVE_AESGCM)
+        run_in_session(slot, test_gcm_decrypt_update_len_range);
 #endif
     }
 

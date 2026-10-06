@@ -19003,6 +19003,10 @@ int WP11_AesGcm_DecryptUpdate(unsigned char* enc, word32 encSz,
     unsigned char* newEnc;
     WP11_GcmParams* gcm = &session->params.gcm;
 
+    /* The cached length is an int; never let it grow past INT_MAX. */
+    if (encSz > (word32)(INT_MAX - gcm->encSz))
+        return BAD_FUNC_ARG;
+
 #ifdef XREALLOC
     newEnc = (unsigned char*)XREALLOC(gcm->enc, gcm->encSz + encSz, NULL,
                                                        DYNAMIC_TYPE_TMP_BUFFER);
