@@ -13255,13 +13255,12 @@ int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
     int ret = 0;
     WP11_Data* key;
     CK_ULONG keyLen = 0;
+    word32 newLen = 0;
 
     if (object->onToken)
         WP11_Lock_LockRW(object->lock);
 
     key = object->data.symmKey;
-    key->len = 0;
-    wc_ForceZero(key->data, sizeof(key->data));
 
     /* First item is the key's length. */
     if (ret == 0 && data[0] != NULL && len[0] != (int)sizeof(CK_ULONG))
@@ -13285,28 +13284,27 @@ int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
     }
 #endif
     if (ret == 0 && data[0] != NULL)
-        key->len = (word32)keyLen;
+        newLen = (word32)keyLen;
 
     /* Second item is the key data. */
     if (ret == 0 && data[1] != NULL) {
-        if (key->len == 0) {
+        if (newLen == 0) {
             if (len[1] > WP11_MAX_SYM_KEY_SZ)
                 ret = BUFFER_E;
             else
-                key->len = (word32)len[1];
+                newLen = (word32)len[1];
         }
-        else if (len[1] != (CK_ULONG)key->len)
+        else if (len[1] != (CK_ULONG)newLen)
             ret = BUFFER_E;
     }
-    if (ret == 0 && key->len > WP11_MAX_SYM_KEY_SZ)
-        ret = BUFFER_E;
-    if (ret == 0 && data[1] != NULL)
-        XMEMCPY(key->data, data[1], key->len);
 
-    /* On any error, record no length so later teardown does not zeroize or
-     * copy past the fixed key buffer. */
-    if (ret != 0)
-        key->len = 0;
+    /* Replace the key only once the new value is known to be valid. */
+    if (ret == 0) {
+        wc_ForceZero(key->data, sizeof(key->data));
+        key->len = newLen;
+        if (data[1] != NULL)
+            XMEMCPY(key->data, data[1], newLen);
+    }
 
     if (object->onToken)
         WP11_Lock_UnlockRW(object->lock);

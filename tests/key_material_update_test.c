@@ -306,6 +306,67 @@ static void test_token_key_value_fixed(CK_SESSION_HANDLE* session)
         check_token_secret_fixed(*session);
 }
 
+/* A rejected secret key update leaves the existing key usable. */
+static void test_rejected_secret_update_keeps_key(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    byte origVal[16];
+    byte newVal[16];
+    CK_ULONG shortLen = 8;
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,       &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE,    &genericType, sizeof(genericType) },
+        { CKA_TOKEN,       &ckFalse,     sizeof(ckFalse)     },
+        { CKA_SENSITIVE,   &ckFalse,     sizeof(ckFalse)     },
+        { CKA_EXTRACTABLE, &ckTrue,      sizeof(ckTrue)      },
+        { CKA_VALUE,       origVal,      sizeof(origVal)     },
+    };
+    CK_ATTRIBUTE badUpdate[] = {
+        { CKA_VALUE_LEN, &shortLen, sizeof(shortLen) },
+        { CKA_VALUE,     newVal,    sizeof(newVal)   },
+    };
+#ifndef NO_AES
+    CK_KEY_TYPE aesType = CKK_AES;
+    CK_ULONG badAesLen = 17;
+    CK_ATTRIBUTE badAesLenTmpl[] = {
+        { CKA_VALUE_LEN, &badAesLen, sizeof(badAesLen) },
+    };
+#endif
+
+    XMEMSET(origVal, 0x33, sizeof(origVal));
+    XMEMSET(newVal, 0x44, sizeof(newVal));
+
+    rv = funcList->C_CreateObject(session, keyTmpl,
+                                  sizeof(keyTmpl) / sizeof(*keyTmpl), &key);
+    CHECK_RV(rv, "create secret key", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_SetAttributeValue(session, key, badUpdate, 2);
+        CHECK_RV(rv, "inconsistent key update rejected",
+                 CKR_ATTRIBUTE_READ_ONLY);
+        CHECK_TRUE(attr_equals(session, key, CKA_VALUE, origVal,
+                               sizeof(origVal)),
+                   "key kept after rejected update");
+    }
+    destroy_obj(session, &key);
+
+#ifndef NO_AES
+    keyTmpl[1].pValue = &aesType;
+    rv = funcList->C_CreateObject(session, keyTmpl,
+                                  sizeof(keyTmpl) / sizeof(*keyTmpl), &key);
+    CHECK_RV(rv, "create AES key", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_SetAttributeValue(session, key, badAesLenTmpl, 1);
+        CHECK_RV(rv, "invalid AES key length rejected",
+                 CKR_ATTRIBUTE_READ_ONLY);
+        CHECK_TRUE(attr_equals(session, key, CKA_VALUE, origVal,
+                               sizeof(origVal)),
+                   "AES key kept after rejected length");
+    }
+    destroy_obj(session, &key);
+#endif
+}
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -324,6 +385,7 @@ static int run_test(void)
     }
     if (rv == CKR_OK) {
         test_token_key_value_fixed(&session);
+        test_rejected_secret_update_keeps_key(session);
     }
 
     if (session != 0) {
