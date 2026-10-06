@@ -7068,6 +7068,31 @@ static void wp11_Object_Scrub(WP11_Object* object)
 }
 
 /**
+ * Encrypt the token's decoded objects with the current token key.
+ *
+ * @param [in, out]  token    Token object.
+ * @param [in]       protect  Unencrypted private key data is cleared.
+ * @return  0 on success.
+ * @return  -ve on failure of any object.
+ */
+static int wp11_Token_EncodeObjects(WP11_Token* token, int protect)
+{
+    int ret = 0;
+    int err;
+    WP11_Object* object;
+
+    for (object = token->object; object != NULL; object = object->next) {
+        if (wp11_Object_IsEncrypted(object) && !object->encoded) {
+            err = wp11_Object_Encode(object, protect);
+            if (ret == 0)
+                ret = err;
+        }
+    }
+
+    return ret;
+}
+
+/**
  * Unstore a key object to storage.
  *
  * Empties the contents of the object.
@@ -9027,16 +9052,21 @@ static void wp11_Slot_Logout(WP11_Slot* slot)
 {
 #ifndef WOLFPKCS11_NO_STORE
     int state;
-    int ret = 0;
+    WP11_Object* object;
 #endif
 
 #ifndef WOLFPKCS11_NO_STORE
     state = slot->token.loginState;
     if (state == WP11_APP_STATE_RO_USER || state == WP11_APP_STATE_RW_USER) {
-        WP11_Object* object = slot->token.object;
-        while (ret == 0 && object != NULL) {
-            ret = wp11_Object_Encode(object, 1);
-            object = object->next;
+        /* Protect every decoded object; one failure must not stop the rest. */
+        if (wp11_Token_EncodeObjects(&slot->token, 1) != 0) {
+            WOLFPKCS11_MSG("Logout: failed to protect a token object");
+            /* Never let a later store encrypt it under the zeroed key. */
+            for (object = slot->token.object; object != NULL;
+                    object = object->next) {
+                if (wp11_Object_IsEncrypted(object) && !object->encoded)
+                    wp11_Object_Scrub(object);
+            }
         }
         /* Zero token key only on user logout — SO logout must preserve it
          * for subsequent object encryption (e.g., empty-PIN flow). */
