@@ -64,6 +64,10 @@
     #define SECRET_BASE_TESTS
 #endif
 
+#if defined(SECRET_BASE_TESTS) || !defined(NO_DH)
+    #define DERIVE_TESTS
+#endif
+
 static int test_passed = 0;
 static int test_failed = 0;
 
@@ -94,11 +98,14 @@ static int userPinLen = 15;
 
 #define CHECK_CKR(rv, op) CHECK_RV(rv, CKR_OK, op)
 
-#ifdef SECRET_BASE_TESTS
+#ifdef DERIVE_TESTS
 static CK_OBJECT_CLASS secretKeyClass = CKO_SECRET_KEY;
 static CK_KEY_TYPE genericKeyType = CKK_GENERIC_SECRET;
 static CK_BBOOL ckTrue = CK_TRUE;
 static CK_BBOOL ckFalse = CK_FALSE;
+#endif
+
+#ifdef SECRET_BASE_TESTS
 
 static byte baseSecret[32] = {
     0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b,
@@ -125,7 +132,9 @@ static CK_RV create_secret_base(CK_SESSION_HANDLE session, CK_KEY_TYPE type,
 
     return funcList->C_CreateObject(session, tmpl, cnt, obj);
 }
+#endif /* SECRET_BASE_TESTS */
 
+#ifdef DERIVE_TESTS
 /* Derive a public, extractable generic secret of the given length. */
 static CK_RV derive_generic(CK_SESSION_HANDLE session, CK_MECHANISM* mech,
                             CK_OBJECT_HANDLE base, CK_ULONG len,
@@ -152,7 +161,7 @@ static void destroy_obj(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE* obj)
         *obj = CK_INVALID_HANDLE;
     }
 }
-#endif /* SECRET_BASE_TESTS */
+#endif /* DERIVE_TESTS */
 
 #if defined(WOLFPKCS11_HKDF) && defined(WIDE_CK_ULONG)
 /* HKDF salt and info lengths must be representable without truncation. */
@@ -235,6 +244,64 @@ static int test_session_hash_length_fits_word32(CK_SESSION_HANDLE session)
     ret = derive_generic(session, &mech, base, 48, &derived);
     CHECK_RV(ret, CKR_MECHANISM_PARAM_INVALID,
              "session hash length beyond 32 bits rejected");
+
+cleanup:
+    destroy_obj(session, &derived);
+    destroy_obj(session, &base);
+    return result;
+}
+#endif
+
+#ifndef NO_DH
+/* DH peer public value lengths are bounded by the largest supported prime. */
+static int test_dh_public_length_bound(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_CLASS privClass = CKO_PRIVATE_KEY;
+    CK_KEY_TYPE dhType = CKK_DH;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    CK_MECHANISM mech;
+    byte padded[8192 / 8 + 1];
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,       &privClass,     sizeof(privClass)      },
+        { CKA_KEY_TYPE,    &dhType,        sizeof(dhType)         },
+        { CKA_PRIVATE,     &ckFalse,       sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckFalse,       sizeof(ckFalse)        },
+        { CKA_DERIVE,      &ckTrue,        sizeof(ckTrue)         },
+        { CKA_PRIME,       dh_ffdhe2048_p, sizeof(dh_ffdhe2048_p) },
+        { CKA_BASE,        dh_ffdhe2048_g, sizeof(dh_ffdhe2048_g) },
+        { CKA_VALUE,       dh_2048_priv,   sizeof(dh_2048_priv)   },
+    };
+    int result = 0;
+
+    ret = funcList->C_CreateObject(session, tmpl,
+                                   sizeof(tmpl) / sizeof(*tmpl), &base);
+    CHECK_CKR(ret, "create DH base key");
+
+    mech.mechanism = CKM_DH_PKCS_DERIVE;
+    mech.pParameter = dh_2048_peer;
+    mech.ulParameterLen = sizeof(dh_2048_peer);
+    ret = derive_generic(session, &mech, base, 32, &derived);
+    CHECK_CKR(ret, "DH derive with peer public value");
+    destroy_obj(session, &derived);
+
+    XMEMSET(padded, 0, sizeof(padded));
+    XMEMCPY(padded + sizeof(padded) - sizeof(dh_2048_peer), dh_2048_peer,
+            sizeof(dh_2048_peer));
+    mech.pParameter = padded;
+    mech.ulParameterLen = sizeof(padded);
+    ret = derive_generic(session, &mech, base, 32, &derived);
+    CHECK_RV(ret, CKR_MECHANISM_PARAM_INVALID,
+             "DH public value longer than any prime rejected");
+
+#ifdef WIDE_CK_ULONG
+    mech.pParameter = dh_2048_peer;
+    mech.ulParameterLen = LEN_ABOVE_WORD32(sizeof(dh_2048_peer));
+    ret = derive_generic(session, &mech, base, 32, &derived);
+    CHECK_RV(ret, CKR_MECHANISM_PARAM_INVALID,
+             "DH public value length beyond 32 bits rejected");
+#endif
 
 cleanup:
     destroy_obj(session, &derived);
@@ -359,6 +426,11 @@ static int kdf_tls_derive_test(void)
         result = -1;
 #endif
 
+#ifndef NO_DH
+    if (test_dh_public_length_bound(session) != 0)
+        result = -1;
+#endif
+
 cleanup:
     if (session != CK_INVALID_HANDLE) {
         funcList->C_Logout(session);
@@ -391,7 +463,7 @@ int main(int argc, char* argv[])
         test_failed++;
 
     print_results();
-#ifndef SECRET_BASE_TESTS
+#ifndef DERIVE_TESTS
     if (test_failed == 0)
         return 77;
 #endif

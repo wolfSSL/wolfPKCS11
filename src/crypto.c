@@ -9784,7 +9784,8 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                 return CKR_KEY_TYPE_INCONSISTENT;
             if (pMechanism->pParameter == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
-            if (pMechanism->ulParameterLen == 0)
+            if (pMechanism->ulParameterLen == 0 ||
+                pMechanism->ulParameterLen > WP11_MAX_DH_KEY_SZ)
                 return CKR_MECHANISM_PARAM_INVALID;
 
             keyLen = (word32)pMechanism->ulParameterLen;

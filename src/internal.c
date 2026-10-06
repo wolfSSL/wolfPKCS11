@@ -120,13 +120,6 @@
 
 
 
-/* Maximum size of storage for generated/derived DH key. */
-#ifdef WOLFPKCS11_NSS
-#define WP11_MAX_DH_KEY_SZ             (8192/8)
-#else
-#define WP11_MAX_DH_KEY_SZ             (4096/8)
-#endif
-
 #ifndef WP11_MAX_CERT_SZ
 #define WP11_MAX_CERT_SZ              4096
 #endif
