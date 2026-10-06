@@ -930,6 +930,119 @@ static void find_during_login_changes_test(void)
 }
 #endif
 
+#ifndef WOLFPKCS11_NSS
+/* Logging out invalidates the handles of private session objects. */
+static void logout_drops_private_session_objects_test(void)
+{
+    CK_RV rv;
+    int i;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE privObj = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE pubObj = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    CK_BBOOL yes = CK_TRUE;
+    CK_BBOOL no = CK_FALSE;
+    byte value[4] = { 1, 2, 3, 4 };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_CLASS,   &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN,   &no,        sizeof(no)        },
+        { CKA_PRIVATE, &yes,       sizeof(yes)       },
+        { CKA_VALUE,   value,      sizeof(value)     },
+    };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_CLASS,   &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN,   &no,        sizeof(no)        },
+        { CKA_PRIVATE, &no,        sizeof(no)        },
+        { CKA_VALUE,   value,      sizeof(value)     },
+    };
+    CK_OBJECT_CLASS gotClass;
+#if !defined(NO_AES) && defined(HAVE_AES_CBC)
+    CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE keyType = CKK_AES;
+    byte keyValue[16] = { 0 };
+    CK_OBJECT_HANDLE keyObj = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,    &keyClass,    sizeof(keyClass)    },
+        { CKA_KEY_TYPE, &keyType,     sizeof(keyType)     },
+        { CKA_VALUE,    keyValue,     sizeof(keyValue)    },
+        { CKA_TOKEN,    &no,          sizeof(no)          },
+        { CKA_PRIVATE,  &yes,         sizeof(yes)         },
+        { CKA_ENCRYPT,  &yes,         sizeof(yes)         },
+    };
+    byte iv[16] = { 0 };
+    byte plain[16] = { 0 };
+    byte enc[16];
+    CK_ULONG encLen = sizeof(enc);
+    CK_MECHANISM cbc = { CKM_AES_CBC, iv, sizeof(iv) };
+#endif
+    CK_ATTRIBUTE getTmpl[] = {
+        { CKA_CLASS, &gotClass, sizeof(gotClass) },
+    };
+
+    printf("--- logout drops private session objects ---\n");
+    rv = token_setup(&slot, userPin);
+    if (rv == CKR_OK)
+        rv = open_rw(slot, &session);
+    if (rv == CKR_OK)
+        rv = user_login(session, userPin);
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, privTmpl,
+                sizeof(privTmpl) / sizeof(*privTmpl), &privObj);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, pubTmpl,
+                sizeof(pubTmpl) / sizeof(*pubTmpl), &pubObj);
+    }
+#if !defined(NO_AES) && defined(HAVE_AES_CBC)
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, keyTmpl,
+                sizeof(keyTmpl) / sizeof(*keyTmpl), &keyObj);
+    }
+    if (rv == CKR_OK)
+        rv = funcList->C_EncryptInit(session, &cbc, keyObj);
+#endif
+    if (rv == CKR_OK)
+        rv = funcList->C_Logout(session);
+    if (rv == CKR_OK)
+        rv = user_login(session, userPin);
+    CHECK_RV(rv, "create session objects, log out and back in", CKR_OK);
+#if !defined(NO_AES) && defined(HAVE_AES_CBC)
+    /* PKCS#11 leaves it to the token whether the operation survives logout;
+     * either way it must complete safely. */
+    if (rv == CKR_OK) {
+        rv = funcList->C_Encrypt(session, plain, sizeof(plain), enc, &encLen);
+        CHECK_TRUE(rv == CKR_OK || rv == CKR_OPERATION_NOT_INITIALIZED,
+                   "operation started before logout completes safely");
+        rv = CKR_OK;
+    }
+#endif
+    if (rv == CKR_OK) {
+        rv = funcList->C_GetAttributeValue(session, privObj, getTmpl, 1);
+        CHECK_RV(rv, "private session object gone after logout",
+                 CKR_OBJECT_HANDLE_INVALID);
+        rv = funcList->C_GetAttributeValue(session, pubObj, getTmpl, 1);
+        CHECK_RV(rv, "public session object kept after logout", CKR_OK);
+        rv = CKR_OK;
+        /* Logged-out private objects must not use up the session limit. */
+        for (i = 0; rv == CKR_OK && i < WP11_SESSION_OBJECT_CNT_MAX + 2; i++) {
+            rv = funcList->C_CreateObject(session, privTmpl,
+                    sizeof(privTmpl) / sizeof(*privTmpl), &privObj);
+            if (rv == CKR_OK)
+                rv = funcList->C_Logout(session);
+            if (rv == CKR_OK)
+                rv = user_login(session, userPin);
+        }
+        CHECK_RV(rv, "repeated private object create and logout cycles",
+                 CKR_OK);
+        funcList->C_Logout(session);
+    }
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
 #if defined(DEBUG_WOLFPKCS11) && !defined(SINGLE_THREADED) && \
     !defined(WOLFPKCS11_NO_STORE) && !defined(WOLFPKCS11_NSS)
 #define FIND_HOOK_WAIT_MS 200
@@ -1055,6 +1168,9 @@ static int run_test(void)
 #endif
 #ifndef SINGLE_THREADED
     close_last_session_race_test();
+#endif
+#ifndef WOLFPKCS11_NSS
+    logout_drops_private_session_objects_test();
 #endif
 #if !defined(SINGLE_THREADED) && !defined(WOLFPKCS11_NO_TIME)
     concurrent_login_lockout_test();
