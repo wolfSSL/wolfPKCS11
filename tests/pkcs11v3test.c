@@ -3560,9 +3560,8 @@ static CK_RV test_hss_paramset_rejected(void* args)
     return ret;
 }
 
-/* A failed re-import via C_SetAttributeValue (a bad CKA_VALUE) must leave the
- * existing key intact: the object still verifies its original signature. This
- * exercises the atomic temporary-key swap in WP11_Object_SetHssKey. */
+/* A re-import via C_SetAttributeValue is rejected because key material is
+ * read-only after creation, and the existing key stays usable. */
 static CK_RV test_hss_reimport_atomic(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -3590,7 +3589,7 @@ static CK_RV test_hss_reimport_atomic(void* args)
     CHECK_CKR(ret, "HSS key import for re-import test");
     if (ret == CKR_OK) {
         ret = funcList->C_SetAttributeValue(session, obj, badVal, 1);
-        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_READ_ONLY,
             "HSS re-import of invalid CKA_VALUE rejected");
     }
     if (ret == CKR_OK) {
@@ -3876,12 +3875,12 @@ static CK_RV test_xmss_paramset_setattr_rejected(void* args)
     /* A wrong OID via C_SetAttributeValue must be rejected, not a no-op. */
     if (ret == CKR_OK) {
         ret = funcList->C_SetAttributeValue(session, obj, setBadOnly, 1);
-        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_READ_ONLY,
             "XMSS set wrong CKA_PARAMETER_SET rejected");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_SetAttributeValue(session, obj, setBadWithVal, 2);
-        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_READ_ONLY,
             "XMSS set wrong CKA_PARAMETER_SET + value rejected");
     }
     /* The key-derived OID must be unchanged by the rejected sets. */
