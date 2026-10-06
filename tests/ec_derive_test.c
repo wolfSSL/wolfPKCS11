@@ -724,6 +724,46 @@ cleanup:
         funcList->C_DestroyObject(session, pub);
     return result;
 }
+
+/* A derived key type that cannot hold the secret fails with a defined
+ * PKCS#11 return value. */
+static int test_unusable_key_type_defined_error(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    CK_ECDH1_DERIVE_PARAMS params;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,    &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE, &eccKeyType,     sizeof(eccKeyType)     },
+        { CKA_PRIVATE,  &ckFalse,        sizeof(ckFalse)        },
+    };
+    int result = 0;
+
+    ret = create_ec_base(session, CK_FALSE, CK_TRUE, &base);
+    CHECK_CKR(ret, "create EC base key");
+
+    ecdh_params_init(&params, ecc_p256_point, sizeof(ecc_p256_point));
+    ret = ecdh_derive_tmpl(session, base, &params, tmpl,
+                           sizeof(tmpl) / sizeof(*tmpl), &derived);
+    if (ret == CKR_OK || ret >= CKR_VENDOR_DEFINED) {
+        fprintf(stderr, "FAIL: derive to EC secret key returned 0x%lx\n",
+                (unsigned long)ret);
+        test_failed++;
+        result = -1;
+        goto cleanup;
+    }
+    printf("PASS: derive to unusable key type returns 0x%lx\n",
+           (unsigned long)ret);
+    test_passed++;
+
+cleanup:
+    if (derived != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, derived);
+    if (base != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, base);
+    return result;
+}
 #endif /* HAVE_ECC */
 
 static CK_RV pkcs11_init(void)
@@ -850,6 +890,8 @@ static int ec_derive_test(void)
     if (test_private_derive_requires_login(session) != 0)
         result = -1;
     if (test_derived_states_follow_base(session) != 0)
+        result = -1;
+    if (test_unusable_key_type_defined_error(session) != 0)
         result = -1;
 #else
     printf("ECC not available, skipping ECDH derive tests\n");
