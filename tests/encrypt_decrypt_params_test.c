@@ -685,6 +685,92 @@ static void test_ccm_param_ranges(CK_SESSION_HANDLE session)
 }
 #endif
 
+#if !defined(NO_RSA) && !defined(WC_NO_RSA_OAEP)
+static void check_oaep_params_rejected(CK_SESSION_HANDLE session,
+                                       CK_OBJECT_HANDLE pub,
+                                       CK_OBJECT_HANDLE priv,
+                                       CK_MECHANISM* mech)
+{
+    CK_RV rv;
+
+    rv = funcList->C_EncryptInit(session, mech, pub);
+    CHECK_RV(rv, "OAEP: C_EncryptInit rejects source length",
+             CKR_MECHANISM_PARAM_INVALID);
+    rv = funcList->C_DecryptInit(session, mech, priv);
+    CHECK_RV(rv, "OAEP: C_DecryptInit rejects source length",
+             CKR_MECHANISM_PARAM_INVALID);
+}
+
+/* An OAEP source length the token cannot represent is rejected rather than
+ * narrowed to a different label. */
+static void test_oaep_source_len_range(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_RSA_PKCS_OAEP_PARAMS params;
+    CK_MECHANISM mech;
+    byte label[16];
+    byte plain[16];
+    byte enc[256];
+    byte dec[256];
+    CK_ULONG encLen;
+    CK_ULONG decLen;
+    CK_ULONG wrap = ((CK_ULONG)1 << 16) << 16;
+
+    XMEMSET(label, 0x4C, sizeof(label));
+    XMEMSET(plain, 0x50, sizeof(plain));
+
+    rv = create_rsa_keys(session, &pub, &priv);
+    CHECK_RV(rv, "OAEP: create RSA keys", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    printf("OAEP: source length 0x80000000\n");
+    oaep_params_init(&params, &mech);
+    params.pSourceData = label;
+    params.ulSourceDataLen = 0x80000000UL;
+    check_oaep_params_rejected(session, pub, priv, &mech);
+
+    if (wrap != 0) {
+        printf("OAEP: source length 2^32 + 16\n");
+        oaep_params_init(&params, &mech);
+        params.pSourceData = label;
+        params.ulSourceDataLen = wrap + sizeof(label);
+        check_oaep_params_rejected(session, pub, priv, &mech);
+
+        printf("OAEP: source length 2^32\n");
+        oaep_params_init(&params, &mech);
+        params.pSourceData = label;
+        params.ulSourceDataLen = wrap;
+        check_oaep_params_rejected(session, pub, priv, &mech);
+    }
+
+    oaep_params_init(&params, &mech);
+    params.pSourceData = label;
+    params.ulSourceDataLen = sizeof(label);
+    rv = funcList->C_EncryptInit(session, &mech, pub);
+    CHECK_RV(rv, "OAEP: C_EncryptInit with label", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    encLen = sizeof(enc);
+    rv = funcList->C_Encrypt(session, plain, sizeof(plain), enc, &encLen);
+    CHECK_RV(rv, "OAEP: C_Encrypt with label", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    rv = funcList->C_DecryptInit(session, &mech, priv);
+    CHECK_RV(rv, "OAEP: C_DecryptInit with label", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    decLen = sizeof(dec);
+    rv = funcList->C_Decrypt(session, enc, encLen, dec, &decLen);
+    CHECK_RV(rv, "OAEP: C_Decrypt with label", CKR_OK);
+    CHECK_TRUE(decLen == sizeof(plain) &&
+               XMEMCMP(dec, plain, sizeof(plain)) == 0,
+               "OAEP: labelled ciphertext round-trips");
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -730,6 +816,9 @@ static int run_test(void)
 #endif
 #if !defined(NO_AES) && defined(HAVE_AESCCM)
         run_in_session(slot, test_ccm_param_ranges);
+#endif
+#if !defined(NO_RSA) && !defined(WC_NO_RSA_OAEP)
+        run_in_session(slot, test_oaep_source_len_range);
 #endif
     }
 
