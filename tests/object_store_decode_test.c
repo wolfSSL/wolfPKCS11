@@ -1105,6 +1105,46 @@ static void test_failed_decrypt_scrubbed(void)
         "rsakey_priv", rsa_2048_priv_exp, 32);
 #endif
 }
+
+#ifndef NO_AES
+static byte aesKeyValue[32] = {
+    0x5b, 0x1e, 0xc4, 0x27, 0x9a, 0x30, 0xe8, 0x71,
+    0x0d, 0xb6, 0x43, 0xf9, 0x82, 0x2c, 0x95, 0x6e,
+    0xa7, 0x14, 0xd0, 0x3b, 0x68, 0xcf, 0x51, 0x0a,
+    0xe3, 0x9d, 0x26, 0x7c, 0xb1, 0x48, 0xf5, 0x13
+};
+
+static CK_RV create_aes_key(CK_SESSION_HANDLE session)
+{
+    CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE keyType = CKK_AES;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,    &keyClass,   sizeof(keyClass)    },
+        { CKA_KEY_TYPE, &keyType,    sizeof(keyType)     },
+        { CKA_TOKEN,    &ckTrue,     sizeof(ckTrue)      },
+        { CKA_PRIVATE,  &ckTrue,     sizeof(ckTrue)      },
+        { CKA_ENCRYPT,  &ckTrue,     sizeof(ckTrue)      },
+        { CKA_VALUE,    aesKeyValue, sizeof(aesKeyValue) },
+    };
+
+    return funcList->C_CreateObject(session, tmpl,
+        sizeof(tmpl) / sizeof(*tmpl), &obj);
+}
+#endif
+
+static void test_failed_key_decrypt_scrubbed(void)
+{
+    printf("\n--- secret key storage cleared after failed decrypt ---\n");
+#ifndef NO_AES
+    check_failed_decrypt_scrubbed("AES key", create_aes_key, "symmkey",
+        aesKeyValue, sizeof(aesKeyValue));
+#endif
+#ifndef NO_DH
+    check_failed_decrypt_scrubbed("DH private key value", create_dh_private_key,
+        "dhkey_priv", dh_2048_priv, sizeof(dh_2048_priv));
+#endif
+}
 #endif
 
 int main(int argc, char* argv[])
@@ -1133,6 +1173,7 @@ int main(int argc, char* argv[])
 #endif
 #ifdef HAVE_ALLOC_TRACKING
     test_failed_decrypt_scrubbed();
+    test_failed_key_decrypt_scrubbed();
 #endif
 
     return pkcs11_test_summary();

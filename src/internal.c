@@ -5076,6 +5076,10 @@ static int wp11_Object_Decode_DhKey(WP11_Object* object)
                                         sizeof(object->slot->token.key),
                                         object->iv, sizeof(object->iv),
                                         object->devId);
+            if (ret != 0) {
+                wc_ForceZero(object->data.dhKey->key,
+                             (word32)(object->keyDataLen - AES_BLOCK_SIZE));
+            }
         }
         if (ret == 0)
             object->data.dhKey->len = object->keyDataLen - AES_BLOCK_SIZE;
@@ -6478,6 +6482,10 @@ static int wp11_Object_Decode_SymmKey(WP11_Object* object)
                                     object->slot->token.key,
                                     sizeof(object->slot->token.key), object->iv,
                                     sizeof(object->iv), object->devId);
+        if (ret != 0) {
+            wc_ForceZero(object->data.symmKey->data,
+                         (word32)(object->keyDataLen - AES_BLOCK_SIZE));
+        }
     }
     if (ret == 0)
         object->data.symmKey->len = object->keyDataLen - AES_BLOCK_SIZE;
