@@ -1202,6 +1202,11 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
                 WP11_Session_GetState(session) != WP11_APP_STATE_RW_SO) {
             return CKR_ATTRIBUTE_READ_ONLY;
         }
+        /* The type-specific storage was allocated for the creation class. */
+        if (newObject && attr->type == CKA_CLASS &&
+                *(CK_OBJECT_CLASS*)attr->pValue != objClass) {
+            return CKR_TEMPLATE_INCONSISTENT;
+        }
         /* Derived by the token; never accepted in a creation template. */
         if (newObject && (attr->type == CKA_ALWAYS_SENSITIVE ||
                           attr->type == CKA_NEVER_EXTRACTABLE)) {
