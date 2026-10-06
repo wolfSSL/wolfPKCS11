@@ -9615,6 +9615,11 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
     CK_BBOOL baseAlwaysSensitive = CK_FALSE;
     CK_BBOOL baseNeverExtractable = CK_FALSE;
     CK_ULONG histLen;
+    CK_ATTRIBUTE* valueLenAttr = NULL;
+    CK_ULONG reqValueLen = 0;
+#endif
+#ifndef NO_DH
+    CK_ULONG dhPrimeLen = 0;
 #endif
 
     WOLFPKCS11_ENTER("C_DeriveKey");
@@ -10010,7 +10015,29 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
         if (WP11_Object_GetAttr(obj, CKA_NEVER_EXTRACTABLE,
                                 &baseNeverExtractable, &histLen) != 0)
             baseNeverExtractable = CK_FALSE;
-        rv = CreateObject(session, pTemplate, ulAttributeCount, &obj);
+        FindAttributeType(pTemplate, ulAttributeCount, CKA_VALUE_LEN,
+                          &valueLenAttr);
+        if ((valueLenAttr != NULL) && (valueLenAttr->pValue != NULL) &&
+                (valueLenAttr->ulValueLen == sizeof(CK_ULONG))) {
+            XMEMCPY(&reqValueLen, valueLenAttr->pValue, sizeof(CK_ULONG));
+        }
+#ifndef NO_DH
+        /* DH agreement drops leading zero bytes; restore up to the prime
+         * length on request. */
+        if ((pMechanism->mechanism == CKM_DH_PKCS_DERIVE) &&
+                (reqValueLen > keyLen) &&
+                (reqValueLen <= pMechanism->ulParameterLen) &&
+                (WP11_Object_GetAttr(obj, CKA_PRIME, NULL, &dhPrimeLen) == 0) &&
+                (reqValueLen <= dhPrimeLen)) {
+            XMEMMOVE(derivedKey + (reqValueLen - keyLen), derivedKey, keyLen);
+            XMEMSET(derivedKey, 0, reqValueLen - keyLen);
+            keyLen = (word32)reqValueLen;
+        }
+#endif
+        if (reqValueLen > keyLen)
+            rv = CKR_ATTRIBUTE_VALUE_INVALID;
+        if (rv == CKR_OK)
+            rv = CreateObject(session, pTemplate, ulAttributeCount, &obj);
         if (rv == CKR_OK) {
             /* obj now refers to the newly created derived key. */
 #ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT

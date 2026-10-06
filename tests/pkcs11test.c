@@ -10541,8 +10541,8 @@ static CK_RV aes_cbc_encrypt_data_test(CK_SESSION_HANDLE session,
     word32 outSz = sizeof(out);
     CK_OBJECT_HANDLE secret;
     CK_KEY_TYPE      keyType = CKK_GENERIC_SECRET;
-    CK_ULONG         secSz = outSz;
     CK_BYTE          data[16] = { 0 };
+    CK_ULONG         secSz = sizeof(data);
     CK_AES_CBC_ENCRYPT_DATA_PARAMS aesParams = {
         { 0 }, data, sizeof(data)
     };
