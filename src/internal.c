@@ -20258,6 +20258,7 @@ int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
     if (stateDataLen < sizeof(session->mechanism))
         return CKR_SAVED_STATE_INVALID;
 
+    WP11_Session_AbortOp(session);
     XMEMCPY(&session->mechanism, stateData, sizeof(session->mechanism));
     switch (session->mechanism) {
 #ifndef NO_MD5

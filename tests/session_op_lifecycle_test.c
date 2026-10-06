@@ -1019,6 +1019,79 @@ out:
 #endif
 
 #if defined(TRACK_ALLOCS) && !defined(NO_AES) && defined(HAVE_AESGCM) && \
+    !defined(NO_SHA256)
+/* Restoring a saved digest state must release the operation it replaces. */
+static void test_restored_state_releases_operation(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE aesKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE macKey = CK_INVALID_HANDLE;
+    CK_MECHANISM sha256Mech = { CKM_SHA256, NULL, 0 };
+    CK_GCM_PARAMS gcmParams;
+    CK_MECHANISM gcmMech = { CKM_AES_GCM, &gcmParams, sizeof(gcmParams) };
+    byte state[1024];
+    CK_ULONG stateLen;
+    byte digest[32];
+    CK_ULONG digestLen;
+    CK_SLOT_ID slot;
+    long before;
+
+    printf("\n--- restoring a saved state releases the replaced op ---\n");
+    XMEMSET(&gcmParams, 0, sizeof(gcmParams));
+    gcmParams.pIv = gcmIv;
+    gcmParams.ulIvLen = sizeof(gcmIv);
+    gcmParams.ulIvBits = sizeof(gcmIv) * 8;
+    gcmParams.pAAD = gcmAad;
+    gcmParams.ulAADLen = sizeof(gcmAad);
+    gcmParams.ulTagBits = 128;
+
+    rv = init_library(&slot);
+    CHECK_RV(rv, "initialize library", CKR_OK);
+    if (rv != CKR_OK)
+        goto out;
+    before = liveBlocks;
+    rv = open_with_keys(slot, &session, &aesKey, &macKey);
+    CHECK_RV(rv, "open session with keys", CKR_OK);
+    if (rv != CKR_OK)
+        goto out;
+
+    rv = funcList->C_DigestInit(session, &sha256Mech);
+    CHECK_RV(rv, "C_DigestInit(SHA-256)", CKR_OK);
+    rv = funcList->C_DigestUpdate(session, plainMarker, sizeof(plainMarker));
+    CHECK_RV(rv, "C_DigestUpdate", CKR_OK);
+    stateLen = sizeof(state);
+    rv = funcList->C_GetOperationState(session, state, &stateLen);
+    CHECK_RV(rv, "C_GetOperationState", CKR_OK);
+    digestLen = sizeof(digest);
+    rv = funcList->C_DigestFinal(session, digest, &digestLen);
+    CHECK_RV(rv, "C_DigestFinal", CKR_OK);
+
+    rv = funcList->C_EncryptInit(session, &gcmMech, aesKey);
+    CHECK_RV(rv, "C_EncryptInit(AES-GCM with AAD)", CKR_OK);
+    rv = funcList->C_SetOperationState(session, state, stateLen, 0, 0);
+    CHECK_RV(rv, "C_SetOperationState over active encrypt", CKR_OK);
+    digestLen = sizeof(digest);
+    rv = funcList->C_DigestFinal(session, digest, &digestLen);
+    CHECK_RV(rv, "C_DigestFinal of restored state", CKR_OK);
+
+    rv = funcList->C_DestroyObject(session, aesKey);
+    CHECK_RV(rv, "C_DestroyObject(AES)", CKR_OK);
+    rv = funcList->C_DestroyObject(session, macKey);
+    CHECK_RV(rv, "C_DestroyObject(HMAC)", CKR_OK);
+    funcList->C_CloseSession(session);
+    session = CK_INVALID_HANDLE;
+    CHECK_TRUE(liveBlocks == before,
+               "restored state leaves no allocation behind");
+
+out:
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
+#if defined(TRACK_ALLOCS) && !defined(NO_AES) && defined(HAVE_AESGCM) && \
     !defined(WOLFSSL_AESGCM_STREAM)
 /* Destroying the key of a multi-part AES-GCM operation must release the
  * plaintext it buffered once the operation is next used. */
@@ -1129,6 +1202,10 @@ static int run_test(void)
 #endif
 #ifndef NO_SHA256
     test_operation_state_requires_active_digest();
+#endif
+#if defined(TRACK_ALLOCS) && !defined(NO_AES) && defined(HAVE_AESGCM) && \
+    !defined(NO_SHA256)
+    test_restored_state_releases_operation();
 #endif
 
     pkcs11_unload();
