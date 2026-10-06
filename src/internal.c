@@ -19333,6 +19333,21 @@ int WP11_AesKeyWrap_Decrypt(unsigned char* enc, word32 encSz,
     return 0;
 }
 
+/**
+ * Abandon an AES key wrap operation, releasing the AES object.
+ *
+ * @param  session  [in]  Session object holding Aes object.
+ */
+void WP11_AesKeyWrap_Final(WP11_Session* session)
+{
+    WP11_KeyWrapParams *wrap = &session->params.kw;
+
+    wc_AesFree(&wrap->aes);
+    /* Older wolfSSL versions do not zeroize the key schedule in wc_AesFree. */
+    wc_ForceZero(wrap, sizeof(*wrap));
+    session->init = 0;
+}
+
 /* Single-block AES encrypt/decrypt. FIPS modules before v5.3 declare
  * wc_AesEncryptDirect/wc_AesDecryptDirect as returning void, so no result is
  * available there. The v5.2.3 and v5.2.4 modules return int for ARM assembly

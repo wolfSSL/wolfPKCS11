@@ -4544,8 +4544,9 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
 
             /* AES Key Wrap ciphertext is at least two semiblocks: one data
              * semiblock plus the 8-byte integrity check value. */
-            if (ulEncryptedDataLen < 2 * KEYWRAP_BLOCK_SIZE) {
-                WP11_Session_AbortOp(session);
+            if (!CK_ULONG_FITS_WORD32(ulEncryptedDataLen) ||
+                ulEncryptedDataLen < 2 * KEYWRAP_BLOCK_SIZE) {
+                WP11_AesKeyWrap_Final(session);
                 return CKR_ENCRYPTED_DATA_LEN_RANGE;
             }
             decDataLen = (word32)(ulEncryptedDataLen - KEYWRAP_BLOCK_SIZE);
@@ -4569,9 +4570,10 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
             /* RFC 5649 ciphertext is at least two semiblocks and a multiple of
              * 8. The recovered length is encoded in the AIV and is known only
              * after unwrapping; the upper bound is ciphertext - 8. */
-            if (ulEncryptedDataLen < 2 * KEYWRAP_BLOCK_SIZE ||
+            if (!CK_ULONG_FITS_WORD32(ulEncryptedDataLen) ||
+                ulEncryptedDataLen < 2 * KEYWRAP_BLOCK_SIZE ||
                 (ulEncryptedDataLen % KEYWRAP_BLOCK_SIZE) != 0) {
-                WP11_Session_AbortOp(session);
+                WP11_AesKeyWrap_Final(session);
                 return CKR_ENCRYPTED_DATA_LEN_RANGE;
             }
             decDataLen = (word32)(ulEncryptedDataLen - KEYWRAP_BLOCK_SIZE);
