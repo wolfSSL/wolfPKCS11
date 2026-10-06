@@ -68,6 +68,31 @@ static CK_BBOOL ckTrue = CK_TRUE;
 static CK_BBOOL ckFalse = CK_FALSE;
 static byte keyData[16] = { 0 };
 
+#if !defined(WOLFSSL_STATIC_MEMORY) && !defined(WOLFSSL_DEBUG_MEMORY) && \
+    !defined(NO_WOLFSSL_MEMORY)
+#define TEST_ALLOC_FAILURE
+static int failAllocs = 0;
+
+static void* test_malloc(size_t n)
+{
+    if (failAllocs)
+        return NULL;
+    return malloc(n);
+}
+
+static void test_free(void* p)
+{
+    free(p);
+}
+
+static void* test_realloc(void* p, size_t n)
+{
+    if (failAllocs)
+        return NULL;
+    return realloc(p, n);
+}
+#endif
+
 static void clear_store_dir(void)
 {
     DIR* dir;
@@ -616,6 +641,41 @@ static void test_init_retry_after_load_failure(void)
     }
 }
 
+#ifdef TEST_ALLOC_FAILURE
+/* Object creation fails cleanly when memory cannot be allocated. */
+static void test_create_object_out_of_memory(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &genericType, sizeof(genericType) },
+        { CKA_VALUE,    keyData,      sizeof(keyData)     },
+        { CKA_TOKEN,    &ckFalse,     sizeof(ckFalse)     },
+    };
+
+    printf("\n--- object creation fails cleanly without memory ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        failAllocs = 1;
+        rv = funcList->C_CreateObject(session, tmpl,
+                                      sizeof(tmpl) / sizeof(*tmpl), &obj);
+        failAllocs = 0;
+        CHECK_TRUE(rv != CKR_OK, "create fails when allocation fails");
+        rv = funcList->C_CreateObject(session, tmpl,
+                                      sizeof(tmpl) / sizeof(*tmpl), &obj);
+        CHECK_RV(rv, "create succeeds once memory is available", CKR_OK);
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
 static int run_tests(void)
 {
     CK_RV rv;
@@ -633,6 +693,9 @@ static int run_tests(void)
     test_token_reset_store_failure();
     test_finalize_reports_store_failure();
     test_init_retry_after_load_failure();
+#ifdef TEST_ALLOC_FAILURE
+    test_create_object_out_of_memory();
+#endif
 
     clear_store_dir();
     pkcs11_unload();
@@ -648,6 +711,12 @@ int main(int argc, char* argv[])
     unsetenv("WOLFPKCS11_NO_STORE");
 
     printf("=== wolfPKCS11 token store test ===\n");
+#ifdef TEST_ALLOC_FAILURE
+    if (wolfSSL_SetAllocators(test_malloc, test_free, test_realloc) != 0) {
+        fprintf(stderr, "FAIL: wolfSSL_SetAllocators\n");
+        return 1;
+    }
+#endif
     run_tests();
     return pkcs11_test_summary();
 }
