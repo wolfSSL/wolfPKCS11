@@ -8486,7 +8486,7 @@ int WP11_Slot_CheckSOPinLockout(WP11_Slot* slot, char* pin, int pinLen)
 
     /* Check for too many fails and whether the timeout has elapsed. */
     WP11_Lock_LockRW(&slot->lock);
-    if (slot->token.soFailedLogin == WP11_MAX_LOGIN_FAILS_SO) {
+    if (slot->token.soFailedLogin >= WP11_MAX_LOGIN_FAILS_SO) {
         allowed = slot->token.soLastFailedLogin +
                                                  slot->token.soFailLoginTimeout;
         if (allowed < now)
@@ -8504,7 +8504,8 @@ int WP11_Slot_CheckSOPinLockout(WP11_Slot* slot, char* pin, int pinLen)
 #ifndef WOLFPKCS11_NO_TIME
     WP11_Lock_LockRW(&slot->lock);
     /* PIN failed - update failure info. */
-    if (ret == PIN_INVALID_E) {
+    if (ret == PIN_INVALID_E &&
+            slot->token.soFailedLogin < WP11_MAX_LOGIN_FAILS_SO) {
         slot->token.soFailedLogin++;
         if (slot->token.soFailedLogin == WP11_MAX_LOGIN_FAILS_SO) {
             slot->token.soLastFailedLogin = now;
@@ -8597,7 +8598,8 @@ int WP11_Slot_SOLogin(WP11_Slot* slot, char* pin, int pinLen)
         ret = PIN_INVALID_E;
 #endif
 
-    WP11_Lock_LockRO(&slot->lock);
+    /* Write lock: the lockout check below may reset the failure count. */
+    WP11_Lock_LockRW(&slot->lock);
     if (ret == 0) {
         /* SO already logged in is the same user type; a logged-in USER is a
          * different one. */
@@ -8612,7 +8614,7 @@ int WP11_Slot_SOLogin(WP11_Slot* slot, char* pin, int pinLen)
     }
 #ifndef WOLFPKCS11_NO_TIME
     /* Check for too many fails and timeout. */
-    if (ret == 0 && slot->token.soFailedLogin == WP11_MAX_LOGIN_FAILS_SO) {
+    if (ret == 0 && slot->token.soFailedLogin >= WP11_MAX_LOGIN_FAILS_SO) {
         allowed = slot->token.soLastFailedLogin +
                                                  slot->token.soFailLoginTimeout;
         if (allowed < now)
@@ -8638,7 +8640,7 @@ int WP11_Slot_SOLogin(WP11_Slot* slot, char* pin, int pinLen)
             ret = READ_ONLY_E;
     }
 #endif
-    WP11_Lock_UnlockRO(&slot->lock);
+    WP11_Lock_UnlockRW(&slot->lock);
 
     if (ret == 0) {
         ret = WP11_Slot_CheckSOPin(slot, pin, pinLen);
@@ -8646,10 +8648,14 @@ int WP11_Slot_SOLogin(WP11_Slot* slot, char* pin, int pinLen)
         /* PIN Failed - Update failure info. */
         if (ret == PIN_INVALID_E) {
 #ifndef WOLFPKCS11_NO_TIME
-            slot->token.soFailedLogin++;
-            if (slot->token.soFailedLogin == WP11_MAX_LOGIN_FAILS_SO) {
-                slot->token.soLastFailedLogin = now;
-                slot->token.soFailLoginTimeout += WP11_SO_LOGIN_FAIL_TIMEOUT;
+            /* Concurrent failures must not push the count past the limit. */
+            if (slot->token.soFailedLogin < WP11_MAX_LOGIN_FAILS_SO) {
+                slot->token.soFailedLogin++;
+                if (slot->token.soFailedLogin == WP11_MAX_LOGIN_FAILS_SO) {
+                    slot->token.soLastFailedLogin = now;
+                    slot->token.soFailLoginTimeout +=
+                                                    WP11_SO_LOGIN_FAIL_TIMEOUT;
+                }
             }
 #endif
         }
@@ -8719,7 +8725,7 @@ int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen)
     }
 #ifndef WOLFPKCS11_NO_TIME
     /* Check for too many fails */
-    if (ret == 0 && token->userFailedLogin == WP11_MAX_LOGIN_FAILS_USER) {
+    if (ret == 0 && token->userFailedLogin >= WP11_MAX_LOGIN_FAILS_USER) {
         allowed = token->userLastFailedLogin + token->userFailLoginTimeout;
         if (allowed < now)
             token->userFailedLogin = 0;
@@ -8744,10 +8750,14 @@ int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen)
         /* PIN Failed - Update failure info. */
         if (ret == PIN_INVALID_E) {
 #ifndef WOLFPKCS11_NO_TIME
-            token->userFailedLogin++;
-            if (token->userFailedLogin == WP11_MAX_LOGIN_FAILS_USER) {
-                token->userLastFailedLogin = now;
-                token->userFailLoginTimeout += WP11_USER_LOGIN_FAIL_TIMEOUT;
+            /* Concurrent failures must not push the count past the limit. */
+            if (token->userFailedLogin < WP11_MAX_LOGIN_FAILS_USER) {
+                token->userFailedLogin++;
+                if (token->userFailedLogin == WP11_MAX_LOGIN_FAILS_USER) {
+                    token->userLastFailedLogin = now;
+                    token->userFailLoginTimeout +=
+                                                  WP11_USER_LOGIN_FAIL_TIMEOUT;
+                }
             }
 #endif
         }
@@ -9080,10 +9090,16 @@ int WP11_Slot_IsTokenInitialized(WP11_Slot* slot)
  */
 int WP11_Slot_TokenFailedLogin(WP11_Slot* slot, int login)
 {
+    int ret;
+
+    WP11_Lock_LockRO(&slot->lock);
     if (login == WP11_LOGIN_SO)
-        return slot->token.soFailedLogin;
+        ret = slot->token.soFailedLogin;
     else
-        return slot->token.userFailedLogin;
+        ret = slot->token.userFailedLogin;
+    WP11_Lock_UnlockRO(&slot->lock);
+
+    return ret;
 }
 
 /**
@@ -9096,12 +9112,18 @@ int WP11_Slot_TokenFailedLogin(WP11_Slot* slot, int login)
  */
 time_t WP11_Slot_TokenFailedExpire(WP11_Slot* slot, int login)
 {
+    time_t ret;
+
+    WP11_Lock_LockRO(&slot->lock);
     if (login == WP11_LOGIN_SO)
-        return slot->token.soLastFailedLogin + slot->token.soFailLoginTimeout;
+        ret = slot->token.soLastFailedLogin + slot->token.soFailLoginTimeout;
     else {
-        return slot->token.userLastFailedLogin +
+        ret = slot->token.userLastFailedLogin +
                                                slot->token.userFailLoginTimeout;
     }
+    WP11_Lock_UnlockRO(&slot->lock);
+
+    return ret;
 }
 
 /**

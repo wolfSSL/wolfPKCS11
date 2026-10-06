@@ -43,6 +43,8 @@
 #include <dlfcn.h>
 #endif
 
+#include <wolfpkcs11/internal.h>
+
 #include "testdata.h"
 #include "pkcs11_test_util.h"
 
@@ -351,6 +353,132 @@ static void empty_pin_change_requires_login_test(void)
 }
 #endif
 
+#if !defined(SINGLE_THREADED) && !defined(WOLFPKCS11_NO_TIME)
+#define LOCKOUT_THREADS 6
+#define LOCKOUT_ROUNDS 4
+
+static const char* wrongPin = "not-the-right-pin";
+
+typedef struct login_ctx {
+    CK_SESSION_HANDLE session;
+    CK_USER_TYPE type;
+    CK_RV rv;
+} login_ctx;
+
+static pthread_mutex_t goMutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t goCond = PTHREAD_COND_INITIALIZER;
+static int goFlag = 0;
+
+static void* wrong_login(void* arg)
+{
+    login_ctx* ctx = (login_ctx*)arg;
+
+    pthread_mutex_lock(&goMutex);
+    while (!goFlag)
+        pthread_cond_wait(&goCond, &goMutex);
+    pthread_mutex_unlock(&goMutex);
+
+    ctx->rv = funcList->C_Login(ctx->session, ctx->type,
+                                (CK_UTF8CHAR_PTR)wrongPin,
+                                (CK_ULONG)XSTRLEN(wrongPin));
+    return NULL;
+}
+
+/* Run simultaneous wrong-PIN logins, one per session. Returns 1 when every
+ * one of them was rejected as an incorrect PIN. */
+static int concurrent_wrong_logins(CK_SLOT_ID slot, CK_USER_TYPE type)
+{
+    int i;
+    int started = 0;
+    int rejected = 1;
+    pthread_t threads[LOCKOUT_THREADS];
+    login_ctx ctx[LOCKOUT_THREADS];
+
+    goFlag = 0;
+    for (i = 0; i < LOCKOUT_THREADS; i++) {
+        ctx[i].session = CK_INVALID_HANDLE;
+        ctx[i].type = type;
+        ctx[i].rv = CKR_OK;
+        if (open_rw(slot, &ctx[i].session) != CKR_OK)
+            break;
+        if (pthread_create(&threads[i], NULL, wrong_login, &ctx[i]) != 0) {
+            funcList->C_CloseSession(ctx[i].session);
+            break;
+        }
+        started++;
+    }
+    pthread_mutex_lock(&goMutex);
+    goFlag = 1;
+    pthread_cond_broadcast(&goCond);
+    pthread_mutex_unlock(&goMutex);
+    for (i = 0; i < started; i++) {
+        pthread_join(threads[i], NULL);
+        funcList->C_CloseSession(ctx[i].session);
+        if (ctx[i].rv != CKR_PIN_INCORRECT)
+            rejected = 0;
+    }
+    CHECK_TRUE(started == LOCKOUT_THREADS, "start concurrent logins");
+    return rejected;
+}
+
+/* Failed logins that race each other still lock out the correct PIN. */
+static void lockout_after_concurrent_failures(CK_USER_TYPE type,
+                                              const char* pin, int maxFails,
+                                              const char* what)
+{
+    CK_RV rv = CKR_OK;
+    int i;
+    int round;
+    int locked = 1;
+    int rejected = 1;
+    CK_RV final;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+
+    for (round = 0; rv == CKR_OK && round < LOCKOUT_ROUNDS; round++) {
+        rv = token_setup(&slot, userPin);
+        if (rv == CKR_OK)
+            rv = open_rw(slot, &session);
+        for (i = 0; rv == CKR_OK && i < maxFails - 1; i++) {
+            rv = funcList->C_Login(session, type, (CK_UTF8CHAR_PTR)wrongPin,
+                                   (CK_ULONG)XSTRLEN(wrongPin));
+            if (rv == CKR_PIN_INCORRECT)
+                rv = CKR_OK;
+        }
+        if (rv == CKR_OK) {
+            if (!concurrent_wrong_logins(slot, type))
+                rejected = 0;
+            final = funcList->C_Login(session, type, (CK_UTF8CHAR_PTR)pin,
+                                      (CK_ULONG)XSTRLEN(pin));
+            if (final != CKR_PIN_INCORRECT && final != CKR_PIN_LOCKED)
+                locked = 0;
+            if (final == CKR_OK)
+                funcList->C_Logout(session);
+        }
+        if (session != CK_INVALID_HANDLE) {
+            funcList->C_CloseSession(session);
+            session = CK_INVALID_HANDLE;
+        }
+        funcList->C_Finalize(NULL);
+        /* The lockout is persisted; start each round from a fresh token. */
+        cleanup_test_files();
+    }
+    CHECK_RV(rv, "set up failed logins", CKR_OK);
+    CHECK_TRUE(rejected, "concurrent wrong PINs rejected");
+    CHECK_TRUE(locked, what);
+}
+
+static void concurrent_login_lockout_test(void)
+{
+    printf("--- concurrent failed logins lock out the PIN ---\n");
+    lockout_after_concurrent_failures(CKU_USER, userPin,
+                                      WP11_MAX_LOGIN_FAILS_USER,
+                                      "user PIN locked after racing failures");
+    lockout_after_concurrent_failures(CKU_SO, soPin, WP11_MAX_LOGIN_FAILS_SO,
+                                      "SO PIN locked after racing failures");
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -365,6 +493,9 @@ static int run_test(void)
 #endif
 #ifdef LOGIN_TEST_FILE_STORE
     failed_login_leaves_no_token_key_test();
+#endif
+#if !defined(SINGLE_THREADED) && !defined(WOLFPKCS11_NO_TIME)
+    concurrent_login_lockout_test();
 #endif
 
     pkcs11_unload();
