@@ -500,6 +500,101 @@ static void run_in_session(CK_SLOT_ID slot, test_fn fn)
     }
 }
 
+#if !defined(NO_AES) && defined(HAVE_AESGCM)
+static void gcm_params_init(CK_GCM_PARAMS* params, CK_MECHANISM* mech,
+                            byte* iv, byte* aad)
+{
+    XMEMSET(params, 0, sizeof(*params));
+    params->pIv = iv;
+    params->ulIvLen = 12;
+    params->pAAD = aad;
+    params->ulAADLen = 16;
+    params->ulTagBits = 128;
+    mech->mechanism = CKM_AES_GCM;
+    mech->pParameter = params;
+    mech->ulParameterLen = sizeof(*params);
+}
+
+static void check_gcm_params_rejected(CK_SESSION_HANDLE session,
+                                      CK_OBJECT_HANDLE key, CK_MECHANISM* mech)
+{
+    CK_RV rv;
+
+    rv = funcList->C_EncryptInit(session, mech, key);
+    CHECK_RV(rv, "GCM: C_EncryptInit rejects parameter",
+             CKR_MECHANISM_PARAM_INVALID);
+    rv = funcList->C_DecryptInit(session, mech, key);
+    CHECK_RV(rv, "GCM: C_DecryptInit rejects parameter",
+             CKR_MECHANISM_PARAM_INVALID);
+}
+
+/* CK_GCM_PARAMS lengths outside what the token supports are rejected rather
+ * than narrowed. */
+static void test_gcm_param_ranges(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_GCM_PARAMS params;
+    CK_MECHANISM mech;
+    byte iv[12];
+    byte aad[16];
+    byte plain[16];
+    byte enc[32];
+    CK_ULONG encLen;
+    CK_ULONG wrap = ((CK_ULONG)1 << 16) << 16;
+
+    XMEMSET(iv, 0x21, sizeof(iv));
+    XMEMSET(aad, 0x43, sizeof(aad));
+    XMEMSET(plain, 0x65, sizeof(plain));
+
+    rv = create_aes_key(session, aes_128_key, sizeof(aes_128_key), &key);
+    CHECK_RV(rv, "GCM: create AES key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    printf("GCM: tag bits 0xFFFFFFFF\n");
+    gcm_params_init(&params, &mech, iv, aad);
+    params.ulTagBits = 0xFFFFFFFFUL;
+    check_gcm_params_rejected(session, key, &mech);
+
+    printf("GCM: tag bits 0x80000000\n");
+    gcm_params_init(&params, &mech, iv, aad);
+    params.ulTagBits = 0x80000000UL;
+    check_gcm_params_rejected(session, key, &mech);
+
+    printf("GCM: AAD length 0x80000000\n");
+    gcm_params_init(&params, &mech, iv, aad);
+    params.ulAADLen = 0x80000000UL;
+    check_gcm_params_rejected(session, key, &mech);
+
+    if (wrap != 0) {
+        printf("GCM: tag bits 2^32 + 128\n");
+        gcm_params_init(&params, &mech, iv, aad);
+        params.ulTagBits = wrap + 128;
+        check_gcm_params_rejected(session, key, &mech);
+
+        printf("GCM: IV length 2^32 + 12\n");
+        gcm_params_init(&params, &mech, iv, aad);
+        params.ulIvLen = wrap + sizeof(iv);
+        check_gcm_params_rejected(session, key, &mech);
+
+        printf("GCM: AAD length 2^32 + 16\n");
+        gcm_params_init(&params, &mech, iv, aad);
+        params.ulAADLen = wrap + sizeof(aad);
+        check_gcm_params_rejected(session, key, &mech);
+    }
+
+    gcm_params_init(&params, &mech, iv, aad);
+    rv = funcList->C_EncryptInit(session, &mech, key);
+    CHECK_RV(rv, "GCM: C_EncryptInit valid parameters", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    encLen = sizeof(enc);
+    rv = funcList->C_Encrypt(session, plain, sizeof(plain), enc, &encLen);
+    CHECK_RV(rv, "GCM: C_Encrypt valid parameters", CKR_OK);
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -539,6 +634,9 @@ static int run_test(void)
 #endif
 #if !defined(NO_AES) && defined(HAVE_AESECB)
         run_in_session(slot, test_aes_check_value_key_sizes);
+#endif
+#if !defined(NO_AES) && defined(HAVE_AESGCM)
+        run_in_session(slot, test_gcm_param_ranges);
 #endif
     }
 
