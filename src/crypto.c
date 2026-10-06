@@ -9856,6 +9856,12 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                     tlsParams->ulIVSizeInBits  > ((CK_ULONG)0xFFFFFFFF / 2)) {
                     return CKR_MECHANISM_PARAM_INVALID;
                 }
+                /* Each field is extracted separately in whole bytes */
+                if ((tlsParams->ulMacSizeInBits % 8) != 0 ||
+                    (tlsParams->ulKeySizeInBits % 8) != 0 ||
+                    (tlsParams->ulIVSizeInBits % 8) != 0) {
+                    return CKR_MECHANISM_PARAM_INVALID;
+                }
                 /* Check sum won't overflow on 32-bit */
                 if (a > (CK_ULONG)0xFFFFFFFF - b)
                     return CKR_MECHANISM_PARAM_INVALID;
