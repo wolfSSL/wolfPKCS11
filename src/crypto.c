@@ -9655,6 +9655,8 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                 return CKR_MECHANISM_PARAM_INVALID;
             if (params->kdf != CKD_NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
+            if (params->pSharedData != NULL || params->ulSharedDataLen != 0)
+                return CKR_MECHANISM_PARAM_INVALID;
 
             keyLen = (word32)(params->ulPublicDataLen / 2);
             derivedKey = (byte*)XMALLOC(keyLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
