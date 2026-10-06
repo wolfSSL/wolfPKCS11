@@ -20150,7 +20150,10 @@ int WP11_GetOperationState(WP11_Session* session, unsigned char* stateData,
     wc_Hashes* hashAlg;
 #endif
 
-    *stateDataLen = sizeof(session->mechanism);
+    if (session->init == 0)
+        return CKR_OPERATION_NOT_INITIALIZED;
+    if (!WP11_Session_IsOpInitialized(session, WP11_INIT_DIGEST))
+        return CKR_STATE_UNSAVEABLE;
 
     switch (session->mechanism) {
 #ifndef NO_MD5
@@ -20186,7 +20189,7 @@ int WP11_GetOperationState(WP11_Session* session, unsigned char* stateData,
         default:
             return CKR_STATE_UNSAVEABLE;
     }
-    *stateDataLen += mechSize;
+    *stateDataLen = sizeof(session->mechanism) + mechSize;
 
     if (stateData == NULL)
         return CKR_OK;
