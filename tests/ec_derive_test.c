@@ -112,12 +112,26 @@ static CK_RV create_ec_base(CK_SESSION_HANDLE session, CK_BBOOL sensitive,
     return funcList->C_CreateObject(session, tmpl, cnt, obj);
 }
 
+static CK_RV ecdh_derive_tmpl(CK_SESSION_HANDLE session,
+                              CK_OBJECT_HANDLE base,
+                              CK_ECDH1_DERIVE_PARAMS* params,
+                              CK_ATTRIBUTE* tmpl, CK_ULONG cnt,
+                              CK_OBJECT_HANDLE* derived)
+{
+    CK_MECHANISM mech;
+
+    mech.mechanism = CKM_ECDH1_DERIVE;
+    mech.pParameter = params;
+    mech.ulParameterLen = sizeof(*params);
+
+    return funcList->C_DeriveKey(session, &mech, base, tmpl, cnt, derived);
+}
+
 /* ECDH derive of a public, extractable generic secret. */
 static CK_RV ecdh_derive(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE base,
                          CK_ECDH1_DERIVE_PARAMS* params,
                          CK_OBJECT_HANDLE* derived)
 {
-    CK_MECHANISM mech;
     CK_ATTRIBUTE tmpl[] = {
         { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
         { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
@@ -128,11 +142,7 @@ static CK_RV ecdh_derive(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE base,
     };
     CK_ULONG cnt = sizeof(tmpl) / sizeof(*tmpl);
 
-    mech.mechanism = CKM_ECDH1_DERIVE;
-    mech.pParameter = params;
-    mech.ulParameterLen = sizeof(*params);
-
-    return funcList->C_DeriveKey(session, &mech, base, tmpl, cnt, derived);
+    return ecdh_derive_tmpl(session, base, params, tmpl, cnt, derived);
 }
 
 static void ecdh_params_init(CK_ECDH1_DERIVE_PARAMS* params, byte* point,
@@ -531,6 +541,75 @@ cleanup:
     return result;
 }
 #endif /* EC_DERIVE_THREAD_TEST */
+
+/* Deriving a private key object requires a user login. */
+static int test_private_derive_requires_login(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    CK_ECDH1_DERIVE_PARAMS params;
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_PRIVATE,     &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VALUE_LEN,   &secretLen,      sizeof(secretLen)      },
+    };
+#ifndef WOLFPKCS11_LEGACY_PRIVATE_FALSE_DEFAULT
+    CK_ATTRIBUTE defTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_VALUE_LEN,   &secretLen,      sizeof(secretLen)      },
+    };
+#endif
+    int loggedOut = 0;
+    int result = 0;
+
+    ret = funcList->C_Logout(session);
+    CHECK_CKR(ret, "C_Logout");
+    loggedOut = 1;
+
+    ret = create_ec_base(session, CK_FALSE, CK_TRUE, &base);
+    CHECK_CKR(ret, "create public EC base key without login");
+
+    ecdh_params_init(&params, ecc_p256_point, sizeof(ecc_p256_point));
+    ret = ecdh_derive(session, base, &params, &derived);
+    CHECK_CKR(ret, "derive public key without login");
+    funcList->C_DestroyObject(session, derived);
+    derived = CK_INVALID_HANDLE;
+
+    ret = ecdh_derive_tmpl(session, base, &params, privTmpl,
+                           sizeof(privTmpl) / sizeof(*privTmpl), &derived);
+    CHECK_RV(ret, CKR_USER_NOT_LOGGED_IN,
+             "derive private key without login rejected");
+
+#ifndef WOLFPKCS11_LEGACY_PRIVATE_FALSE_DEFAULT
+    ret = ecdh_derive_tmpl(session, base, &params, defTmpl,
+                           sizeof(defTmpl) / sizeof(*defTmpl), &derived);
+    CHECK_RV(ret, CKR_USER_NOT_LOGGED_IN,
+             "derive default-private secret key without login rejected");
+#endif
+
+    ret = funcList->C_Login(session, CKU_USER, userPin, userPinLen);
+    CHECK_CKR(ret, "C_Login");
+    loggedOut = 0;
+
+    ret = ecdh_derive_tmpl(session, base, &params, privTmpl,
+                           sizeof(privTmpl) / sizeof(*privTmpl), &derived);
+    CHECK_CKR(ret, "derive private key after login");
+
+cleanup:
+    if (derived != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, derived);
+    if (base != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, base);
+    if (loggedOut &&
+            funcList->C_Login(session, CKU_USER, userPin, userPinLen) !=
+            CKR_OK) {
+        result = -1;
+    }
+    return result;
+}
 #endif /* HAVE_ECC */
 
 static CK_RV pkcs11_init(void)
@@ -654,6 +733,8 @@ static int ec_derive_test(void)
     if (test_concurrent_derive_same_key(session) != 0)
         result = -1;
 #endif
+    if (test_private_derive_requires_login(session) != 0)
+        result = -1;
 #else
     printf("ECC not available, skipping ECDH derive tests\n");
     test_skipped = 1;
