@@ -243,6 +243,63 @@ static void test_oaep_source_ptr_len(CK_SESSION_HANDLE session)
 }
 #endif
 
+#if !defined(NO_AES) && defined(HAVE_AESCCM)
+static void ccm_params_init(CK_CCM_PARAMS* params, CK_MECHANISM* mech,
+                            byte* iv, CK_ULONG ivLen)
+{
+    XMEMSET(params, 0, sizeof(*params));
+    params->pIv = iv;
+    params->ulIvLen = ivLen;
+    params->ulMacLen = 16;
+    mech->mechanism = CKM_AES_CCM;
+    mech->pParameter = params;
+    mech->ulParameterLen = sizeof(*params);
+}
+
+/* CCM nonces must be 7 to 13 bytes long (NIST SP 800-38C). */
+static void test_ccm_nonce_len(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_CCM_PARAMS params;
+    CK_MECHANISM mech;
+    byte iv[16];
+    byte plain[16];
+    byte enc[32];
+    CK_ULONG encLen;
+    static const CK_ULONG badLens[] = { 1, 6, 14, 16 };
+    int i;
+
+    XMEMSET(iv, 0x44, sizeof(iv));
+    XMEMSET(plain, 0x55, sizeof(plain));
+
+    rv = create_aes_key(session, aes_128_key, sizeof(aes_128_key), &key);
+    CHECK_RV(rv, "CCM: create AES key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    for (i = 0; i < (int)(sizeof(badLens) / sizeof(*badLens)); i++) {
+        ccm_params_init(&params, &mech, iv, badLens[i]);
+        printf("CCM: nonce length %lu\n", (unsigned long)badLens[i]);
+        rv = funcList->C_EncryptInit(session, &mech, key);
+        CHECK_RV(rv, "CCM: C_EncryptInit rejects nonce length",
+                 CKR_MECHANISM_PARAM_INVALID);
+        rv = funcList->C_DecryptInit(session, &mech, key);
+        CHECK_RV(rv, "CCM: C_DecryptInit rejects nonce length",
+                 CKR_MECHANISM_PARAM_INVALID);
+    }
+
+    ccm_params_init(&params, &mech, iv, 7);
+    rv = funcList->C_EncryptInit(session, &mech, key);
+    CHECK_RV(rv, "CCM: C_EncryptInit nonce length 7", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    encLen = sizeof(enc);
+    rv = funcList->C_Encrypt(session, plain, sizeof(plain), enc, &encLen);
+    CHECK_RV(rv, "CCM: C_Encrypt nonce length 7", CKR_OK);
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -261,6 +318,9 @@ static int run_test(void)
 #endif
 #if !defined(NO_RSA) && !defined(WC_NO_RSA_OAEP)
         test_oaep_source_ptr_len(session);
+#endif
+#if !defined(NO_AES) && defined(HAVE_AESCCM)
+        test_ccm_nonce_len(session);
 #endif
     }
 
