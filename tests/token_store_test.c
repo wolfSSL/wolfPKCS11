@@ -641,6 +641,79 @@ static void test_init_retry_after_load_failure(void)
     }
 }
 
+/* Destroying a token object reports stored data that cannot be removed. */
+static void test_destroy_reports_unstore_failure(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE first;
+    CK_OBJECT_HANDLE second;
+    char keyPath[512];
+    char innerPath[600];
+    int blocked = 0;
+
+    printf("\n--- destroy reports stored data that cannot be removed ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "destroy-first", &first);
+        CHECK_RV(rv, "create first token object", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "destroy-second", &second);
+        CHECK_RV(rv, "create second token object", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        snprintf(keyPath, sizeof(keyPath), "%s/wp11_symmkey_%016lx_%016lx",
+                 TEST_DIR, (unsigned long)slot, 1UL);
+        snprintf(innerPath, sizeof(innerPath), "%s/keep", keyPath);
+        blocked = remove(keyPath) == 0 && mkdir(keyPath, 0700) == 0 &&
+                  write_store_file(innerPath, keyData, sizeof(keyData)) == 0;
+        CHECK_TRUE(blocked, "make the stored key data unremovable");
+    }
+    if (blocked) {
+        rv = funcList->C_DestroyObject(session, second);
+        CHECK_TRUE(rv != CKR_OK,
+                   "destroy reports stored data that was not removed");
+        CHECK_TRUE(count_label(session, "destroy-first") == 1,
+                   "other token object is still present");
+        (void)remove(innerPath);
+        (void)rmdir(keyPath);
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+/* A token object never written to storage can still be destroyed. */
+static void test_destroy_unstored_object(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+
+    printf("\n--- destroy of an object created while paused ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        XSETENV("WOLFPKCS11_NO_STORE", "1", 1);
+        rv = create_token_secret(session, "paused-destroy", &obj);
+        unsetenv("WOLFPKCS11_NO_STORE");
+        CHECK_RV(rv, "create token object while storage is paused", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_DestroyObject(session, obj);
+        CHECK_RV(rv, "destroy the never stored object", CKR_OK);
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
 #ifdef TEST_ALLOC_FAILURE
 /* Object creation fails cleanly when memory cannot be allocated. */
 static void test_create_object_out_of_memory(void)
@@ -693,6 +766,8 @@ static int run_tests(void)
     test_token_reset_store_failure();
     test_finalize_reports_store_failure();
     test_init_retry_after_load_failure();
+    test_destroy_reports_unstore_failure();
+    test_destroy_unstored_object();
 #ifdef TEST_ALLOC_FAILURE
     test_create_object_out_of_memory();
 #endif
