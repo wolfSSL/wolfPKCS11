@@ -8434,12 +8434,6 @@ static int wp11_Token_StorePass(WP11_Token* token, int tokenId)
             printf("Failed to store object %d, token %d, ret: %d\n",
                 i, tokenId, ret);
         #endif
-            token->objCnt = i; /* mark number of objects actually stored */
-        #ifdef WOLFPKCS11_TPM_STORE
-            if ((ret & RC_MAX_FM0) == TPM_RC_NV_SPACE) {
-                ret = 0; /* allow this error and continue */
-            }
-        #endif
             break;
         }
         object = object->next;
@@ -11652,6 +11646,11 @@ int WP11_Session_AddObject(WP11_Session* session, int onToken,
                 object->handle = CK_INVALID_HANDLE;
                 object->next = NULL;
                 object->lock = NULL;
+            #ifdef WOLFPKCS11_TPM_STORE
+                /* Best effort: the failed store may have recreated the token
+                 * NV index empty. The original error is returned. */
+                (void)wp11_Slot_Store(session->slot, (int)session->slotId);
+            #endif
             }
         }
     #endif

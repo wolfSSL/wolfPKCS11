@@ -9975,6 +9975,8 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                 if (ret == 0) {
                     rv = AddObject(session, obj, pTemplate,
                                     ulAttributeCount, phKey);
+                    if (rv != CKR_OK)
+                        WP11_Object_Free(obj);
                 }
             }
             else {
