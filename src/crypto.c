@@ -3803,7 +3803,7 @@ static CK_RV wp11_C_EncryptFinal(CK_SESSION_HANDLE hSession,
                 *pulLastEncryptedPartLen = encPartLen;
                 return CKR_OK;
             }
-            if (encPartLen > (word32)*pulLastEncryptedPartLen)
+            if ((CK_ULONG)encPartLen > *pulLastEncryptedPartLen)
                 return CKR_BUFFER_TOO_SMALL;
 
             ret = WP11_AesCbcPad_EncryptFinal(pLastEncryptedPart, &encPartLen,
@@ -3843,7 +3843,7 @@ static CK_RV wp11_C_EncryptFinal(CK_SESSION_HANDLE hSession,
                 *pulLastEncryptedPartLen = encPartLen;
                 return CKR_OK;
             }
-            if (encPartLen > (word32)*pulLastEncryptedPartLen)
+            if ((CK_ULONG)encPartLen > *pulLastEncryptedPartLen)
                 return CKR_BUFFER_TOO_SMALL;
 
             ret = WP11_AesGcm_EncryptFinal(pLastEncryptedPart, &encPartLen,
@@ -3865,7 +3865,12 @@ static CK_RV wp11_C_EncryptFinal(CK_SESSION_HANDLE hSession,
                 return CKR_OK;
             }
 
-            encPartLen = (word32)*pulLastEncryptedPartLen;
+            /* The final output is at most two blocks; cap the capacity to
+             * avoid truncating a large CK_ULONG. */
+            encPartLen = (*pulLastEncryptedPartLen <
+                          (CK_ULONG)(AES_BLOCK_SIZE * 2)) ?
+                         (word32)*pulLastEncryptedPartLen :
+                         (word32)(AES_BLOCK_SIZE * 2);
             ret = WP11_AesCts_EncryptFinal(pLastEncryptedPart, &encPartLen,
                                            session);
             if (ret == BUFFER_E)
