@@ -595,6 +595,56 @@ static void tls_mac_verify_session_close_test(CK_SLOT_ID slot)
 }
 #endif
 
+#if !defined(NO_HMAC) && !defined(NO_SHA256)
+static CK_OBJECT_CLASS hmacKeyClass = CKO_SECRET_KEY;
+static CK_KEY_TYPE hmacKeyType = CKK_GENERIC_SECRET;
+
+/* The HMAC output length parameter is compared as the full CK_ULONG value. */
+static void hmac_len_param_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_ULONG digestLen = 32;
+    CK_MECHANISM mech = { CKM_SHA256_HMAC, &digestLen, sizeof(digestLen) };
+    byte keyData[32];
+    byte data[16];
+    byte mac[32];
+    CK_ULONG macLen = sizeof(mac);
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,    &hmacKeyClass, sizeof(hmacKeyClass) },
+        { CKA_KEY_TYPE, &hmacKeyType,  sizeof(hmacKeyType)  },
+        { CKA_SIGN,     &ckTrue,       sizeof(ckTrue)       },
+        { CKA_PRIVATE,  &ckFalse,      sizeof(ckFalse)      },
+        { CKA_VALUE,    keyData,       sizeof(keyData)      },
+    };
+
+    XMEMSET(keyData, 0x0b, sizeof(keyData));
+    XMEMSET(data, 0x61, sizeof(data));
+    rv = funcList->C_CreateObject(session, keyTmpl,
+                                  sizeof(keyTmpl) / sizeof(*keyTmpl), &key);
+    CHECK_RV(rv, "create HMAC key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_SignInit(session, &mech, key);
+    CHECK_RV(rv, "C_SignInit(SHA256 HMAC, matching length)", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_Sign(session, data, sizeof(data), mac, &macLen);
+        CHECK_RV(rv, "C_Sign(SHA256 HMAC)", CKR_OK);
+    }
+
+    if (sizeof(CK_ULONG) > sizeof(word32)) {
+        /* Out of range, but equal to the digest size in the low 32 bits. */
+        digestLen |= ((CK_ULONG)1 << 16) << 16;
+        rv = funcList->C_SignInit(session, &mech, key);
+        CHECK_RV(rv, "C_SignInit(SHA256 HMAC, length above 32 bits)",
+                 CKR_MECHANISM_PARAM_INVALID);
+    }
+
+    funcList->C_DestroyObject(session, key);
+}
+#endif
+
 #ifdef HAVE_ECC
 static CK_OBJECT_CLASS ecPubClass = CKO_PUBLIC_KEY;
 static CK_KEY_TYPE ecKeyType = CKK_EC;
@@ -735,6 +785,9 @@ static int run_test(void)
 #endif
 #ifdef HAVE_ECC
         ecdsa_sig_len_test(session);
+#endif
+#if !defined(NO_HMAC) && !defined(NO_SHA256)
+        hmac_len_param_test(session);
 #endif
     }
 

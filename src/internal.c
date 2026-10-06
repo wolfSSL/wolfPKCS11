@@ -20225,7 +20225,7 @@ int WP11_Hmac_Init(CK_MECHANISM_TYPE mechanism, WP11_Object* secret,
 
     ret = wp11_hmac_hash_type(mechanism, &hashType);
     if (ret == 0 && digestSize != 0 &&
-            (word32)wc_HmacSizeByType(hashType) != (word32)digestSize)
+            (CK_ULONG)wc_HmacSizeByType(hashType) != digestSize)
         ret = BAD_FUNC_ARG;
     if (ret == 0) {
         WP11_Session_AbortOp(session);
