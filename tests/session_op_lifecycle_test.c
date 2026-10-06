@@ -694,6 +694,197 @@ out:
 }
 #endif
 
+#if !defined(NO_AES) && (defined(HAVE_AESGCM) || defined(HAVE_AESECB) || \
+    defined(HAVE_AESCCM))
+/* Destroying a key must end the operations that still read it, while
+ * operations that copied the key at Init time may finish. */
+static void test_destroyed_key_ends_dependent_operation(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE aesKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE macKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE tmpKey = CK_INVALID_HANDLE;
+#ifdef HAVE_AESGCM
+    CK_GCM_PARAMS gcmParams;
+    CK_MECHANISM gcmMech = { CKM_AES_GCM, &gcmParams, sizeof(gcmParams) };
+#endif
+#ifdef HAVE_AESECB
+    CK_MECHANISM ecbMech = { CKM_AES_ECB, NULL, 0 };
+#endif
+#ifdef HAVE_AESCCM
+    CK_CCM_PARAMS ccmParams;
+    CK_MECHANISM ccmMech = { CKM_AES_CCM, &ccmParams, sizeof(ccmParams) };
+#endif
+#ifdef HAVE_AES_CBC
+    byte iv[16] = { 0 };
+    CK_MECHANISM cbcMech = { CKM_AES_CBC, NULL, 0 };
+#endif
+    byte out[64];
+    CK_ULONG outLen;
+    CK_SLOT_ID slot;
+
+    printf("\n--- destroying a key ends operations that read it ---\n");
+#ifdef HAVE_AESGCM
+    XMEMSET(&gcmParams, 0, sizeof(gcmParams));
+    gcmParams.pIv = gcmIv;
+    gcmParams.ulIvLen = sizeof(gcmIv);
+    gcmParams.ulIvBits = sizeof(gcmIv) * 8;
+    gcmParams.ulTagBits = 128;
+#endif
+#ifdef HAVE_AESCCM
+    XMEMSET(&ccmParams, 0, sizeof(ccmParams));
+    ccmParams.ulDataLen = 16;
+    ccmParams.pIv = gcmIv;
+    ccmParams.ulIvLen = sizeof(gcmIv);
+    ccmParams.pAAD = gcmAad;
+    ccmParams.ulAADLen = sizeof(gcmAad);
+    ccmParams.ulMacLen = 16;
+#endif
+#ifdef HAVE_AES_CBC
+    cbcMech.pParameter = iv;
+    cbcMech.ulParameterLen = sizeof(iv);
+#endif
+
+    rv = init_library(&slot);
+    if (rv == CKR_OK)
+        rv = open_with_keys(slot, &session, &aesKey, &macKey);
+    CHECK_RV(rv, "open session with keys", CKR_OK);
+    if (rv != CKR_OK)
+        goto out;
+
+#ifdef HAVE_AESGCM
+    rv = create_secret(session, &aesType, aesKeyValue, sizeof(aesKeyValue),
+                       &tmpKey);
+    CHECK_RV(rv, "C_CreateObject(AES)", CKR_OK);
+    rv = funcList->C_EncryptInit(session, &gcmMech, tmpKey);
+    CHECK_RV(rv, "C_EncryptInit(AES-GCM)", CKR_OK);
+    rv = funcList->C_DestroyObject(session, tmpKey);
+    CHECK_RV(rv, "C_DestroyObject(active AES-GCM key)", CKR_OK);
+    outLen = sizeof(out);
+    rv = funcList->C_Encrypt(session, plainMarker, 16, out, &outLen);
+    CHECK_RV(rv, "C_Encrypt(AES-GCM) after key destroyed",
+             CKR_OPERATION_NOT_INITIALIZED);
+    rv = funcList->C_EncryptInit(session, &gcmMech, aesKey);
+    CHECK_RV(rv, "C_EncryptInit(AES-GCM) with another key", CKR_OK);
+    outLen = sizeof(out);
+    rv = funcList->C_Encrypt(session, plainMarker, 16, out, &outLen);
+    CHECK_RV(rv, "C_Encrypt(AES-GCM) with another key", CKR_OK);
+#endif
+#ifdef HAVE_AESCCM
+    rv = create_secret(session, &aesType, aesKeyValue, sizeof(aesKeyValue),
+                       &tmpKey);
+    CHECK_RV(rv, "C_CreateObject(AES)", CKR_OK);
+    rv = funcList->C_EncryptInit(session, &ccmMech, tmpKey);
+    CHECK_RV(rv, "C_EncryptInit(AES-CCM)", CKR_OK);
+    rv = funcList->C_DestroyObject(session, tmpKey);
+    CHECK_RV(rv, "C_DestroyObject(active AES-CCM key)", CKR_OK);
+    outLen = sizeof(out);
+    rv = funcList->C_Encrypt(session, plainMarker, 16, out, &outLen);
+    CHECK_RV(rv, "C_Encrypt(AES-CCM) after key destroyed",
+             CKR_OPERATION_NOT_INITIALIZED);
+    rv = funcList->C_EncryptInit(session, &ccmMech, aesKey);
+    CHECK_RV(rv, "C_EncryptInit(AES-CCM) with another key", CKR_OK);
+    outLen = sizeof(out);
+    rv = funcList->C_Encrypt(session, plainMarker, 16, out, &outLen);
+    CHECK_RV(rv, "C_Encrypt(AES-CCM) with another key", CKR_OK);
+#endif
+#ifdef HAVE_AESECB
+    rv = create_secret(session, &aesType, aesKeyValue, sizeof(aesKeyValue),
+                       &tmpKey);
+    CHECK_RV(rv, "C_CreateObject(AES)", CKR_OK);
+    rv = funcList->C_DecryptInit(session, &ecbMech, tmpKey);
+    CHECK_RV(rv, "C_DecryptInit(AES-ECB)", CKR_OK);
+    rv = funcList->C_DestroyObject(session, tmpKey);
+    CHECK_RV(rv, "C_DestroyObject(active AES-ECB key)", CKR_OK);
+    outLen = sizeof(out);
+    rv = funcList->C_Decrypt(session, plainMarker, 16, out, &outLen);
+    CHECK_RV(rv, "C_Decrypt(AES-ECB) after key destroyed",
+             CKR_OPERATION_NOT_INITIALIZED);
+#endif
+#ifdef HAVE_AES_CBC
+    rv = create_secret(session, &aesType, aesKeyValue, sizeof(aesKeyValue),
+                       &tmpKey);
+    CHECK_RV(rv, "C_CreateObject(AES)", CKR_OK);
+    rv = funcList->C_EncryptInit(session, &cbcMech, tmpKey);
+    CHECK_RV(rv, "C_EncryptInit(AES-CBC)", CKR_OK);
+    rv = funcList->C_DestroyObject(session, tmpKey);
+    CHECK_RV(rv, "C_DestroyObject(active AES-CBC key)", CKR_OK);
+    outLen = sizeof(out);
+    rv = funcList->C_Encrypt(session, plainMarker, 16, out, &outLen);
+    CHECK_RV(rv, "C_Encrypt(AES-CBC) with key copied at Init", CKR_OK);
+#endif
+
+out:
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
+#if defined(TRACK_ALLOCS) && !defined(NO_AES) && defined(HAVE_AESGCM) && \
+    !defined(WOLFSSL_AESGCM_STREAM)
+/* Destroying the key of a multi-part AES-GCM operation must release the
+ * plaintext it buffered once the operation is next used. */
+static void test_destroyed_gcm_key_releases_input(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE aesKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE macKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE tmpKey = CK_INVALID_HANDLE;
+    CK_GCM_PARAMS gcmParams;
+    CK_MECHANISM gcmMech = { CKM_AES_GCM, &gcmParams, sizeof(gcmParams) };
+    byte out[64];
+    CK_ULONG outLen;
+    CK_SLOT_ID slot;
+    long before;
+    int hit;
+
+    printf("\n--- destroying an AES-GCM key releases buffered input ---\n");
+    XMEMSET(&gcmParams, 0, sizeof(gcmParams));
+    gcmParams.pIv = gcmIv;
+    gcmParams.ulIvLen = sizeof(gcmIv);
+    gcmParams.ulIvBits = sizeof(gcmIv) * 8;
+    gcmParams.ulTagBits = 128;
+
+    rv = init_library(&slot);
+    if (rv == CKR_OK)
+        rv = open_with_keys(slot, &session, &aesKey, &macKey);
+    if (rv == CKR_OK) {
+        rv = create_secret(session, &aesType, aesKeyValue, sizeof(aesKeyValue),
+                           &tmpKey);
+    }
+    if (rv == CKR_OK)
+        rv = funcList->C_EncryptInit(session, &gcmMech, tmpKey);
+    if (rv == CKR_OK) {
+        outLen = sizeof(out);
+        rv = funcList->C_EncryptUpdate(session, plainMarker,
+                                       sizeof(plainMarker), out, &outLen);
+    }
+    if (rv == CKR_OK)
+        rv = funcList->C_DestroyObject(session, tmpKey);
+    CHECK_RV(rv, "buffer AES-GCM input and destroy its key", CKR_OK);
+    if (rv != CKR_OK)
+        goto out;
+
+    before = liveBlocks;
+    watch_start(plainMarker, sizeof(plainMarker));
+    outLen = sizeof(out);
+    rv = funcList->C_EncryptFinal(session, out, &outLen);
+    hit = watch_stop();
+    CHECK_RV(rv, "C_EncryptFinal(AES-GCM) after key destroyed",
+             CKR_OPERATION_NOT_INITIALIZED);
+    CHECK_TRUE(liveBlocks < before, "buffered AES-GCM input is released");
+    CHECK_TRUE(!hit, "buffered AES-GCM input is scrubbed");
+
+out:
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -726,6 +917,14 @@ static int run_test(void)
 #endif
 #if !defined(NO_AES) && defined(HAVE_AES_CBC)
     test_failed_key_setup_keeps_session_usable();
+#endif
+#if !defined(NO_AES) && (defined(HAVE_AESGCM) || defined(HAVE_AESECB) || \
+    defined(HAVE_AESCCM))
+    test_destroyed_key_ends_dependent_operation();
+#endif
+#if defined(TRACK_ALLOCS) && !defined(NO_AES) && defined(HAVE_AESGCM) && \
+    !defined(WOLFSSL_AESGCM_STREAM)
+    test_destroyed_gcm_key_releases_input();
 #endif
 
     pkcs11_unload();

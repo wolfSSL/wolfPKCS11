@@ -10664,6 +10664,20 @@ static int wp11_init_get_op_category(int init)
 }
 
 /**
+ * Return whether the mechanism reads the key object each time data is
+ * processed rather than copying the key at initialization.
+ *
+ * @param  mechanism  [in]  Mechanism of the operation.
+ * @return  1 when the key object is read during the operation.
+ *          0 otherwise.
+ */
+static int wp11_mech_reads_key(CK_MECHANISM_TYPE mechanism)
+{
+    return mechanism == CKM_AES_GCM || mechanism == CKM_AES_CCM ||
+           mechanism == CKM_AES_ECB;
+}
+
+/**
  * Check whether the session has an active operation of the given category.
  * Per PKCS#11 spec, only operations of the same type block re-initialization.
  *
@@ -10677,6 +10691,9 @@ int WP11_Session_IsOpCategoryActive(WP11_Session* session, int opCategory)
     int currentInit;
 
     if (session->init == 0)
+        return 0;
+    /* The key of this operation was destroyed so it can no longer run. */
+    if (session->curr == NULL && wp11_mech_reads_key(session->mechanism))
         return 0;
 
     currentInit = session->init & ~WP11_INIT_DIGEST_MASK;
@@ -11843,7 +11860,9 @@ void WP11_Session_RemoveObject(WP11_Session* session, WP11_Object* object)
  * operation context during their *Init and run to completion without referring
  * to the object again, so a caller may legitimately destroy the key before
  * finishing the operation (wolfCrypt's PKCS#11 layer does exactly this for
- * multi-part HMAC). Those operations are left untouched.
+ * multi-part HMAC). Those operations are left untouched. AES-GCM, AES-CCM and
+ * AES-ECB read the key object when data is processed, so only their reference
+ * is dropped; the owning session releases the operation state itself.
  *
  * Asymmetric operations dereference the key object while running, so for those
  * key types drop the active reference in every session that holds it and reset
@@ -11856,18 +11875,22 @@ void WP11_Slot_ClearActiveObject(WP11_Slot* slot, WP11_Object* object)
 {
     WP11_Session* curr;
     CK_KEY_TYPE keyType;
+    int symmetric;
 
     if (slot == NULL || object == NULL)
         return;
 
     keyType = WP11_Object_GetType(object);
-    if (keyType == CKK_AES || keyType == CKK_GENERIC_SECRET ||
-            keyType == CKK_HKDF)
-        return;
+    symmetric = (keyType == CKK_AES || keyType == CKK_GENERIC_SECRET ||
+                 keyType == CKK_HKDF);
 
     WP11_Lock_LockRW(&slot->lock);
     for (curr = slot->session; curr != NULL; curr = curr->next) {
-        if (curr->curr == object) {
+        if (curr->curr == object && symmetric) {
+            if (wp11_mech_reads_key(curr->mechanism))
+                curr->curr = NULL;
+        }
+        else if (curr->curr == object) {
 #if !defined(NO_RSA) && !defined(WC_NO_RSA_OAEP)
             /* Release the operation-owned RSA-OAEP label before dropping the
              * operation state. Otherwise a later init for a different mechanism
@@ -11895,6 +11918,11 @@ void WP11_Slot_ClearActiveObject(WP11_Slot* slot, WP11_Object* object)
  */
 void WP11_Session_GetObject(WP11_Session* session, WP11_Object** object)
 {
+    /* The key was destroyed: release the state its operation still holds. */
+    if (session->curr == NULL && wp11_mech_reads_key(session->mechanism) &&
+            (session->init & ~WP11_INIT_DIGEST_MASK) != 0) {
+        WP11_Session_AbortOp(session);
+    }
     *object = session->curr;
 }
 
