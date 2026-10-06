@@ -743,6 +743,118 @@ cleanup:
 }
 #endif
 
+#ifdef WOLFSSL_HAVE_PRF
+static CK_RV read_states(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE obj,
+                         CK_BBOOL* alwaysSensitive, CK_BBOOL* neverExtractable)
+{
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_ALWAYS_SENSITIVE,  alwaysSensitive,  sizeof(CK_BBOOL) },
+        { CKA_NEVER_EXTRACTABLE, neverExtractable, sizeof(CK_BBOOL) },
+    };
+
+    return funcList->C_GetAttributeValue(session, obj, tmpl,
+                                         sizeof(tmpl) / sizeof(*tmpl));
+}
+
+/* All four TLS keys must report exactly the expected historical flags. */
+static CK_RV check_key_mat_states(CK_SESSION_HANDLE session,
+                                  CK_SSL3_KEY_MAT_OUT* out, CK_BBOOL expected)
+{
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE keys[4];
+    CK_BBOOL alwaysSensitive;
+    CK_BBOOL neverExtractable;
+    int i;
+
+    keys[0] = out->hClientMacSecret;
+    keys[1] = out->hServerMacSecret;
+    keys[2] = out->hClientKey;
+    keys[3] = out->hServerKey;
+    for (i = 0; i < 4 && ret == CKR_OK; i++) {
+        alwaysSensitive = !expected;
+        neverExtractable = !expected;
+        ret = read_states(session, keys[i], &alwaysSensitive,
+                          &neverExtractable);
+        if (ret == CKR_OK && (alwaysSensitive != expected ||
+                              neverExtractable != expected)) {
+            fprintf(stderr, "TLS key %d: ALWAYS_SENSITIVE=%d "
+                    "NEVER_EXTRACTABLE=%d, expected %d\n", i,
+                    (int)alwaysSensitive, (int)neverExtractable,
+                    (int)expected);
+            ret = CKR_GENERAL_ERROR;
+        }
+    }
+    return ret;
+}
+
+/* TLS key material keys carry the derive historical protection flags. */
+static int test_tls_key_states_follow_base(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_TLS12_KEY_MAT_PARAMS params;
+    CK_SSL3_KEY_MAT_OUT out;
+    CK_MECHANISM genMech = { CKM_GENERIC_SECRET_KEY_GEN, NULL, 0 };
+    CK_ULONG masterLen = 48;
+    byte master[48];
+    CK_ATTRIBUTE genTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckTrue,         sizeof(ckTrue)         },
+        { CKA_EXTRACTABLE, &ckFalse,        sizeof(ckFalse)        },
+        { CKA_DERIVE,      &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VALUE_LEN,   &masterLen,      sizeof(masterLen)      },
+    };
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckTrue,         sizeof(ckTrue)         },
+        { CKA_EXTRACTABLE, &ckFalse,        sizeof(ckFalse)        },
+    };
+    CK_ATTRIBUTE importTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckTrue,         sizeof(ckTrue)         },
+        { CKA_EXTRACTABLE, &ckFalse,        sizeof(ckFalse)        },
+        { CKA_DERIVE,      &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VALUE,       master,          sizeof(master)         },
+    };
+    int result = 0;
+
+    tls_key_mat_init(&params, &out, 256, 128, 0);
+    ret = funcList->C_GenerateKey(session, &genMech, genTmpl,
+                                  sizeof(genTmpl) / sizeof(*genTmpl), &base);
+    CHECK_CKR(ret, "generate TLS master secret");
+    ret = tls_key_mat_derive(session, base, &params, keyTmpl,
+                             sizeof(keyTmpl) / sizeof(*keyTmpl));
+    CHECK_CKR(ret, "TLS key and MAC derive from generated secret");
+    ret = check_key_mat_states(session, &out, CK_TRUE);
+    CHECK_CKR(ret, "TLS keys from generated secret keep history");
+    destroy_key_mat(session, &out);
+    destroy_obj(session, &base);
+
+    XMEMSET(master, 0x5c, sizeof(master));
+    ret = funcList->C_CreateObject(session, importTmpl,
+                                   sizeof(importTmpl) / sizeof(*importTmpl),
+                                   &base);
+    CHECK_CKR(ret, "import TLS master secret");
+    tls_key_mat_init(&params, &out, 256, 128, 0);
+    ret = tls_key_mat_derive(session, base, &params, keyTmpl,
+                             sizeof(keyTmpl) / sizeof(*keyTmpl));
+    CHECK_CKR(ret, "TLS key and MAC derive from imported secret");
+    ret = check_key_mat_states(session, &out, CK_FALSE);
+    CHECK_CKR(ret, "TLS keys from imported secret have no history");
+
+cleanup:
+    destroy_key_mat(session, &out);
+    destroy_obj(session, &base);
+    return result;
+}
+#endif
+
 static CK_RV pkcs11_init(void)
 {
     CK_RV ret;
@@ -885,6 +997,10 @@ static int kdf_tls_derive_test(void)
 #endif
 #ifdef WOLFSSL_HAVE_PRF
     if (test_tls_master_version_param(session) != 0)
+        result = -1;
+#endif
+#ifdef WOLFSSL_HAVE_PRF
+    if (test_tls_key_states_follow_base(session) != 0)
         result = -1;
 #endif
 #if defined(WOLFSSL_HAVE_PRF) && defined(WOLFPKCS11_NSS)
