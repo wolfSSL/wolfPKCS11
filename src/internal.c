@@ -1219,6 +1219,12 @@ static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
         case WOLFPKCS11_STORE_DHKEY_PUB:
         case WOLFPKCS11_STORE_CERT:
         case WOLFPKCS11_STORE_TRUST:
+        case WOLFPKCS11_STORE_MLDSAKEY_PRIV:
+        case WOLFPKCS11_STORE_MLDSAKEY_PUB:
+        case WOLFPKCS11_STORE_MLKEMKEY_PRIV:
+        case WOLFPKCS11_STORE_MLKEMKEY_PUB:
+        case WOLFPKCS11_STORE_HSSKEY_PUB:
+        case WOLFPKCS11_STORE_XMSSKEY_PUB:
             maxSz = sizeof(word32) + variableSz;
             break;
 
@@ -1234,9 +1240,9 @@ static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
 #ifdef WOLFPKCS11_TPM_STORE
 static word32 wolfPKCS11_Store_Handle(int type, CK_ULONG id1, CK_ULONG id2)
 {
-    /* Build unique handle */
+    /* Build unique handle. Store types run past 0x0F, so use five bits. */
     word32 nvIndex = WOLFPKCS11_TPM_NV_BASE +
-        ((type & 0x0F) << 16) +
+        ((type & 0x1F) << 16) +
             (((word32)id1 & 0xFF) << 8) +
              ((word32)id2 & 0xFF);
     return nvIndex;
