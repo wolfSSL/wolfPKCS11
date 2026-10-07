@@ -20897,6 +20897,7 @@ int WP11_Digest_Final(unsigned char* data, word32* dataLen,
     }
 
     if (*dataLen < (word32)blockLen) {
+        *dataLen = (word32)blockLen;
         return BUFFER_E;
     }
 
