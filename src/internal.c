@@ -21141,6 +21141,7 @@ int WP11_Hmac_Verify(unsigned char* sig, word32 sigLen, unsigned char* data,
         ret = WP11_Hmac_Sign(data, dataLen, genSig, &genSigLen, session);
     if (ret == 0)
         *stat = genSigLen == sigLen && WP11_ConstantCompare(sig, genSig, sigLen);
+    wc_ForceZero(genSig, sizeof(genSig));
 
     return ret;
 }
@@ -21212,6 +21213,7 @@ int WP11_Hmac_VerifyFinal(unsigned char* sig, word32 sigLen, int* stat,
     ret = WP11_Hmac_SignFinal(genSig, &genSigLen, session);
     if (ret == 0)
         *stat = genSigLen == sigLen && WP11_ConstantCompare(sig, genSig, sigLen);
+    wc_ForceZero(genSig, sizeof(genSig));
 
     return ret;
 }
