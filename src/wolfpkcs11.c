@@ -666,6 +666,9 @@ CK_RV C_GetInfo(CK_INFO_PTR pInfo)
     }
 
     XMEMCPY(pInfo, &wolfpkcs11Info, sizeof(wolfpkcs11Info));
+    WP11_BlankPad(pInfo->manufacturerID, sizeof(pInfo->manufacturerID));
+    WP11_BlankPad(pInfo->libraryDescription,
+                  sizeof(pInfo->libraryDescription));
     ret = CKR_OK;
     WOLFPKCS11_LEAVE("C_GetInfo", ret);
     return ret;
@@ -680,6 +683,9 @@ CK_RV C_GetInfoV3_0(CK_INFO_PTR pInfo)
         return CKR_ARGUMENTS_BAD;
 
     XMEMCPY(pInfo, &wolfpkcs11Info_3_0, sizeof(wolfpkcs11Info_3_0));
+    WP11_BlankPad(pInfo->manufacturerID, sizeof(pInfo->manufacturerID));
+    WP11_BlankPad(pInfo->libraryDescription,
+                  sizeof(pInfo->libraryDescription));
 
     return CKR_OK;
 }
@@ -694,6 +700,9 @@ CK_RV C_GetInfoV3_2(CK_INFO_PTR pInfo)
         return CKR_ARGUMENTS_BAD;
 
     XMEMCPY(pInfo, &wolfpkcs11Info_3_2, sizeof(wolfpkcs11Info_3_2));
+    WP11_BlankPad(pInfo->manufacturerID, sizeof(pInfo->manufacturerID));
+    WP11_BlankPad(pInfo->libraryDescription,
+                  sizeof(pInfo->libraryDescription));
 
     return CKR_OK;
 }

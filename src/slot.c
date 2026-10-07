@@ -138,6 +138,8 @@ CK_RV C_GetSlotInfo(CK_SLOT_ID slotID, CK_SLOT_INFO_PTR pInfo)
     }
 
     XMEMCPY(pInfo, &slotInfoTemplate, sizeof(slotInfoTemplate));
+    WP11_BlankPad(pInfo->slotDescription, sizeof(pInfo->slotDescription));
+    WP11_BlankPad(pInfo->manufacturerID, sizeof(pInfo->manufacturerID));
     /* Put in the slot id value as two decimal digits. */
     pInfo->slotDescription[SLOT_ID_IDX + 0] = ((slotID / 10) % 10) + '0';
     pInfo->slotDescription[SLOT_ID_IDX + 1] = ((slotID     ) % 10) + '0';
@@ -164,8 +166,8 @@ static CK_TOKEN_INFO tokenInfoTemplate = {
     "wolfpkcs11",
     "wolfpkcs11",
     {
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+        '0', '0', '0', '0', '0', '0', '0', '0', '0',
+        '0', '0', '0', '0', '0', '0', '0'
     }, /* serialNumber */
     CKF_RNG | CKF_CLOCK_ON_TOKEN | CKF_LOGIN_REQUIRED,
     WP11_SESSION_CNT_MAX, /* ulMaxSessionCount */
@@ -230,6 +232,8 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
     }
 
     XMEMCPY(pInfo, &tokenInfoTemplate, sizeof(tokenInfoTemplate));
+    WP11_BlankPad(pInfo->manufacturerID, sizeof(pInfo->manufacturerID));
+    WP11_BlankPad(pInfo->model, sizeof(pInfo->model));
     WP11_Slot_GetTokenLabel(slot, (char*)pInfo->label);
     pInfo->serialNumber[14] = ((slotID / 10) % 10) + '0';
     pInfo->serialNumber[15] = ((slotID /  1) % 10) + '0';
