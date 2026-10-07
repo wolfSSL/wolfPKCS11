@@ -1587,9 +1587,7 @@ static CK_RV CreateObject(WP11_Session* session, CK_ATTRIBUTE_PTR pTemplate,
         }
     }
     else if (objectClass == CKO_DATA) {
-        FindAttributeType(pTemplate, ulCount, CKA_VALUE, &attr);
-        if (attr == NULL)
-            return CKR_TEMPLATE_INCOMPLETE;
+        /* Every data object attribute is optional. */
     }
 #ifdef WOLFPKCS11_NSS
     else if (objectClass == CKO_NSS_TRUST) {
