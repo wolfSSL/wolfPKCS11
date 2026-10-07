@@ -825,6 +825,7 @@ static int Rng_New(WC_RNG* baseRng, WP11_Lock* lock, WC_RNG* rng)
 
     if (ret == 0)
         ret = wc_InitRngNonce_ex(rng, seed, sizeof(seed), NULL, INVALID_DEVID);
+    wc_ForceZero(seed, sizeof(seed));
 
     return ret;
 }
