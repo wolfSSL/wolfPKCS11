@@ -18734,26 +18734,19 @@ static int wp11_AesGcm_BufferAppend(WP11_GcmParams* gcm, unsigned char* data,
     if (dataSz > (word32)(INT_MAX - gcm->encSz))
         return BAD_FUNC_ARG;
 
-#ifdef XREALLOC
-    newBuf = (unsigned char*)XREALLOC(gcm->enc, gcm->encSz + dataSz, NULL,
-                                      DYNAMIC_TYPE_TMP_BUFFER);
-    if (newBuf == NULL)
-        return MEMORY_E;
-    gcm->enc = newBuf;
-    XMEMCPY(gcm->enc + gcm->encSz, data, dataSz);
-    gcm->encSz += dataSz;
-#else
+    /* Not XREALLOC: the old plaintext copy must be wiped before release. */
     newBuf = (unsigned char*)XMALLOC(gcm->encSz + dataSz, NULL,
                                      DYNAMIC_TYPE_TMP_BUFFER);
     if (newBuf == NULL)
         return MEMORY_E;
-    if (gcm->enc != NULL)
+    if (gcm->enc != NULL) {
         XMEMCPY(newBuf, gcm->enc, gcm->encSz);
-    XFREE(gcm->enc, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        wc_ForceZero(gcm->enc, (size_t)gcm->encSz);
+        XFREE(gcm->enc, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    }
     gcm->enc = newBuf;
     XMEMCPY(gcm->enc + gcm->encSz, data, dataSz);
     gcm->encSz += dataSz;
-#endif
 
     return 0;
 }
@@ -18938,6 +18931,7 @@ int WP11_AesGcm_EncryptFinal(unsigned char* enc, word32* encSz,
     }
 
     if (gcm->enc != NULL) {
+        wc_ForceZero(gcm->enc, (size_t)gcm->encSz);
         XFREE(gcm->enc, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         gcm->enc = NULL;
     }

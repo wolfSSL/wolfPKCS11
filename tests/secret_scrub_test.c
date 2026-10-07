@@ -198,7 +198,8 @@ static CK_RV user_session_open(CK_SESSION_HANDLE* session)
     return rv;
 }
 
-#if !defined(NO_AES) && defined(HAVE_AES_CBC)
+#if !defined(NO_AES) && (defined(HAVE_AES_CBC) || \
+    (defined(HAVE_AESGCM) && !defined(WOLFSSL_AESGCM_STREAM)))
 static CK_OBJECT_CLASS secretKeyClass = CKO_SECRET_KEY;
 static CK_KEY_TYPE aesKeyType = CKK_AES;
 static unsigned char aesKeyData[16] = {
@@ -301,6 +302,77 @@ static void cbc_buffered_scrub_test(CK_MECHANISM_TYPE mechType, int decrypt,
 }
 #endif
 
+#if !defined(NO_AES) && defined(HAVE_AESGCM) && !defined(WOLFSSL_AESGCM_STREAM)
+static unsigned char gcmIv[12] = {
+    0xca, 0xfe, 0xba, 0xbe, 0xfa, 0xce, 0xdb, 0xad, 0xde, 0xca, 0xf8, 0x88
+};
+static const unsigned char gcmPlain1[24] = {
+    0x5e, 0x17, 0xa2, 0x9c, 0x04, 0xd3, 0x6f, 0xb1,
+    0x88, 0x2a, 0xe5, 0x71, 0x3d, 0xc6, 0x90, 0x4b,
+    0xf2, 0x1e, 0x67, 0xad, 0x39, 0x85, 0xcb, 0x12
+};
+static const unsigned char gcmPlain2[24] = {
+    0x93, 0x4e, 0xd7, 0x0b, 0x61, 0xfa, 0x28, 0xc5,
+    0x7e, 0xb3, 0x16, 0x8d, 0x42, 0xe9, 0x5c, 0xa0,
+    0x0f, 0x74, 0xbe, 0x23, 0xd8, 0x69, 0x31, 0xe6
+};
+
+/* Plaintext buffered by a multi-part GCM encrypt must be wiped whenever its
+ * buffer is replaced or released. */
+static void gcm_buffered_plaintext_scrub_test(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = 0;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_MECHANISM mech;
+    CK_GCM_PARAMS params;
+    CK_BYTE out[32];
+    CK_ULONG outLen;
+    int clean;
+
+    XMEMSET(&params, 0, sizeof(params));
+    params.pIv = gcmIv;
+    params.ulIvLen = sizeof(gcmIv);
+    params.ulIvBits = sizeof(gcmIv) * 8;
+    params.ulTagBits = 128;
+    mech.mechanism = CKM_AES_GCM;
+    mech.pParameter = &params;
+    mech.ulParameterLen = sizeof(params);
+
+    rv = user_session_open(&session);
+    if (rv == CKR_OK)
+        rv = create_aes_key(session, &key);
+    if (rv == CKR_OK)
+        rv = funcList->C_EncryptInit(session, &mech, key);
+    CHECK_RV(rv, "GCM C_EncryptInit", CKR_OK);
+
+    if (rv == CKR_OK) {
+        watch_start(gcmPlain1, sizeof(gcmPlain1));
+        outLen = sizeof(out);
+        rv = funcList->C_EncryptUpdate(session, (CK_BYTE_PTR)gcmPlain1,
+                                       sizeof(gcmPlain1), out, &outLen);
+        if (rv == CKR_OK) {
+            outLen = sizeof(out);
+            rv = funcList->C_EncryptUpdate(session, (CK_BYTE_PTR)gcmPlain2,
+                                           sizeof(gcmPlain2), out, &outLen);
+        }
+        clean = watch_stop_clean();
+        CHECK_RV(rv, "GCM C_EncryptUpdate twice", CKR_OK);
+        CHECK_TRUE(clean, "GCM plaintext wiped when its buffer grows");
+    }
+    if (rv == CKR_OK) {
+        watch_start(gcmPlain1, sizeof(gcmPlain1));
+        outLen = sizeof(out);
+        rv = funcList->C_EncryptFinal(session, out, &outLen);
+        clean = watch_stop_clean();
+        CHECK_RV(rv, "GCM C_EncryptFinal", CKR_OK);
+        CHECK_TRUE(clean, "GCM plaintext wiped after C_EncryptFinal");
+    }
+
+    funcList->C_Finalize(NULL);
+}
+#endif
+
 int main(int argc, char* argv[])
 {
     CK_RV rv;
@@ -346,6 +418,9 @@ int main(int argc, char* argv[])
             "CBC buffered input wiped after a rejected C_DecryptFinal");
         cbc_buffered_scrub_test(CKM_AES_CBC_PAD, 1, 1, CKR_OK,
             "CBC-PAD buffered block wiped after C_DecryptFinal");
+#endif
+#if !defined(NO_AES) && defined(HAVE_AESGCM) && !defined(WOLFSSL_AESGCM_STREAM)
+        gcm_buffered_plaintext_scrub_test();
 #endif
     }
     pkcs11_unload();
