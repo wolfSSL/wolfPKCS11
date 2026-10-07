@@ -20522,6 +20522,7 @@ int WP11_TLS_MAC_verify(byte* data, word32 dataLen, byte* sig, word32 sigLen,
                 && WP11_ConstantCompare(sig, genSig, sigLen);
     }
 
+    wc_ForceZero(genSig, sigLen);
     XFREE(genSig, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     session->init = 0;
     return ret;
