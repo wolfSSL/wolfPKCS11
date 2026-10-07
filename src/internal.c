@@ -14128,8 +14128,10 @@ static int EcObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
 #endif
             break;
         case CKA_EC_POINT:
-            if (noPub)
+            if (noPub) {
                 *len = CK_UNAVAILABLE_INFORMATION;
+                ret = NOT_AVAILABLE_E;
+            }
             else
                 ret = GetEcPoint(object->data.ecKey, data, len);
             break;
@@ -14273,6 +14275,7 @@ static int MldsaObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
             break;
         case CKA_SEED:
             *len = CK_UNAVAILABLE_INFORMATION;
+            ret = NOT_AVAILABLE_E;
             break;
         case CKA_VALUE:
             if (object->objClass == CKO_PRIVATE_KEY) {
@@ -14284,8 +14287,10 @@ static int MldsaObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
                     ret = GetMldsaPrivateKey(object->data.mldsaKey, data, len);
             }
             else if (object->objClass == CKO_PUBLIC_KEY) {
-                if (noPub)
+                if (noPub) {
                     *len = CK_UNAVAILABLE_INFORMATION;
+                    ret = NOT_AVAILABLE_E;
+                }
                 else
                     ret = GetMldsaPublicKey(object->data.mldsaKey, data, len);
             }
@@ -14460,6 +14465,7 @@ static int MlKemObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
             break;
         case CKA_SEED:
             *len = CK_UNAVAILABLE_INFORMATION;
+            ret = NOT_AVAILABLE_E;
             break;
         case CKA_VALUE:
             if (object->objClass == CKO_PRIVATE_KEY) {
@@ -14471,8 +14477,10 @@ static int MlKemObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
                     ret = GetMlKemPrivateKey(object->data.mlKemKey, data, len);
             }
             else if (object->objClass == CKO_PUBLIC_KEY) {
-                if (noPub)
+                if (noPub) {
                     *len = CK_UNAVAILABLE_INFORMATION;
+                    ret = NOT_AVAILABLE_E;
+                }
                 else
                     ret = GetMlKemPublicKey(object->data.mlKemKey, data, len);
             }

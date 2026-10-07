@@ -9299,7 +9299,9 @@ static CK_RV test_attributes_ecc(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_GetAttributeValue(session, priv, eccPrivTmpl,
                                                                 eccPrivTmplCnt);
-        CHECK_CKR(ret, "Get Attributes EC Private Key NULL values");
+        /* No public point is stored, so CKA_EC_POINT is unavailable. */
+        CHECK_CKR_FAIL(ret, CK_UNAVAILABLE_INFORMATION,
+                       "Get Attributes EC Private Key NULL values");
     }
     if (ret == CKR_OK) {
         CHECK_COND(eccPrivTmpl[0].ulValueLen == sizeof(ecc_p256_params), ret,
@@ -9318,7 +9320,9 @@ static CK_RV test_attributes_ecc(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_GetAttributeValue(session, priv, eccPrivTmpl,
                                                                 eccPrivTmplCnt);
-        CHECK_CKR(ret, "Get Attributes EC Private Key values");
+        /* No public point is stored, so CKA_EC_POINT is unavailable. */
+        CHECK_CKR_FAIL(ret, CK_UNAVAILABLE_INFORMATION,
+                       "Get Attributes EC Private Key values");
     }
     funcList->C_DestroyObject(session, priv);
 
