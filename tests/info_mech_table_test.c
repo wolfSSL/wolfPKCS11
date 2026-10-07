@@ -243,6 +243,50 @@ static void test_generic_secret_size(CK_SLOT_ID slot,
                "generic secret above maximum size is rejected");
 }
 
+/* Every listed key generation mechanism must be known to C_GenerateKey. */
+static void test_listed_keygen_supported(CK_SLOT_ID slot,
+                                         CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_MECHANISM_TYPE mechs[256];
+    CK_ULONG count = sizeof(mechs) / sizeof(mechs[0]);
+    CK_ULONG i;
+    CK_MECHANISM_INFO info;
+    CK_MECHANISM mech;
+    CK_OBJECT_HANDLE key;
+    char msg[96];
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,   &secretClass, sizeof(secretClass) },
+        { CKA_PRIVATE, &ckFalse,     sizeof(ckFalse)     },
+    };
+
+    rv = funcList->C_GetMechanismList(slot, mechs, &count);
+    CHECK_RV(rv, "C_GetMechanismList", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    for (i = 0; i < count; i++) {
+        rv = funcList->C_GetMechanismInfo(slot, mechs[i], &info);
+        snprintf(msg, sizeof(msg), "C_GetMechanismInfo(listed 0x%lx)",
+                 (unsigned long)mechs[i]);
+        CHECK_RV(rv, msg, CKR_OK);
+        if (rv != CKR_OK || (info.flags & CKF_GENERATE) == 0)
+            continue;
+
+        mech.mechanism = mechs[i];
+        mech.pParameter = NULL;
+        mech.ulParameterLen = 0;
+        key = CK_INVALID_HANDLE;
+        rv = funcList->C_GenerateKey(session, &mech, tmpl,
+                                     sizeof(tmpl) / sizeof(*tmpl), &key);
+        if (key != CK_INVALID_HANDLE)
+            funcList->C_DestroyObject(session, key);
+        snprintf(msg, sizeof(msg), "C_GenerateKey accepts listed 0x%lx",
+                 (unsigned long)mechs[i]);
+        CHECK_TRUE(rv != CKR_MECHANISM_INVALID, msg);
+    }
+}
+
 typedef struct WrapCase {
     CK_MECHANISM_TYPE mech;
     int useIv;
@@ -648,6 +692,7 @@ static int run_test(void)
     }
     if (rv == CKR_OK) {
         test_generic_secret_size(slotList[0], session);
+        test_listed_keygen_supported(slotList[0], session);
         test_wrap_flags(slotList[0], session);
 #ifndef NO_AES
         test_ecb_wrap_short_key(slotList[0], session);
