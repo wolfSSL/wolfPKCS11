@@ -264,6 +264,32 @@ static void digest_input_len_range_test(CK_SESSION_HANDLE session)
              CKR_OPERATION_NOT_INITIALIZED);
 }
 
+/* Digesting accepts an output buffer length above 32 bits. */
+static void digest_output_capacity_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    byte data[16];
+    byte hash[32];
+    CK_ULONG hashLen = big_len(0);
+
+    XMEMSET(data, 0x70, sizeof(data));
+    rv = funcList->C_DigestInit(session, &sha256Mech);
+    if (rv == CKR_OK)
+        rv = funcList->C_Digest(session, data, sizeof(data), hash, &hashLen);
+    CHECK_RV(rv, "C_Digest with a buffer length above 32 bits", CKR_OK);
+    CHECK_TRUE(hashLen == sizeof(hash), "C_Digest reports the digest length");
+
+    hashLen = big_len(0);
+    rv = funcList->C_DigestInit(session, &sha256Mech);
+    if (rv == CKR_OK)
+        rv = funcList->C_DigestUpdate(session, data, sizeof(data));
+    if (rv == CKR_OK)
+        rv = funcList->C_DigestFinal(session, hash, &hashLen);
+    CHECK_RV(rv, "C_DigestFinal with a buffer length above 32 bits", CKR_OK);
+    CHECK_TRUE(hashLen == sizeof(hash),
+               "C_DigestFinal reports the digest length");
+}
+
 #if !defined(NO_HMAC)
 /* MAC input and signature lengths that do not fit in 32 bits are rejected. */
 static void hmac_input_len_range_test(CK_SESSION_HANDLE session)
@@ -953,6 +979,7 @@ static int run_test(void)
         if (sizeof(CK_ULONG) > sizeof(word32)) {
 #ifndef NO_SHA256
             digest_input_len_range_test(session);
+            digest_output_capacity_test(session);
 #if !defined(NO_HMAC)
             hmac_input_len_range_test(session);
             verify_final_sig_len_range_test(session);

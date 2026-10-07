@@ -5313,7 +5313,7 @@ CK_RV C_Digest(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
         return CKR_DATA_LEN_RANGE;
     }
 
-    hashLen = (word32)*pulDigestLen;
+    hashLen = CK_ULONG_CAP_WORD32(*pulDigestLen);
     ret = WP11_Digest_Single(pData, (word32)ulDataLen, pDigest, &hashLen,
                              session);
     *pulDigestLen = hashLen;
@@ -5489,7 +5489,7 @@ CK_RV C_DigestFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pDigest,
         return CKR_ARGUMENTS_BAD;
     if (!WP11_Session_IsOpInitialized(session, WP11_INIT_DIGEST))
         return CKR_OPERATION_NOT_INITIALIZED;
-    hashLen = (word32)*pulDigestLen;
+    hashLen = CK_ULONG_CAP_WORD32(*pulDigestLen);
     ret = WP11_Digest_Final(pDigest, &hashLen, session);
     *pulDigestLen = hashLen;
 
