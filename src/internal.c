@@ -9882,7 +9882,8 @@ void WP11_Slot_ObjectCallLeave(WP11_ObjectCalls* calls)
  * @param  slot    [in]  Slot object.
  * @param  pin     [in]  PIN to use to login.
  * @param  pinLen  [in]  Length of PIN.
- * @return  READ_ONLY_E when there is a read-only session open.
+ * @return  LOGGED_IN_E when the user is already logged in.
+ *          LOGGED_IN_ANOTHER_E when the SO is logged in.
  *          PIN_NOT_SET_E when the token is not initialized.
  *          PIN_INVALID_E when the PIN is not correct.
  *          Other -ve value when hashing PIN fails.
