@@ -56,7 +56,6 @@
     #define LEN_ABOVE_WORD32(n) ((CK_ULONG)0xFFFFFFFFUL + 1 + (CK_ULONG)(n))
 #endif
 
-#ifdef WIDE_CK_ULONG
 static CK_BBOOL ckTrue = CK_TRUE;
 static CK_BBOOL ckFalse = CK_FALSE;
 static CK_OBJECT_CLASS secretClass = CKO_SECRET_KEY;
@@ -128,6 +127,7 @@ static CK_RV create_rsa_unwrap_keys(CK_SESSION_HANDLE session,
     return rv;
 }
 
+#ifdef WIDE_CK_ULONG
 /* RSA PKCS#1 v1.5 encrypt a 16-byte secret to make a valid wrapped key. */
 static CK_RV rsa_wrap_secret(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE pub,
                              byte* out, CK_ULONG* outLen)
@@ -143,8 +143,10 @@ static CK_RV rsa_wrap_secret(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE pub,
     }
     return rv;
 }
+#endif /* WIDE_CK_ULONG */
 #endif
 
+#ifdef WIDE_CK_ULONG
 static void test_unwrap_wrapped_len_beyond_word32(CK_SESSION_HANDLE session)
 {
     CK_RV rv = CKR_OK;
@@ -217,6 +219,80 @@ static void test_unwrap_wrapped_len_beyond_word32(CK_SESSION_HANDLE session)
 }
 #endif /* WIDE_CK_ULONG */
 
+static void test_unwrap_failure_codes(CK_SESSION_HANDLE session)
+{
+    CK_RV rv = CKR_OK;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &genericType, sizeof(genericType) },
+        { CKA_PRIVATE,  &ckFalse,     sizeof(ckFalse)     },
+    };
+    CK_ULONG tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
+#ifdef AES_UNWRAP_TEST
+    CK_OBJECT_HANDLE aesKey = CK_INVALID_HANDLE;
+    CK_MECHANISM cbcMech = { CKM_AES_CBC, (void*)aes_cbc_iv,
+                             sizeof(aes_cbc_iv) };
+    CK_MECHANISM padMech = { CKM_AES_CBC_PAD, (void*)aes_cbc_iv,
+                             sizeof(aes_cbc_iv) };
+    byte plain[16];
+    byte badPad[16];
+    CK_ULONG badPadLen = sizeof(badPad);
+#endif
+#ifndef NO_RSA
+    CK_OBJECT_HANDLE rsaPub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE rsaPriv = CK_INVALID_HANDLE;
+    CK_MECHANISM rsaMech = { CKM_RSA_PKCS, NULL, 0 };
+    byte rsaBlob[256];
+#endif
+
+#ifdef AES_UNWRAP_TEST
+    /* A zero final block decrypts to an invalid CBC pad byte. */
+    XMEMSET(plain, 0, sizeof(plain));
+    rv = create_aes_unwrap_key(session, &aesKey);
+    CHECK_RV(rv, "create AES unwrapping key", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_EncryptInit(session, &cbcMech, aesKey);
+        CHECK_RV(rv, "AES-CBC encrypt init", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Encrypt(session, plain, sizeof(plain), badPad,
+                                 &badPadLen);
+        CHECK_RV(rv, "AES-CBC encrypt", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_UnwrapKey(session, &padMech, aesKey, badPad,
+                                   badPadLen, tmpl, tmplCnt, &key);
+        CHECK_RV(rv, "AES-CBC-PAD unwrap with bad padding",
+                 CKR_WRAPPED_KEY_INVALID);
+        rv = funcList->C_UnwrapKey(session, &padMech, aesKey, badPad,
+                                   badPadLen - 1, tmpl, tmplCnt, &key);
+        CHECK_RV(rv, "AES-CBC-PAD unwrap with partial block",
+                 CKR_WRAPPED_KEY_LEN_RANGE);
+    }
+#endif
+
+#ifndef NO_RSA
+    rv = create_rsa_unwrap_keys(session, &rsaPub, &rsaPriv);
+    CHECK_RV(rv, "create RSA unwrapping keys", CKR_OK);
+    if (rv == CKR_OK) {
+        XMEMSET(rsaBlob, 0x5a, sizeof(rsaBlob));
+        rv = funcList->C_UnwrapKey(session, &rsaMech, rsaPriv, rsaBlob,
+                                   sizeof(rsaBlob), tmpl, tmplCnt, &key);
+        CHECK_RV(rv, "RSA unwrap with bad PKCS#1 padding",
+                 CKR_WRAPPED_KEY_INVALID);
+        rv = funcList->C_UnwrapKey(session, &rsaMech, rsaPriv, rsaBlob,
+                                   sizeof(rsaBlob) / 2, tmpl, tmplCnt, &key);
+        CHECK_RV(rv, "RSA unwrap with short wrapped key",
+                 CKR_WRAPPED_KEY_LEN_RANGE);
+    }
+#endif
+    (void)session;
+    (void)rv;
+    (void)key;
+    (void)tmplCnt;
+}
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -233,6 +309,7 @@ static int run_test(void)
 #ifdef WIDE_CK_ULONG
         test_unwrap_wrapped_len_beyond_word32(session);
 #endif
+        test_unwrap_failure_codes(session);
         funcList->C_CloseSession(session);
     }
     funcList->C_Finalize(NULL);

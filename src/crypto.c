@@ -9859,6 +9859,10 @@ static CK_RV wp11_C_UnwrapKey(CK_SESSION_HANDLE hSession,
 
             rv = C_Decrypt(hSession, pWrappedKey, ulWrappedKeyLen, workBuffer,
                 &ulUnwrappedLen);
+            if (rv == CKR_ENCRYPTED_DATA_LEN_RANGE)
+                rv = CKR_WRAPPED_KEY_LEN_RANGE;
+            else if (rv == CKR_ENCRYPTED_DATA_INVALID)
+                rv = CKR_WRAPPED_KEY_INVALID;
             if (rv != CKR_OK)
                 goto err_out;
 
@@ -9893,6 +9897,10 @@ static CK_RV wp11_C_UnwrapKey(CK_SESSION_HANDLE hSession,
                 rv = CKR_MECHANISM_PARAM_INVALID;
                 goto err_out;
             }
+            if (ulWrappedKeyLen != (CK_ULONG)WP11_Rsa_KeyLen(unwrappingKey)) {
+                rv = CKR_WRAPPED_KEY_LEN_RANGE;
+                goto err_out;
+            }
 
             workBuffer = (byte*)XMALLOC(ulWrappedKeyLen, NULL,
                 DYNAMIC_TYPE_TMP_BUFFER);
@@ -9907,7 +9915,7 @@ static CK_RV wp11_C_UnwrapKey(CK_SESSION_HANDLE hSession,
             ulUnwrappedLen = (CK_ULONG)decryptedLen;
 
             if (ret != 0) {
-                rv = CKR_FUNCTION_FAILED;
+                rv = CKR_WRAPPED_KEY_INVALID;
                 goto err_out;
             }
 
