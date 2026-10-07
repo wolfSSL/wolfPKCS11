@@ -711,6 +711,79 @@ static void test_key_subject_roundtrip(CK_SESSION_HANDLE session)
 }
 #endif
 
+#ifndef NO_AES
+static CK_BBOOL get_local(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE obj)
+{
+    CK_BBOOL local = 2;
+    CK_ATTRIBUTE attr = { CKA_LOCAL, &local, sizeof(local) };
+
+    if (funcList->C_GetAttributeValue(session, obj, &attr, 1) != CKR_OK)
+        return 2;
+    return local;
+}
+
+/* A copy keeps CKA_LOCAL of the key it was copied from. */
+static void test_copy_keeps_local(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS secretClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE aesType = CKK_AES;
+    CK_ULONG keyLen = 16;
+    CK_MECHANISM mech = { CKM_AES_KEY_GEN, NULL, 0 };
+    CK_OBJECT_HANDLE gen = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE imported = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE copy = CK_INVALID_HANDLE;
+    static const byte copyLabel[] = "copy";
+    CK_ATTRIBUTE copyTmpl[] = {
+        { CKA_LABEL, (void*)copyLabel, sizeof(copyLabel) - 1 },
+    };
+    CK_ATTRIBUTE genTmpl[] = {
+        { CKA_TOKEN,     &ckFalse, sizeof(ckFalse) },
+        { CKA_PRIVATE,   &ckFalse, sizeof(ckFalse) },
+        { CKA_VALUE_LEN, &keyLen,  sizeof(keyLen)  },
+    };
+    CK_ATTRIBUTE importTmpl[] = {
+        { CKA_CLASS,    &secretClass,       sizeof(secretClass) },
+        { CKA_KEY_TYPE, &aesType,           sizeof(aesType)     },
+        { CKA_TOKEN,    &ckFalse,           sizeof(ckFalse)     },
+        { CKA_PRIVATE,  &ckFalse,           sizeof(ckFalse)     },
+        { CKA_VALUE,    (void*)secretValue, sizeof(secretValue) },
+    };
+
+    rv = funcList->C_GenerateKey(session, &mech, genTmpl,
+                                 sizeof(genTmpl) / sizeof(*genTmpl), &gen);
+    CHECK_RV(rv, "generate AES key", CKR_OK);
+    if (rv == CKR_OK) {
+        CHECK_TRUE(get_local(session, gen) == CK_TRUE,
+                   "generated key is local");
+        rv = funcList->C_CopyObject(session, gen, copyTmpl, 1, &copy);
+        CHECK_RV(rv, "copy generated key", CKR_OK);
+        if (rv == CKR_OK) {
+            CHECK_TRUE(get_local(session, copy) == CK_TRUE,
+                       "copy of generated key is local");
+        }
+        destroy_obj(session, &copy);
+    }
+
+    rv = funcList->C_CreateObject(session, importTmpl,
+                                  sizeof(importTmpl) / sizeof(*importTmpl),
+                                  &imported);
+    CHECK_RV(rv, "import AES key", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_CopyObject(session, imported, copyTmpl, 1, &copy);
+        CHECK_RV(rv, "copy imported key", CKR_OK);
+        if (rv == CKR_OK) {
+            CHECK_TRUE(get_local(session, copy) == CK_FALSE,
+                       "copy of imported key is not local");
+        }
+        destroy_obj(session, &copy);
+    }
+
+    destroy_obj(session, &imported);
+    destroy_obj(session, &gen);
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -732,6 +805,9 @@ static int run_test(void)
         test_cert_category_roundtrip(session);
 #ifdef HAVE_ECC
         test_key_subject_roundtrip(session);
+#endif
+#ifndef NO_AES
+        test_copy_keeps_local(session);
 #endif
 #if !defined(NO_RSA) || defined(HAVE_ECC)
         test_key_type_matches_class(session);

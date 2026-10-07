@@ -3672,6 +3672,7 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
 #endif
     dest->objClass = src->objClass;
     dest->keyGenMech = src->keyGenMech;
+    dest->local = src->local;
     dest->opFlag = src->opFlag;
     XMEMCPY(dest->startDate, src->startDate, sizeof(dest->startDate));
     XMEMCPY(dest->endDate, src->endDate, sizeof(dest->endDate));
