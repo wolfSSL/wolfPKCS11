@@ -8773,6 +8773,10 @@ static CK_RV wp11_C_WrapKey(CK_SESSION_HANDLE hSession,
     CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
     word32 serialSize = 0;
     byte* serialBuff = NULL;
+#ifndef NO_AES
+    byte* padBuff;
+    word32 padSize;
+#endif
     CK_BBOOL getVar;
     CK_ULONG getVarLen = sizeof(CK_BBOOL);
 
@@ -8904,6 +8908,25 @@ static CK_RV wp11_C_WrapKey(CK_SESSION_HANDLE hSession,
             if (wrapkeyType != CKK_AES) {
                 rv = CKR_WRAPPING_KEY_TYPE_INCONSISTENT;
                 goto err_out;
+            }
+            /* AES-ECB zero-pads a secret key value to the block size. */
+            if (pMechanism->mechanism == CKM_AES_ECB &&
+                    keyClass == CKO_SECRET_KEY &&
+                    (serialSize % AES_BLOCK_SIZE) != 0) {
+                padSize = serialSize + AES_BLOCK_SIZE -
+                          (serialSize % AES_BLOCK_SIZE);
+                padBuff = (byte*)XMALLOC(padSize, NULL,
+                    DYNAMIC_TYPE_TMP_BUFFER);
+                if (padBuff == NULL) {
+                    rv = CKR_HOST_MEMORY;
+                    goto err_out;
+                }
+                XMEMCPY(padBuff, serialBuff, serialSize);
+                XMEMSET(padBuff + serialSize, 0, padSize - serialSize);
+                wc_ForceZero(serialBuff, serialSize);
+                XFREE(serialBuff, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                serialBuff = padBuff;
+                serialSize = padSize;
             }
 
         #ifdef WOLFSSL_STM32U5_DHUK
@@ -9172,6 +9195,25 @@ static CK_RV wp11_C_UnwrapKey(CK_SESSION_HANDLE hSession,
                 &ulUnwrappedLen);
             if (rv != CKR_OK)
                 goto err_out;
+
+            /* AES-ECB keeps no length: CKA_VALUE_LEN drops secret padding. */
+            if (pMechanism->mechanism == CKM_AES_ECB &&
+                    keyClass == CKO_SECRET_KEY) {
+                FindAttributeType(pTemplate, ulAttributeCount, CKA_VALUE_LEN,
+                    &attr);
+                if (attr == NULL) {
+                    rv = CKR_TEMPLATE_INCOMPLETE;
+                    goto err_out;
+                }
+                if (attr->pValue == NULL ||
+                        attr->ulValueLen != sizeof(CK_ULONG) ||
+                        *(CK_ULONG*)attr->pValue == 0 ||
+                        *(CK_ULONG*)attr->pValue > ulUnwrappedLen) {
+                    rv = CKR_TEMPLATE_INCONSISTENT;
+                    goto err_out;
+                }
+                ulUnwrappedLen = *(CK_ULONG*)attr->pValue;
+            }
 
             break;
 #endif
