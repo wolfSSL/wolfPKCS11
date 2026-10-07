@@ -322,6 +322,48 @@ static void verify_final_sig_len_range_test(CK_SESSION_HANDLE session)
     funcList->C_DestroyObject(session, key);
 }
 
+/* A short signature buffer reports the length that is needed and leaves the
+ * operation active. */
+static void sign_buffer_too_small_len_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_SHA256_HMAC, NULL, 0 };
+    byte data[16];
+    byte mac[32];
+    CK_ULONG macLen;
+
+    XMEMSET(data, 0x6b, sizeof(data));
+    rv = create_hmac_key(session, &key);
+    CHECK_RV(rv, "create HMAC key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_SignInit(session, &mech, key);
+    CHECK_RV(rv, "C_SignInit(HMAC)", CKR_OK);
+    macLen = sizeof(mac) - 1;
+    rv = funcList->C_Sign(session, data, sizeof(data), mac, &macLen);
+    CHECK_RV(rv, "C_Sign(HMAC) short buffer", CKR_BUFFER_TOO_SMALL);
+    CHECK_TRUE(macLen == sizeof(mac),
+               "C_Sign(HMAC) short buffer reports the length");
+    rv = funcList->C_Sign(session, data, sizeof(data), mac, &macLen);
+    CHECK_RV(rv, "C_Sign(HMAC) retry with the reported length", CKR_OK);
+
+    rv = funcList->C_SignInit(session, &mech, key);
+    CHECK_RV(rv, "C_SignInit(HMAC) multi-part", CKR_OK);
+    rv = funcList->C_SignUpdate(session, data, sizeof(data));
+    CHECK_RV(rv, "C_SignUpdate(HMAC)", CKR_OK);
+    macLen = 1;
+    rv = funcList->C_SignFinal(session, mac, &macLen);
+    CHECK_RV(rv, "C_SignFinal(HMAC) short buffer", CKR_BUFFER_TOO_SMALL);
+    CHECK_TRUE(macLen == sizeof(mac),
+               "C_SignFinal(HMAC) short buffer reports the length");
+    rv = funcList->C_SignFinal(session, mac, &macLen);
+    CHECK_RV(rv, "C_SignFinal(HMAC) retry with the reported length", CKR_OK);
+
+    funcList->C_DestroyObject(session, key);
+}
+
 /* Signing accepts an output buffer length above 32 bits. */
 static void sign_output_capacity_test(CK_SESSION_HANDLE session)
 {
@@ -415,6 +457,65 @@ static void rsa_input_len_range_test(CK_SESSION_HANDLE session)
 #endif
 
 #ifndef NO_RSA
+/* A short RSA output buffer reports the length that is needed. */
+static void rsa_buffer_too_small_len_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_RSA_PKCS, NULL, 0 };
+    byte data[16];
+    byte out[2048 / 8];
+    byte dec[2048 / 8];
+    CK_ULONG outLen;
+    CK_ULONG decLen;
+
+    XMEMSET(data, 0x6c, sizeof(data));
+    rv = create_rsa_keys(session, &priv, &pub);
+    CHECK_RV(rv, "create RSA key pair", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_SignInit(session, &mech, priv);
+    CHECK_RV(rv, "C_SignInit(RSA PKCS)", CKR_OK);
+    outLen = sizeof(out) - 1;
+    rv = funcList->C_Sign(session, data, sizeof(data), out, &outLen);
+    CHECK_RV(rv, "C_Sign(RSA PKCS) short buffer", CKR_BUFFER_TOO_SMALL);
+    CHECK_TRUE(outLen == sizeof(out),
+               "C_Sign(RSA PKCS) short buffer reports the length");
+    rv = funcList->C_Sign(session, data, sizeof(data), out, &outLen);
+    CHECK_RV(rv, "C_Sign(RSA PKCS) retry with the reported length", CKR_OK);
+
+    rv = funcList->C_EncryptInit(session, &mech, pub);
+    CHECK_RV(rv, "C_EncryptInit(RSA PKCS)", CKR_OK);
+    outLen = sizeof(out) - 1;
+    rv = funcList->C_Encrypt(session, data, sizeof(data), out, &outLen);
+    CHECK_RV(rv, "C_Encrypt(RSA PKCS) short buffer", CKR_BUFFER_TOO_SMALL);
+    CHECK_TRUE(outLen == sizeof(out),
+               "C_Encrypt(RSA PKCS) short buffer reports the length");
+    rv = funcList->C_Encrypt(session, data, sizeof(data), out, &outLen);
+    CHECK_RV(rv, "C_Encrypt(RSA PKCS) retry with the reported length",
+             CKR_OK);
+
+    rv = funcList->C_DecryptInit(session, &mech, priv);
+    CHECK_RV(rv, "C_DecryptInit(RSA PKCS)", CKR_OK);
+    decLen = sizeof(data);
+    rv = funcList->C_Decrypt(session, out, outLen, dec, &decLen);
+    CHECK_RV(rv, "C_Decrypt(RSA PKCS) short buffer", CKR_BUFFER_TOO_SMALL);
+    CHECK_TRUE(decLen == sizeof(dec),
+               "C_Decrypt(RSA PKCS) short buffer reports the length");
+    rv = funcList->C_Decrypt(session, out, outLen, dec, &decLen);
+    CHECK_RV(rv, "C_Decrypt(RSA PKCS) retry with the reported length",
+             CKR_OK);
+    CHECK_TRUE(decLen == sizeof(data) && XMEMCMP(dec, data, decLen) == 0,
+               "C_Decrypt(RSA PKCS) recovers the data");
+
+    funcList->C_DestroyObject(session, priv);
+    funcList->C_DestroyObject(session, pub);
+}
+#endif
+
+#ifndef NO_RSA
 /* An RSA sign accepts an output buffer length above 32 bits. */
 static void rsa_sign_output_capacity_test(CK_SESSION_HANDLE session)
 {
@@ -497,6 +598,35 @@ static void cmac_verify_final_sig_len_range_test(CK_SESSION_HANDLE session)
     funcList->C_DestroyObject(session, key);
 }
 
+/* A short CMAC buffer reports the length that is needed. */
+static void cmac_buffer_too_small_len_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_AES_CMAC, NULL, 0 };
+    byte data[16];
+    byte mac[16];
+    CK_ULONG macLen;
+
+    XMEMSET(data, 0x6d, sizeof(data));
+    rv = create_cmac_key(session, &key);
+    CHECK_RV(rv, "create AES key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_SignInit(session, &mech, key);
+    CHECK_RV(rv, "C_SignInit(CMAC)", CKR_OK);
+    macLen = sizeof(mac) - 1;
+    rv = funcList->C_Sign(session, data, sizeof(data), mac, &macLen);
+    CHECK_RV(rv, "C_Sign(CMAC) short buffer", CKR_BUFFER_TOO_SMALL);
+    CHECK_TRUE(macLen == sizeof(mac),
+               "C_Sign(CMAC) short buffer reports the length");
+    rv = funcList->C_Sign(session, data, sizeof(data), mac, &macLen);
+    CHECK_RV(rv, "C_Sign(CMAC) retry with the reported length", CKR_OK);
+
+    funcList->C_DestroyObject(session, key);
+}
+
 /* A CMAC sign accepts an output buffer length above 32 bits. */
 static void cmac_sign_output_capacity_test(CK_SESSION_HANDLE session)
 {
@@ -530,6 +660,155 @@ static void cmac_sign_output_capacity_test(CK_SESSION_HANDLE session)
              CKR_OK);
     CHECK_TRUE(macLen == sizeof(mac),
                "C_SignFinal(CMAC) reports the MAC length");
+
+    funcList->C_DestroyObject(session, key);
+}
+#endif
+
+#if !defined(NO_AES) && (defined(HAVE_AES_CBC) || defined(HAVE_AESGCM))
+static CK_OBJECT_CLASS aesEncKeyClass = CKO_SECRET_KEY;
+static CK_KEY_TYPE aesEncKeyType = CKK_AES;
+
+static CK_RV create_aes_enc_key(CK_SESSION_HANDLE session,
+                                CK_OBJECT_HANDLE* key)
+{
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,    &aesEncKeyClass, sizeof(aesEncKeyClass) },
+        { CKA_KEY_TYPE, &aesEncKeyType,  sizeof(aesEncKeyType)  },
+        { CKA_ENCRYPT,  &ckTrue,         sizeof(ckTrue)         },
+        { CKA_DECRYPT,  &ckTrue,         sizeof(ckTrue)         },
+        { CKA_PRIVATE,  &ckFalse,        sizeof(ckFalse)        },
+        { CKA_VALUE,    aes_128_key,     sizeof(aes_128_key)    },
+    };
+
+    return funcList->C_CreateObject(session, keyTmpl,
+                                    sizeof(keyTmpl) / sizeof(*keyTmpl), key);
+}
+
+/* A short encrypt or decrypt buffer reports the length that is needed and
+ * leaves the operation active. */
+static void aes_buffer_too_small_len_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    byte iv[16];
+    byte data[32];
+    byte enc[48];
+    byte dec[48];
+    CK_ULONG encLen;
+    CK_ULONG decLen;
+#ifdef HAVE_AES_CBC
+    CK_MECHANISM cbcMech;
+#endif
+#ifdef HAVE_AESGCM
+    CK_GCM_PARAMS gcmParams;
+    CK_MECHANISM gcmMech;
+#endif
+
+    XMEMSET(iv, 0x01, sizeof(iv));
+    XMEMSET(data, 0x6a, sizeof(data));
+    rv = create_aes_enc_key(session, &key);
+    CHECK_RV(rv, "create AES key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+#ifdef HAVE_AES_CBC
+    cbcMech.mechanism = CKM_AES_CBC;
+    cbcMech.pParameter = iv;
+    cbcMech.ulParameterLen = sizeof(iv);
+
+    rv = funcList->C_EncryptInit(session, &cbcMech, key);
+    CHECK_RV(rv, "C_EncryptInit(AES CBC)", CKR_OK);
+    encLen = sizeof(data) - 1;
+    rv = funcList->C_Encrypt(session, data, sizeof(data), enc, &encLen);
+    CHECK_RV(rv, "C_Encrypt(AES CBC) short buffer", CKR_BUFFER_TOO_SMALL);
+    CHECK_TRUE(encLen == sizeof(data),
+               "C_Encrypt(AES CBC) short buffer reports the length");
+    rv = funcList->C_Encrypt(session, data, sizeof(data), enc, &encLen);
+    CHECK_RV(rv, "C_Encrypt(AES CBC) retry with the reported length", CKR_OK);
+
+    rv = funcList->C_DecryptInit(session, &cbcMech, key);
+    CHECK_RV(rv, "C_DecryptInit(AES CBC)", CKR_OK);
+    decLen = 1;
+    rv = funcList->C_Decrypt(session, enc, encLen, dec, &decLen);
+    CHECK_RV(rv, "C_Decrypt(AES CBC) short buffer", CKR_BUFFER_TOO_SMALL);
+    CHECK_TRUE(decLen == encLen,
+               "C_Decrypt(AES CBC) short buffer reports the length");
+    rv = funcList->C_Decrypt(session, enc, encLen, dec, &decLen);
+    CHECK_RV(rv, "C_Decrypt(AES CBC) retry with the reported length", CKR_OK);
+
+    rv = funcList->C_EncryptInit(session, &cbcMech, key);
+    CHECK_RV(rv, "C_EncryptInit(AES CBC) multi-part", CKR_OK);
+    encLen = 16;
+    rv = funcList->C_EncryptUpdate(session, data, sizeof(data), enc, &encLen);
+    CHECK_RV(rv, "C_EncryptUpdate(AES CBC) short buffer",
+             CKR_BUFFER_TOO_SMALL);
+    CHECK_TRUE(encLen == sizeof(data),
+               "C_EncryptUpdate(AES CBC) short buffer reports the length");
+    rv = funcList->C_EncryptUpdate(session, data, sizeof(data), enc, &encLen);
+    CHECK_RV(rv, "C_EncryptUpdate(AES CBC) retry", CKR_OK);
+    decLen = sizeof(dec);
+    rv = funcList->C_EncryptFinal(session, dec, &decLen);
+    CHECK_RV(rv, "C_EncryptFinal(AES CBC)", CKR_OK);
+
+    rv = funcList->C_DecryptInit(session, &cbcMech, key);
+    CHECK_RV(rv, "C_DecryptInit(AES CBC) multi-part", CKR_OK);
+    decLen = 16;
+    rv = funcList->C_DecryptUpdate(session, enc, encLen, dec, &decLen);
+    CHECK_RV(rv, "C_DecryptUpdate(AES CBC) short buffer",
+             CKR_BUFFER_TOO_SMALL);
+    CHECK_TRUE(decLen == encLen,
+               "C_DecryptUpdate(AES CBC) short buffer reports the length");
+    rv = funcList->C_DecryptUpdate(session, enc, encLen, dec, &decLen);
+    CHECK_RV(rv, "C_DecryptUpdate(AES CBC) retry", CKR_OK);
+    encLen = sizeof(enc);
+    rv = funcList->C_DecryptFinal(session, enc, &encLen);
+    CHECK_RV(rv, "C_DecryptFinal(AES CBC)", CKR_OK);
+#endif
+
+#ifdef HAVE_AESGCM
+    XMEMSET(&gcmParams, 0, sizeof(gcmParams));
+    gcmParams.pIv = iv;
+    gcmParams.ulIvLen = 12;
+    gcmParams.ulIvBits = 96;
+    gcmParams.ulTagBits = 128;
+    gcmMech.mechanism = CKM_AES_GCM;
+    gcmMech.pParameter = &gcmParams;
+    gcmMech.ulParameterLen = sizeof(gcmParams);
+
+    rv = funcList->C_EncryptInit(session, &gcmMech, key);
+    CHECK_RV(rv, "C_EncryptInit(AES GCM)", CKR_OK);
+    encLen = sizeof(data);
+    rv = funcList->C_Encrypt(session, data, sizeof(data), enc, &encLen);
+    CHECK_RV(rv, "C_Encrypt(AES GCM) short buffer", CKR_BUFFER_TOO_SMALL);
+    CHECK_TRUE(encLen == sizeof(data) + 16,
+               "C_Encrypt(AES GCM) short buffer reports the length");
+    rv = funcList->C_Encrypt(session, data, sizeof(data), enc, &encLen);
+    CHECK_RV(rv, "C_Encrypt(AES GCM) retry with the reported length", CKR_OK);
+
+    rv = funcList->C_DecryptInit(session, &gcmMech, key);
+    CHECK_RV(rv, "C_DecryptInit(AES GCM)", CKR_OK);
+    decLen = 1;
+    rv = funcList->C_Decrypt(session, enc, encLen, dec, &decLen);
+    CHECK_RV(rv, "C_Decrypt(AES GCM) short buffer", CKR_BUFFER_TOO_SMALL);
+    CHECK_TRUE(decLen == sizeof(data),
+               "C_Decrypt(AES GCM) short buffer reports the length");
+    rv = funcList->C_Decrypt(session, enc, encLen, dec, &decLen);
+    CHECK_RV(rv, "C_Decrypt(AES GCM) retry with the reported length", CKR_OK);
+
+    rv = funcList->C_EncryptInit(session, &gcmMech, key);
+    CHECK_RV(rv, "C_EncryptInit(AES GCM) multi-part", CKR_OK);
+    encLen = sizeof(enc);
+    rv = funcList->C_EncryptUpdate(session, data, sizeof(data), enc, &encLen);
+    CHECK_RV(rv, "C_EncryptUpdate(AES GCM)", CKR_OK);
+    decLen = 15;
+    rv = funcList->C_EncryptFinal(session, dec, &decLen);
+    CHECK_RV(rv, "C_EncryptFinal(AES GCM) short buffer", CKR_BUFFER_TOO_SMALL);
+    CHECK_TRUE(decLen == 16,
+               "C_EncryptFinal(AES GCM) short buffer reports the length");
+    rv = funcList->C_EncryptFinal(session, dec, &decLen);
+    CHECK_RV(rv, "C_EncryptFinal(AES GCM) retry", CKR_OK);
+#endif
 
     funcList->C_DestroyObject(session, key);
 }
@@ -604,6 +883,18 @@ static int run_test(void)
     if (rv == CKR_OK) {
 #ifndef NO_SHA256
         digest_requires_init_test(session);
+#endif
+#if !defined(NO_SHA256) && !defined(NO_HMAC)
+        sign_buffer_too_small_len_test(session);
+#endif
+#ifndef NO_RSA
+        rsa_buffer_too_small_len_test(session);
+#endif
+#if !defined(NO_AES) && (defined(HAVE_AES_CBC) || defined(HAVE_AESGCM))
+        aes_buffer_too_small_len_test(session);
+#endif
+#if !defined(NO_AES) && defined(HAVE_AESCMAC)
+        cmac_buffer_too_small_len_test(session);
 #endif
         if (sizeof(CK_ULONG) > sizeof(word32)) {
 #ifndef NO_SHA256

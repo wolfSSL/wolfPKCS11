@@ -3200,8 +3200,10 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
             }
-            if (encDataLen > (word32)*pulEncryptedDataLen)
+            if (encDataLen > (word32)*pulEncryptedDataLen) {
+                *pulEncryptedDataLen = encDataLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_Rsa_PublicEncrypt(pData, (int)ulDataLen, pEncryptedData,
                                                  &encDataLen, obj,
@@ -3223,8 +3225,10 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
             }
-            if (encDataLen > (word32)*pulEncryptedDataLen)
+            if (encDataLen > (word32)*pulEncryptedDataLen) {
+                *pulEncryptedDataLen = encDataLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_RsaPkcs15_PublicEncrypt(pData, (int)ulDataLen,
                                                pEncryptedData, &encDataLen, obj,
@@ -3249,8 +3253,10 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
             }
-            if (encDataLen > (word32)*pulEncryptedDataLen)
+            if (encDataLen > (word32)*pulEncryptedDataLen) {
+                *pulEncryptedDataLen = encDataLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_RsaOaep_PublicEncrypt(pData, (int)ulDataLen,
                                                pEncryptedData, &encDataLen, obj,
@@ -3281,8 +3287,10 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
             }
-            if (encDataLen > (word32)*pulEncryptedDataLen)
+            if (encDataLen > (word32)*pulEncryptedDataLen) {
+                *pulEncryptedDataLen = encDataLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_AesCbc_Encrypt(pData, (int)ulDataLen, pEncryptedData,
                                                           &encDataLen, session);
@@ -3312,8 +3320,10 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
             }
-            if (encDataLen > (word32)*pulEncryptedDataLen)
+            if (encDataLen > (word32)*pulEncryptedDataLen) {
+                *pulEncryptedDataLen = encDataLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_AesCbcPad_Encrypt(pData, (int)ulDataLen, pEncryptedData,
                                                           &encDataLen, session);
@@ -3335,8 +3345,10 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulEncryptedDataLen = ulDataLen;
                 return CKR_OK;
             }
-            if (ulDataLen > *pulEncryptedDataLen)
+            if (ulDataLen > *pulEncryptedDataLen) {
+                *pulEncryptedDataLen = ulDataLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             encDataLen = (word32)*pulEncryptedDataLen;
             ret = WP11_AesCtr_Do(pData, (word32)ulDataLen, pEncryptedData,
@@ -3363,8 +3375,10 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
             }
-            if (encDataLen > (word32)*pulEncryptedDataLen)
+            if (encDataLen > (word32)*pulEncryptedDataLen) {
+                *pulEncryptedDataLen = encDataLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_AesGcm_Encrypt(pData, (int)ulDataLen, pEncryptedData,
                                                      &encDataLen, obj, session);
@@ -3388,8 +3402,10 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
             }
-            if (encDataLen > (word32)*pulEncryptedDataLen)
+            if (encDataLen > (word32)*pulEncryptedDataLen) {
+                *pulEncryptedDataLen = encDataLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_AesCcm_Encrypt(pData, (int)ulDataLen, pEncryptedData,
                                       &encDataLen, obj, session);
@@ -3416,8 +3432,10 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
             }
-            if (encDataLen > (word32)*pulEncryptedDataLen)
+            if (encDataLen > (word32)*pulEncryptedDataLen) {
+                *pulEncryptedDataLen = encDataLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_AesEcb_Encrypt(pData, (int)ulDataLen, pEncryptedData,
                                       &encDataLen, obj, session);
@@ -3440,8 +3458,10 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulEncryptedDataLen = ulDataLen;
                 return CKR_OK;
             }
-            if (ulDataLen > *pulEncryptedDataLen)
+            if (ulDataLen > *pulEncryptedDataLen) {
+                *pulEncryptedDataLen = ulDataLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_AesCts_Encrypt(pData, (int)ulDataLen, pEncryptedData,
                                                           &encDataLen, session);
@@ -3465,8 +3485,10 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
             }
-            if (encDataLen > (word32)*pulEncryptedDataLen)
+            if (encDataLen > (word32)*pulEncryptedDataLen) {
+                *pulEncryptedDataLen = encDataLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_AesKeyWrap_Encrypt(pData, (word32)ulDataLen,
                                           pEncryptedData, &encDataLen, session);
@@ -3493,8 +3515,10 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
             }
-            if (encDataLen > (word32)*pulEncryptedDataLen)
+            if (encDataLen > (word32)*pulEncryptedDataLen) {
+                *pulEncryptedDataLen = encDataLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_AesKeyWrapPad_Encrypt(pData, (word32)ulDataLen,
                                           pEncryptedData, &encDataLen, session);
@@ -3618,6 +3642,7 @@ static CK_RV wp11_C_EncryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
                 return rv;
             }
             if (encPartLen > (word32)*pulEncryptedPartLen) {
+                *pulEncryptedPartLen = encPartLen;
                 rv = CKR_BUFFER_TOO_SMALL;
                 WOLFPKCS11_LEAVE("C_EncryptUpdate", rv);
                 return rv;
@@ -3650,8 +3675,10 @@ static CK_RV wp11_C_EncryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
                 *pulEncryptedPartLen = encPartLen;
                 return CKR_OK;
             }
-            if (encPartLen > (word32)*pulEncryptedPartLen)
+            if (encPartLen > (word32)*pulEncryptedPartLen) {
+                *pulEncryptedPartLen = encPartLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_AesCbcPad_EncryptUpdate(pPart, (int)ulPartLen,
                                           pEncryptedPart, &encPartLen, session);
@@ -3675,8 +3702,10 @@ static CK_RV wp11_C_EncryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
                 *pulEncryptedPartLen = ulPartLen;
                 return CKR_OK;
             }
-            if (ulPartLen > *pulEncryptedPartLen)
+            if (ulPartLen > *pulEncryptedPartLen) {
+                *pulEncryptedPartLen = ulPartLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             encPartLen = (word32)*pulEncryptedPartLen;
             ret = WP11_AesCtr_Update(pPart, (int)ulPartLen, pEncryptedPart,
@@ -3708,8 +3737,10 @@ static CK_RV wp11_C_EncryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
                 *pulEncryptedPartLen = encPartLen;
                 return CKR_OK;
             }
-            if (encPartLen > (word32)*pulEncryptedPartLen)
+            if (encPartLen > (word32)*pulEncryptedPartLen) {
+                *pulEncryptedPartLen = encPartLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_AesGcm_EncryptUpdate(pPart, (int)ulPartLen,
                                                pEncryptedPart, &encPartLen, obj,
@@ -3738,8 +3769,10 @@ static CK_RV wp11_C_EncryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
             encPartLen = (word32)*pulEncryptedPartLen;
             ret = WP11_AesCts_EncryptUpdate(pPart, (word32)ulPartLen,
                                           pEncryptedPart, &encPartLen, session);
-            if (ret == BUFFER_E)
+            if (ret == BUFFER_E) {
+                *pulEncryptedPartLen = ulPartLen + AES_BLOCK_SIZE * 2;
                 return CKR_BUFFER_TOO_SMALL;
+            }
             if (ret < 0) {
                 WP11_Session_AbortOp(session);
                 return CKR_FUNCTION_FAILED;
@@ -3864,8 +3897,10 @@ static CK_RV wp11_C_EncryptFinal(CK_SESSION_HANDLE hSession,
                 *pulLastEncryptedPartLen = encPartLen;
                 return CKR_OK;
             }
-            if ((CK_ULONG)encPartLen > *pulLastEncryptedPartLen)
+            if ((CK_ULONG)encPartLen > *pulLastEncryptedPartLen) {
+                *pulLastEncryptedPartLen = encPartLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_AesCbcPad_EncryptFinal(pLastEncryptedPart, &encPartLen,
                                                                        session);
@@ -3904,8 +3939,10 @@ static CK_RV wp11_C_EncryptFinal(CK_SESSION_HANDLE hSession,
                 *pulLastEncryptedPartLen = encPartLen;
                 return CKR_OK;
             }
-            if ((CK_ULONG)encPartLen > *pulLastEncryptedPartLen)
+            if ((CK_ULONG)encPartLen > *pulLastEncryptedPartLen) {
+                *pulLastEncryptedPartLen = encPartLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_AesGcm_EncryptFinal(pLastEncryptedPart, &encPartLen,
                                                                   obj, session);
@@ -3934,8 +3971,10 @@ static CK_RV wp11_C_EncryptFinal(CK_SESSION_HANDLE hSession,
                          (word32)(AES_BLOCK_SIZE * 2);
             ret = WP11_AesCts_EncryptFinal(pLastEncryptedPart, &encPartLen,
                                            session);
-            if (ret == BUFFER_E)
+            if (ret == BUFFER_E) {
+                *pulLastEncryptedPartLen = AES_BLOCK_SIZE * 2;
                 return CKR_BUFFER_TOO_SMALL;
+            }
             if (ret < 0) {
                 WP11_Session_AbortOp(session);
                 return CKR_FUNCTION_FAILED;
@@ -4350,8 +4389,10 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 *pulDataLen = decDataLen;
                 return CKR_OK;
             }
-            if (decDataLen > (word32)*pulDataLen)
+            if (decDataLen > (word32)*pulDataLen) {
+                *pulDataLen = decDataLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_Rsa_PrivateDecrypt(pEncryptedData,
                                                  (int)ulEncryptedDataLen, pData,
@@ -4374,8 +4415,10 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 *pulDataLen = decDataLen;
                 return CKR_OK;
             }
-            if (decDataLen > (word32)*pulDataLen)
+            if (decDataLen > (word32)*pulDataLen) {
+                *pulDataLen = decDataLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_RsaPkcs15_PrivateDecrypt(pEncryptedData,
                                                  (int)ulEncryptedDataLen, pData,
@@ -4401,8 +4444,10 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 *pulDataLen = decDataLen;
                 return CKR_OK;
             }
-            if (decDataLen > (word32)*pulDataLen)
+            if (decDataLen > (word32)*pulDataLen) {
+                *pulDataLen = decDataLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_RsaOaep_PrivateDecrypt(pEncryptedData,
                                                  (int)ulEncryptedDataLen, pData,
@@ -4433,8 +4478,10 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 *pulDataLen = decDataLen;
                 return CKR_OK;
             }
-            if (decDataLen > (word32)*pulDataLen)
+            if (decDataLen > (word32)*pulDataLen) {
+                *pulDataLen = decDataLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_AesCbc_Decrypt(pEncryptedData, (int)ulEncryptedDataLen,
                                               pData, &decDataLen, session);
@@ -4498,8 +4545,10 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 *pulDataLen = ulEncryptedDataLen;
                 return CKR_OK;
             }
-            if (ulEncryptedDataLen > *pulDataLen)
+            if (ulEncryptedDataLen > *pulDataLen) {
+                *pulDataLen = ulEncryptedDataLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             decDataLen = (word32)*pulDataLen;
             ret = WP11_AesCtr_Do(pEncryptedData,
@@ -4526,8 +4575,10 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 *pulDataLen = decDataLen;
                 return CKR_OK;
             }
-            if (decDataLen > (word32)*pulDataLen)
+            if (decDataLen > (word32)*pulDataLen) {
+                *pulDataLen = decDataLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_AesGcm_Decrypt(pEncryptedData, (int)ulEncryptedDataLen,
                                               pData, &decDataLen, obj, session);
@@ -4551,8 +4602,10 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 *pulDataLen = decDataLen;
                 return CKR_OK;
             }
-            if (decDataLen > (word32)*pulDataLen)
+            if (decDataLen > (word32)*pulDataLen) {
+                *pulDataLen = decDataLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_AesCcm_Decrypt(pEncryptedData, (int)ulEncryptedDataLen,
                                       pData, &decDataLen, obj, session);
@@ -4579,8 +4632,10 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 *pulDataLen = decDataLen;
                 return CKR_OK;
             }
-            if (decDataLen > (word32)*pulDataLen)
+            if (decDataLen > (word32)*pulDataLen) {
+                *pulDataLen = decDataLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_AesEcb_Decrypt(pEncryptedData, (int)ulEncryptedDataLen,
                                       pData, &decDataLen, obj, session);
@@ -4603,13 +4658,17 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 *pulDataLen = ulEncryptedDataLen;
                 return CKR_OK;
             }
-            if (ulEncryptedDataLen > *pulDataLen)
+            if (ulEncryptedDataLen > *pulDataLen) {
+                *pulDataLen = ulEncryptedDataLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_AesCts_Decrypt(pEncryptedData, (int)ulEncryptedDataLen,
                                               pData, &decDataLen, session);
-            if (ret == BUFFER_E)
+            if (ret == BUFFER_E) {
+                *pulDataLen = ulEncryptedDataLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
             if (ret < 0)
                 break;
             *pulDataLen = decDataLen;
@@ -4632,8 +4691,10 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 *pulDataLen = decDataLen;
                 return CKR_OK;
             }
-            if (decDataLen > (word32)*pulDataLen)
+            if (decDataLen > (word32)*pulDataLen) {
+                *pulDataLen = decDataLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_AesKeyWrap_Decrypt(pEncryptedData,
                     (word32)ulEncryptedDataLen, pData, &decDataLen, session);
@@ -4782,8 +4843,10 @@ static CK_RV wp11_C_DecryptUpdate(CK_SESSION_HANDLE hSession,
                 *pulPartLen = decPartLen;
                 return CKR_OK;
             }
-            if (decPartLen > (word32)*pulPartLen)
+            if (decPartLen > (word32)*pulPartLen) {
+                *pulPartLen = decPartLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_AesCbc_DecryptUpdate(pEncryptedPart,
                                                  (int)ulEncryptedPartLen, pPart,
@@ -4815,8 +4878,10 @@ static CK_RV wp11_C_DecryptUpdate(CK_SESSION_HANDLE hSession,
                 *pulPartLen = decPartLen;
                 return CKR_OK;
             }
-            if (decPartLen > (word32)*pulPartLen)
+            if (decPartLen > (word32)*pulPartLen) {
+                *pulPartLen = decPartLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_AesCbcPad_DecryptUpdate(pEncryptedPart,
                                                  (int)ulEncryptedPartLen, pPart,
@@ -4846,8 +4911,10 @@ static CK_RV wp11_C_DecryptUpdate(CK_SESSION_HANDLE hSession,
                 *pulPartLen = ulEncryptedPartLen;
                 return CKR_OK;
             }
-            if (ulEncryptedPartLen > *pulPartLen)
+            if (ulEncryptedPartLen > *pulPartLen) {
+                *pulPartLen = ulEncryptedPartLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             /* Output is the same length as the input, which fits the buffer. */
             decPartLen = (word32)ulEncryptedPartLen;
@@ -4891,6 +4958,10 @@ static CK_RV wp11_C_DecryptUpdate(CK_SESSION_HANDLE hSession,
         case CKM_AES_CTS:
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CTS_DEC))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            if (!CK_ULONG_FITS_WORD32(ulEncryptedPartLen)) {
+                WP11_AesCts_Final(session);
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
+            }
 
             if (pPart == NULL) {
                 *pulPartLen = ulEncryptedPartLen + AES_BLOCK_SIZE * 2;
@@ -4900,8 +4971,10 @@ static CK_RV wp11_C_DecryptUpdate(CK_SESSION_HANDLE hSession,
             decPartLen = (word32)*pulPartLen;
             ret = WP11_AesCts_DecryptUpdate(pEncryptedPart,
                     (word32)ulEncryptedPartLen, pPart, &decPartLen, session);
-            if (ret == BUFFER_E)
+            if (ret == BUFFER_E) {
+                *pulPartLen = ulEncryptedPartLen + AES_BLOCK_SIZE * 2;
                 return CKR_BUFFER_TOO_SMALL;
+            }
             if (ret < 0) {
                 WP11_Session_AbortOp(session);
                 return CKR_FUNCTION_FAILED;
@@ -5083,8 +5156,10 @@ static CK_RV wp11_C_DecryptFinal(CK_SESSION_HANDLE hSession,
                 *pulLastPartLen = decPartLen;
                 return CKR_OK;
             }
-            if ((CK_ULONG)decPartLen > *pulLastPartLen)
+            if ((CK_ULONG)decPartLen > *pulLastPartLen) {
+                *pulLastPartLen = decPartLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_AesGcm_DecryptFinal(pLastPart, &decPartLen, obj,
                                                                        session);
@@ -5107,8 +5182,10 @@ static CK_RV wp11_C_DecryptFinal(CK_SESSION_HANDLE hSession,
 
             decPartLen = (word32)*pulLastPartLen;
             ret = WP11_AesCts_DecryptFinal(pLastPart, &decPartLen, session);
-            if (ret == BUFFER_E)
+            if (ret == BUFFER_E) {
+                *pulLastPartLen = AES_BLOCK_SIZE * 2;
                 return CKR_BUFFER_TOO_SMALL;
+            }
             if (ret < 0) {
                 WP11_Session_AbortOp(session);
                 return CKR_FUNCTION_FAILED;
@@ -6069,8 +6146,10 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulSignatureLen = sigLen;
                 return CKR_OK;
             }
-            if ((CK_ULONG)sigLen > *pulSignatureLen)
+            if ((CK_ULONG)sigLen > *pulSignatureLen) {
+                *pulSignatureLen = sigLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_Rsa_Sign(pData, (int)ulDataLen, pSignature, &sigLen, obj,
                                                  WP11_Session_GetSlot(session));
@@ -6108,8 +6187,10 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulSignatureLen = sigLen;
                 return CKR_OK;
             }
-            if ((CK_ULONG)sigLen > *pulSignatureLen)
+            if ((CK_ULONG)sigLen > *pulSignatureLen) {
+                *pulSignatureLen = sigLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             if (hash_type != WC_HASH_TYPE_NONE) {
                 if (wc_Hash(hash_type, pData, (word32)ulDataLen,
@@ -6177,8 +6258,10 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulSignatureLen = sigLen;
                 return CKR_OK;
             }
-            if ((CK_ULONG)sigLen > *pulSignatureLen)
+            if ((CK_ULONG)sigLen > *pulSignatureLen) {
+                *pulSignatureLen = sigLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             if (hash_type != WC_HASH_TYPE_NONE) {
                 if (wc_Hash(hash_type, pData, (word32)ulDataLen,
@@ -6229,8 +6312,10 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulSignatureLen = sigLen;
                 return CKR_OK;
             }
-            if ((CK_ULONG)sigLen > *pulSignatureLen)
+            if ((CK_ULONG)sigLen > *pulSignatureLen) {
+                *pulSignatureLen = sigLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             if (hash_type != WC_HASH_TYPE_NONE) {
                 if (wc_Hash(hash_type, pData, (word32)ulDataLen, digest,
@@ -6259,8 +6344,10 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulSignatureLen = sigLen;
                 return CKR_OK;
             }
-            if ((CK_ULONG)sigLen > *pulSignatureLen)
+            if ((CK_ULONG)sigLen > *pulSignatureLen) {
+                *pulSignatureLen = sigLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_Mldsa_Sign(pData, (int)ulDataLen, pSignature,
                                   &sigLen, obj, session);
@@ -6311,8 +6398,10 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulSignatureLen = sigLen;
                 return CKR_OK;
             }
-            if ((CK_ULONG)sigLen > *pulSignatureLen)
+            if ((CK_ULONG)sigLen > *pulSignatureLen) {
+                *pulSignatureLen = sigLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_Hmac_Sign(pData, (int)ulDataLen, pSignature, &sigLen,
                                                                        session);
@@ -6359,8 +6448,10 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulSignatureLen = (CK_ULONG)WP11_TLS_MAC_get_len(session);
                 return CKR_OK;
             }
-            if ((CK_ULONG)WP11_TLS_MAC_get_len(session) > *pulSignatureLen)
+            if ((CK_ULONG)WP11_TLS_MAC_get_len(session) > *pulSignatureLen) {
+                *pulSignatureLen = WP11_TLS_MAC_get_len(session);
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             sigLen = CK_ULONG_CAP_WORD32(*pulSignatureLen);
             ret = WP11_TLS_MAC_sign(pData, (word32)ulDataLen, pSignature,
@@ -6640,8 +6731,10 @@ static CK_RV wp11_C_SignFinal(CK_SESSION_HANDLE hSession,
                 *pulSignatureLen = sigLen;
                 return CKR_OK;
             }
-            if ((CK_ULONG)sigLen > *pulSignatureLen)
+            if ((CK_ULONG)sigLen > *pulSignatureLen) {
+                *pulSignatureLen = sigLen;
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             ret = WP11_Hmac_SignFinal(pSignature, &sigLen, session);
             *pulSignatureLen = sigLen;
@@ -6680,8 +6773,10 @@ static CK_RV wp11_C_SignFinal(CK_SESSION_HANDLE hSession,
                 *pulSignatureLen = (CK_ULONG)WP11_TLS_MAC_get_len(session);
                 return CKR_OK;
             }
-            if ((CK_ULONG)WP11_TLS_MAC_get_len(session) > *pulSignatureLen)
+            if ((CK_ULONG)WP11_TLS_MAC_get_len(session) > *pulSignatureLen) {
+                *pulSignatureLen = WP11_TLS_MAC_get_len(session);
                 return CKR_BUFFER_TOO_SMALL;
+            }
 
             WP11_Session_GetData(session, &data, &dataLen);
             sigLen = (word32)*pulSignatureLen;
