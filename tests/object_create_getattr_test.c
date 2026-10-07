@@ -56,6 +56,13 @@ static CK_BBOOL ckFalse = CK_FALSE;
 static const byte certValue[] = { 0x30, 0x82, 0x01, 0x00 };
 static const byte certSubject[] = { 0x30, 0x00 };
 static const char certUrl[] = "http://example.com/cert.der";
+#ifdef HAVE_ECC
+static const byte keySubject[] = {
+    0x30, 0x0f, 0x31, 0x0d, 0x30, 0x0b, 0x06, 0x03,
+    0x55, 0x04, 0x03, 0x0c, 0x04, 0x74, 0x65, 0x73, 0x74
+};
+static const byte keySerial[] = { 0x02, 0x01, 0x01 };
+#endif
 static const byte dataValue[] = "object-create-data";
 static const byte dataLabel[] = "object-create-data-label";
 static const byte secretValue[] = {
@@ -630,6 +637,80 @@ static void test_cert_category_roundtrip(CK_SESSION_HANDLE session)
     }
 }
 
+#ifdef HAVE_ECC
+/* CKA_SUBJECT on a public or private key reads back as supplied, and the
+ * certificate-only CKA_ISSUER and CKA_SERIAL_NUMBER are not accepted. */
+static void test_key_subject_roundtrip(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS pubClass = CKO_PUBLIC_KEY;
+    CK_OBJECT_CLASS privClass = CKO_PRIVATE_KEY;
+    CK_KEY_TYPE ecType = CKK_EC;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    byte buf[32];
+    CK_ATTRIBUTE get = { CKA_SUBJECT, buf, sizeof(buf) };
+    CK_ATTRIBUTE issuer = { CKA_ISSUER, (void*)keySubject,
+                            sizeof(keySubject) };
+    CK_ATTRIBUTE serial = { CKA_SERIAL_NUMBER, (void*)keySerial,
+                            sizeof(keySerial) };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_CLASS,     &pubClass,          sizeof(pubClass)        },
+        { CKA_KEY_TYPE,  &ecType,            sizeof(ecType)          },
+        { CKA_TOKEN,     &ckFalse,           sizeof(ckFalse)         },
+        { CKA_EC_PARAMS, ecc_p256_params,    sizeof(ecc_p256_params) },
+        { CKA_EC_POINT,  ecc_p256_pub,       sizeof(ecc_p256_pub)    },
+        { CKA_SUBJECT,   (void*)keySubject,  sizeof(keySubject)      },
+        { CKA_ISSUER,    (void*)keySubject,  sizeof(keySubject)      },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_CLASS,     &privClass,         sizeof(privClass)       },
+        { CKA_KEY_TYPE,  &ecType,            sizeof(ecType)          },
+        { CKA_TOKEN,     &ckFalse,           sizeof(ckFalse)         },
+        { CKA_PRIVATE,   &ckFalse,           sizeof(ckFalse)         },
+        { CKA_EC_PARAMS, ecc_p256_params,    sizeof(ecc_p256_params) },
+        { CKA_VALUE,     ecc_p256_priv,      sizeof(ecc_p256_priv)   },
+        { CKA_SUBJECT,   (void*)keySubject,  sizeof(keySubject)      },
+        { CKA_SERIAL_NUMBER, (void*)keySerial, sizeof(keySerial)     },
+    };
+    CK_ULONG pubCnt = sizeof(pubTmpl) / sizeof(*pubTmpl);
+    CK_ULONG privCnt = sizeof(privTmpl) / sizeof(*privTmpl);
+
+    rv = funcList->C_CreateObject(session, pubTmpl, pubCnt, &key);
+    CHECK_TRUE(rv != CKR_OK, "public key with CKA_ISSUER rejected");
+    destroy_obj(session, &key);
+    rv = funcList->C_CreateObject(session, privTmpl, privCnt, &key);
+    CHECK_TRUE(rv != CKR_OK, "private key with CKA_SERIAL_NUMBER rejected");
+    destroy_obj(session, &key);
+
+    rv = funcList->C_CreateObject(session, pubTmpl, pubCnt - 1, &key);
+    CHECK_RV(rv, "create public key with subject", CKR_OK);
+    if (rv == CKR_OK) {
+        get.ulValueLen = sizeof(buf);
+        rv = funcList->C_GetAttributeValue(session, key, &get, 1);
+        CHECK_TRUE(rv == CKR_OK && get.ulValueLen == sizeof(keySubject) &&
+                   XMEMCMP(buf, keySubject, sizeof(keySubject)) == 0,
+                   "public key subject reads back");
+        rv = funcList->C_SetAttributeValue(session, key, &issuer, 1);
+        CHECK_TRUE(rv != CKR_OK, "set CKA_ISSUER on public key rejected");
+    }
+    destroy_obj(session, &key);
+
+    rv = funcList->C_CreateObject(session, privTmpl, privCnt - 1, &key);
+    CHECK_RV(rv, "create private key with subject", CKR_OK);
+    if (rv == CKR_OK) {
+        get.ulValueLen = sizeof(buf);
+        rv = funcList->C_GetAttributeValue(session, key, &get, 1);
+        CHECK_TRUE(rv == CKR_OK && get.ulValueLen == sizeof(keySubject) &&
+                   XMEMCMP(buf, keySubject, sizeof(keySubject)) == 0,
+                   "private key subject reads back");
+        rv = funcList->C_SetAttributeValue(session, key, &serial, 1);
+        CHECK_TRUE(rv != CKR_OK,
+                   "set CKA_SERIAL_NUMBER on private key rejected");
+    }
+    destroy_obj(session, &key);
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -649,6 +730,9 @@ static int run_test(void)
         test_data_object_value_optional(session);
         test_unavailable_attr_is_error(session);
         test_cert_category_roundtrip(session);
+#ifdef HAVE_ECC
+        test_key_subject_roundtrip(session);
+#endif
 #if !defined(NO_RSA) || defined(HAVE_ECC)
         test_key_type_matches_class(session);
 #endif

@@ -14844,6 +14844,12 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
 #endif
                 else if (object->objClass == CKO_DATA)
                     ret = GetDataAttr(object, type, data, len);
+                else if (type == CKA_SUBJECT &&
+                         (object->objClass == CKO_PUBLIC_KEY ||
+                          object->objClass == CKO_PRIVATE_KEY)) {
+                    ret = GetData(object->subject, object->subjectLen, data,
+                                  len);
+                }
                 else {
                     switch (object->type) {
 #ifndef NO_RSA
@@ -15331,12 +15337,23 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             /* Handled in layer above */
             break;
         case CKA_ISSUER:
-            ret = WP11_Object_SetData(&object->issuer, &object->issuerLen,
-                                      data, (int)len);
-            break;
         case CKA_SERIAL_NUMBER:
-            ret = WP11_Object_SetData(&object->serial, &object->serialLen,
-                                      data, (int)len);
+            /* Certificate attributes; NSS trust objects carry them too. */
+            if (object->objClass != CKO_CERTIFICATE
+#ifdef WOLFPKCS11_NSS
+                    && object->objClass != CKO_NSS_TRUST
+#endif
+                    ) {
+                ret = BAD_FUNC_ARG;
+            }
+            else if (type == CKA_ISSUER) {
+                ret = WP11_Object_SetData(&object->issuer, &object->issuerLen,
+                                          data, (int)len);
+            }
+            else {
+                ret = WP11_Object_SetData(&object->serial, &object->serialLen,
+                                          data, (int)len);
+            }
             break;
         case CKA_SUBJECT:
             ret = WP11_Object_SetData(&object->subject, &object->subjectLen,
