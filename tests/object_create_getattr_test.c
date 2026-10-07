@@ -586,6 +586,50 @@ static void test_unavailable_attr_is_error(CK_SESSION_HANDLE session)
     (void)session;
 }
 
+/* CKA_CERTIFICATE_CATEGORY reads back as supplied, and defaults to 0. */
+static void test_cert_category_roundtrip(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS certClass = CKO_CERTIFICATE;
+    CK_CERTIFICATE_TYPE certType = CKC_X_509;
+    CK_ULONG category = 2;
+    CK_ULONG got;
+    CK_OBJECT_HANDLE cert = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE get = { CKA_CERTIFICATE_CATEGORY, NULL, 0 };
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,                &certClass,         sizeof(certClass)   },
+        { CKA_CERTIFICATE_TYPE,     &certType,          sizeof(certType)    },
+        { CKA_TOKEN,                &ckFalse,           sizeof(ckFalse)     },
+        { CKA_SUBJECT,              (void*)certSubject, sizeof(certSubject) },
+        { CKA_VALUE,                (void*)certValue,   sizeof(certValue)   },
+        { CKA_CERTIFICATE_CATEGORY, &category,          sizeof(category)    },
+    };
+    CK_ULONG cnt = sizeof(tmpl) / sizeof(*tmpl);
+    int i;
+
+    for (i = 0; i < 2; i++) {
+        rv = funcList->C_CreateObject(session, tmpl, cnt - (CK_ULONG)i, &cert);
+        CHECK_RV(rv, "create certificate", CKR_OK);
+        if (rv != CKR_OK)
+            continue;
+
+        get.pValue = NULL;
+        get.ulValueLen = 0;
+        rv = funcList->C_GetAttributeValue(session, cert, &get, 1);
+        CHECK_TRUE(rv == CKR_OK && get.ulValueLen == sizeof(CK_ULONG),
+                   "certificate category size");
+        got = (CK_ULONG)-1;
+        get.pValue = &got;
+        get.ulValueLen = sizeof(got);
+        rv = funcList->C_GetAttributeValue(session, cert, &get, 1);
+        CHECK_TRUE(rv == CKR_OK && get.ulValueLen == sizeof(got) &&
+                   got == ((i == 0) ? category : 0),
+                   (i == 0) ? "certificate category reads back" :
+                              "certificate category defaults to 0");
+        destroy_obj(session, &cert);
+    }
+}
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -604,6 +648,7 @@ static int run_test(void)
         test_create_count_range(session);
         test_data_object_value_optional(session);
         test_unavailable_attr_is_error(session);
+        test_cert_category_roundtrip(session);
 #if !defined(NO_RSA) || defined(HAVE_ECC)
         test_key_type_matches_class(session);
 #endif
