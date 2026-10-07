@@ -1678,15 +1678,18 @@ static CK_RV RequireAttribute(CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
     return CKR_OK;
 }
 
-/* Attributes required at C_CreateObject, checked once CreateObject has
- * validated the template. Unwrap, derive and decapsulate also use CreateObject
- * but supply the key value afterwards. */
+/* Attributes required at C_CreateObject, and a secret key class needs a secret
+ * key type. Unwrap, derive and decapsulate also use CreateObject but supply the
+ * key value afterwards. A malformed or unsupported class or key type is left
+ * for CreateObject to report. */
 static CK_RV CheckCreateRequiredAttributes(CK_ATTRIBUTE_PTR pTemplate,
                                            CK_ULONG ulCount)
 {
     CK_RV rv = CKR_OK;
     CK_ATTRIBUTE* attr;
     CK_OBJECT_CLASS objectClass;
+    CK_KEY_TYPE keyType;
+    int secretType;
 
     FindAttributeType(pTemplate, ulCount, CKA_CLASS, &attr);
     if (attr == NULL || attr->pValue == NULL ||
@@ -1698,9 +1701,101 @@ static CK_RV CheckCreateRequiredAttributes(CK_ATTRIBUTE_PTR pTemplate,
     if (objectClass == CKO_CERTIFICATE) {
         /* CKA_URL is not stored, so a certificate needs its value. */
         rv = RequireAttribute(pTemplate, ulCount, CKA_VALUE);
+        return rv;
     }
-    else if (objectClass == CKO_SECRET_KEY) {
+
+    FindAttributeType(pTemplate, ulCount, CKA_KEY_TYPE, &attr);
+    if (attr == NULL || attr->pValue == NULL ||
+            attr->ulValueLen != sizeof(CK_KEY_TYPE)) {
+        return CKR_OK;
+    }
+    keyType = *(CK_KEY_TYPE*)attr->pValue;
+
+    switch (keyType) {
+        case CKK_GENERIC_SECRET:
+    #ifndef NO_AES
+        case CKK_AES:
+    #endif
+    #ifdef WOLFPKCS11_HKDF
+        case CKK_HKDF:
+    #endif
+            secretType = 1;
+            break;
+    #ifndef NO_RSA
+        case CKK_RSA:
+    #endif
+    #ifdef HAVE_ECC
+        case CKK_EC:
+    #endif
+    #ifndef NO_DH
+        case CKK_DH:
+    #endif
+    #ifdef WOLFPKCS11_MLDSA
+        case CKK_ML_DSA:
+    #endif
+    #ifdef WOLFPKCS11_MLKEM
+        case CKK_ML_KEM:
+    #endif
+    #ifdef WOLFPKCS11_LMS
+        case CKK_HSS:
+    #endif
+    #ifdef WOLFPKCS11_XMSS
+        case CKK_XMSS:
+        case CKK_XMSSMT:
+    #endif
+            secretType = 0;
+            break;
+        default:
+            return CKR_OK;
+    }
+
+    if (objectClass == CKO_SECRET_KEY) {
+        if (!secretType)
+            return CKR_TEMPLATE_INCONSISTENT;
         rv = RequireAttribute(pTemplate, ulCount, CKA_VALUE);
+    }
+    else if (objectClass == CKO_PUBLIC_KEY || objectClass == CKO_PRIVATE_KEY) {
+        switch (keyType) {
+        #ifndef NO_RSA
+            case CKK_RSA:
+                FindAttributeType(pTemplate, ulCount, CKA_MODULUS, &attr);
+                if (objectClass == CKO_PUBLIC_KEY) {
+                    rv = RequireAttribute(pTemplate, ulCount, CKA_MODULUS);
+                    if (rv == CKR_OK) {
+                        rv = RequireAttribute(pTemplate, ulCount,
+                                              CKA_PUBLIC_EXPONENT);
+                    }
+                }
+                else if (attr == NULL) {
+                    /* The modulus is computed from the primes. */
+                    rv = RequireAttribute(pTemplate, ulCount, CKA_PRIME_1);
+                    if (rv == CKR_OK) {
+                        rv = RequireAttribute(pTemplate, ulCount,
+                                              CKA_PRIME_2);
+                    }
+                }
+                else {
+                    rv = RequireAttribute(pTemplate, ulCount, CKA_MODULUS);
+                }
+                if (rv == CKR_OK && objectClass == CKO_PRIVATE_KEY) {
+                    rv = RequireAttribute(pTemplate, ulCount,
+                                          CKA_PRIVATE_EXPONENT);
+                }
+                break;
+        #endif
+        #ifdef HAVE_ECC
+            case CKK_EC:
+                rv = RequireAttribute(pTemplate, ulCount, CKA_EC_PARAMS);
+                if (rv == CKR_OK) {
+                    rv = RequireAttribute(pTemplate, ulCount,
+                        (objectClass == CKO_PUBLIC_KEY) ?
+                        CKA_EC_POINT : CKA_VALUE);
+                }
+                break;
+        #endif
+            default:
+                break;
+        }
     }
 
     return rv;
@@ -1715,9 +1810,11 @@ static CK_RV CheckCreateRequiredAttributes(CK_ATTRIBUTE_PTR pTemplate,
  * @param  phObject   [out]  Handle of object created.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_ARGUMENTS_BAD when pTemplate or phObject is NULL.
+ *          CKR_ARGUMENTS_BAD when pTemplate or phObject is NULL, or ulCount
+ *          is too large.
  *          CKR_SESSION_READ_ONLY when the session cannot create objects.
- *          CKR_TEMPLATE_INCOMPLETE when CKA_KEY_TYPE is missing.
+ *          CKR_TEMPLATE_INCOMPLETE when CKA_KEY_TYPE or an attribute required
+ *          for the object is missing.
  *          CKR_ATTRIBUTE_VALUE_INVALID when an attribute has invalid value or
  *          length.
  *          CKR_DEVICE_MEMORY when dynamic memory allocation fails.
@@ -1750,7 +1847,7 @@ static CK_RV wp11_C_CreateObject(CK_SESSION_HANDLE hSession,
         WOLFPKCS11_LEAVE("C_CreateObject", rv);
         return rv;
     }
-    if (pTemplate == NULL || phObject == NULL) {
+    if (pTemplate == NULL || phObject == NULL || ulCount > (CK_ULONG)INT_MAX) {
         rv = CKR_ARGUMENTS_BAD;
         WOLFPKCS11_LEAVE("C_CreateObject", rv);
         return rv;
@@ -1790,14 +1887,14 @@ static CK_RV wp11_C_CreateObject(CK_SESSION_HANDLE hSession,
         return rv;
     }
 
-    rv = CreateObject(session, pTemplate, ulCount, &object);
+    rv = CheckCreateRequiredAttributes(pTemplate, ulCount);
     if (rv != CKR_OK) {
         WOLFPKCS11_LEAVE("C_CreateObject", rv);
         return rv;
     }
-    rv = CheckCreateRequiredAttributes(pTemplate, ulCount);
+
+    rv = CreateObject(session, pTemplate, ulCount, &object);
     if (rv != CKR_OK) {
-        WP11_Object_Free(object);
         WOLFPKCS11_LEAVE("C_CreateObject", rv);
         return rv;
     }

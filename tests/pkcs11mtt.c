@@ -284,6 +284,18 @@ static CK_RV test_object(void* args)
         { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
         { CKA_TOKEN,             &ckTrue,           0                         },
     };
+    CK_ATTRIBUTE tokenNullCreate[] = {
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
+        { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
+        { CKA_VALUE,             keyData,           sizeof(keyData)           },
+        { CKA_TOKEN,             NULL,              sizeof(CK_BBOOL)          },
+    };
+    CK_ATTRIBUTE tokenBadLenCreate[] = {
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
+        { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
+        { CKA_VALUE,             keyData,           sizeof(keyData)           },
+        { CKA_TOKEN,             &ckTrue,           0                         },
+    };
     CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE objOnToken = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE copyObj = CK_INVALID_HANDLE;
@@ -345,14 +357,14 @@ static CK_RV test_object(void* args)
                                             "Create Object zero len key class");
     }
     if (ret == CKR_OK) {
-        count = sizeof(tokenNull) / sizeof(*tokenNull);
-        ret = funcList->C_CreateObject(session, tokenNull, count, &obj);
+        count = sizeof(tokenNullCreate) / sizeof(*tokenNullCreate);
+        ret = funcList->C_CreateObject(session, tokenNullCreate, count, &obj);
         CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
                                                     "Create Object NULL token");
     }
     if (ret == CKR_OK) {
-        count = sizeof(tokenBadLen) / sizeof(*tokenBadLen);
-        ret = funcList->C_CreateObject(session, tokenBadLen, count, &obj);
+        count = sizeof(tokenBadLenCreate) / sizeof(*tokenBadLenCreate);
+        ret = funcList->C_CreateObject(session, tokenBadLenCreate, count, &obj);
         CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
                                                 "Create Object zero token len");
     }
