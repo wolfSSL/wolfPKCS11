@@ -54,6 +54,10 @@
 #include "testdata.h"
 #include "pkcs11_test_util.h"
 
+#if defined(WOLFPKCS11_MLKEM) && defined(WOLFPKCS11_PKCS11_V3_2)
+    #define MLKEM_TEST
+#endif
+
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && defined(HAVE_ECC) && \
     defined(USE_WOLFSSL_MEMORY) && !defined(WOLFSSL_STATIC_MEMORY) && \
     !defined(WOLFSSL_DEBUG_MEMORY)
@@ -199,6 +203,7 @@ static void test_unwrap_wrapped_len_beyond_word32(CK_SESSION_HANDLE session)
         }
         key = CK_INVALID_HANDLE;
     }
+    funcList->C_DestroyObject(session, aesKey);
 #endif
 
 #ifndef NO_RSA
@@ -225,6 +230,8 @@ static void test_unwrap_wrapped_len_beyond_word32(CK_SESSION_HANDLE session)
             funcList->C_DestroyObject(session, key);
         }
     }
+    funcList->C_DestroyObject(session, rsaPub);
+    funcList->C_DestroyObject(session, rsaPriv);
 #endif
     (void)session;
     (void)rv;
@@ -284,6 +291,7 @@ static void test_unwrap_failure_codes(CK_SESSION_HANDLE session)
         CHECK_RV(rv, "AES-CBC-PAD unwrap with partial block",
                  CKR_WRAPPED_KEY_LEN_RANGE);
     }
+    funcList->C_DestroyObject(session, aesKey);
 #endif
 
 #ifndef NO_RSA
@@ -300,6 +308,8 @@ static void test_unwrap_failure_codes(CK_SESSION_HANDLE session)
         CHECK_RV(rv, "RSA unwrap with short wrapped key",
                  CKR_WRAPPED_KEY_LEN_RANGE);
     }
+    funcList->C_DestroyObject(session, rsaPub);
+    funcList->C_DestroyObject(session, rsaPriv);
 #endif
     (void)session;
     (void)rv;
@@ -566,6 +576,98 @@ static void test_hkdf_keygen_matches_support(CK_SESSION_HANDLE session)
     }
 }
 
+#if defined(MLKEM_TEST) && defined(WIDE_CK_ULONG)
+/* C_EncapsulateKey and C_DecapsulateKey are only in the v3.2 list. */
+static CK_FUNCTION_LIST_3_2* get_v32_list(void)
+{
+    CK_INTERFACE* iface = NULL;
+    CK_RV rv;
+#ifndef HAVE_PKCS11_STATIC
+    CK_C_GetInterface func;
+
+    func = (CK_C_GetInterface)dlsym(dlib, "C_GetInterface");
+    if (func == NULL)
+        return NULL;
+    rv = func((CK_UTF8CHAR_PTR)"PKCS 11", NULL, &iface, 0);
+#else
+    rv = C_GetInterface((CK_UTF8CHAR_PTR)"PKCS 11", NULL, &iface, 0);
+#endif
+    if (rv != CKR_OK || iface == NULL)
+        return NULL;
+    return (CK_FUNCTION_LIST_3_2*)iface->pFunctionList;
+}
+
+static CK_RV gen_mlkem_keys(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE* pub,
+                            CK_OBJECT_HANDLE* priv)
+{
+    CK_MECHANISM mech = { CKM_ML_KEM_KEY_PAIR_GEN, NULL, 0 };
+    CK_ML_KEM_PARAMETER_SET_TYPE paramSet = CKP_ML_KEM_768;
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_PARAMETER_SET, &paramSet, sizeof(paramSet) },
+        { CKA_ENCAPSULATE,   &ckTrue,   sizeof(ckTrue)   },
+        { CKA_PRIVATE,       &ckFalse,  sizeof(ckFalse)  },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_DECAPSULATE, &ckTrue,  sizeof(ckTrue)  },
+        { CKA_PRIVATE,     &ckFalse, sizeof(ckFalse) },
+    };
+
+    return funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+               sizeof(pubTmpl) / sizeof(*pubTmpl), privTmpl,
+               sizeof(privTmpl) / sizeof(*privTmpl), pub, priv);
+}
+
+static void test_decapsulate_ct_len_beyond_word32(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_FUNCTION_LIST_3_2* list;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_ML_KEM, NULL, 0 };
+    byte ct[2048];
+    CK_ULONG ctLen = sizeof(ct);
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &genericType, sizeof(genericType) },
+        { CKA_PRIVATE,  &ckFalse,     sizeof(ckFalse)     },
+    };
+    CK_ULONG tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
+
+    list = get_v32_list();
+    CHECK_TRUE(list != NULL, "get v3.2 function list");
+    if (list == NULL)
+        return;
+    rv = gen_mlkem_keys(session, &pub, &priv);
+    CHECK_RV(rv, "generate ML-KEM key pair", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = list->C_EncapsulateKey(session, &mech, pub, tmpl, tmplCnt, ct,
+                                    &ctLen, &key);
+        CHECK_RV(rv, "ML-KEM encapsulate", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        funcList->C_DestroyObject(session, key);
+        key = CK_INVALID_HANDLE;
+        rv = list->C_DecapsulateKey(session, &mech, priv, tmpl, tmplCnt, ct,
+                                    LEN_ABOVE_WORD32(ctLen), &key);
+        CHECK_RV(rv, "ML-KEM decapsulate with ciphertext length beyond 32 bits",
+                 CKR_ARGUMENTS_BAD);
+        if (rv == CKR_OK) {
+            funcList->C_DestroyObject(session, key);
+        }
+        key = CK_INVALID_HANDLE;
+        rv = list->C_DecapsulateKey(session, &mech, priv, tmpl, tmplCnt, ct,
+                                    ctLen, &key);
+        CHECK_RV(rv, "ML-KEM decapsulate with exact ciphertext length",
+                 CKR_OK);
+        if (rv == CKR_OK) {
+            funcList->C_DestroyObject(session, key);
+        }
+    }    funcList->C_DestroyObject(session, pub);
+    funcList->C_DestroyObject(session, priv);
+}
+#endif /* MLKEM_TEST && WIDE_CK_ULONG */
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -584,6 +686,9 @@ static int run_test(void)
 #endif
         test_unwrap_failure_codes(session);
         test_hkdf_keygen_matches_support(session);
+#if defined(MLKEM_TEST) && defined(WIDE_CK_ULONG)
+        test_decapsulate_ct_len_beyond_word32(session);
+#endif
 #ifdef LABEL_ALLOC_FAIL_TEST
         test_keypair_common_label_copy_failure(session);
 #endif

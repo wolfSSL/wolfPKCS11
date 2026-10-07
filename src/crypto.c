@@ -11511,6 +11511,8 @@ static CK_RV wp11_C_DecapsulateKey(CK_SESSION_HANDLE hSession,
                 pMechanism->ulParameterLen != 0) {
                 return CKR_MECHANISM_PARAM_INVALID;
             }
+            if (!CK_ULONG_FITS_WORD32(ulCiphertextLen))
+                return CKR_ARGUMENTS_BAD;
             ret = WP11_MlKem_Decapsulate(privObj, &derivedKey, &keyLen,
                                          pCiphertext, ulCiphertextLen);
             if (ret < 0)
