@@ -3646,6 +3646,14 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
     if (src == NULL || dest == NULL)
         return BAD_FUNC_ARG;
 
+    /* Not copyable; reject before any field is copied. */
+    if (src->objClass == CKO_CERTIFICATE)
+        return BAD_FUNC_ARG;
+#ifdef WOLFPKCS11_NSS
+    if (src->objClass == CKO_NSS_TRUST)
+        return BAD_FUNC_ARG;
+#endif
+
     /* We save data copying for the last step */
 
     /* Copy the common mutable fields, and a data object's payload, under the
@@ -3700,15 +3708,7 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
     if (ret != 0)
         return ret;
 
-    if (src->objClass == CKO_CERTIFICATE) {
-        return BAD_FUNC_ARG;
-    }
-#ifdef WOLFPKCS11_NSS
-    else if (src->objClass == CKO_NSS_TRUST) {
-        return BAD_FUNC_ARG;
-    }
-#endif
-    else if (src->objClass == CKO_DATA) {
+    if (src->objClass == CKO_DATA) {
         /* Payload copied above under the source lock. */
     }
     else {
@@ -13446,6 +13446,13 @@ int WP11_Object_SetCert(WP11_Object* object, unsigned char** data,
             XMEMCPY(newData, data[1], len[1]);
     }
     if (ret == 0 && data[1] != NULL) {
+#ifndef WOLFPKCS11_NO_STORE
+        /* A loaded certificate's value is the storage buffer itself. */
+        if (cert->data != NULL && cert->data == object->keyData) {
+            object->keyData = NULL;
+            object->keyDataLen = 0;
+        }
+#endif
         if (cert->data != NULL) {
             XFREE(cert->data, NULL, DYNAMIC_TYPE_CERT);
         }
