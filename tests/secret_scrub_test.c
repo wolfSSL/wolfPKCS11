@@ -49,6 +49,12 @@
 #include "testdata.h"
 #include "pkcs11_test_util.h"
 
+#if (!defined(NO_AES) && (defined(HAVE_AES_CBC) || \
+    (defined(HAVE_AESGCM) && !defined(WOLFSSL_AESGCM_STREAM)))) || \
+    (defined(WOLFSSL_HAVE_PRF) && !defined(NO_SHA256))
+    #define SCRUB_SESSION_TESTS
+#endif
+
 #define TEST_DIR "./store/secret_scrub_test"
 
 static const char* soPin = "password123456";
@@ -126,6 +132,7 @@ static void* scrub_realloc(void* ptr, size_t n)
     return np;
 }
 
+#ifdef SCRUB_SESSION_TESTS
 static void watch_start(const unsigned char* data, size_t len)
 {
     watchData = data;
@@ -141,6 +148,7 @@ static int watch_stop_clean(void)
     watchLen = 0;
     return watchFrees > 0 && watchHits == 0;
 }
+#endif
 
 static CK_RV token_setup(CK_SLOT_ID* slot)
 {
@@ -185,6 +193,7 @@ static CK_RV token_setup(CK_SLOT_ID* slot)
     return rv;
 }
 
+#ifdef SCRUB_SESSION_TESTS
 /* C_Initialize, then open a user session on the first slot. */
 static CK_RV user_session_open(CK_SESSION_HANDLE* session)
 {
@@ -197,6 +206,7 @@ static CK_RV user_session_open(CK_SESSION_HANDLE* session)
     }
     return rv;
 }
+#endif
 
 #if !defined(NO_AES) && (defined(HAVE_AES_CBC) || \
     (defined(HAVE_AESGCM) && !defined(WOLFSSL_AESGCM_STREAM)))
@@ -373,6 +383,89 @@ static void gcm_buffered_plaintext_scrub_test(void)
 }
 #endif
 
+#if defined(WOLFSSL_HAVE_PRF) && !defined(NO_SHA256)
+static CK_OBJECT_CLASS tlsKeyClass = CKO_SECRET_KEY;
+static CK_KEY_TYPE genericKeyType = CKK_GENERIC_SECRET;
+static unsigned char tlsSecret[48] = {
+    0x6d, 0x21, 0xb4, 0x0f, 0x93, 0xce, 0x57, 0x1a,
+    0xe8, 0x3c, 0x75, 0xa9, 0x02, 0xdf, 0x46, 0xbb
+};
+static unsigned char tlsHandshakeHash[32] = {
+    0x1f, 0x8e, 0x34, 0xc7, 0x5a, 0x09, 0xd6, 0x72,
+    0xab, 0x40, 0xe5, 0x18, 0x9d, 0x63, 0xf0, 0x2c
+};
+
+/* A rejected TLS MAC verify must not leave the expected MAC in memory that
+ * has been released. */
+static void tls_mac_verify_scrub_test(int multiPart, const char* op)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = 0;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_TLS_MAC_PARAMS params;
+    CK_MECHANISM mech;
+    CK_BYTE mac[12];
+    CK_BYTE badMac[12];
+    CK_ULONG macLen = sizeof(mac);
+    int clean = 0;
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,    &tlsKeyClass,    sizeof(tlsKeyClass)    },
+        { CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType) },
+        { CKA_SIGN,     &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VERIFY,   &ckTrue,         sizeof(ckTrue)         },
+        { CKA_TOKEN,    &ckFalse,        sizeof(ckFalse)        },
+        { CKA_VALUE,    tlsSecret,       sizeof(tlsSecret)      },
+    };
+
+    params.prfHashMechanism = CKM_SHA256;
+    params.ulMacLength = sizeof(mac);
+    params.ulServerOrClient = 1;
+    mech.mechanism = CKM_TLS_MAC;
+    mech.pParameter = &params;
+    mech.ulParameterLen = sizeof(params);
+
+    rv = user_session_open(&session);
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, keyTmpl,
+                                      sizeof(keyTmpl) / sizeof(*keyTmpl), &key);
+    }
+    if (rv == CKR_OK)
+        rv = funcList->C_SignInit(session, &mech, key);
+    if (rv == CKR_OK) {
+        rv = funcList->C_Sign(session, tlsHandshakeHash,
+                              sizeof(tlsHandshakeHash), mac, &macLen);
+    }
+    if (rv == CKR_OK && macLen != sizeof(mac))
+        rv = CKR_GENERAL_ERROR;
+    if (rv == CKR_OK)
+        rv = funcList->C_VerifyInit(session, &mech, key);
+    CHECK_RV(rv, "TLS MAC sign and verify init", CKR_OK);
+
+    if (rv == CKR_OK) {
+        XMEMCPY(badMac, mac, sizeof(mac));
+        badMac[0] ^= 0x01;
+        watch_start(mac, sizeof(mac));
+        if (multiPart) {
+            rv = funcList->C_VerifyUpdate(session, tlsHandshakeHash,
+                                          sizeof(tlsHandshakeHash));
+            if (rv == CKR_OK)
+                rv = funcList->C_VerifyFinal(session, badMac, sizeof(badMac));
+        }
+        else {
+            rv = funcList->C_Verify(session, tlsHandshakeHash,
+                                    sizeof(tlsHandshakeHash), badMac,
+                                    sizeof(badMac));
+        }
+        clean = watch_stop_clean();
+        CHECK_RV(rv, "TLS MAC verify rejects a wrong tag",
+                 CKR_SIGNATURE_INVALID);
+        CHECK_TRUE(clean, op);
+    }
+
+    funcList->C_Finalize(NULL);
+}
+#endif
+
 int main(int argc, char* argv[])
 {
     CK_RV rv;
@@ -421,6 +514,12 @@ int main(int argc, char* argv[])
 #endif
 #if !defined(NO_AES) && defined(HAVE_AESGCM) && !defined(WOLFSSL_AESGCM_STREAM)
         gcm_buffered_plaintext_scrub_test();
+#endif
+#if defined(WOLFSSL_HAVE_PRF) && !defined(NO_SHA256)
+        tls_mac_verify_scrub_test(0,
+            "TLS MAC expected value wiped after C_Verify");
+        tls_mac_verify_scrub_test(1,
+            "TLS MAC expected value wiped after C_VerifyFinal");
 #endif
     }
     pkcs11_unload();
