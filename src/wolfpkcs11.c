@@ -415,6 +415,19 @@ static CK_RV ParseNssConfigString(char *nssArgs,
 
         if (keyLen == XSTR_SIZEOF("configdir")
                 && XMEMCMP(keyStart, "configdir", keyLen) == 0) {
+            /* NSS prefixes the directory with the database type
+             * ("sql:/home/user/.pki/nssdb"); the store uses the directory. */
+            static const char* const dbTypes[] = { "sql:", "dbm:", "extern:" };
+            size_t i;
+            for (i = 0; i < sizeof(dbTypes) / sizeof(dbTypes[0]); i++) {
+                size_t typeLen = XSTRLEN(dbTypes[i]);
+                if (valueLen > typeLen &&
+                        XMEMCMP(valueStart, dbTypes[i], typeLen) == 0) {
+                    valueStart += typeLen;
+                    valueLen -= typeLen;
+                    break;
+                }
+            }
             *configdir = valueStart;
             *configdirLen = valueLen;
             /* Exit since we only support configdir */
