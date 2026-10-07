@@ -1184,6 +1184,12 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
             return CKR_ATTRIBUTE_VALUE_INVALID;
         else if (ret == BUFFER_E)
             return CKR_BUFFER_TOO_SMALL;
+        else if (ret == BAD_STATE_E) {
+            /* Logged in yet undecoded: the stored key failed to verify. */
+            if (WP11_Slot_IsUserLoggedIn(WP11_Session_GetSlot(session)))
+                return CKR_FUNCTION_FAILED;
+            return CKR_USER_NOT_LOGGED_IN;
+        }
         else if (ret != 0)
             return CKR_FUNCTION_FAILED;
     }
