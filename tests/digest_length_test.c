@@ -233,6 +233,64 @@ static void digest_final_too_small_len_test(CK_SESSION_HANDLE session)
                "C_DigestFinal retry gives the full digest");
 }
 
+/* The empty message digests to the standard value, and a zero-length update
+ * leaves a multi-part digest unchanged. */
+static void digest_empty_input_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    static const byte emptySha256[32] = {
+        0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14,
+        0x9a, 0xfb, 0xf4, 0xc8, 0x99, 0x6f, 0xb9, 0x24,
+        0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c,
+        0xa4, 0x95, 0x99, 0x1b, 0x78, 0x52, 0xb8, 0x55
+    };
+    byte data[16];
+    byte hash[32];
+    byte single[32];
+    CK_ULONG hashLen = sizeof(hash);
+    CK_ULONG singleLen = sizeof(single);
+
+    XMEMSET(data, 0x71, sizeof(data));
+    rv = funcList->C_DigestInit(session, &sha256Mech);
+    if (rv == CKR_OK)
+        rv = funcList->C_Digest(session, data, 0, hash, &hashLen);
+    CHECK_RV(rv, "C_Digest of the empty message", CKR_OK);
+    CHECK_TRUE(hashLen == sizeof(emptySha256) &&
+               XMEMCMP(hash, emptySha256, sizeof(emptySha256)) == 0,
+               "C_Digest of the empty message matches SHA-256(\"\")");
+
+    rv = funcList->C_DigestInit(session, &sha256Mech);
+    if (rv == CKR_OK)
+        rv = funcList->C_Digest(session, data, sizeof(data), single,
+                                &singleLen);
+    CHECK_RV(rv, "C_Digest(SHA256) reference", CKR_OK);
+
+    hashLen = sizeof(hash);
+    rv = funcList->C_DigestInit(session, &sha256Mech);
+    CHECK_RV(rv, "C_DigestInit(SHA256) multi-part", CKR_OK);
+    rv = funcList->C_DigestUpdate(session, data, 8);
+    CHECK_RV(rv, "C_DigestUpdate first part", CKR_OK);
+    rv = funcList->C_DigestUpdate(session, data + 8, 0);
+    CHECK_RV(rv, "C_DigestUpdate zero-length part", CKR_OK);
+    rv = funcList->C_DigestUpdate(session, data + 8, sizeof(data) - 8);
+    CHECK_RV(rv, "C_DigestUpdate last part", CKR_OK);
+    rv = funcList->C_DigestFinal(session, hash, &hashLen);
+    CHECK_RV(rv, "C_DigestFinal multi-part", CKR_OK);
+    CHECK_TRUE(hashLen == singleLen && XMEMCMP(hash, single, hashLen) == 0,
+               "zero-length update leaves the digest unchanged");
+
+    rv = funcList->C_DigestInit(session, &sha256Mech);
+    CHECK_RV(rv, "C_DigestInit(SHA256) for NULL data", CKR_OK);
+    hashLen = sizeof(hash);
+    rv = funcList->C_Digest(session, NULL, sizeof(data), hash, &hashLen);
+    CHECK_RV(rv, "C_Digest rejects NULL data with a length",
+             CKR_ARGUMENTS_BAD);
+    rv = funcList->C_DigestUpdate(session, NULL, sizeof(data));
+    CHECK_RV(rv, "C_DigestUpdate rejects NULL data with a length",
+             CKR_ARGUMENTS_BAD);
+    (void)funcList->C_DigestFinal(session, hash, &hashLen);
+}
+
 /* Digest input lengths that do not fit in 32 bits are rejected. */
 static void digest_input_len_range_test(CK_SESSION_HANDLE session)
 {
@@ -963,6 +1021,7 @@ static int run_test(void)
         digest_requires_init_test(session);
         digest_single_too_small_len_test(session);
         digest_final_too_small_len_test(session);
+        digest_empty_input_test(session);
 #endif
 #if !defined(NO_SHA256) && !defined(NO_HMAC)
         sign_buffer_too_small_len_test(session);

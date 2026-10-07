@@ -1271,7 +1271,8 @@ static CK_RV test_digest(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_Digest(session, data, 0, hash, &hashSz);
-        CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD, "Digest zero data length");
+        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
+                                     "Digest zero data length without init");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_Digest(session, data, dataSz, hash, NULL);
@@ -1288,8 +1289,8 @@ static CK_RV test_digest(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_DigestUpdate(session, data, 0);
-        CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD,
-                                              "Digest Update zero data length");
+        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
+                              "Digest Update zero data length without init");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_DigestKey(CK_INVALID_HANDLE, key);

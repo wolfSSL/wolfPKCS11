@@ -5277,7 +5277,7 @@ CK_RV C_DigestInit(CK_SESSION_HANDLE hSession,
  *                                 On out, length of the digest data in bytes.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_ARGUMENTS_BAD when pData, ulDataLen or pulDigestLen is NULL.
+ *          CKR_ARGUMENTS_BAD when pData or pulDigestLen is NULL.
  *          CKR_OPERATION_NOT_INITIALIZED when C_DigestInit has not been
  *          successfully called.
  */
@@ -5304,7 +5304,7 @@ CK_RV C_Digest(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
     }
     if (WP11_Session_Get(hSession, &session) != 0)
         return CKR_SESSION_HANDLE_INVALID;
-    if (pData == NULL || ulDataLen == 0 || pulDigestLen == NULL)
+    if (pData == NULL || pulDigestLen == NULL)
         return CKR_ARGUMENTS_BAD;
     if (!WP11_Session_IsOpInitialized(session, WP11_INIT_DIGEST))
         return CKR_OPERATION_NOT_INITIALIZED;
@@ -5336,7 +5336,7 @@ CK_RV C_Digest(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
  * @param  ulPartLen     [in]      Length of data in bytes.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_ARGUMENTS_BAD when pPart is NULL or ulPartLen is 0.
+ *          CKR_ARGUMENTS_BAD when pPart is NULL.
  *          CKR_OPERATION_NOT_INITIALIZED when C_DigestInit has not been
  *          successfully called.
  */
@@ -5361,7 +5361,7 @@ CK_RV C_DigestUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
     }
     if (WP11_Session_Get(hSession, &session) != 0)
         return CKR_SESSION_HANDLE_INVALID;
-    if (pPart == NULL || ulPartLen == 0)
+    if (pPart == NULL)
         return CKR_ARGUMENTS_BAD;
     if (!WP11_Session_IsOpInitialized(session, WP11_INIT_DIGEST))
         return CKR_OPERATION_NOT_INITIALIZED;
