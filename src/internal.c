@@ -20045,7 +20045,8 @@ int WP11_Digest_Update(unsigned char* data, word32 dataLen,
 *
 * @param  key      [in]  Key to be digested.
 * @param  session  [in]  Session object with the Digest object.
-* @return  -ve on failure.
+* @return  CKR_KEY_INDIGESTIBLE when the key is not a secret key value.
+*          -ve on failure.
 *          0 on success.
 */
 int WP11_Digest_Key(WP11_Object* key, WP11_Session* session)
@@ -20053,8 +20054,22 @@ int WP11_Digest_Key(WP11_Object* key, WP11_Session* session)
     int ret;
 #ifndef WOLFPKCS11_NO_STORE
     WP11_Digest* digest = &session->params.digest;
-    ret = wc_HashUpdate(&digest->hash, digest->hashType, key->keyData,
-                        key->keyDataLen);
+
+    if (key->objClass != CKO_SECRET_KEY || (key->type != CKK_AES &&
+            key->type != CKK_GENERIC_SECRET && key->type != CKK_HKDF) ||
+            key->data.symmKey == NULL) {
+        return (int)CKR_KEY_INDIGESTIBLE;
+    }
+    if (key->encoded)
+        return BAD_FUNC_ARG;
+    if (key->onToken) {
+        WP11_Lock_LockRO(key->lock);
+    }
+    ret = wc_HashUpdate(&digest->hash, digest->hashType,
+                        key->data.symmKey->data, key->data.symmKey->len);
+    if (key->onToken) {
+        WP11_Lock_UnlockRO(key->lock);
+    }
 #else
     (void) session;
     (void) key;
