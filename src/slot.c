@@ -1468,8 +1468,9 @@ CK_RV C_InitPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pPin,
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pOldPin or pNewPin is NULL.
- *          CKR_PIN_INCORRECT when length of old or new PIN is not valid or
- *          old PIN does not verify.
+ *          CKR_PIN_INCORRECT when length of old PIN is not valid or old PIN
+ *          does not verify.
+ *          CKR_PIN_LEN_RANGE when length of new PIN is not valid.
  *          CKR_SESSION_READ_ONLY when session not read/write.
  *          CKR_USER_PIN_NOT_INITIALIZED when no previous PIN set for user.
  *          CKR_FUNCTION_FAILED when setting user PIN fails.
