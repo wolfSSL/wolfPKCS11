@@ -9830,6 +9830,9 @@ static CK_RV wp11_C_UnwrapKey(CK_SESSION_HANDLE hSession,
     if (rv != CKR_OK)
         return rv;
 
+    if (!CK_ULONG_FITS_WORD32(ulWrappedKeyLen))
+        return CKR_WRAPPED_KEY_LEN_RANGE;
+
     wrapkeyType = WP11_Object_GetType(unwrappingKey);
 
     switch (pMechanism->mechanism) {
