@@ -19847,8 +19847,10 @@ int WP11_Aes_Cmac_Check_Len(CK_BYTE_PTR pSignature,
         *pulSignatureLen = cmac->sigLen;
         return CKR_OK;
     }
-    if (*pulSignatureLen < cmac->sigLen)
+    if (*pulSignatureLen < cmac->sigLen) {
+        *pulSignatureLen = cmac->sigLen;
         return CKR_BUFFER_TOO_SMALL;
+    }
 
     return CKR_OK;
 }
