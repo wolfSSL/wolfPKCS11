@@ -3569,15 +3569,14 @@ int WP11_Object_New(WP11_Session* session, CK_KEY_TYPE type,
 }
 
 #ifndef NO_RSA
-static long GetRsaExponentValue(unsigned char* eData, word32 eSz)
+static unsigned long GetRsaExponentValue(unsigned char* eData, word32 eSz)
 {
     int i;
-    long e = 0;
+    unsigned long e = 0;
 
     /* Convert big-endian data into number. */
     for (i = 0; i < (int)eSz; i++) {
-        e <<= 8;
-        e |= eData[i];
+        e = (e << 8) | eData[i];
     }
     return e;
 }
@@ -15848,6 +15847,7 @@ int WP11_Rsa_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
     unsigned char eData[sizeof(long)];
     int eSz;
     long e = 0;
+    unsigned long eVal;
     WC_RNG rng;
 
     /* Use public exponent if public key has one set. */
@@ -15860,7 +15860,11 @@ int WP11_Rsa_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
         if (ret == 0)
             ret = mp_to_unsigned_bin_len(&pub->data.rsaKey->e, eData, eSz);
         if (ret == 0) {
-            e = GetRsaExponentValue(eData, eSz);
+            eVal = GetRsaExponentValue(eData, eSz);
+            if (eVal > (~0UL >> 1))
+                ret = BAD_FUNC_ARG;
+            else
+                e = (long)eVal;
         }
     }
     else {

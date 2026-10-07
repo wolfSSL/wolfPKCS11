@@ -756,6 +756,39 @@ static void test_encapsulate_private_default_needs_login(void)
 }
 #endif /* MLKEM_LOGIN_TEST */
 
+#if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN)
+/* A public exponent too large for the key generation API is rejected. */
+static void test_rsa_keygen_exponent_range(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_RSA_PKCS_KEY_PAIR_GEN, NULL, 0 };
+    CK_ULONG bits = 2048;
+    byte wideExp[sizeof(long)];
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_MODULUS_BITS,    &bits,   sizeof(bits)    },
+        { CKA_PUBLIC_EXPONENT, wideExp, sizeof(wideExp) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_PRIVATE, &ckFalse, sizeof(ckFalse) },
+    };
+
+    XMEMSET(wideExp, 0, sizeof(wideExp));
+    wideExp[0] = 0x80;
+    wideExp[sizeof(wideExp) - 1] = 0x01;
+    rv = funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+             sizeof(pubTmpl) / sizeof(*pubTmpl), privTmpl,
+             sizeof(privTmpl) / sizeof(*privTmpl), &pub, &priv);
+    CHECK_RV(rv, "RSA key generation with an out of range public exponent",
+             CKR_FUNCTION_FAILED);
+    if (rv == CKR_OK) {
+        funcList->C_DestroyObject(session, pub);
+        funcList->C_DestroyObject(session, priv);
+    }
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -774,6 +807,9 @@ static int run_test(void)
 #endif
         test_unwrap_failure_codes(session);
         test_hkdf_keygen_matches_support(session);
+#if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN)
+        test_rsa_keygen_exponent_range(session);
+#endif
 #if defined(MLKEM_TEST) && defined(WIDE_CK_ULONG)
         test_decapsulate_ct_len_beyond_word32(session);
 #endif
