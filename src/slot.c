@@ -1398,7 +1398,7 @@ CK_RV C_InitToken(CK_SLOT_ID slotID, CK_UTF8CHAR_PTR pPin,
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pPin is NULL.
  *          CKR_USER_NOT_LOGGED_IN when not logged in as Security Officer.
- *          CKR_PIN_INCORRECT when length of PIN is not valid.
+ *          CKR_PIN_LEN_RANGE when length of PIN is not valid.
  *          CKR_FUNCTION_FAILED when setting User PIN fails.
  *          CKR_OK on success.
  */
