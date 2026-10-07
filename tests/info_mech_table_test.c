@@ -143,6 +143,49 @@ static void test_info_blank_padding(CK_SLOT_ID slot)
     }
 }
 
+static int two_digits(const CK_CHAR* p, int* val)
+{
+    if (p[0] < '0' || p[0] > '9' || p[1] < '0' || p[1] > '9')
+        return 0;
+    *val = (p[0] - '0') * 10 + (p[1] - '0');
+    return 1;
+}
+
+/* A token that claims a clock must report a valid UTC time. */
+static void test_token_clock(CK_SLOT_ID slot)
+{
+    CK_RV rv;
+    CK_TOKEN_INFO tokenInfo;
+    int century = 0, year = 0, month = 0, day = 0;
+    int hour = 0, minute = 0, second = 0;
+    int valid;
+
+    XMEMSET(&tokenInfo, 0, sizeof(tokenInfo));
+    rv = funcList->C_GetTokenInfo(slot, &tokenInfo);
+    CHECK_RV(rv, "C_GetTokenInfo(clock)", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    if ((tokenInfo.flags & CKF_CLOCK_ON_TOKEN) == 0) {
+        CHECK_TRUE(XMEMCMP(tokenInfo.utcTime, "                ",
+                           sizeof(tokenInfo.utcTime)) == 0,
+                   "utcTime is blank without a clock");
+        return;
+    }
+
+    valid = two_digits(&tokenInfo.utcTime[0], &century) &&
+            two_digits(&tokenInfo.utcTime[2], &year) &&
+            two_digits(&tokenInfo.utcTime[4], &month) &&
+            two_digits(&tokenInfo.utcTime[6], &day) &&
+            two_digits(&tokenInfo.utcTime[8], &hour) &&
+            two_digits(&tokenInfo.utcTime[10], &minute) &&
+            two_digits(&tokenInfo.utcTime[12], &second);
+    CHECK_TRUE(valid && century * 100 + year >= 1970 &&
+               month >= 1 && month <= 12 && day >= 1 && day <= 31 &&
+               hour <= 23 && minute <= 59 && second <= 60,
+               "CKF_CLOCK_ON_TOKEN reports a valid utcTime");
+}
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -169,6 +212,7 @@ static int run_test(void)
     }
     if (rv == CKR_OK) {
         test_info_blank_padding(slotList[0]);
+        test_token_clock(slotList[0]);
     }
     funcList->C_Finalize(NULL);
 
