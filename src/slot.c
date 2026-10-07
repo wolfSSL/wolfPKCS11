@@ -518,7 +518,6 @@ static int mechanismCnt = ((int)(sizeof(mechanismList)/sizeof(*mechanismList)));
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SLOT_ID_INVALID when no slot with id can be found.
  *          CKR_ARGUMENTS_BAD when pulCount is NULL.
- *          CKR_BUFFER_TOO_SMALL when pulCount is NULL.
  *          CKR_BUFFER_TOO_SMALL when there are more mechanisms than entries in
  *          array.
  *          CKR_OK on success.
