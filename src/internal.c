@@ -20130,6 +20130,7 @@ int WP11_Digest_Single(unsigned char* data, word32 dataLen,
         return CKR_OK;
     }
     if (*dataOutLen < (word32)blockLen) {
+        *dataOutLen = (word32)blockLen;
         return BUFFER_E;
     }
     ret = wc_Hash(digest->hashType, data, dataLen, dataOut, *dataOutLen);

@@ -181,6 +181,26 @@ static void digest_requires_init_test(CK_SESSION_HANDLE session)
 #endif
 }
 
+/* A short C_Digest buffer reports the digest length and leaves the operation
+ * active. */
+static void digest_single_too_small_len_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    byte data[16];
+    byte hash[32];
+    CK_ULONG hashLen = sizeof(hash) - 1;
+
+    XMEMSET(data, 0x6e, sizeof(data));
+    rv = funcList->C_DigestInit(session, &sha256Mech);
+    CHECK_RV(rv, "C_DigestInit(SHA256)", CKR_OK);
+    rv = funcList->C_Digest(session, data, sizeof(data), hash, &hashLen);
+    CHECK_RV(rv, "C_Digest short buffer", CKR_BUFFER_TOO_SMALL);
+    CHECK_TRUE(hashLen == sizeof(hash),
+               "C_Digest short buffer reports the digest length");
+    rv = funcList->C_Digest(session, data, sizeof(data), hash, &hashLen);
+    CHECK_RV(rv, "C_Digest retry with the reported length", CKR_OK);
+}
+
 /* Digest input lengths that do not fit in 32 bits are rejected. */
 static void digest_input_len_range_test(CK_SESSION_HANDLE session)
 {
@@ -883,6 +903,7 @@ static int run_test(void)
     if (rv == CKR_OK) {
 #ifndef NO_SHA256
         digest_requires_init_test(session);
+        digest_single_too_small_len_test(session);
 #endif
 #if !defined(NO_SHA256) && !defined(NO_HMAC)
         sign_buffer_too_small_len_test(session);
