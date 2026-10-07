@@ -800,6 +800,35 @@ static void test_loaded_cert_value_fixed(CK_SESSION_HANDLE* session)
 }
 #endif
 
+#ifndef NO_DH
+/* Domain parameters larger than any supported DH key are rejected. */
+static void test_dh_param_size_range(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS pubClass = CKO_PUBLIC_KEY;
+    CK_KEY_TYPE dhType = CKK_DH;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    static byte bigPrime[2049];
+    byte base[1] = { 0x02 };
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,    &pubClass, sizeof(pubClass) },
+        { CKA_KEY_TYPE, &dhType,   sizeof(dhType)   },
+        { CKA_TOKEN,    &ckTrue,   sizeof(ckTrue)   },
+        { CKA_PRIVATE,  &ckFalse,  sizeof(ckFalse)  },
+        { CKA_PRIME,    bigPrime,  sizeof(bigPrime) },
+        { CKA_BASE,     base,      sizeof(base)     },
+        { CKA_VALUE,    base,      sizeof(base)     },
+    };
+
+    XMEMSET(bigPrime, 0xff, sizeof(bigPrime));
+    rv = funcList->C_CreateObject(session, keyTmpl,
+                                  sizeof(keyTmpl) / sizeof(*keyTmpl), &key);
+    CHECK_TRUE(rv != CKR_OK, "oversized DH prime rejected");
+    if (rv == CKR_OK)
+        destroy_obj(session, &key);
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -835,6 +864,9 @@ static int run_test(void)
 #endif
 #ifndef WOLFPKCS11_NO_STORE
         test_loaded_cert_value_fixed(&session);
+#endif
+#ifndef NO_DH
+        test_dh_param_size_range(session);
 #endif
     }
 

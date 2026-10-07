@@ -13108,9 +13108,15 @@ int WP11_Object_SetDhKey(WP11_Object* object, unsigned char** data,
     key = object->data.dhKey;
     ret = wc_InitDhKey_ex(&key->params, NULL, object->devId);
     if (ret == 0) {
-        if (data[0] != NULL && data[1] != NULL)
+        /* Parameters larger than any storable DH key are not supported. */
+        if (data[0] != NULL && data[1] != NULL &&
+                (len[0] > WP11_MAX_DH_KEY_SZ || len[1] > WP11_MAX_DH_KEY_SZ)) {
+            ret = BAD_FUNC_ARG;
+        }
+        else if (data[0] != NULL && data[1] != NULL) {
             ret = wc_DhSetKey(&key->params, data[0], (int)len[0], data[1],
                                                                    (int)len[1]);
+        }
         if (ret == 0 && data[2] != NULL) {
             if (len[2] > (int)sizeof(key->key))
                 ret = BAD_FUNC_ARG;
