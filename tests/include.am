@@ -356,6 +356,11 @@ noinst_PROGRAMS += tests/key_material_update_test
 tests_key_material_update_test_SOURCES = tests/key_material_update_test.c
 tests_key_material_update_test_LDADD =
 
+check_PROGRAMS += tests/object_create_getattr_test
+noinst_PROGRAMS += tests/object_create_getattr_test
+tests_object_create_getattr_test_SOURCES = tests/object_create_getattr_test.c
+tests_object_create_getattr_test_LDADD =
+
 if BUILD_STATIC
 tests_pkcs11test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11mtt_LDADD  += src/libwolfpkcs11.la
@@ -428,6 +433,7 @@ tests_session_op_lifecycle_test_LDADD += src/libwolfpkcs11.la
 tests_info_mech_table_test_LDADD += src/libwolfpkcs11.la
 tests_attribute_validation_test_LDADD += src/libwolfpkcs11.la
 tests_key_material_update_test_LDADD += src/libwolfpkcs11.la
+tests_object_create_getattr_test_LDADD += src/libwolfpkcs11.la
 else
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
 tests_empty_pin_store_test_LDADD += src/libwolfpkcs11.la
@@ -492,6 +498,7 @@ tests_session_op_lifecycle_test_LDADD += src/libwolfpkcs11.la
 tests_info_mech_table_test_LDADD += src/libwolfpkcs11.la
 tests_attribute_validation_test_LDADD += src/libwolfpkcs11.la
 tests_key_material_update_test_LDADD += src/libwolfpkcs11.la
+tests_object_create_getattr_test_LDADD += src/libwolfpkcs11.la
 endif
 
 EXTRA_DIST += tests/unit.h \

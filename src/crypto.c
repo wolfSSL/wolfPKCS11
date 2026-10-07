@@ -1664,6 +1664,45 @@ static CK_RV CreateObject(WP11_Session* session, CK_ATTRIBUTE_PTR pTemplate,
     return rv;
 }
 
+/* Find an attribute that must be supplied with a non-empty value. */
+static CK_RV RequireAttribute(CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
+                              CK_ATTRIBUTE_TYPE type)
+{
+    CK_ATTRIBUTE* attr;
+
+    FindAttributeType(pTemplate, ulCount, type, &attr);
+    if (attr == NULL)
+        return CKR_TEMPLATE_INCOMPLETE;
+    if (attr->pValue == NULL || attr->ulValueLen == 0)
+        return CKR_ATTRIBUTE_VALUE_INVALID;
+    return CKR_OK;
+}
+
+/* Attributes required at C_CreateObject. Unwrap, derive and decapsulate also
+ * use CreateObject but supply the key value afterwards. A malformed class is
+ * left for CreateObject to report. */
+static CK_RV CheckCreateRequiredAttributes(CK_ATTRIBUTE_PTR pTemplate,
+                                           CK_ULONG ulCount)
+{
+    CK_RV rv = CKR_OK;
+    CK_ATTRIBUTE* attr;
+    CK_OBJECT_CLASS objectClass;
+
+    FindAttributeType(pTemplate, ulCount, CKA_CLASS, &attr);
+    if (attr == NULL || attr->pValue == NULL ||
+            attr->ulValueLen != sizeof(CK_OBJECT_CLASS)) {
+        return CKR_OK;
+    }
+    objectClass = *(CK_OBJECT_CLASS*)attr->pValue;
+
+    if (objectClass == CKO_CERTIFICATE) {
+        /* CKA_URL is not stored, so a certificate needs its value. */
+        rv = RequireAttribute(pTemplate, ulCount, CKA_VALUE);
+    }
+
+    return rv;
+}
+
 /**
  * Create an object in the session or on the token associated with the session.
  *
@@ -1743,6 +1782,12 @@ static CK_RV wp11_C_CreateObject(CK_SESSION_HANDLE hSession,
 
     rv = CheckPrivateLogin(session, pTemplate, ulCount,
                            WP11_NO_IMPLICIT_CLASS);
+    if (rv != CKR_OK) {
+        WOLFPKCS11_LEAVE("C_CreateObject", rv);
+        return rv;
+    }
+
+    rv = CheckCreateRequiredAttributes(pTemplate, ulCount);
     if (rv != CKR_OK) {
         WOLFPKCS11_LEAVE("C_CreateObject", rv);
         return rv;
