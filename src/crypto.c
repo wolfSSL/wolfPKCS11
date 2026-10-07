@@ -1678,9 +1678,9 @@ static CK_RV RequireAttribute(CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
     return CKR_OK;
 }
 
-/* Attributes required at C_CreateObject. Unwrap, derive and decapsulate also
- * use CreateObject but supply the key value afterwards. A malformed class is
- * left for CreateObject to report. */
+/* Attributes required at C_CreateObject, checked once CreateObject has
+ * validated the template. Unwrap, derive and decapsulate also use CreateObject
+ * but supply the key value afterwards. */
 static CK_RV CheckCreateRequiredAttributes(CK_ATTRIBUTE_PTR pTemplate,
                                            CK_ULONG ulCount)
 {
@@ -1697,6 +1697,9 @@ static CK_RV CheckCreateRequiredAttributes(CK_ATTRIBUTE_PTR pTemplate,
 
     if (objectClass == CKO_CERTIFICATE) {
         /* CKA_URL is not stored, so a certificate needs its value. */
+        rv = RequireAttribute(pTemplate, ulCount, CKA_VALUE);
+    }
+    else if (objectClass == CKO_SECRET_KEY) {
         rv = RequireAttribute(pTemplate, ulCount, CKA_VALUE);
     }
 
@@ -1787,14 +1790,14 @@ static CK_RV wp11_C_CreateObject(CK_SESSION_HANDLE hSession,
         return rv;
     }
 
-    rv = CheckCreateRequiredAttributes(pTemplate, ulCount);
+    rv = CreateObject(session, pTemplate, ulCount, &object);
     if (rv != CKR_OK) {
         WOLFPKCS11_LEAVE("C_CreateObject", rv);
         return rv;
     }
-
-    rv = CreateObject(session, pTemplate, ulCount, &object);
+    rv = CheckCreateRequiredAttributes(pTemplate, ulCount);
     if (rv != CKR_OK) {
+        WP11_Object_Free(object);
         WOLFPKCS11_LEAVE("C_CreateObject", rv);
         return rv;
     }

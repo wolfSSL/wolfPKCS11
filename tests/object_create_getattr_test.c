@@ -55,6 +55,10 @@ static CK_BBOOL ckFalse = CK_FALSE;
 static const byte certValue[] = { 0x30, 0x82, 0x01, 0x00 };
 static const byte certSubject[] = { 0x30, 0x00 };
 static const char certUrl[] = "http://example.com/cert.der";
+static const byte secretValue[] = {
+    0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+    0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff
+};
 
 static void destroy_obj(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE* obj)
 {
@@ -134,6 +138,62 @@ static void test_cert_requires_value(CK_SESSION_HANDLE session)
                   CKR_OK, "complete certificate");
 }
 
+/* A secret key object needs its key value. */
+static void test_secret_key_requires_value(CK_SESSION_HANDLE session)
+{
+    CK_OBJECT_CLASS secretClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE genericType = CKK_GENERIC_SECRET;
+    CK_ULONG valueLen = sizeof(secretValue);
+    CK_ATTRIBUTE noValue[] = {
+        { CKA_CLASS,     &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE,  &genericType, sizeof(genericType) },
+        { CKA_TOKEN,     &ckFalse,     sizeof(ckFalse)     },
+    };
+    CK_ATTRIBUTE lenOnly[] = {
+        { CKA_CLASS,     &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE,  &genericType, sizeof(genericType) },
+        { CKA_TOKEN,     &ckFalse,     sizeof(ckFalse)     },
+        { CKA_VALUE_LEN, &valueLen,    sizeof(valueLen)    },
+    };
+    CK_ATTRIBUTE emptyValue[] = {
+        { CKA_CLASS,     &secretClass,        sizeof(secretClass) },
+        { CKA_KEY_TYPE,  &genericType,        sizeof(genericType) },
+        { CKA_TOKEN,     &ckFalse,            sizeof(ckFalse)     },
+        { CKA_VALUE,     (void*)secretValue,  0                   },
+    };
+    CK_ATTRIBUTE complete[] = {
+        { CKA_CLASS,     &secretClass,        sizeof(secretClass) },
+        { CKA_KEY_TYPE,  &genericType,        sizeof(genericType) },
+        { CKA_TOKEN,     &ckFalse,            sizeof(ckFalse)     },
+        { CKA_VALUE,     (void*)secretValue,  sizeof(secretValue) },
+    };
+#ifndef NO_AES
+    CK_KEY_TYPE aesType = CKK_AES;
+    CK_ATTRIBUTE aesNoValue[] = {
+        { CKA_CLASS,     &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE,  &aesType,     sizeof(aesType)     },
+        { CKA_TOKEN,     &ckFalse,     sizeof(ckFalse)     },
+    };
+#endif
+
+    expect_create(session, noValue, sizeof(noValue) / sizeof(*noValue),
+                  CKR_TEMPLATE_INCOMPLETE, "secret key without CKA_VALUE");
+    expect_create(session, lenOnly, sizeof(lenOnly) / sizeof(*lenOnly),
+                  CKR_TEMPLATE_INCOMPLETE,
+                  "secret key with only CKA_VALUE_LEN");
+    expect_create(session, emptyValue,
+                  sizeof(emptyValue) / sizeof(*emptyValue),
+                  CKR_ATTRIBUTE_VALUE_INVALID,
+                  "secret key with empty CKA_VALUE");
+#ifndef NO_AES
+    expect_create(session, aesNoValue,
+                  sizeof(aesNoValue) / sizeof(*aesNoValue),
+                  CKR_TEMPLATE_INCOMPLETE, "AES key without CKA_VALUE");
+#endif
+    expect_create(session, complete, sizeof(complete) / sizeof(*complete),
+                  CKR_OK, "complete secret key");
+}
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -148,6 +208,7 @@ static int run_test(void)
     CHECK_RV(rv, "open session", CKR_OK);
     if (rv == CKR_OK) {
         test_cert_requires_value(session);
+        test_secret_key_requires_value(session);
     }
 
     if (session != 0)
