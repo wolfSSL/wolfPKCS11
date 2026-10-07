@@ -738,6 +738,68 @@ static void test_cert_value_failure_consistent(CK_SESSION_HANDLE session)
 }
 #endif
 
+#ifndef WOLFPKCS11_NO_STORE
+/* A certificate loaded from the token keeps its value through a rejected
+ * replacement and a rejected copy, and persists unchanged. */
+static void test_loaded_cert_value_fixed(CK_SESSION_HANDLE* session)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS certClass = CKO_CERTIFICATE;
+    CK_CERTIFICATE_TYPE certType = CKC_X_509;
+    CK_OBJECT_HANDLE cert = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE copy = CK_INVALID_HANDLE;
+    static const char certLabel[] = "kmu-token-cert";
+    byte certVal[64];
+    byte newVal[80];
+    CK_ATTRIBUTE certTmpl[] = {
+        { CKA_CLASS,            &certClass,       sizeof(certClass)     },
+        { CKA_CERTIFICATE_TYPE, &certType,        sizeof(certType)      },
+        { CKA_TOKEN,            &ckTrue,          sizeof(ckTrue)        },
+        { CKA_PRIVATE,          &ckFalse,         sizeof(ckFalse)       },
+        { CKA_LABEL,            (void*)certLabel, sizeof(certLabel) - 1 },
+        { CKA_VALUE,            certVal,          sizeof(certVal)       },
+    };
+    CK_ATTRIBUTE setValue[] = { { CKA_VALUE, newVal, sizeof(newVal) } };
+
+    XMEMSET(certVal, 0x30, sizeof(certVal));
+    XMEMSET(newVal, 0x31, sizeof(newVal));
+    rv = funcList->C_CreateObject(*session, certTmpl,
+                                  sizeof(certTmpl) / sizeof(*certTmpl), &cert);
+    CHECK_RV(rv, "create token certificate", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = reload_token(session, 1);
+    CHECK_RV(rv, "reload token with certificate", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    cert = find_by_label(*session, certLabel);
+    CHECK_TRUE(cert != CK_INVALID_HANDLE, "find loaded certificate");
+    if (cert == CK_INVALID_HANDLE)
+        return;
+
+    rv = funcList->C_SetAttributeValue(*session, cert, setValue, 1);
+    CHECK_RV(rv, "replace loaded certificate value", CKR_ATTRIBUTE_READ_ONLY);
+    rv = funcList->C_CopyObject(*session, cert, NULL, 0, &copy);
+    CHECK_TRUE(rv != CKR_OK, "copy of certificate rejected");
+    destroy_obj(*session, &copy);
+    CHECK_TRUE(attr_equals(*session, cert, CKA_VALUE, certVal,
+                           sizeof(certVal)),
+               "loaded certificate value kept");
+
+    rv = reload_token(session, 1);
+    CHECK_RV(rv, "reload token again", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    cert = find_by_label(*session, certLabel);
+    CHECK_TRUE(cert != CK_INVALID_HANDLE &&
+               attr_equals(*session, cert, CKA_VALUE, certVal,
+                           sizeof(certVal)),
+               "persisted certificate value kept");
+    destroy_obj(*session, &cert);
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -770,6 +832,9 @@ static int run_test(void)
         test_cert_type_update_keeps_value(session);
 #ifdef KMU_ALLOC_HOOK
         test_cert_value_failure_consistent(session);
+#endif
+#ifndef WOLFPKCS11_NO_STORE
+        test_loaded_cert_value_fixed(&session);
 #endif
     }
 
