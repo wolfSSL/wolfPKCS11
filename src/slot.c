@@ -893,8 +893,9 @@ static CK_MECHANISM_INFO sha3MechInfo = {
 };
 #endif
 #endif
+/* Key sizes in bits. */
 static CK_MECHANISM_INFO genSecKeyGenMechInfo = {
-    1, 32, CKF_GENERATE
+    8, WP11_MAX_SYM_KEY_SZ * 8, CKF_GENERATE
 };
 
 static CK_MECHANISM_INFO pkcs5Pbkdf2MechInfo = {
