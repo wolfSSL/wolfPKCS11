@@ -1026,6 +1026,8 @@ static void wp11_Session_FreeOp(WP11_Session* session)
     if ((session->mechanism == CKM_AES_CBC ||
                       session->mechanism == CKM_AES_CBC_PAD) && session->init) {
         wc_AesFree(&session->params.cbc.aes);
+        wc_ForceZero(session->params.cbc.partial,
+                     sizeof(session->params.cbc.partial));
         session->init = 0;
     }
 #endif
@@ -18934,6 +18936,7 @@ int WP11_AesCbc_EncryptFinal(WP11_Session* session)
     WP11_CbcParams* cbc = &session->params.cbc;
 
     wc_AesFree(&cbc->aes);
+    wc_ForceZero(cbc->partial, sizeof(cbc->partial));
     cbc->partialSz = 0;
     session->init = 0;
 
@@ -19045,6 +19048,7 @@ int WP11_AesCbc_DecryptFinal(WP11_Session* session)
     WP11_CbcParams* cbc = &session->params.cbc;
 
     wc_AesFree(&cbc->aes);
+    wc_ForceZero(cbc->partial, sizeof(cbc->partial));
     cbc->partialSz = 0;
     session->init = 0;
 
@@ -19132,6 +19136,7 @@ int WP11_AesCbcPad_EncryptFinal(unsigned char* enc, word32* encSz,
         *encSz = AES_BLOCK_SIZE;
 
     wc_AesFree(&cbc->aes);
+    wc_ForceZero(cbc->partial, sizeof(cbc->partial));
     cbc->partialSz = 0;
     session->init = 0;
 
@@ -19326,6 +19331,7 @@ int WP11_AesCbcPad_DecryptFinal(unsigned char* dec, word32* decSz,
     }
 
     wc_AesFree(&cbc->aes);
+    wc_ForceZero(cbc->partial, sizeof(cbc->partial));
     wc_ForceZero(cbc->final, sizeof(cbc->final));
     cbc->partialSz = 0;
     cbc->finalReady = 0;
