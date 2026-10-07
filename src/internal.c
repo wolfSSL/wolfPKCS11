@@ -13858,14 +13858,14 @@ static int GetTrustAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
 
     switch (type) {
         case CKA_CERT_SHA1_HASH:
-            if (*len < WC_SHA_DIGEST_SIZE)
+            if (data != NULL && *len < WC_SHA_DIGEST_SIZE)
                 return BUFFER_E;
             *len = WC_SHA_DIGEST_SIZE;
             if (data != NULL)
                 XMEMCPY(data, &object->data.trust.sha1Hash, WC_SHA_DIGEST_SIZE);
             break;
         case CKA_CERT_MD5_HASH:
-            if (*len < WC_MD5_DIGEST_SIZE)
+            if (data != NULL && *len < WC_MD5_DIGEST_SIZE)
                 return BUFFER_E;
             *len = WC_MD5_DIGEST_SIZE;
             if (data != NULL)

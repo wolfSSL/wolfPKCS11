@@ -829,6 +829,65 @@ static void test_param_set_len(CK_SESSION_HANDLE session)
 }
 #endif
 
+#ifdef WOLFPKCS11_NSS
+static void check_trust_hash(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE obj,
+                             CK_ATTRIBUTE_TYPE type, CK_ULONG hashLen,
+                             const char* name)
+{
+    CK_RV rv;
+    byte buf[32];
+    CK_ATTRIBUTE get = { type, NULL, 0 };
+    char msg[96];
+
+    rv = funcList->C_GetAttributeValue(session, obj, &get, 1);
+    snprintf(msg, sizeof(msg), "%s size query", name);
+    CHECK_TRUE(rv == CKR_OK && get.ulValueLen == hashLen, msg);
+
+    XMEMSET(buf, 0xAB, sizeof(buf));
+    get.pValue = buf;
+    get.ulValueLen = hashLen - 1;
+    rv = funcList->C_GetAttributeValue(session, obj, &get, 1);
+    snprintf(msg, sizeof(msg), "%s undersized buffer", name);
+    CHECK_TRUE(rv == CKR_BUFFER_TOO_SMALL && buf[hashLen - 1] == 0xAB, msg);
+
+    get.ulValueLen = sizeof(buf);
+    rv = funcList->C_GetAttributeValue(session, obj, &get, 1);
+    snprintf(msg, sizeof(msg), "%s read", name);
+    CHECK_TRUE(rv == CKR_OK && get.ulValueLen == hashLen, msg);
+}
+
+/* Trust object hashes follow the size query convention. */
+static void test_trust_hash_size_query(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS trustClass = CKO_NSS_TRUST;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    static const byte issuer[] = "CN=Test,O=wolfSSL,C=US";
+    static const byte serial[] = { 0x02, 0x01, 0x01 };
+    static const byte sha1Hash[20] = { 0x01 };
+    static const byte md5Hash[16] = { 0x02 };
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,          &trustClass,     sizeof(trustClass)  },
+        { CKA_TOKEN,          &ckFalse,        sizeof(ckFalse)     },
+        { CKA_ISSUER,         (void*)issuer,   sizeof(issuer) - 1  },
+        { CKA_SERIAL_NUMBER,  (void*)serial,   sizeof(serial)      },
+        { CKA_CERT_SHA1_HASH, (void*)sha1Hash, sizeof(sha1Hash)    },
+        { CKA_CERT_MD5_HASH,  (void*)md5Hash,  sizeof(md5Hash)     },
+    };
+
+    rv = funcList->C_CreateObject(session, tmpl, sizeof(tmpl) / sizeof(*tmpl),
+                                  &obj);
+    CHECK_RV(rv, "create trust object", CKR_OK);
+    if (rv == CKR_OK) {
+        check_trust_hash(session, obj, CKA_CERT_SHA1_HASH, sizeof(sha1Hash),
+                         "trust SHA-1 hash");
+        check_trust_hash(session, obj, CKA_CERT_MD5_HASH, sizeof(md5Hash),
+                         "trust MD5 hash");
+    }
+    destroy_obj(session, &obj);
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -856,6 +915,9 @@ static int run_test(void)
 #endif
 #if defined(WOLFPKCS11_MLDSA) || defined(WOLFPKCS11_MLKEM)
         test_param_set_len(session);
+#endif
+#ifdef WOLFPKCS11_NSS
+        test_trust_hash_size_query(session);
 #endif
 #if !defined(NO_RSA) || defined(HAVE_ECC)
         test_key_type_matches_class(session);
