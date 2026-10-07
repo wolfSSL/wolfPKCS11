@@ -186,12 +186,396 @@ static void test_token_clock(CK_SLOT_ID slot)
                "CKF_CLOCK_ON_TOKEN reports a valid utcTime");
 }
 
+/* C_WrapKey rejects every key before the mechanism check when it cannot
+ * serialize keys, as in a build without a store. */
+#if defined(WOLFPKCS11_NO_STORE) && !defined(WOLFSSL_STM32U5_DHUK)
+    #define WRAP_UNSUPPORTED_RV    CKR_KEY_NOT_WRAPPABLE
+#else
+    #define WRAP_UNSUPPORTED_RV    CKR_MECHANISM_INVALID
+#endif
+
+static CK_OBJECT_CLASS secretClass = CKO_SECRET_KEY;
+static CK_KEY_TYPE genericType = CKK_GENERIC_SECRET;
+static CK_BBOOL ckTrue = CK_TRUE;
+static CK_BBOOL ckFalse = CK_FALSE;
+
+typedef struct WrapCase {
+    CK_MECHANISM_TYPE mech;
+    int useIv;
+    int rsa;
+} WrapCase;
+
+/* Wrap and unwrap must succeed exactly for mechanisms that advertise them. */
+static void test_wrap_flags(CK_SLOT_ID slot, CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_MECHANISM_INFO info;
+    CK_MECHANISM mech;
+    CK_OBJECT_HANDLE secret = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE aesKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE wrapKey;
+    CK_OBJECT_HANDLE unwrapKey;
+    CK_OBJECT_HANDLE unwrapped;
+    CK_BYTE iv[16];
+    CK_BYTE secretValue[32];
+    CK_BYTE aesValue[16];
+    CK_BYTE wrapped[512];
+    CK_ULONG wrappedLen;
+    CK_BYTE* unwrapData;
+    CK_ULONG unwrapLen;
+    char msg[96];
+    size_t i;
+#ifndef NO_RSA
+    CK_OBJECT_HANDLE rsaPub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE rsaPriv = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS pubClass = CKO_PUBLIC_KEY;
+    CK_OBJECT_CLASS privClass = CKO_PRIVATE_KEY;
+    CK_KEY_TYPE rsaType = CKK_RSA;
+    CK_ATTRIBUTE rsaPubTmpl[] = {
+        { CKA_CLASS,           &pubClass,        sizeof(pubClass)         },
+        { CKA_KEY_TYPE,        &rsaType,         sizeof(rsaType)          },
+        { CKA_WRAP,            &ckTrue,          sizeof(ckTrue)           },
+        { CKA_ENCRYPT,         &ckTrue,          sizeof(ckTrue)           },
+        { CKA_MODULUS,         rsa_2048_modulus, sizeof(rsa_2048_modulus) },
+        { CKA_PUBLIC_EXPONENT, rsa_2048_pub_exp, sizeof(rsa_2048_pub_exp) },
+    };
+    CK_ATTRIBUTE rsaPrivTmpl[] = {
+        { CKA_CLASS,            &privClass,        sizeof(privClass)         },
+        { CKA_KEY_TYPE,         &rsaType,          sizeof(rsaType)           },
+        { CKA_PRIVATE,          &ckFalse,          sizeof(ckFalse)           },
+        { CKA_UNWRAP,           &ckTrue,           sizeof(ckTrue)            },
+        { CKA_DECRYPT,          &ckTrue,           sizeof(ckTrue)            },
+        { CKA_MODULUS,          rsa_2048_modulus,  sizeof(rsa_2048_modulus)  },
+        { CKA_PRIVATE_EXPONENT, rsa_2048_priv_exp, sizeof(rsa_2048_priv_exp) },
+        { CKA_PRIME_1,          rsa_2048_p,        sizeof(rsa_2048_p)        },
+        { CKA_PRIME_2,          rsa_2048_q,        sizeof(rsa_2048_q)        },
+        { CKA_EXPONENT_1,       rsa_2048_dP,       sizeof(rsa_2048_dP)       },
+        { CKA_EXPONENT_2,       rsa_2048_dQ,       sizeof(rsa_2048_dQ)       },
+        { CKA_COEFFICIENT,      rsa_2048_u,        sizeof(rsa_2048_u)        },
+        { CKA_PUBLIC_EXPONENT,  rsa_2048_pub_exp,  sizeof(rsa_2048_pub_exp)  },
+    };
+#endif
+#ifndef NO_AES
+    CK_KEY_TYPE aesType = CKK_AES;
+    CK_ATTRIBUTE aesTmpl[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &aesType,     sizeof(aesType)     },
+        { CKA_PRIVATE,  &ckFalse,     sizeof(ckFalse)     },
+        { CKA_WRAP,     &ckTrue,      sizeof(ckTrue)      },
+        { CKA_UNWRAP,   &ckTrue,      sizeof(ckTrue)      },
+        { CKA_ENCRYPT,  &ckTrue,      sizeof(ckTrue)      },
+        { CKA_DECRYPT,  &ckTrue,      sizeof(ckTrue)      },
+        { CKA_VALUE,    aesValue,     sizeof(aesValue)    },
+    };
+#endif
+    CK_ATTRIBUTE secretTmpl[] = {
+        { CKA_CLASS,       &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE,    &genericType, sizeof(genericType) },
+        { CKA_PRIVATE,     &ckFalse,     sizeof(ckFalse)     },
+        { CKA_SENSITIVE,   &ckFalse,     sizeof(ckFalse)     },
+        { CKA_EXTRACTABLE, &ckTrue,      sizeof(ckTrue)      },
+        { CKA_VALUE,       secretValue,  sizeof(secretValue) },
+    };
+    CK_ULONG secretLen = sizeof(secretValue);
+    CK_ATTRIBUTE unwrapTmpl[] = {
+        { CKA_CLASS,       &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE,    &genericType, sizeof(genericType) },
+        { CKA_PRIVATE,     &ckFalse,     sizeof(ckFalse)     },
+        { CKA_SENSITIVE,   &ckFalse,     sizeof(ckFalse)     },
+        { CKA_EXTRACTABLE, &ckTrue,      sizeof(ckTrue)      },
+        { CKA_VALUE_LEN,   &secretLen,   sizeof(secretLen)   },
+    };
+    static const WrapCase cases[] = {
+        { CKM_AES_KEY_WRAP,     0, 0 },
+        { CKM_AES_KEY_WRAP_PAD, 0, 0 },
+        { CKM_AES_CBC,          1, 0 },
+        { CKM_AES_CBC_PAD,      1, 0 },
+        { CKM_AES_ECB,          0, 0 },
+        { CKM_RSA_PKCS,         0, 1 },
+        { CKM_RSA_X_509,        0, 1 },
+    };
+
+    XMEMSET(iv, 0x11, sizeof(iv));
+    XMEMSET(secretValue, 0x22, sizeof(secretValue));
+    XMEMSET(aesValue, 0x33, sizeof(aesValue));
+
+    rv = funcList->C_CreateObject(session, secretTmpl,
+                                  sizeof(secretTmpl) / sizeof(*secretTmpl),
+                                  &secret);
+    CHECK_RV(rv, "C_CreateObject(secret to wrap)", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+#ifndef NO_AES
+    rv = funcList->C_CreateObject(session, aesTmpl,
+                                  sizeof(aesTmpl) / sizeof(*aesTmpl), &aesKey);
+    CHECK_RV(rv, "C_CreateObject(AES wrapping key)", CKR_OK);
+#endif
+#ifndef NO_RSA
+    rv = funcList->C_CreateObject(session, rsaPubTmpl,
+                                  sizeof(rsaPubTmpl) / sizeof(*rsaPubTmpl),
+                                  &rsaPub);
+    CHECK_RV(rv, "C_CreateObject(RSA wrapping key)", CKR_OK);
+    rv = funcList->C_CreateObject(session, rsaPrivTmpl,
+                                  sizeof(rsaPrivTmpl) / sizeof(*rsaPrivTmpl),
+                                  &rsaPriv);
+    CHECK_RV(rv, "C_CreateObject(RSA unwrapping key)", CKR_OK);
+#endif
+
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        rv = funcList->C_GetMechanismInfo(slot, cases[i].mech, &info);
+        if (rv == CKR_MECHANISM_INVALID)
+            continue;
+        snprintf(msg, sizeof(msg), "C_GetMechanismInfo(0x%lx)",
+                 (unsigned long)cases[i].mech);
+        CHECK_RV(rv, msg, CKR_OK);
+        if (rv != CKR_OK)
+            continue;
+
+        wrapKey = aesKey;
+        unwrapKey = aesKey;
+#ifndef NO_RSA
+        if (cases[i].rsa) {
+            wrapKey = rsaPub;
+            unwrapKey = rsaPriv;
+        }
+#endif
+        if (wrapKey == CK_INVALID_HANDLE || unwrapKey == CK_INVALID_HANDLE)
+            continue;
+
+        mech.mechanism = cases[i].mech;
+        mech.pParameter = cases[i].useIv ? iv : NULL;
+        mech.ulParameterLen = cases[i].useIv ? sizeof(iv) : 0;
+
+        wrappedLen = sizeof(wrapped);
+        rv = funcList->C_WrapKey(session, &mech, wrapKey, secret, wrapped,
+                                 &wrappedLen);
+        snprintf(msg, sizeof(msg), "C_WrapKey(0x%lx) matches CKF_WRAP",
+                 (unsigned long)cases[i].mech);
+        CHECK_RV(rv, msg, ((info.flags & CKF_WRAP) != 0) ?
+                 CKR_OK : WRAP_UNSUPPORTED_RV);
+
+        unwrapData = wrapped;
+        unwrapLen = wrappedLen;
+        if (rv != CKR_OK) {
+            XMEMSET(wrapped, 0x44, sizeof(wrapped));
+            unwrapLen = cases[i].rsa ? 256 : 48;
+        }
+        if (rv != CKR_OK && (info.flags & CKF_UNWRAP) != 0) {
+            /* Unwrap works without wrap support: encrypt the key directly. */
+            wrappedLen = sizeof(wrapped);
+            rv = funcList->C_EncryptInit(session, &mech, wrapKey);
+            if (rv == CKR_OK) {
+                rv = funcList->C_Encrypt(session, secretValue,
+                                         sizeof(secretValue), wrapped,
+                                         &wrappedLen);
+            }
+            snprintf(msg, sizeof(msg), "C_Encrypt(0x%lx) key to unwrap",
+                     (unsigned long)cases[i].mech);
+            CHECK_RV(rv, msg, CKR_OK);
+            unwrapLen = wrappedLen;
+        }
+        unwrapped = CK_INVALID_HANDLE;
+        /* AES-ECB needs CKA_VALUE_LEN to know the key length. */
+        rv = funcList->C_UnwrapKey(session, &mech, unwrapKey, unwrapData,
+                                   unwrapLen, unwrapTmpl,
+                                   sizeof(unwrapTmpl) / sizeof(*unwrapTmpl) -
+                                   (cases[i].mech == CKM_AES_ECB ? 0 : 1),
+                                   &unwrapped);
+        snprintf(msg, sizeof(msg), "C_UnwrapKey(0x%lx) matches CKF_UNWRAP",
+                 (unsigned long)cases[i].mech);
+        CHECK_RV(rv, msg, ((info.flags & CKF_UNWRAP) != 0) ?
+                 CKR_OK : CKR_MECHANISM_INVALID);
+        if (unwrapped != CK_INVALID_HANDLE)
+            funcList->C_DestroyObject(session, unwrapped);
+    }
+}
+
+#ifndef NO_AES
+/* AES-ECB wraps a key that is not block aligned and unwraps it back. */
+static void test_ecb_wrap_short_key(CK_SLOT_ID slot, CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_MECHANISM_INFO info;
+    CK_MECHANISM mech = { CKM_AES_ECB, NULL, 0 };
+    CK_OBJECT_HANDLE secret = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE aesKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE unwrapped = CK_INVALID_HANDLE;
+    CK_KEY_TYPE aesType = CKK_AES;
+    CK_ULONG valueLen = 20;
+    CK_BYTE secretValue[20];
+    CK_BYTE aesValue[16];
+    CK_BYTE wrapped[64];
+    CK_BYTE value[32];
+    CK_ULONG wrappedLen = sizeof(wrapped);
+    CK_ATTRIBUTE secretTmpl[] = {
+        { CKA_CLASS,       &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE,    &genericType, sizeof(genericType) },
+        { CKA_PRIVATE,     &ckFalse,     sizeof(ckFalse)     },
+        { CKA_SENSITIVE,   &ckFalse,     sizeof(ckFalse)     },
+        { CKA_EXTRACTABLE, &ckTrue,      sizeof(ckTrue)      },
+        { CKA_VALUE,       secretValue,  sizeof(secretValue) },
+    };
+    CK_ATTRIBUTE aesTmpl[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &aesType,     sizeof(aesType)     },
+        { CKA_PRIVATE,  &ckFalse,     sizeof(ckFalse)     },
+        { CKA_WRAP,     &ckTrue,      sizeof(ckTrue)      },
+        { CKA_UNWRAP,   &ckTrue,      sizeof(ckTrue)      },
+        { CKA_ENCRYPT,  &ckTrue,      sizeof(ckTrue)      },
+        { CKA_DECRYPT,  &ckTrue,      sizeof(ckTrue)      },
+        { CKA_VALUE,    aesValue,     sizeof(aesValue)    },
+    };
+    CK_ATTRIBUTE unwrapTmpl[] = {
+        { CKA_CLASS,       &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE,    &genericType, sizeof(genericType) },
+        { CKA_PRIVATE,     &ckFalse,     sizeof(ckFalse)     },
+        { CKA_SENSITIVE,   &ckFalse,     sizeof(ckFalse)     },
+        { CKA_EXTRACTABLE, &ckTrue,      sizeof(ckTrue)      },
+        { CKA_VALUE_LEN,   &valueLen,    sizeof(valueLen)    },
+    };
+    CK_ATTRIBUTE valueAttr = { CKA_VALUE, value, sizeof(value) };
+
+    rv = funcList->C_GetMechanismInfo(slot, CKM_AES_ECB, &info);
+    if (rv != CKR_OK || (info.flags & CKF_WRAP) == 0)
+        return;
+    XMEMSET(secretValue, 0x5c, sizeof(secretValue));
+    XMEMSET(aesValue, 0x3a, sizeof(aesValue));
+    rv = funcList->C_CreateObject(session, secretTmpl,
+        sizeof(secretTmpl) / sizeof(*secretTmpl), &secret);
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, aesTmpl,
+            sizeof(aesTmpl) / sizeof(*aesTmpl), &aesKey);
+    }
+    CHECK_RV(rv, "create 20 byte secret and AES wrapping key", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_WrapKey(session, &mech, aesKey, secret, wrapped,
+                                 &wrappedLen);
+        CHECK_RV(rv, "C_WrapKey(AES-ECB) pads a 20 byte key", CKR_OK);
+        CHECK_TRUE(rv != CKR_OK || wrappedLen == 32,
+                   "AES-ECB wrapped length is two blocks");
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_UnwrapKey(session, &mech, aesKey, wrapped,
+                                   wrappedLen, unwrapTmpl,
+                                   sizeof(unwrapTmpl) / sizeof(*unwrapTmpl),
+                                   &unwrapped);
+        CHECK_RV(rv, "C_UnwrapKey(AES-ECB) with CKA_VALUE_LEN", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        CK_OBJECT_HANDLE noLen = CK_INVALID_HANDLE;
+
+        rv = funcList->C_UnwrapKey(session, &mech, aesKey, wrapped,
+                                   wrappedLen, unwrapTmpl,
+                                   sizeof(unwrapTmpl) / sizeof(*unwrapTmpl) - 1,
+                                   &noLen);
+        CHECK_RV(rv, "C_UnwrapKey(AES-ECB) needs CKA_VALUE_LEN",
+                 CKR_TEMPLATE_INCOMPLETE);
+        rv = CKR_OK;
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_GetAttributeValue(session, unwrapped, &valueAttr, 1);
+        CHECK_TRUE(rv == CKR_OK && valueAttr.ulValueLen == sizeof(secretValue)
+                   && XMEMCMP(value, secretValue, sizeof(secretValue)) == 0,
+                   "AES-ECB unwrapped key has its original value");
+    }
+    if (unwrapped != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, unwrapped);
+    if (aesKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, aesKey);
+    if (secret != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, secret);
+}
+#endif
+
+#if !defined(NO_RSA) && !defined(NO_AES) && !defined(WOLFPKCS11_NO_STORE)
+/* An RSA key AES-ECB wraps must unwrap without CKA_VALUE_LEN. */
+static void test_ecb_wrap_rsa_key(CK_SLOT_ID slot, CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_MECHANISM_INFO info;
+    CK_MECHANISM mech = { CKM_AES_ECB, NULL, 0 };
+    CK_OBJECT_HANDLE rsaPriv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE aesKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE unwrapped = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS privClass = CKO_PRIVATE_KEY;
+    CK_KEY_TYPE rsaType = CKK_RSA;
+    CK_KEY_TYPE aesType = CKK_AES;
+    CK_BYTE aesValue[16];
+    CK_BYTE wrapped[2048];
+    CK_ULONG wrappedLen = sizeof(wrapped);
+    CK_ATTRIBUTE rsaPrivTmpl[] = {
+        { CKA_CLASS,            &privClass,        sizeof(privClass)         },
+        { CKA_KEY_TYPE,         &rsaType,          sizeof(rsaType)           },
+        { CKA_PRIVATE,          &ckFalse,          sizeof(ckFalse)           },
+        { CKA_SENSITIVE,        &ckFalse,          sizeof(ckFalse)           },
+        { CKA_EXTRACTABLE,      &ckTrue,           sizeof(ckTrue)            },
+        { CKA_MODULUS,          rsa_2048_modulus,  sizeof(rsa_2048_modulus)  },
+        { CKA_PRIVATE_EXPONENT, rsa_2048_priv_exp, sizeof(rsa_2048_priv_exp) },
+        { CKA_PRIME_1,          rsa_2048_p,        sizeof(rsa_2048_p)        },
+        { CKA_PRIME_2,          rsa_2048_q,        sizeof(rsa_2048_q)        },
+        { CKA_EXPONENT_1,       rsa_2048_dP,       sizeof(rsa_2048_dP)       },
+        { CKA_EXPONENT_2,       rsa_2048_dQ,       sizeof(rsa_2048_dQ)       },
+        { CKA_COEFFICIENT,      rsa_2048_u,        sizeof(rsa_2048_u)        },
+        { CKA_PUBLIC_EXPONENT,  rsa_2048_pub_exp,  sizeof(rsa_2048_pub_exp)  },
+    };
+    CK_ATTRIBUTE aesTmpl[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &aesType,     sizeof(aesType)     },
+        { CKA_PRIVATE,  &ckFalse,     sizeof(ckFalse)     },
+        { CKA_WRAP,     &ckTrue,      sizeof(ckTrue)      },
+        { CKA_UNWRAP,   &ckTrue,      sizeof(ckTrue)      },
+        { CKA_ENCRYPT,  &ckTrue,      sizeof(ckTrue)      },
+        { CKA_DECRYPT,  &ckTrue,      sizeof(ckTrue)      },
+        { CKA_VALUE,    aesValue,     sizeof(aesValue)    },
+    };
+    CK_ATTRIBUTE unwrapTmpl[] = {
+        { CKA_CLASS,    &privClass, sizeof(privClass) },
+        { CKA_KEY_TYPE, &rsaType,   sizeof(rsaType)   },
+        { CKA_PRIVATE,  &ckFalse,   sizeof(ckFalse)   },
+    };
+
+    rv = funcList->C_GetMechanismInfo(slot, CKM_AES_ECB, &info);
+    if (rv != CKR_OK || (info.flags & CKF_WRAP) == 0)
+        return;
+    XMEMSET(aesValue, 0x4b, sizeof(aesValue));
+    rv = funcList->C_CreateObject(session, rsaPrivTmpl,
+        sizeof(rsaPrivTmpl) / sizeof(*rsaPrivTmpl), &rsaPriv);
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, aesTmpl,
+            sizeof(aesTmpl) / sizeof(*aesTmpl), &aesKey);
+    }
+    CHECK_RV(rv, "create RSA private key and AES wrapping key", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_WrapKey(session, &mech, aesKey, rsaPriv, wrapped,
+                                 &wrappedLen);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_UnwrapKey(session, &mech, aesKey, wrapped,
+                                   wrappedLen, unwrapTmpl,
+                                   sizeof(unwrapTmpl) / sizeof(*unwrapTmpl),
+                                   &unwrapped);
+        CHECK_RV(rv, "C_UnwrapKey(AES-ECB) of the RSA key it wrapped", CKR_OK);
+    }
+    else {
+        CHECK_TRUE(rsaPriv != CK_INVALID_HANDLE && aesKey != CK_INVALID_HANDLE,
+                   "C_WrapKey(AES-ECB) refuses an unaligned RSA key");
+    }
+    if (unwrapped != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, unwrapped);
+    if (aesKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, aesKey);
+    if (rsaPriv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, rsaPriv);
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
     CK_C_INITIALIZE_ARGS args;
     CK_SLOT_ID slotList[16];
     CK_ULONG slotCount = sizeof(slotList) / sizeof(slotList[0]);
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
 
     rv = pkcs11_load();
     CHECK_RV(rv, "load library", CKR_OK);
@@ -213,6 +597,20 @@ static int run_test(void)
     if (rv == CKR_OK) {
         test_info_blank_padding(slotList[0]);
         test_token_clock(slotList[0]);
+        rv = funcList->C_OpenSession(slotList[0],
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+        CHECK_RV(rv, "C_OpenSession", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        test_wrap_flags(slotList[0], session);
+#ifndef NO_AES
+        test_ecb_wrap_short_key(slotList[0], session);
+#endif
+#if !defined(NO_RSA) && !defined(NO_AES) && !defined(WOLFPKCS11_NO_STORE)
+        test_ecb_wrap_rsa_key(slotList[0], session);
+#endif
+        funcList->C_CloseSession(session);
     }
     funcList->C_Finalize(NULL);
 

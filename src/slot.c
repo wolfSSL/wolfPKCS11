@@ -574,6 +574,14 @@ CK_RV C_GetMechanismList(CK_SLOT_ID slotID,
     return rv;
 }
 
+/* Matches the key serialization C_WrapKey compiles in for RSA and secret
+ * keys; without any, every wrap fails with CKR_KEY_NOT_WRAPPABLE. */
+#if defined(WOLFSSL_STM32U5_DHUK) || !defined(WOLFPKCS11_NO_STORE)
+    #define WP11_MECH_WRAP_FLAG    CKF_WRAP
+#else
+    #define WP11_MECH_WRAP_FLAG    0
+#endif
+
 #ifndef NO_RSA
 #ifdef WOLFSSL_KEY_GEN
 /* Info on RSA key generation mechanism. */
@@ -583,13 +591,13 @@ static CK_MECHANISM_INFO rsaKgMechInfo = {
 #endif
 /* Info on RSA X.509 mechanism. */
 static CK_MECHANISM_INFO rsaX509MechInfo = {
-    1024, 4096, CKF_ENCRYPT | CKF_DECRYPT | CKF_SIGN | CKF_VERIFY | CKF_WRAP |
-    CKF_UNWRAP | CKF_VERIFY_RECOVER
+    1024, 4096, CKF_ENCRYPT | CKF_DECRYPT | CKF_SIGN | CKF_VERIFY |
+    CKF_VERIFY_RECOVER
 };
 /* Info on RSA PKCS#1.5 mechanism. */
 static CK_MECHANISM_INFO rsaPkcsMechInfo = {
     1024, 4096, CKF_ENCRYPT | CKF_DECRYPT | CKF_SIGN | CKF_VERIFY |
-    CKF_VERIFY_RECOVER
+    CKF_VERIFY_RECOVER | WP11_MECH_WRAP_FLAG | CKF_UNWRAP
 };
 #ifndef WC_NO_RSA_OAEP
 /* Info on RSA PKCS#1 OAEP mechanism. */
@@ -753,13 +761,16 @@ static CK_MECHANISM_INFO aesKeyGenMechInfo = {
 };
 #ifdef HAVE_AES_KEYWRAP
 static CK_MECHANISM_INFO aesKeyWrapMechInfo = {
-    16, 32, CKF_ENCRYPT | CKF_DECRYPT | CKF_WRAP | CKF_UNWRAP
+    16, 32, CKF_ENCRYPT | CKF_DECRYPT | WP11_MECH_WRAP_FLAG | CKF_UNWRAP
 };
 #endif
 #ifdef HAVE_AES_CBC
 /* Info on AES-CBC mechanism. */
 static CK_MECHANISM_INFO aesCbcMechInfo = {
     16, 32, CKF_ENCRYPT | CKF_DECRYPT
+};
+static CK_MECHANISM_INFO aesCbcPadMechInfo = {
+    16, 32, CKF_ENCRYPT | CKF_DECRYPT | WP11_MECH_WRAP_FLAG | CKF_UNWRAP
 };
 static CK_MECHANISM_INFO aesCbcEncryptDataMechInfo = {
     1, 32, CKF_DERIVE
@@ -786,7 +797,7 @@ static CK_MECHANISM_INFO aesCcmMechInfo = {
 #ifdef HAVE_AESECB
 /* Info on AES-ECB mechanism. */
 static CK_MECHANISM_INFO aesEcbMechInfo = {
-    16, 32, CKF_ENCRYPT | CKF_DECRYPT
+    16, 32, CKF_ENCRYPT | CKF_DECRYPT | WP11_MECH_WRAP_FLAG | CKF_UNWRAP
 };
 #endif
 #ifdef HAVE_AESCTS
@@ -1083,6 +1094,8 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
 #endif
 #ifdef HAVE_AES_CBC
         case CKM_AES_CBC_PAD:
+            XMEMCPY(pInfo, &aesCbcPadMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
         case CKM_AES_CBC:
             XMEMCPY(pInfo, &aesCbcMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
