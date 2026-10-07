@@ -20717,6 +20717,7 @@ int WP11_Aes_Cmac_Verify(unsigned char* data, word32 dataLen,
         ret = WP11_Aes_Cmac_Sign(data, dataLen, resSig, &resSigLen, session);
     if (ret == 0)
         *stat = resSigLen == sigLen && WP11_ConstantCompare(resSig, sig, sigLen);
+    wc_ForceZero(resSig, sizeof(resSig));
 
     return ret;
 }
@@ -20735,6 +20736,7 @@ int WP11_Aes_Cmac_Verify_Final(unsigned char* sig, word32 sigLen, int* stat,
         ret = WP11_Aes_Cmac_Sign_Final(resSig, &resSigLen, session);
     if (ret == 0)
         *stat = resSigLen == sigLen && WP11_ConstantCompare(resSig, sig, sigLen);
+    wc_ForceZero(resSig, sizeof(resSig));
 
     return ret;
 }
