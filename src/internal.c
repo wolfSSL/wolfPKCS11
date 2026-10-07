@@ -127,17 +127,6 @@
 #define WP11_MAX_DH_KEY_SZ             (4096/8)
 #endif
 
-/* Maximum size of storage for generated/derived symmetric key. */
-#ifdef WOLFPKCS11_NSS
-#define WP11_MAX_SYM_KEY_SZ            (2048)
-#elif !defined(NO_DH)
-#define WP11_MAX_SYM_KEY_SZ            (4096/8)
-#elif defined(HAVE_ECC)
-#define WP11_MAX_SYM_KEY_SZ            ((521+7)/8)
-#else
-#define WP11_MAX_SYM_KEY_SZ            64
-#endif
-
 #ifndef WP11_MAX_CERT_SZ
 #define WP11_MAX_CERT_SZ              4096
 #endif

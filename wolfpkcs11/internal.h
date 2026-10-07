@@ -348,6 +348,17 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #define WP11_MAX_PIN_LEN               32
 #endif
 
+/* Maximum size of storage for generated/derived symmetric key. */
+#ifdef WOLFPKCS11_NSS
+#define WP11_MAX_SYM_KEY_SZ            (2048)
+#elif !defined(NO_DH)
+#define WP11_MAX_SYM_KEY_SZ            (4096/8)
+#elif defined(HAVE_ECC)
+#define WP11_MAX_SYM_KEY_SZ            ((521+7)/8)
+#else
+#define WP11_MAX_SYM_KEY_SZ            64
+#endif
+
 /* Login failure constants. */
 #ifndef WP11_MAX_LOGIN_FAILS_SO
 #define WP11_MAX_LOGIN_FAILS_SO        3

@@ -199,6 +199,50 @@ static CK_KEY_TYPE genericType = CKK_GENERIC_SECRET;
 static CK_BBOOL ckTrue = CK_TRUE;
 static CK_BBOOL ckFalse = CK_FALSE;
 
+static CK_RV generate_generic(CK_SESSION_HANDLE session, CK_ULONG len)
+{
+    CK_RV rv;
+    CK_MECHANISM mech = { CKM_GENERIC_SECRET_KEY_GEN, NULL, 0 };
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,     &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE,  &genericType, sizeof(genericType) },
+        { CKA_PRIVATE,   &ckFalse,     sizeof(ckFalse)     },
+        { CKA_VALUE_LEN, &len,         sizeof(len)         },
+    };
+
+    rv = funcList->C_GenerateKey(session, &mech, tmpl,
+                                 sizeof(tmpl) / sizeof(*tmpl), &key);
+    if (key != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, key);
+    return rv;
+}
+
+/* Generic secret key sizes are reported in bits and match what generates. */
+static void test_generic_secret_size(CK_SLOT_ID slot,
+                                     CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_MECHANISM_INFO info;
+
+    rv = funcList->C_GetMechanismInfo(slot, CKM_GENERIC_SECRET_KEY_GEN, &info);
+    CHECK_RV(rv, "C_GetMechanismInfo(CKM_GENERIC_SECRET_KEY_GEN)", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    CHECK_TRUE(info.ulMinKeySize >= 8 && info.ulMinKeySize % 8 == 0 &&
+               info.ulMaxKeySize % 8 == 0 &&
+               info.ulMaxKeySize >= info.ulMinKeySize,
+               "generic secret key sizes are whole bytes in bits");
+    rv = generate_generic(session, info.ulMinKeySize / 8);
+    CHECK_RV(rv, "generate generic secret of minimum size", CKR_OK);
+    rv = generate_generic(session, info.ulMaxKeySize / 8);
+    CHECK_RV(rv, "generate generic secret of maximum size", CKR_OK);
+    rv = generate_generic(session, info.ulMaxKeySize / 8 + 1);
+    CHECK_TRUE(rv != CKR_OK,
+               "generic secret above maximum size is rejected");
+}
+
 typedef struct WrapCase {
     CK_MECHANISM_TYPE mech;
     int useIv;
@@ -603,6 +647,7 @@ static int run_test(void)
         CHECK_RV(rv, "C_OpenSession", CKR_OK);
     }
     if (rv == CKR_OK) {
+        test_generic_secret_size(slotList[0], session);
         test_wrap_flags(slotList[0], session);
 #ifndef NO_AES
         test_ecb_wrap_short_key(slotList[0], session);
