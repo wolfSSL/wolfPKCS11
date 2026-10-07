@@ -56,6 +56,13 @@
 
 #if defined(WOLFPKCS11_MLKEM) && defined(WOLFPKCS11_PKCS11_V3_2)
     #define MLKEM_TEST
+    #ifndef WOLFPKCS11_NO_STORE
+        #define MLKEM_LOGIN_TEST
+    #endif
+#endif
+
+#if defined(KEYPAIR_PERSIST_TEST) || defined(MLKEM_LOGIN_TEST)
+    #define TOKEN_TEST
 #endif
 
 #if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && defined(HAVE_ECC) && \
@@ -317,7 +324,7 @@ static void test_unwrap_failure_codes(CK_SESSION_HANDLE session)
     (void)tmplCnt;
 }
 
-#ifdef KEYPAIR_PERSIST_TEST
+#ifdef TOKEN_TEST
 static const char* soPin = "password123456";
 static const char* userPin = "wolfpkcs11-test";
 
@@ -381,7 +388,9 @@ static CK_RV user_session(CK_SLOT_ID slot, CK_SESSION_HANDLE* session)
     }
     return rv;
 }
+#endif /* TOKEN_TEST */
 
+#ifdef KEYPAIR_PERSIST_TEST
 /* The stored private key must carry its initial-state flags even when the
  * process ends right after key-pair generation returns. */
 static void test_keypair_initial_states_stored(void)
@@ -576,7 +585,8 @@ static void test_hkdf_keygen_matches_support(CK_SESSION_HANDLE session)
     }
 }
 
-#if defined(MLKEM_TEST) && defined(WIDE_CK_ULONG)
+#if defined(MLKEM_TEST) && \
+    (defined(WIDE_CK_ULONG) || defined(MLKEM_LOGIN_TEST))
 /* C_EncapsulateKey and C_DecapsulateKey are only in the v3.2 list. */
 static CK_FUNCTION_LIST_3_2* get_v32_list(void)
 {
@@ -617,6 +627,9 @@ static CK_RV gen_mlkem_keys(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE* pub,
                sizeof(privTmpl) / sizeof(*privTmpl), pub, priv);
 }
 
+#endif
+
+#if defined(MLKEM_TEST) && defined(WIDE_CK_ULONG)
 static void test_decapsulate_ct_len_beyond_word32(CK_SESSION_HANDLE session)
 {
     CK_RV rv;
@@ -668,6 +681,81 @@ static void test_decapsulate_ct_len_beyond_word32(CK_SESSION_HANDLE session)
 }
 #endif /* MLKEM_TEST && WIDE_CK_ULONG */
 
+#ifdef MLKEM_LOGIN_TEST
+/* A shared secret defaults to a private object, so creating one needs a user
+ * login once the token has a user PIN. */
+static void test_encapsulate_private_default_needs_login(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = 0;
+    CK_FUNCTION_LIST_3_2* list = NULL;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_ML_KEM, NULL, 0 };
+    byte ct[2048];
+    CK_ULONG ctLen = sizeof(ct);
+    CK_ATTRIBUTE defaultTmpl[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &genericType, sizeof(genericType) },
+    };
+    CK_ATTRIBUTE publicTmpl[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &genericType, sizeof(genericType) },
+        { CKA_PRIVATE,  &ckFalse,     sizeof(ckFalse)     },
+    };
+
+    rv = token_init(&slot);
+    CHECK_RV(rv, "initialize token", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    rv = user_session(slot, &session);
+    CHECK_RV(rv, "user session", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = gen_mlkem_keys(session, &pub, &priv);
+        CHECK_RV(rv, "generate public ML-KEM key pair", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Logout(session);
+        CHECK_RV(rv, "log out", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        list = get_v32_list();
+        CHECK_TRUE(list != NULL, "get v3.2 function list");
+    }
+    if (list != NULL) {
+        rv = list->C_EncapsulateKey(session, &mech, pub, defaultTmpl,
+                 sizeof(defaultTmpl) / sizeof(*defaultTmpl), ct, &ctLen, &key);
+#ifndef WOLFPKCS11_LEGACY_PRIVATE_FALSE_DEFAULT
+        CHECK_RV(rv, "encapsulate to a default secret key without login",
+                 CKR_USER_NOT_LOGGED_IN);
+#else
+        CHECK_RV(rv, "encapsulate to a legacy public secret key without login",
+                 CKR_OK);
+#endif
+        if (rv == CKR_OK) {
+            funcList->C_DestroyObject(session, key);
+        }
+        key = CK_INVALID_HANDLE;
+        ctLen = sizeof(ct);
+        rv = list->C_EncapsulateKey(session, &mech, pub, publicTmpl,
+                 sizeof(publicTmpl) / sizeof(*publicTmpl), ct, &ctLen, &key);
+        CHECK_RV(rv, "encapsulate to a public secret key without login",
+                 CKR_OK);
+        if (rv == CKR_OK) {
+            funcList->C_DestroyObject(session, key);
+        }
+    }
+    if (session != 0) {
+        funcList->C_DestroyObject(session, pub);
+        funcList->C_DestroyObject(session, priv);
+        funcList->C_CloseSession(session);
+    }
+    funcList->C_Finalize(NULL);
+}
+#endif /* MLKEM_LOGIN_TEST */
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -698,6 +786,9 @@ static int run_test(void)
 
 #ifdef KEYPAIR_PERSIST_TEST
     test_keypair_initial_states_stored();
+#endif
+#ifdef MLKEM_LOGIN_TEST
+    test_encapsulate_private_default_needs_login();
 #endif
 
     pkcs11_unload();

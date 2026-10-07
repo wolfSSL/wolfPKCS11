@@ -11275,38 +11275,6 @@ CK_RV C_MessageVerifyFinal(CK_SESSION_HANDLE hSession)
 
 #if defined (WOLFPKCS11_PKCS11_V3_2)
 
-#ifdef WOLFPKCS11_MLKEM
-/*
- * PKCS#11 v3.0 sec 5.1: an object whose effective CKA_PRIVATE is CK_TRUE must
- * not be created on a session that is not logged in as the user. Empty-PIN
- * tokens treat public sessions as logged in (mirrors the find-time gate in
- * WP11_Object_Find). Returns CKR_USER_NOT_LOGGED_IN when the template asks for
- * a private object on a public session, otherwise CKR_OK.
- *
- * Only used by C_EncapsulateKey / C_DecapsulateKey, which are themselves
- * compiled out without WOLFPKCS11_MLKEM; guard the definition the same way to
- * avoid an unused-function error under -Werror.
- */
-static CK_RV CheckPrivateObjectLogin(WP11_Session* session,
-                                     CK_ATTRIBUTE_PTR pTemplate,
-                                     CK_ULONG ulAttributeCount)
-{
-    CK_ATTRIBUTE* privAttr = NULL;
-
-    FindAttributeType(pTemplate, ulAttributeCount, CKA_PRIVATE, &privAttr);
-    if (privAttr != NULL && privAttr->pValue != NULL &&
-            privAttr->ulValueLen == sizeof(CK_BBOOL) &&
-            *(CK_BBOOL*)privAttr->pValue == CK_TRUE) {
-        WP11_Slot* slot = WP11_Session_GetSlot(session);
-        if (!WP11_Slot_Has_Empty_Pin(slot) && !WP11_Slot_IsLoggedIn(slot)) {
-            return CKR_USER_NOT_LOGGED_IN;
-        }
-    }
-
-    return CKR_OK;
-}
-#endif /* WOLFPKCS11_MLKEM */
-
 static CK_RV wp11_C_EncapsulateKey(CK_SESSION_HANDLE hSession,
                                    CK_MECHANISM_PTR pMechanism,
                                    CK_OBJECT_HANDLE hPublicKey,
@@ -11389,7 +11357,8 @@ static CK_RV wp11_C_EncapsulateKey(CK_SESSION_HANDLE hSession,
         return CKR_OK;
 
     if (rv == CKR_OK)
-        rv = CheckPrivateObjectLogin(session, pTemplate, ulAttributeCount);
+        rv = CheckPrivateLogin(session, pTemplate, ulAttributeCount,
+                               CKO_SECRET_KEY);
 
     if (rv == CKR_OK) {
         rv = CreateObject(session, pTemplate, ulAttributeCount, &secretObj);
@@ -11525,7 +11494,8 @@ static CK_RV wp11_C_DecapsulateKey(CK_SESSION_HANDLE hSession,
     }
 
     if (rv == CKR_OK)
-        rv = CheckPrivateObjectLogin(session, pTemplate, ulAttributeCount);
+        rv = CheckPrivateLogin(session, pTemplate, ulAttributeCount,
+                               CKO_SECRET_KEY);
 
     if (rv == CKR_OK) {
         rv = CreateObject(session, pTemplate, ulAttributeCount, &secretObj);
