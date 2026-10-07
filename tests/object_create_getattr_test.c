@@ -56,6 +56,8 @@ static CK_BBOOL ckFalse = CK_FALSE;
 static const byte certValue[] = { 0x30, 0x82, 0x01, 0x00 };
 static const byte certSubject[] = { 0x30, 0x00 };
 static const char certUrl[] = "http://example.com/cert.der";
+static const byte dataValue[] = "object-create-data";
+static const byte dataLabel[] = "object-create-data-label";
 static const byte secretValue[] = {
     0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
     0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff
@@ -411,6 +413,51 @@ static void test_ec_key_requires_material(CK_SESSION_HANDLE session)
 }
 #endif
 
+/* CKA_VALUE of a data object is optional and defaults to empty. */
+static void test_data_object_value_optional(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    CK_BBOOL onToken = CK_FALSE;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    byte buf[32];
+    CK_ATTRIBUTE getValue = { CKA_VALUE, buf, sizeof(buf) };
+    CK_ATTRIBUTE setValue = { CKA_VALUE, (void*)dataValue,
+                              sizeof(dataValue) - 1 };
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,   &dataClass,       sizeof(dataClass)     },
+        { CKA_TOKEN,   &onToken,         sizeof(onToken)       },
+        { CKA_PRIVATE, &ckFalse,         sizeof(ckFalse)       },
+        { CKA_LABEL,   (void*)dataLabel, sizeof(dataLabel) - 1 },
+    };
+    int i;
+
+    for (i = 0; i < 2; i++) {
+        onToken = (i == 0) ? CK_FALSE : CK_TRUE;
+        rv = funcList->C_CreateObject(session, tmpl,
+                                      sizeof(tmpl) / sizeof(*tmpl), &obj);
+        CHECK_RV(rv, "create data object without CKA_VALUE", CKR_OK);
+        if (rv != CKR_OK)
+            continue;
+
+        getValue.ulValueLen = sizeof(buf);
+        rv = funcList->C_GetAttributeValue(session, obj, &getValue, 1);
+        CHECK_TRUE(rv == CKR_OK && getValue.ulValueLen == 0,
+                   "omitted data object value reads as empty");
+
+        rv = funcList->C_SetAttributeValue(session, obj, &setValue, 1);
+        CHECK_RV(rv, "set data object value later", CKR_OK);
+        getValue.ulValueLen = sizeof(buf);
+        rv = funcList->C_GetAttributeValue(session, obj, &getValue, 1);
+        CHECK_TRUE(rv == CKR_OK &&
+                   getValue.ulValueLen == sizeof(dataValue) - 1 &&
+                   XMEMCMP(buf, dataValue, sizeof(dataValue) - 1) == 0,
+                   "data object value set after creation");
+
+        destroy_obj(session, &obj);
+    }
+}
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -427,6 +474,7 @@ static int run_test(void)
         test_cert_requires_value(session);
         test_secret_key_requires_value(session);
         test_create_count_range(session);
+        test_data_object_value_optional(session);
 #if !defined(NO_RSA) || defined(HAVE_ECC)
         test_key_type_matches_class(session);
 #endif
