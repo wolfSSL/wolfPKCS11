@@ -45,6 +45,12 @@
 #include <dlfcn.h>
 #endif
 
+#if defined(HAVE_ECC) && !defined(WOLFPKCS11_NO_STORE) && !defined(_WIN32)
+    #define KEYPAIR_PERSIST_TEST
+    #include <unistd.h>
+    #include <sys/wait.h>
+#endif
+
 #include "testdata.h"
 #include "pkcs11_test_util.h"
 
@@ -293,6 +299,159 @@ static void test_unwrap_failure_codes(CK_SESSION_HANDLE session)
     (void)tmplCnt;
 }
 
+#ifdef KEYPAIR_PERSIST_TEST
+static const char* soPin = "password123456";
+static const char* userPin = "wolfpkcs11-test";
+
+static CK_RV token_init(CK_SLOT_ID* slot)
+{
+    CK_RV rv;
+    CK_C_INITIALIZE_ARGS args;
+    CK_SLOT_ID slotList[16];
+    CK_ULONG slotCount = sizeof(slotList) / sizeof(slotList[0]);
+    CK_SESSION_HANDLE soSession = 0;
+    unsigned char label[32];
+
+    XMEMSET(&args, 0, sizeof(args));
+    args.flags = CKF_OS_LOCKING_OK;
+    rv = funcList->C_Initialize(&args);
+    if (rv != CKR_OK)
+        return rv;
+    rv = funcList->C_GetSlotList(CK_TRUE, slotList, &slotCount);
+    if (rv == CKR_OK && slotCount == 0)
+        rv = CKR_TOKEN_NOT_PRESENT;
+    if (rv == CKR_OK) {
+        *slot = slotList[0];
+        XMEMSET(label, ' ', sizeof(label));
+        XMEMCPY(label, "unwrap-keygen", 13);
+        rv = funcList->C_InitToken(*slot, (CK_UTF8CHAR_PTR)soPin,
+                                   (CK_ULONG)XSTRLEN(soPin), label);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(*slot,
+                 CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL, NULL, &soSession);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(soSession, CKU_SO, (CK_UTF8CHAR_PTR)soPin,
+                               (CK_ULONG)XSTRLEN(soPin));
+        if (rv == CKR_OK) {
+            rv = funcList->C_InitPIN(soSession, (CK_UTF8CHAR_PTR)userPin,
+                                     (CK_ULONG)XSTRLEN(userPin));
+            funcList->C_Logout(soSession);
+        }
+        funcList->C_CloseSession(soSession);
+    }
+    funcList->C_Finalize(NULL);
+    return rv;
+}
+
+static CK_RV user_session(CK_SLOT_ID slot, CK_SESSION_HANDLE* session)
+{
+    CK_RV rv;
+    CK_C_INITIALIZE_ARGS args;
+
+    XMEMSET(&args, 0, sizeof(args));
+    args.flags = CKF_OS_LOCKING_OK;
+    rv = funcList->C_Initialize(&args);
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                 CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL, NULL, session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(*session, CKU_USER, (CK_UTF8CHAR_PTR)userPin,
+                               (CK_ULONG)XSTRLEN(userPin));
+    }
+    return rv;
+}
+
+/* The stored private key must carry its initial-state flags even when the
+ * process ends right after key-pair generation returns. */
+static void test_keypair_initial_states_stored(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = 0;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_ULONG found = 0;
+    CK_MECHANISM mech = { CKM_EC_KEY_PAIR_GEN, NULL, 0 };
+    CK_OBJECT_CLASS privKeyClass = CKO_PRIVATE_KEY;
+    char label[] = "stored-initial-states";
+    CK_BBOOL alwaysSensitive = CK_FALSE;
+    CK_BBOOL neverExtractable = CK_FALSE;
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_EC_PARAMS, ecc_p256_params, sizeof(ecc_p256_params) },
+        { CKA_TOKEN,     &ckTrue,         sizeof(ckTrue)          },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_TOKEN,       &ckTrue,  sizeof(ckTrue)    },
+        { CKA_SENSITIVE,   &ckTrue,  sizeof(ckTrue)    },
+        { CKA_EXTRACTABLE, &ckFalse, sizeof(ckFalse)   },
+        { CKA_LABEL,       label,    sizeof(label) - 1 },
+    };
+    CK_ATTRIBUTE findTmpl[] = {
+        { CKA_CLASS, &privKeyClass, sizeof(privKeyClass) },
+        { CKA_LABEL, label,         sizeof(label) - 1    },
+    };
+    CK_ATTRIBUTE getTmpl[] = {
+        { CKA_ALWAYS_SENSITIVE,  &alwaysSensitive,  sizeof(CK_BBOOL) },
+        { CKA_NEVER_EXTRACTABLE, &neverExtractable, sizeof(CK_BBOOL) },
+    };
+    pid_t pid;
+    int status = 0;
+
+    rv = token_init(&slot);
+    CHECK_RV(rv, "initialize token", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    pid = fork();
+    if (pid == 0) {
+        rv = user_session(slot, &session);
+        if (rv == CKR_OK) {
+            rv = funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+                     sizeof(pubTmpl) / sizeof(*pubTmpl), privTmpl,
+                     sizeof(privTmpl) / sizeof(*privTmpl), &pub, &priv);
+        }
+        /* End without C_Finalize so only what was stored survives. */
+        _exit(rv == CKR_OK ? 0 : 1);
+    }
+    CHECK_TRUE(pid > 0, "fork key-pair generator");
+    if (pid <= 0)
+        return;
+    CHECK_TRUE(waitpid(pid, &status, 0) == pid && WIFEXITED(status) &&
+               WEXITSTATUS(status) == 0, "generate token key pair");
+
+    rv = user_session(slot, &session);
+    CHECK_RV(rv, "reopen token", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_FindObjectsInit(session, findTmpl,
+                 sizeof(findTmpl) / sizeof(*findTmpl));
+        if (rv == CKR_OK) {
+            rv = funcList->C_FindObjects(session, &priv, 1, &found);
+            funcList->C_FindObjectsFinal(session);
+        }
+        CHECK_TRUE(rv == CKR_OK && found == 1, "find stored private key");
+    }
+    if (rv == CKR_OK && found == 1) {
+        rv = funcList->C_GetAttributeValue(session, priv, getTmpl,
+                 sizeof(getTmpl) / sizeof(*getTmpl));
+        CHECK_RV(rv, "read stored initial states", CKR_OK);
+        CHECK_TRUE(alwaysSensitive == CK_TRUE,
+                   "stored private key is always sensitive");
+        CHECK_TRUE(neverExtractable == CK_TRUE,
+                   "stored private key is never extractable");
+        funcList->C_DestroyObject(session, priv);
+    }
+    if (session != 0) {
+        funcList->C_Logout(session);
+        funcList->C_CloseSession(session);
+    }
+    funcList->C_Finalize(NULL);
+    (void)pub;
+}
+#endif /* KEYPAIR_PERSIST_TEST */
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -313,6 +472,10 @@ static int run_test(void)
         funcList->C_CloseSession(session);
     }
     funcList->C_Finalize(NULL);
+
+#ifdef KEYPAIR_PERSIST_TEST
+    test_keypair_initial_states_stored();
+#endif
 
     pkcs11_unload();
     return 0;
