@@ -541,6 +541,31 @@ static void test_keypair_common_label_copy_failure(CK_SESSION_HANDLE session)
 }
 #endif /* LABEL_ALLOC_FAIL_TEST */
 
+/* CKM_HKDF_KEY_GEN is accepted exactly when HKDF keys are supported. */
+static void test_hkdf_keygen_matches_support(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_HKDF_KEY_GEN, NULL, 0 };
+    CK_ULONG keyLen = 32;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_VALUE_LEN, &keyLen,  sizeof(keyLen)  },
+        { CKA_PRIVATE,   &ckFalse, sizeof(ckFalse) },
+    };
+
+    rv = funcList->C_GenerateKey(session, &mech, tmpl,
+                                 sizeof(tmpl) / sizeof(*tmpl), &key);
+#ifdef WOLFPKCS11_HKDF
+    CHECK_RV(rv, "HKDF key generation when HKDF keys are supported", CKR_OK);
+#else
+    CHECK_RV(rv, "HKDF key generation when HKDF keys are not supported",
+             CKR_MECHANISM_INVALID);
+#endif
+    if (rv == CKR_OK) {
+        funcList->C_DestroyObject(session, key);
+    }
+}
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -558,6 +583,7 @@ static int run_test(void)
         test_unwrap_wrapped_len_beyond_word32(session);
 #endif
         test_unwrap_failure_codes(session);
+        test_hkdf_keygen_matches_support(session);
 #ifdef LABEL_ALLOC_FAIL_TEST
         test_keypair_common_label_copy_failure(session);
 #endif

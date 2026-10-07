@@ -8509,7 +8509,7 @@ static CK_RV wp11_C_GenerateKey(CK_SESSION_HANDLE hSession,
             keyType = CKK_AES;
             break;
 #endif
-#ifdef HAVE_HKDF
+#ifdef WOLFPKCS11_HKDF
         case CKM_HKDF_KEY_GEN:
             keyType = CKK_HKDF;
             break;
