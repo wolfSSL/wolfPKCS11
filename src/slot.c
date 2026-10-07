@@ -204,6 +204,7 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
 #ifndef WOLFPKCS11_NO_TIME
     time_t now, expire;
     struct tm nowTM;
+    struct tm* utc;
 #endif
     WP11_Slot* slot;
     int cnt;
@@ -245,28 +246,33 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
 #ifndef WOLFPKCS11_NO_TIME
     now = XTIME(0);
     XMEMSET(&nowTM, 0, sizeof(nowTM));
-    if (XGMTIME(&now, &nowTM) != NULL) {
-        pInfo->utcTime[ 0] = (((1900 + nowTM.tm_year) / 1000) % 10) + '0';
-        pInfo->utcTime[ 1] = (((1900 + nowTM.tm_year) /  100) % 10) + '0';
-        pInfo->utcTime[ 2] = (((1900 + nowTM.tm_year) /   10) % 10) + '0';
-        pInfo->utcTime[ 3] = (((1900 + nowTM.tm_year) /    1) % 10) + '0';
-        pInfo->utcTime[ 4] = (((1 + nowTM.tm_mon) / 10) % 10) + '0';
-        pInfo->utcTime[ 5] = (((1 + nowTM.tm_mon) /  1) % 10) + '0';
-        pInfo->utcTime[ 6] = ((nowTM.tm_mday / 10) % 10) + '0';
-        pInfo->utcTime[ 7] = ((nowTM.tm_mday /  1) % 10) + '0';
-        pInfo->utcTime[ 8] = ((nowTM.tm_hour / 10) % 10) + '0';
-        pInfo->utcTime[ 9] = ((nowTM.tm_hour /  1) % 10) + '0';
-        pInfo->utcTime[10] = ((nowTM.tm_min / 10) % 10) + '0';
-        pInfo->utcTime[11] = ((nowTM.tm_min /  1) % 10) + '0';
-        pInfo->utcTime[12] = ((nowTM.tm_sec / 10) % 10) + '0';
-        pInfo->utcTime[13] = ((nowTM.tm_sec /  1) % 10) + '0';
+    /* XGMTIME may map to gmtime(), which ignores nowTM. */
+    utc = NULL;
+    if (now != (time_t)-1)
+        utc = XGMTIME(&now, &nowTM);
+    if (utc != NULL) {
+        pInfo->utcTime[ 0] = (((1900 + utc->tm_year) / 1000) % 10) + '0';
+        pInfo->utcTime[ 1] = (((1900 + utc->tm_year) /  100) % 10) + '0';
+        pInfo->utcTime[ 2] = (((1900 + utc->tm_year) /   10) % 10) + '0';
+        pInfo->utcTime[ 3] = (((1900 + utc->tm_year) /    1) % 10) + '0';
+        pInfo->utcTime[ 4] = (((1 + utc->tm_mon) / 10) % 10) + '0';
+        pInfo->utcTime[ 5] = (((1 + utc->tm_mon) /  1) % 10) + '0';
+        pInfo->utcTime[ 6] = ((utc->tm_mday / 10) % 10) + '0';
+        pInfo->utcTime[ 7] = ((utc->tm_mday /  1) % 10) + '0';
+        pInfo->utcTime[ 8] = ((utc->tm_hour / 10) % 10) + '0';
+        pInfo->utcTime[ 9] = ((utc->tm_hour /  1) % 10) + '0';
+        pInfo->utcTime[10] = ((utc->tm_min / 10) % 10) + '0';
+        pInfo->utcTime[11] = ((utc->tm_min /  1) % 10) + '0';
+        pInfo->utcTime[12] = ((utc->tm_sec / 10) % 10) + '0';
+        pInfo->utcTime[13] = ((utc->tm_sec /  1) % 10) + '0';
     }
     else {
-        /* Set date to all zeros. */
-        XMEMCPY(pInfo->utcTime, "00000000000000", 14);
+        pInfo->flags &= ~(CKF_CLOCK_ON_TOKEN);
+        XMEMSET(pInfo->utcTime, ' ', sizeof(pInfo->utcTime));
     }
 #else
-    XMEMCPY(pInfo->utcTime, "00000000000000", 14);
+    pInfo->flags &= ~(CKF_CLOCK_ON_TOKEN);
+    XMEMSET(pInfo->utcTime, ' ', sizeof(pInfo->utcTime));
 #endif
 
     cnt = WP11_Slot_TokenFailedLogin(slot, WP11_LOGIN_SO);

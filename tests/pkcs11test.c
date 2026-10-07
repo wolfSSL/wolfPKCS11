@@ -61,6 +61,11 @@
 #define PKCS11TEST_FUNC_SESS_DECL(func)                                    \
     PKCS11TEST_CASE(func, TEST_FLAG_INIT | TEST_FLAG_TOKEN | TEST_FLAG_SESSION)
 
+#ifndef WOLFPKCS11_NO_TIME
+    #define TOKEN_CLOCK_FLAG    CKF_CLOCK_ON_TOKEN
+#else
+    #define TOKEN_CLOCK_FLAG    0
+#endif
 
 #ifndef HAVE_PKCS11_STATIC
 static void* dlib;
@@ -468,7 +473,7 @@ static CK_RV test_no_token_init(void* args)
      * that has never had C_InitToken called. Pre-fix wp11_Token_Init
      * unconditionally marked the token state INITIALIZED, so the old
      * test included CKF_TOKEN_INITIALIZED in the expected mask. */
-    CK_FLAGS expFlags = CKF_RNG | CKF_CLOCK_ON_TOKEN;
+    CK_FLAGS expFlags = CKF_RNG | TOKEN_CLOCK_FLAG;
     int flags = CKF_SERIAL_SESSION | CKF_RW_SESSION;
 
     ret = funcList->C_GetTokenInfo(slot, &tokenInfo);
@@ -695,7 +700,7 @@ static CK_RV test_token(void* args)
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_RV ret;
     CK_TOKEN_INFO tokenInfo;
-    CK_FLAGS expFlags = CKF_RNG | CKF_CLOCK_ON_TOKEN | CKF_TOKEN_INITIALIZED;
+    CK_FLAGS expFlags = CKF_RNG | TOKEN_CLOCK_FLAG | CKF_TOKEN_INITIALIZED;
     unsigned char label[32];
     int flags = CKF_SERIAL_SESSION | CKF_RW_SESSION;
 
@@ -1002,7 +1007,7 @@ static CK_RV test_login_logout(void* args)
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_RV ret = 0;
     CK_TOKEN_INFO tokenInfo;
-    CK_FLAGS expFlags = CKF_RNG | CKF_CLOCK_ON_TOKEN | CKF_LOGIN_REQUIRED |
+    CK_FLAGS expFlags = CKF_RNG | TOKEN_CLOCK_FLAG | CKF_LOGIN_REQUIRED |
                         CKF_TOKEN_INITIALIZED | CKF_USER_PIN_INITIALIZED;
 
     funcList->C_Logout(session);
