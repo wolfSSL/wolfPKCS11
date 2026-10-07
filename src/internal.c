@@ -14178,8 +14178,10 @@ static int GetMldsaParams(wc_MlDsaKey* key, byte* data, CK_ULONG* len)
         *len = sizeof(CK_ML_DSA_PARAMETER_SET_TYPE);
     else if (*len < sizeof(CK_ML_DSA_PARAMETER_SET_TYPE))
         ret = BUFFER_E;
-    else
+    else {
         XMEMCPY(data, &params, sizeof(CK_ML_DSA_PARAMETER_SET_TYPE));
+        *len = sizeof(CK_ML_DSA_PARAMETER_SET_TYPE);
+    }
 
     return ret;
 }

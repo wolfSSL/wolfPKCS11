@@ -557,6 +557,37 @@ static void check_pq_unavailable(CK_SESSION_HANDLE session,
     destroy_obj(session, &priv);
     destroy_obj(session, &pub);
 }
+
+/* Reading CKA_PARAMETER_SET into a larger buffer reports the real length. */
+static void check_param_set_len(CK_SESSION_HANDLE session,
+                                CK_MECHANISM_TYPE genMech, CK_ULONG paramSet,
+                                const char* name)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_ULONG buf[4];
+    CK_ATTRIBUTE get = { CKA_PARAMETER_SET, buf, sizeof(buf) };
+    char msg[96];
+    int i;
+
+    rv = gen_pq_key_pair(session, genMech, paramSet, &pub, &priv);
+    snprintf(msg, sizeof(msg), "%s generate key pair", name);
+    CHECK_RV(rv, msg, CKR_OK);
+    for (i = 0; rv == CKR_OK && i < 2; i++) {
+        XMEMSET(buf, 0, sizeof(buf));
+        get.ulValueLen = sizeof(buf);
+        rv = funcList->C_GetAttributeValue(session, (i == 0) ? pub : priv,
+                                           &get, 1);
+        snprintf(msg, sizeof(msg), "%s %s parameter set length", name,
+                 (i == 0) ? "public" : "private");
+        CHECK_TRUE(rv == CKR_OK && get.ulValueLen == sizeof(CK_ULONG) &&
+                   buf[0] == paramSet, msg);
+    }
+
+    destroy_obj(session, &priv);
+    destroy_obj(session, &pub);
+}
 #endif
 
 static void test_unavailable_attr_is_error(CK_SESSION_HANDLE session)
@@ -784,6 +815,20 @@ static void test_copy_keeps_local(CK_SESSION_HANDLE session)
 }
 #endif
 
+#if defined(WOLFPKCS11_MLDSA) || defined(WOLFPKCS11_MLKEM)
+static void test_param_set_len(CK_SESSION_HANDLE session)
+{
+#ifdef WOLFPKCS11_MLDSA
+    check_param_set_len(session, CKM_ML_DSA_KEY_PAIR_GEN, CKP_ML_DSA_44,
+                        "ML-DSA");
+#endif
+#ifdef WOLFPKCS11_MLKEM
+    check_param_set_len(session, CKM_ML_KEM_KEY_PAIR_GEN, CKP_ML_KEM_512,
+                        "ML-KEM");
+#endif
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -808,6 +853,9 @@ static int run_test(void)
 #endif
 #ifndef NO_AES
         test_copy_keeps_local(session);
+#endif
+#if defined(WOLFPKCS11_MLDSA) || defined(WOLFPKCS11_MLKEM)
+        test_param_set_len(session);
 #endif
 #if !defined(NO_RSA) || defined(HAVE_ECC)
         test_key_type_matches_class(session);
