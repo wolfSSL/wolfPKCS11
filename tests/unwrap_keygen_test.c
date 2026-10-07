@@ -54,6 +54,14 @@
 #include "testdata.h"
 #include "pkcs11_test_util.h"
 
+#if defined(WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL) && defined(HAVE_ECC) && \
+    defined(USE_WOLFSSL_MEMORY) && !defined(WOLFSSL_STATIC_MEMORY) && \
+    !defined(WOLFSSL_DEBUG_MEMORY)
+    #define LABEL_ALLOC_FAIL_TEST
+    #include <stdlib.h>
+    #include <wolfssl/wolfcrypt/memory.h>
+#endif
+
 #define TEST_DIR "./store/unwrap_keygen_test"
 
 /* CK_ULONG lengths above the 32-bit range can only be expressed on LP64. */
@@ -452,6 +460,87 @@ static void test_keypair_initial_states_stored(void)
 }
 #endif /* KEYPAIR_PERSIST_TEST */
 
+#ifdef LABEL_ALLOC_FAIL_TEST
+/* Fails the allocation of failSz bytes after failSkip such allocations. */
+static size_t failSz = 0;
+static int failSkip = 0;
+
+static void* fail_malloc(size_t n)
+{
+    if (failSz != 0 && n == failSz) {
+        if (failSkip == 0) {
+            failSz = 0;
+            return NULL;
+        }
+        failSkip--;
+    }
+    return malloc(n);
+}
+
+static void fail_free(void* p)
+{
+    free(p);
+}
+
+static void* fail_realloc(void* p, size_t n)
+{
+    return realloc(p, n);
+}
+
+/* Key-pair generation must fail when the common label cannot be copied to
+ * the public key. */
+static void test_keypair_common_label_copy_failure(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_EC_KEY_PAIR_GEN, NULL, 0 };
+    char label[] = "common-label-0123456789abcdef-0123456789abcdef-0123456789";
+    byte got[sizeof(label)];
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_EC_PARAMS, ecc_p256_params, sizeof(ecc_p256_params) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_PRIVATE, &ckFalse, sizeof(ckFalse)   },
+        { CKA_LABEL,   label,    sizeof(label) - 1 },
+    };
+    CK_ATTRIBUTE getLabel[] = {
+        { CKA_LABEL, got, sizeof(got) },
+    };
+
+    rv = funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+             sizeof(pubTmpl) / sizeof(*pubTmpl), privTmpl,
+             sizeof(privTmpl) / sizeof(*privTmpl), &pub, &priv);
+    CHECK_RV(rv, "generate key pair with common label", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_GetAttributeValue(session, pub, getLabel, 1);
+        CHECK_TRUE(rv == CKR_OK && getLabel[0].ulValueLen == sizeof(label) - 1
+                   && XMEMCMP(got, label, sizeof(label) - 1) == 0,
+                   "public key takes the private key label");
+        funcList->C_DestroyObject(session, pub);
+        funcList->C_DestroyObject(session, priv);
+    }
+
+    pub = CK_INVALID_HANDLE;
+    priv = CK_INVALID_HANDLE;
+    /* The private key's own label copy comes first; fail the next one. */
+    failSz = sizeof(label) - 1;
+    failSkip = 1;
+    rv = funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+             sizeof(pubTmpl) / sizeof(*pubTmpl), privTmpl,
+             sizeof(privTmpl) / sizeof(*privTmpl), &pub, &priv);
+    CHECK_TRUE(failSz == 0, "label allocation failure injected");
+    failSz = 0;
+    CHECK_RV(rv, "key pair with failed common label copy", CKR_DEVICE_MEMORY);
+    CHECK_TRUE(pub == CK_INVALID_HANDLE && priv == CK_INVALID_HANDLE,
+               "failed common label copy returns no key handles");
+    if (rv == CKR_OK) {
+        funcList->C_DestroyObject(session, pub);
+        funcList->C_DestroyObject(session, priv);
+    }
+}
+#endif /* LABEL_ALLOC_FAIL_TEST */
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -469,6 +558,9 @@ static int run_test(void)
         test_unwrap_wrapped_len_beyond_word32(session);
 #endif
         test_unwrap_failure_codes(session);
+#ifdef LABEL_ALLOC_FAIL_TEST
+        test_keypair_common_label_copy_failure(session);
+#endif
         funcList->C_CloseSession(session);
     }
     funcList->C_Finalize(NULL);
@@ -491,6 +583,12 @@ int main(int argc, char* argv[])
 #endif
 
     printf("=== wolfPKCS11 unwrap and key generation contract test ===\n");
+#ifdef LABEL_ALLOC_FAIL_TEST
+    if (wolfSSL_SetAllocators(fail_malloc, fail_free, fail_realloc) != 0) {
+        fprintf(stderr, "FAIL: wolfSSL_SetAllocators\n");
+        return 1;
+    }
+#endif
     run_test();
     return pkcs11_test_summary();
 }

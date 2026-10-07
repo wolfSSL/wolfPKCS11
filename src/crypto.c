@@ -9333,10 +9333,6 @@ static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
         rv = SetInitialStates(priv);
     }
 
-    if (rv == CKR_OK) {
-        rv = AddObject(session, pub, pPublicKeyTemplate,
-                                        ulPublicKeyAttributeCount, phPublicKey);
-    }
 #ifdef WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL
     if (rv == CKR_OK) {
         CK_ULONG len;
@@ -9346,14 +9342,22 @@ static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
             for (i = 0; i < ulPrivateKeyAttributeCount; i++) {
                 CK_ATTRIBUTE* attr = &pPrivateKeyTemplate[i];
                 if (attr->type == CKA_LABEL) {
-                    WP11_Object_SetAttr(pub, CKA_LABEL, attr->pValue,
+                    ret = WP11_Object_SetAttr(pub, CKA_LABEL, attr->pValue,
                                                               attr->ulValueLen);
+                    if (ret == MEMORY_E)
+                        rv = CKR_DEVICE_MEMORY;
+                    else if (ret != 0)
+                        rv = CKR_FUNCTION_FAILED;
                     break;
                 }
             }
         }
     }
 #endif
+    if (rv == CKR_OK) {
+        rv = AddObject(session, pub, pPublicKeyTemplate,
+                                        ulPublicKeyAttributeCount, phPublicKey);
+    }
     if (rv == CKR_OK) {
         rv = AddObject(session, priv, pPrivateKeyTemplate,
                                       ulPrivateKeyAttributeCount, phPrivateKey);
