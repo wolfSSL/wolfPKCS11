@@ -13801,6 +13801,9 @@ static int GetCertAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
         case CKA_SUBJECT:
             ret = GetData(object->subject, object->subjectLen, data, len);
             break;
+        case CKA_CERTIFICATE_CATEGORY:
+            ret = GetULong(object->category, data, len);
+            break;
 #ifdef WOLFPKCS11_NSS
         case CKA_NSS_EMAIL:
             ret = GetData(object->email, object->emailLen, data, len);
