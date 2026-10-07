@@ -888,6 +888,72 @@ static void test_trust_hash_size_query(CK_SESSION_HANDLE session)
 }
 #endif
 
+#ifdef HAVE_ECC
+/* CKA_EC_PARAMS read into a buffer shorter than the encoding is reported as
+ * too small and nothing is written past the length given. */
+static void test_ec_params_short_buffer(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS pubClass = CKO_PUBLIC_KEY;
+    CK_KEY_TYPE ecType = CKK_EC;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    byte buf[64];
+    CK_ATTRIBUTE get = { CKA_EC_PARAMS, NULL, 0 };
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,     &pubClass,       sizeof(pubClass)        },
+        { CKA_KEY_TYPE,  &ecType,         sizeof(ecType)          },
+        { CKA_TOKEN,     &ckFalse,        sizeof(ckFalse)         },
+        { CKA_EC_PARAMS, ecc_p256_params, sizeof(ecc_p256_params) },
+        { CKA_EC_POINT,  ecc_p256_pub,    sizeof(ecc_p256_pub)    },
+    };
+    CK_ULONG need;
+    CK_ULONG shortLen;
+    CK_ULONG i;
+    int intact;
+
+    rv = funcList->C_CreateObject(session, tmpl, sizeof(tmpl) / sizeof(*tmpl),
+                                  &key);
+    CHECK_RV(rv, "create EC public key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_GetAttributeValue(session, key, &get, 1);
+    CHECK_TRUE(rv == CKR_OK && get.ulValueLen == sizeof(ecc_p256_params),
+               "EC params size query");
+    need = get.ulValueLen;
+
+    for (shortLen = 0; rv == CKR_OK && shortLen < need; shortLen++) {
+        XMEMSET(buf, 0xAB, sizeof(buf));
+        get.pValue = buf;
+        get.ulValueLen = shortLen;
+        rv = funcList->C_GetAttributeValue(session, key, &get, 1);
+        intact = 1;
+        for (i = shortLen; i < sizeof(buf); i++) {
+            if (buf[i] != 0xAB)
+                intact = 0;
+        }
+        if (rv != CKR_BUFFER_TOO_SMALL || !intact) {
+            CHECK_TRUE(0, "EC params short buffer rejected and untouched");
+            rv = CKR_GENERAL_ERROR;
+        }
+        else {
+            rv = CKR_OK;
+        }
+    }
+    if (rv == CKR_OK)
+        CHECK_TRUE(1, "EC params short buffer rejected and untouched");
+
+    get.pValue = buf;
+    get.ulValueLen = sizeof(buf);
+    rv = funcList->C_GetAttributeValue(session, key, &get, 1);
+    CHECK_TRUE(rv == CKR_OK && get.ulValueLen == sizeof(ecc_p256_params) &&
+               XMEMCMP(buf, ecc_p256_params, sizeof(ecc_p256_params)) == 0,
+               "EC params read");
+
+    destroy_obj(session, &key);
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -918,6 +984,9 @@ static int run_test(void)
 #endif
 #ifdef WOLFPKCS11_NSS
         test_trust_hash_size_query(session);
+#endif
+#ifdef HAVE_ECC
+        test_ec_params_short_buffer(session);
 #endif
 #if !defined(NO_RSA) || defined(HAVE_ECC)
         test_key_type_matches_class(session);

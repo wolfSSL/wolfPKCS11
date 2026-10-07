@@ -14017,17 +14017,22 @@ static int GetEcParams(ecc_key* key, byte* data, CK_ULONG* len)
 {
     int ret = 0;
 #if defined(HAVE_OID_ENCODING)
-    word32 dataLen = (word32)*len;
-    byte* out = (data != NULL) ? (data + 2) : NULL;
-    ret = wc_EncodeObjectId(key->dp->oid, key->dp->oidSz, out, &dataLen);
-    if (ret != 0) {
-        return ret;
+    word32 dataLen = 0;
+
+    ret = wc_EncodeObjectId(key->dp->oid, key->dp->oidSz, NULL, &dataLen);
+    if (ret == 0 && data != NULL) {
+        if (*len < (CK_ULONG)dataLen + 2)
+            ret = BUFFER_E;
+        else
+            ret = wc_EncodeObjectId(key->dp->oid, key->dp->oidSz, data + 2,
+                                    &dataLen);
+        if (ret == 0) {
+            data[0] = ASN_OBJECT_ID;
+            data[1] = (byte)dataLen;
+        }
     }
-    if (data != NULL) {
-        data[0] = ASN_OBJECT_ID;
-        data[1] = dataLen;
-    }
-    *len = dataLen + 2;
+    if (ret == 0)
+        *len = (CK_ULONG)dataLen + 2;
 #else
     const byte* oid = NULL;
     word32 oidSz = 0;
