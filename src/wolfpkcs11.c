@@ -522,8 +522,12 @@ CK_RV C_GetInterface(CK_UTF8CHAR_PTR pInterfaceName, CK_VERSION_PTR pVersion,
 /**
  * Initialize the Crypto-Ki library.
  *
- * @param  pInitArgs  [out]  Ignored.
- * @return  CKR_FUNCTION_FAILED when initializing fails.
+ * @param  pInitArgs  [in]  Optional CK_C_INITIALIZE_ARGS. The mutex callbacks
+ *                          must be all set or all NULL and pReserved must be
+ *                          NULL. NSS builds read the configdir from
+ *                          LibraryParameters. The callbacks are not used.
+ * @return  CKR_ARGUMENTS_BAD when pInitArgs is not valid.
+ *          CKR_FUNCTION_FAILED when initializing fails.
  *          CKR_OK on success.
  */
 CK_RV C_Initialize(CK_VOID_PTR pInitArgs)
