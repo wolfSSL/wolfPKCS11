@@ -680,6 +680,136 @@ static void rsa_sign_output_capacity_test(CK_SESSION_HANDLE session)
 }
 #endif
 
+#if !defined(NO_SHA256) && !defined(WOLFPKCS11_NO_STORE)
+/* Digest of a secret key through C_DigestKey for comparison with the value. */
+static CK_RV digest_key(CK_SESSION_HANDLE session, const byte* prefix,
+                        CK_ULONG prefixLen, CK_OBJECT_HANDLE key, byte* hash,
+                        CK_ULONG* hashLen)
+{
+    CK_RV rv;
+
+    rv = funcList->C_DigestInit(session, &sha256Mech);
+    if (rv == CKR_OK && prefixLen > 0)
+        rv = funcList->C_DigestUpdate(session, (CK_BYTE_PTR)prefix, prefixLen);
+    if (rv == CKR_OK)
+        rv = funcList->C_DigestKey(session, key);
+    if (rv == CKR_OK)
+        rv = funcList->C_DigestFinal(session, hash, hashLen);
+    return rv;
+}
+
+/* C_DigestKey digests the value of a secret key, whatever its storage or
+ * sensitivity, and refuses other object classes. */
+static void digest_key_value_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE sessKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE tokenKey = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE keyType = CKK_GENERIC_SECRET;
+    byte value[32];
+    byte prefixed[8 + 32];
+    byte expect[32];
+    byte expectPrefixed[32];
+    byte hash[32];
+    CK_ULONG expectLen = sizeof(expect);
+    CK_ULONG expectPrefixedLen = sizeof(expectPrefixed);
+    CK_ULONG hashLen;
+    CK_ATTRIBUTE sessTmpl[] = {
+        { CKA_CLASS,       &keyClass, sizeof(keyClass) },
+        { CKA_KEY_TYPE,    &keyType,  sizeof(keyType)  },
+        { CKA_PRIVATE,     &ckFalse,  sizeof(ckFalse)  },
+        { CKA_EXTRACTABLE, &ckTrue,   sizeof(ckTrue)   },
+        { CKA_VALUE,       value,     sizeof(value)    },
+    };
+    CK_ATTRIBUTE tokenTmpl[] = {
+        { CKA_CLASS,       &keyClass, sizeof(keyClass) },
+        { CKA_KEY_TYPE,    &keyType,  sizeof(keyType)  },
+        { CKA_TOKEN,       &ckTrue,   sizeof(ckTrue)   },
+        { CKA_PRIVATE,     &ckTrue,   sizeof(ckTrue)   },
+        { CKA_SENSITIVE,   &ckTrue,   sizeof(ckTrue)   },
+        { CKA_EXTRACTABLE, &ckFalse,  sizeof(ckFalse)  },
+        { CKA_VALUE,       value,     sizeof(value)    },
+    };
+#ifndef NO_RSA
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+#endif
+
+    XMEMSET(value, 0x72, sizeof(value));
+    XMEMSET(prefixed, 0x73, 8);
+    XMEMCPY(prefixed + 8, value, sizeof(value));
+
+    rv = funcList->C_DigestInit(session, &sha256Mech);
+    if (rv == CKR_OK)
+        rv = funcList->C_Digest(session, value, sizeof(value), expect,
+                                &expectLen);
+    CHECK_RV(rv, "C_Digest of the key value", CKR_OK);
+    rv = funcList->C_DigestInit(session, &sha256Mech);
+    if (rv == CKR_OK)
+        rv = funcList->C_Digest(session, prefixed, sizeof(prefixed),
+                                expectPrefixed, &expectPrefixedLen);
+    CHECK_RV(rv, "C_Digest of data followed by the key value", CKR_OK);
+
+    rv = funcList->C_CreateObject(session, sessTmpl,
+                                  sizeof(sessTmpl) / sizeof(*sessTmpl),
+                                  &sessKey);
+    CHECK_RV(rv, "create session secret key", CKR_OK);
+    if (rv == CKR_OK) {
+        hashLen = sizeof(hash);
+        rv = digest_key(session, NULL, 0, sessKey, hash, &hashLen);
+        CHECK_RV(rv, "C_DigestKey(session key)", CKR_OK);
+        CHECK_TRUE(hashLen == expectLen &&
+                   XMEMCMP(hash, expect, expectLen) == 0,
+                   "C_DigestKey(session key) digests the key value");
+
+        hashLen = sizeof(hash);
+        rv = digest_key(session, prefixed, 8, sessKey, hash, &hashLen);
+        CHECK_RV(rv, "C_DigestUpdate then C_DigestKey", CKR_OK);
+        CHECK_TRUE(hashLen == expectPrefixedLen &&
+                   XMEMCMP(hash, expectPrefixed, expectPrefixedLen) == 0,
+                   "C_DigestKey continues a multi-part digest");
+        funcList->C_DestroyObject(session, sessKey);
+    }
+
+    rv = funcList->C_CreateObject(session, tokenTmpl,
+                                  sizeof(tokenTmpl) / sizeof(*tokenTmpl),
+                                  &tokenKey);
+    CHECK_RV(rv, "create sensitive token secret key", CKR_OK);
+    if (rv == CKR_OK) {
+        hashLen = sizeof(hash);
+        rv = digest_key(session, NULL, 0, tokenKey, hash, &hashLen);
+        CHECK_RV(rv, "C_DigestKey(sensitive token key)", CKR_OK);
+        CHECK_TRUE(hashLen == expectLen &&
+                   XMEMCMP(hash, expect, expectLen) == 0,
+                   "C_DigestKey(sensitive token key) digests the key value");
+        funcList->C_DestroyObject(session, tokenKey);
+    }
+
+#ifndef NO_RSA
+    rv = create_rsa_keys(session, &priv, &pub);
+    CHECK_RV(rv, "create RSA key pair", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_DigestInit(session, &sha256Mech);
+        CHECK_RV(rv, "C_DigestInit(SHA256) for a public key", CKR_OK);
+        rv = funcList->C_DigestKey(session, pub);
+        CHECK_RV(rv, "C_DigestKey rejects a public key", CKR_KEY_INDIGESTIBLE);
+        hashLen = sizeof(hash);
+        rv = funcList->C_DigestFinal(session, hash, &hashLen);
+        CHECK_RV(rv, "C_DigestKey rejection ends the operation",
+                 CKR_OPERATION_NOT_INITIALIZED);
+        rv = funcList->C_DigestInit(session, &sha256Mech);
+        CHECK_RV(rv, "C_DigestInit(SHA256) for a private key", CKR_OK);
+        rv = funcList->C_DigestKey(session, priv);
+        CHECK_RV(rv, "C_DigestKey rejects a private key",
+                 CKR_KEY_INDIGESTIBLE);
+        funcList->C_DestroyObject(session, priv);
+        funcList->C_DestroyObject(session, pub);
+    }
+#endif
+}
+#endif
+
 #if !defined(NO_AES) && defined(HAVE_AESCMAC)
 static CK_OBJECT_CLASS aesKeyClass = CKO_SECRET_KEY;
 static CK_KEY_TYPE aesKeyType = CKK_AES;
@@ -1022,6 +1152,9 @@ static int run_test(void)
         digest_single_too_small_len_test(session);
         digest_final_too_small_len_test(session);
         digest_empty_input_test(session);
+#ifndef WOLFPKCS11_NO_STORE
+        digest_key_value_test(session);
+#endif
 #endif
 #if !defined(NO_SHA256) && !defined(NO_HMAC)
         sign_buffer_too_small_len_test(session);
