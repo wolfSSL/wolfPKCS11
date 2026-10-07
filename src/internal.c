@@ -10423,6 +10423,22 @@ void WP11_Slot_GetTokenLabel(WP11_Slot* slot, char* label)
 }
 
 /**
+ * Replace NUL bytes in a fixed-length character field with blanks.
+ *
+ * @param  field  [in,out]  Character field.
+ * @param  len    [in]      Length of field in bytes.
+ */
+void WP11_BlankPad(CK_UTF8CHAR* field, int len)
+{
+    int i;
+
+    for (i = 0; i < len; i++) {
+        if (field[i] == '\0')
+            field[i] = ' ';
+    }
+}
+
+/**
  * Check if token has been initialized.
  *
  * @param  slot  [in]  Slot object referencing token.

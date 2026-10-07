@@ -326,6 +326,11 @@ noinst_PROGRAMS += tests/session_op_lifecycle_test
 tests_session_op_lifecycle_test_SOURCES = tests/session_op_lifecycle_test.c
 tests_session_op_lifecycle_test_LDADD =
 
+check_PROGRAMS += tests/info_mech_table_test
+noinst_PROGRAMS += tests/info_mech_table_test
+tests_info_mech_table_test_SOURCES = tests/info_mech_table_test.c
+tests_info_mech_table_test_LDADD =
+
 if BUILD_STATIC
 tests_pkcs11test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11mtt_LDADD  += src/libwolfpkcs11.la
@@ -392,6 +397,7 @@ tests_login_pin_state_test_LDADD += src/libwolfpkcs11.la
 tests_object_store_decode_test_LDADD += src/libwolfpkcs11.la
 tests_object_policy_integrity_test_LDADD += src/libwolfpkcs11.la
 tests_session_op_lifecycle_test_LDADD += src/libwolfpkcs11.la
+tests_info_mech_table_test_LDADD += src/libwolfpkcs11.la
 else
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
 tests_empty_pin_store_test_LDADD += src/libwolfpkcs11.la
@@ -450,6 +456,7 @@ tests_login_pin_state_test_LDADD += src/libwolfpkcs11.la
 tests_object_store_decode_test_LDADD += src/libwolfpkcs11.la
 tests_object_policy_integrity_test_LDADD += src/libwolfpkcs11.la
 tests_session_op_lifecycle_test_LDADD += src/libwolfpkcs11.la
+tests_info_mech_table_test_LDADD += src/libwolfpkcs11.la
 endif
 
 EXTRA_DIST += tests/unit.h \

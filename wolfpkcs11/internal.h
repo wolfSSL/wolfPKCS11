@@ -439,6 +439,7 @@ WP11_LOCAL int WP11_Slot_SetUserPin(WP11_Slot* slot, char* pin, int pinLen);
 WP11_LOCAL int WP11_Slot_TokenReset(WP11_Slot* slot, char* pin, int pinLen,
                          char* label);
 WP11_LOCAL void WP11_Slot_GetTokenLabel(WP11_Slot* slot, char* label);
+WP11_LOCAL void WP11_BlankPad(CK_UTF8CHAR* field, int len);
 WP11_LOCAL int WP11_Slot_IsTokenInitialized(WP11_Slot* slot);
 WP11_LOCAL int WP11_Slot_TokenFailedLogin(WP11_Slot* slot, int login);
 WP11_LOCAL time_t WP11_Slot_TokenFailedExpire(WP11_Slot* slot, int login);
