@@ -27,6 +27,7 @@
 #endif
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #ifndef WOLFSSL_USER_SETTINGS
@@ -34,6 +35,7 @@
 #endif
 #include <wolfssl/wolfcrypt/settings.h>
 #include <wolfssl/wolfcrypt/misc.h>
+#include <wolfssl/wolfcrypt/memory.h>
 
 #ifndef WOLFPKCS11_USER_SETTINGS
     #include <wolfpkcs11/options.h>
@@ -48,6 +50,34 @@
 #include "pkcs11_test_util.h"
 
 #define TEST_DIR "./store/info_mech_table_test"
+
+#if defined(USE_WOLFSSL_MEMORY) && !defined(NO_WOLFSSL_MEMORY) && \
+    !defined(WOLFSSL_STATIC_MEMORY) && !defined(WOLFSSL_DEBUG_MEMORY)
+    #define ALLOC_HOOKS
+#endif
+
+#ifdef ALLOC_HOOKS
+static int failAllocs = 0;
+
+static void* hook_malloc(size_t sz)
+{
+    if (failAllocs)
+        return NULL;
+    return malloc(sz);
+}
+
+static void hook_free(void* ptr)
+{
+    free(ptr);
+}
+
+static void* hook_realloc(void* ptr, size_t sz)
+{
+    if (failAllocs)
+        return NULL;
+    return realloc(ptr, sz);
+}
+#endif
 
 /* Fixed-length character fields are blank padded and never contain NUL. */
 static int blank_padded(const CK_UTF8CHAR* field, size_t len)
@@ -286,6 +316,43 @@ static void test_listed_keygen_supported(CK_SLOT_ID slot,
         CHECK_TRUE(rv != CKR_MECHANISM_INVALID, msg);
     }
 }
+
+#ifdef ALLOC_HOOKS
+/* A session is reported open only when a usable handle was returned. */
+static void test_open_session_alloc_failure(CK_SLOT_ID slot)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE handles[8];
+    CK_SESSION_INFO sessInfo;
+    int opened = 0;
+    int failed = 0;
+    int i;
+
+    for (i = 0; i < (int)(sizeof(handles) / sizeof(handles[0])); i++) {
+        handles[i] = CK_INVALID_HANDLE;
+        failAllocs = 1;
+        rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &handles[i]);
+        failAllocs = 0;
+        if (rv != CKR_OK) {
+            CHECK_RV(rv, "C_OpenSession without memory", CKR_HOST_MEMORY);
+            failed = 1;
+            break;
+        }
+        opened++;
+        rv = funcList->C_GetSessionInfo(handles[i], &sessInfo);
+        CHECK_RV(rv, "C_OpenSession returns a usable handle", CKR_OK);
+        if (rv != CKR_OK)
+            break;
+    }
+    CHECK_TRUE(failed, "C_OpenSession reports allocation failure");
+
+    for (i = 0; i < opened; i++) {
+        if (handles[i] != CK_INVALID_HANDLE)
+            funcList->C_CloseSession(handles[i]);
+    }
+}
+#endif
 
 typedef struct WrapCase {
     CK_MECHANISM_TYPE mech;
@@ -693,6 +760,9 @@ static int run_test(void)
     if (rv == CKR_OK) {
         test_generic_secret_size(slotList[0], session);
         test_listed_keygen_supported(slotList[0], session);
+#ifdef ALLOC_HOOKS
+        test_open_session_alloc_failure(slotList[0]);
+#endif
         test_wrap_flags(slotList[0], session);
 #ifndef NO_AES
         test_ecb_wrap_short_key(slotList[0], session);
@@ -718,6 +788,12 @@ int main(int argc, char* argv[])
 #endif
 
     printf("=== wolfPKCS11 info and mechanism table test ===\n");
+#ifdef ALLOC_HOOKS
+    if (wolfSSL_SetAllocators(hook_malloc, hook_free, hook_realloc) != 0) {
+        CHECK_TRUE(0, "install allocation hooks");
+        return pkcs11_test_summary();
+    }
+#endif
     run_test();
     return pkcs11_test_summary();
 }

@@ -1595,6 +1595,8 @@ CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
  *          CKR_SESSION_READ_WRITE_SO_EXISTS when there is an existing open
  *          Security Officer session.
  *          CKR_SESSION_COUNT when no more sessions can be opened on token.
+ *          CKR_HOST_MEMORY when allocating the session fails.
+ *          CKR_FUNCTION_FAILED when opening the session fails otherwise.
  *          CKR_OK on success.
  */
 CK_RV C_OpenSession(CK_SLOT_ID slotID, CK_FLAGS flags,
@@ -1641,6 +1643,16 @@ CK_RV C_OpenSession(CK_SLOT_ID slotID, CK_FLAGS flags,
     }
     if (ret == SESSION_COUNT_E) {
         rv = CKR_SESSION_COUNT;
+        WOLFPKCS11_LEAVE("C_OpenSession", rv);
+        return rv;
+    }
+    if (ret == MEMORY_E) {
+        rv = CKR_HOST_MEMORY;
+        WOLFPKCS11_LEAVE("C_OpenSession", rv);
+        return rv;
+    }
+    if (ret != 0) {
+        rv = CKR_FUNCTION_FAILED;
         WOLFPKCS11_LEAVE("C_OpenSession", rv);
         return rv;
     }
