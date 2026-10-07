@@ -9325,6 +9325,14 @@ static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
             return CKR_MECHANISM_INVALID;
     }
 
+    if (pub != NULL && rv == CKR_OK) {
+        rv = SetInitialStates(pub);
+    }
+
+    if (priv != NULL && rv == CKR_OK) {
+        rv = SetInitialStates(priv);
+    }
+
     if (rv == CKR_OK) {
         rv = AddObject(session, pub, pPublicKeyTemplate,
                                         ulPublicKeyAttributeCount, phPublicKey);
@@ -9349,14 +9357,6 @@ static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
     if (rv == CKR_OK) {
         rv = AddObject(session, priv, pPrivateKeyTemplate,
                                       ulPrivateKeyAttributeCount, phPrivateKey);
-    }
-
-    if (pub != NULL && rv == CKR_OK) {
-        rv = SetInitialStates(pub);
-    }
-
-    if (priv != NULL && rv == CKR_OK) {
-        rv = SetInitialStates(priv);
     }
 
     if (rv != CKR_OK && pub != NULL) {
