@@ -458,6 +458,134 @@ static void test_data_object_value_optional(CK_SESSION_HANDLE session)
     }
 }
 
+#if defined(HAVE_ECC) || defined(WOLFPKCS11_MLDSA) || defined(WOLFPKCS11_MLKEM)
+/* An attribute the object cannot provide is reported as an error, with the
+ * length set to CK_UNAVAILABLE_INFORMATION, for size queries and reads. */
+static void expect_unavailable(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE obj,
+                               CK_ATTRIBUTE_TYPE type, const char* name)
+{
+    CK_RV rv;
+    byte buf[64];
+    CK_ATTRIBUTE query = { type, NULL, 0 };
+    CK_ATTRIBUTE read = { type, buf, sizeof(buf) };
+    char msg[96];
+
+    rv = funcList->C_GetAttributeValue(session, obj, &query, 1);
+    snprintf(msg, sizeof(msg), "%s size query fails", name);
+    CHECK_TRUE(rv != CKR_OK &&
+               query.ulValueLen == CK_UNAVAILABLE_INFORMATION, msg);
+    rv = funcList->C_GetAttributeValue(session, obj, &read, 1);
+    snprintf(msg, sizeof(msg), "%s read fails", name);
+    CHECK_TRUE(rv != CKR_OK &&
+               read.ulValueLen == CK_UNAVAILABLE_INFORMATION, msg);
+}
+#endif
+
+#if defined(WOLFPKCS11_MLDSA) || defined(WOLFPKCS11_MLKEM)
+/* Generate a parameter-set based key pair as public session objects. */
+static CK_RV gen_pq_key_pair(CK_SESSION_HANDLE session, CK_MECHANISM_TYPE type,
+                             CK_ULONG paramSet, CK_OBJECT_HANDLE* pub,
+                             CK_OBJECT_HANDLE* priv)
+{
+    CK_MECHANISM mech = { type, NULL, 0 };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_PARAMETER_SET, &paramSet, sizeof(paramSet) },
+        { CKA_TOKEN,         &ckFalse,  sizeof(ckFalse)  },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_TOKEN,         &ckFalse,  sizeof(ckFalse)  },
+        { CKA_PRIVATE,       &ckFalse,  sizeof(ckFalse)  },
+    };
+
+    return funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+        sizeof(pubTmpl) / sizeof(*pubTmpl), privTmpl,
+        sizeof(privTmpl) / sizeof(*privTmpl), pub, priv);
+}
+
+/* Create a public key object carrying only its parameter set. */
+static CK_RV create_pq_params_only(CK_SESSION_HANDLE session,
+                                   CK_KEY_TYPE keyType, CK_ULONG paramSet,
+                                   CK_OBJECT_HANDLE* obj)
+{
+    CK_OBJECT_CLASS pubClass = CKO_PUBLIC_KEY;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,         &pubClass, sizeof(pubClass) },
+        { CKA_KEY_TYPE,      &keyType,  sizeof(keyType)  },
+        { CKA_TOKEN,         &ckFalse,  sizeof(ckFalse)  },
+        { CKA_PARAMETER_SET, &paramSet, sizeof(paramSet) },
+    };
+
+    return funcList->C_CreateObject(session, tmpl,
+                                    sizeof(tmpl) / sizeof(*tmpl), obj);
+}
+
+static void check_pq_unavailable(CK_SESSION_HANDLE session,
+                                 CK_MECHANISM_TYPE genMech,
+                                 CK_KEY_TYPE keyType, CK_ULONG paramSet,
+                                 const char* name)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE noPub = CK_INVALID_HANDLE;
+    char msg[96];
+
+    rv = gen_pq_key_pair(session, genMech, paramSet, &pub, &priv);
+    snprintf(msg, sizeof(msg), "%s generate key pair", name);
+    CHECK_RV(rv, msg, CKR_OK);
+    if (rv == CKR_OK) {
+        snprintf(msg, sizeof(msg), "%s private key CKA_SEED", name);
+        expect_unavailable(session, priv, CKA_SEED, msg);
+    }
+
+    rv = create_pq_params_only(session, keyType, paramSet, &noPub);
+    snprintf(msg, sizeof(msg), "%s public key without value", name);
+    CHECK_RV(rv, msg, CKR_OK);
+    if (rv == CKR_OK) {
+        snprintf(msg, sizeof(msg), "%s missing public CKA_VALUE", name);
+        expect_unavailable(session, noPub, CKA_VALUE, msg);
+    }
+
+    destroy_obj(session, &noPub);
+    destroy_obj(session, &priv);
+    destroy_obj(session, &pub);
+}
+#endif
+
+static void test_unavailable_attr_is_error(CK_SESSION_HANDLE session)
+{
+#ifdef HAVE_ECC
+    CK_RV rv;
+    CK_OBJECT_CLASS privClass = CKO_PRIVATE_KEY;
+    CK_KEY_TYPE ecType = CKK_EC;
+    CK_OBJECT_HANDLE ecPriv = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE ecTmpl[] = {
+        { CKA_CLASS,     &privClass,      sizeof(privClass)       },
+        { CKA_KEY_TYPE,  &ecType,         sizeof(ecType)          },
+        { CKA_TOKEN,     &ckFalse,        sizeof(ckFalse)         },
+        { CKA_PRIVATE,   &ckFalse,        sizeof(ckFalse)         },
+        { CKA_EC_PARAMS, ecc_p256_params, sizeof(ecc_p256_params) },
+        { CKA_VALUE,     ecc_p256_priv,   sizeof(ecc_p256_priv)   },
+    };
+
+    rv = funcList->C_CreateObject(session, ecTmpl,
+                                  sizeof(ecTmpl) / sizeof(*ecTmpl), &ecPriv);
+    CHECK_RV(rv, "create EC private key without point", CKR_OK);
+    if (rv == CKR_OK)
+        expect_unavailable(session, ecPriv, CKA_EC_POINT, "EC point");
+    destroy_obj(session, &ecPriv);
+#endif
+#ifdef WOLFPKCS11_MLDSA
+    check_pq_unavailable(session, CKM_ML_DSA_KEY_PAIR_GEN, CKK_ML_DSA,
+                         CKP_ML_DSA_44, "ML-DSA");
+#endif
+#ifdef WOLFPKCS11_MLKEM
+    check_pq_unavailable(session, CKM_ML_KEM_KEY_PAIR_GEN, CKK_ML_KEM,
+                         CKP_ML_KEM_512, "ML-KEM");
+#endif
+    (void)session;
+}
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -475,6 +603,7 @@ static int run_test(void)
         test_secret_key_requires_value(session);
         test_create_count_range(session);
         test_data_object_value_optional(session);
+        test_unavailable_attr_is_error(session);
 #if !defined(NO_RSA) || defined(HAVE_ECC)
         test_key_type_matches_class(session);
 #endif
