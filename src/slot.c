@@ -1309,8 +1309,8 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SLOT_ID_INVALID when no slot with id can be found.
  *          CKR_ARGUMENTS_BAD when pPin or pLabel is NULL.
- *          CKR_PIN_INCORRECT when length of PIN is not valid or PIN does not
- *          match initialized PIN.
+ *          CKR_PIN_LEN_RANGE when length of PIN is not valid.
+ *          CKR_PIN_INCORRECT when PIN does not match initialized PIN.
  *          CKR_SESSION_EXISTS when a session is open on the token.
  *          CKR_FUNCTION_FAILED when resetting token fails.
  *          CKR_OK on success.
