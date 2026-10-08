@@ -1514,19 +1514,18 @@ CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
         }
     }
     else {
-        ret = WP11_Slot_CheckUserPin(slot, (char*)pOldPin, (int)ulOldLen);
+        ret = WP11_Slot_ChangeUserPin(slot, (char*)pOldPin, (int)ulOldLen,
+                                      (char*)pNewPin, (int)ulNewLen);
         if (ret == PIN_NOT_SET_E) {
             rv = CKR_USER_PIN_NOT_INITIALIZED;
             WOLFPKCS11_LEAVE("C_SetPIN", rv);
             return rv;
         }
-        if (ret != 0) {
+        if (ret == PIN_INVALID_E) {
             rv = CKR_PIN_INCORRECT;
             WOLFPKCS11_LEAVE("C_SetPIN", rv);
             return rv;
         }
-
-        ret = WP11_Slot_SetUserPin(slot, (char*)pNewPin, (int)ulNewLen);
         if (ret != 0) {
             rv = CKR_FUNCTION_FAILED;
             WOLFPKCS11_LEAVE("C_SetPIN", rv);
