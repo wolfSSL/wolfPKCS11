@@ -18775,7 +18775,7 @@ int pkcs11test_test(int argc, char* argv[])
                 fprintf(stderr, "%d: %s\n", i + 1, testFunc[i].name);
             return 0;
         }
-        else if (isdigit((int)argv[0][0])) {
+        else if (isdigit((unsigned char)argv[0][0])) {
             testCase = atoi(*argv);
             if (testCase <= 0 || testCase > testFuncCnt) {
                 fprintf(stderr, "Test case out of range: %s\n", *argv);
