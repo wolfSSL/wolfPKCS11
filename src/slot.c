@@ -274,7 +274,7 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
     if (cnt == WP11_MAX_LOGIN_FAILS_SO - 1)
         pInfo->flags |= CKF_SO_PIN_FINAL_TRY;
 #ifndef WOLFPKCS11_NO_TIME
-    else if (cnt == WP11_MAX_LOGIN_FAILS_SO && now < expire)
+    else if (cnt >= WP11_MAX_LOGIN_FAILS_SO && now < expire)
         pInfo->flags |= CKF_SO_PIN_LOCKED;
 #endif
 
@@ -287,7 +287,7 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
     if (cnt == WP11_MAX_LOGIN_FAILS_USER - 1)
         pInfo->flags |= CKF_USER_PIN_FINAL_TRY;
 #ifndef WOLFPKCS11_NO_TIME
-    else if (cnt == WP11_MAX_LOGIN_FAILS_USER && now < expire)
+    else if (cnt >= WP11_MAX_LOGIN_FAILS_USER && now < expire)
         pInfo->flags |= CKF_USER_PIN_LOCKED;
 #endif
 
@@ -1494,7 +1494,7 @@ CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
 
     slot = WP11_Session_GetSlot(session);
     if (state == WP11_APP_STATE_RW_SO) {
-        ret = WP11_Slot_CheckSOPin(slot, (char*)pOldPin, (int)ulOldLen);
+        ret = WP11_Slot_CheckSOPinLockout(slot, (char*)pOldPin, (int)ulOldLen);
         if (ret == PIN_NOT_SET_E) {
             rv = CKR_USER_PIN_NOT_INITIALIZED;
             WOLFPKCS11_LEAVE("C_SetPIN", rv);
@@ -1514,7 +1514,8 @@ CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
         }
     }
     else {
-        ret = WP11_Slot_CheckUserPin(slot, (char*)pOldPin, (int)ulOldLen);
+        ret = WP11_Slot_CheckUserPinLockout(slot, (char*)pOldPin,
+                                            (int)ulOldLen);
         if (ret == PIN_NOT_SET_E) {
             rv = CKR_USER_PIN_NOT_INITIALIZED;
             WOLFPKCS11_LEAVE("C_SetPIN", rv);
