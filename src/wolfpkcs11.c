@@ -522,8 +522,12 @@ CK_RV C_GetInterface(CK_UTF8CHAR_PTR pInterfaceName, CK_VERSION_PTR pVersion,
 /**
  * Initialize the Crypto-Ki library.
  *
- * @param  pInitArgs  [out]  Ignored.
- * @return  CKR_FUNCTION_FAILED when initializing fails.
+ * @param  pInitArgs  [in]  Optional CK_C_INITIALIZE_ARGS. The mutex callbacks
+ *                          must be all set or all NULL and pReserved must be
+ *                          NULL. NSS builds read the configdir from
+ *                          LibraryParameters. The callbacks are not used.
+ * @return  CKR_ARGUMENTS_BAD when pInitArgs is not valid.
+ *          CKR_FUNCTION_FAILED when initializing fails.
  *          CKR_OK on success.
  */
 CK_RV C_Initialize(CK_VOID_PTR pInitArgs)
@@ -586,7 +590,8 @@ CK_RV C_Initialize(CK_VOID_PTR pInitArgs)
  * Finalize the Crypto-Ki library.
  *
  * @param  pReserved  [out]  Ignored.
- * @return  CKR_OK on success.
+ * @return  CKR_FUNCTION_FAILED when token state could not be stored.
+ *          CKR_OK on success.
  */
 CK_RV C_Finalize(CK_VOID_PTR pReserved)
 {
@@ -604,9 +609,7 @@ CK_RV C_Finalize(CK_VOID_PTR pReserved)
         return ret;
     }
 
-    WP11_Library_Final();
-
-    ret = CKR_OK;
+    ret = WP11_Library_Final() == 0 ? CKR_OK : CKR_FUNCTION_FAILED;
     WOLFPKCS11_LEAVE("C_Finalize", ret);
     return ret;
 }
@@ -666,6 +669,9 @@ CK_RV C_GetInfo(CK_INFO_PTR pInfo)
     }
 
     XMEMCPY(pInfo, &wolfpkcs11Info, sizeof(wolfpkcs11Info));
+    WP11_BlankPad(pInfo->manufacturerID, sizeof(pInfo->manufacturerID));
+    WP11_BlankPad(pInfo->libraryDescription,
+                  sizeof(pInfo->libraryDescription));
     ret = CKR_OK;
     WOLFPKCS11_LEAVE("C_GetInfo", ret);
     return ret;
@@ -680,6 +686,9 @@ CK_RV C_GetInfoV3_0(CK_INFO_PTR pInfo)
         return CKR_ARGUMENTS_BAD;
 
     XMEMCPY(pInfo, &wolfpkcs11Info_3_0, sizeof(wolfpkcs11Info_3_0));
+    WP11_BlankPad(pInfo->manufacturerID, sizeof(pInfo->manufacturerID));
+    WP11_BlankPad(pInfo->libraryDescription,
+                  sizeof(pInfo->libraryDescription));
 
     return CKR_OK;
 }
@@ -694,6 +703,9 @@ CK_RV C_GetInfoV3_2(CK_INFO_PTR pInfo)
         return CKR_ARGUMENTS_BAD;
 
     XMEMCPY(pInfo, &wolfpkcs11Info_3_2, sizeof(wolfpkcs11Info_3_2));
+    WP11_BlankPad(pInfo->manufacturerID, sizeof(pInfo->manufacturerID));
+    WP11_BlankPad(pInfo->libraryDescription,
+                  sizeof(pInfo->libraryDescription));
 
     return CKR_OK;
 }

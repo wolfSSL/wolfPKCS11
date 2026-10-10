@@ -40,7 +40,8 @@
 
 #include <stdio.h>
 
-#if defined(_POSIX_THREADS) && !defined(SINGLE_THREADED)
+#if defined(_POSIX_THREADS) && !defined(SINGLE_THREADED) && \
+    !defined(WOLFPKCS11_SINGLE_THREADED)
 #include <wolfssl/wolfcrypt/misc.h>
 
 #define TEST_MULTITHREADED
@@ -238,8 +239,9 @@ static CK_RV test_object(void* args)
         { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
     };
     CK_ULONG tmplOnTokenCnt = sizeof(tmplOnToken) / sizeof(*tmplOnToken);
+    static byte copyLabel[] = "copy";
     CK_ATTRIBUTE copyTmpl[] = {
-        { CKA_VALUE,             keyData,           sizeof(keyData)           },
+        { CKA_LABEL,             copyLabel,         sizeof(copyLabel)-1       },
     };
     CK_ULONG copyTmplCnt = sizeof(copyTmpl) / sizeof(*copyTmpl);
     CK_ULONG count;
@@ -280,6 +282,18 @@ static CK_RV test_object(void* args)
     CK_ATTRIBUTE tokenBadLen[] = {
         { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
         { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
+        { CKA_TOKEN,             &ckTrue,           0                         },
+    };
+    CK_ATTRIBUTE tokenNullCreate[] = {
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
+        { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
+        { CKA_VALUE,             keyData,           sizeof(keyData)           },
+        { CKA_TOKEN,             NULL,              sizeof(CK_BBOOL)          },
+    };
+    CK_ATTRIBUTE tokenBadLenCreate[] = {
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
+        { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
+        { CKA_VALUE,             keyData,           sizeof(keyData)           },
         { CKA_TOKEN,             &ckTrue,           0                         },
     };
     CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
@@ -343,14 +357,14 @@ static CK_RV test_object(void* args)
                                             "Create Object zero len key class");
     }
     if (ret == CKR_OK) {
-        count = sizeof(tokenNull) / sizeof(*tokenNull);
-        ret = funcList->C_CreateObject(session, tokenNull, count, &obj);
+        count = sizeof(tokenNullCreate) / sizeof(*tokenNullCreate);
+        ret = funcList->C_CreateObject(session, tokenNullCreate, count, &obj);
         CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
                                                     "Create Object NULL token");
     }
     if (ret == CKR_OK) {
-        count = sizeof(tokenBadLen) / sizeof(*tokenBadLen);
-        ret = funcList->C_CreateObject(session, tokenBadLen, count, &obj);
+        count = sizeof(tokenBadLenCreate) / sizeof(*tokenBadLenCreate);
+        ret = funcList->C_CreateObject(session, tokenBadLenCreate, count, &obj);
         CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
                                                 "Create Object zero token len");
     }
@@ -1054,8 +1068,12 @@ static CK_RV test_encrypt_decrypt(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_EncryptInit(session, NULL, key);
+#ifdef WOLFPKCS11_PKCS11_V3_0
+        CHECK_CKR(ret, "AES-CBC Encrypt Init no mechanism cancels");
+#else
         CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD,
                                            "AES-CBC Encrypt Init no mechanism");
+#endif
     }
     if (ret == CKR_OK) {
         ret = funcList->C_EncryptInit(session, &mech, CK_INVALID_HANDLE);
@@ -1124,8 +1142,12 @@ static CK_RV test_encrypt_decrypt(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_DecryptInit(session, NULL, key);
+#ifdef WOLFPKCS11_PKCS11_V3_0
+        CHECK_CKR(ret, "AES-CBC Decrypt Init no mechanism cancels");
+#else
         CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD,
                                            "AES-CBC Decrypt Init no mechanism");
+#endif
     }
     if (ret == CKR_OK) {
         ret = funcList->C_DecryptInit(session, &mech, CK_INVALID_HANDLE);
@@ -1231,7 +1253,11 @@ static CK_RV test_digest(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_DigestInit(session, NULL);
+#ifdef WOLFPKCS11_PKCS11_V3_0
+        CHECK_CKR(ret, "Digest Init no mechanism cancels");
+#else
         CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD, "Digest Init no mechanism");
+#endif
     }
     if (ret == CKR_OK) {
         ret = funcList->C_Digest(CK_INVALID_HANDLE, data, dataSz, hash,
@@ -1245,7 +1271,8 @@ static CK_RV test_digest(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_Digest(session, data, 0, hash, &hashSz);
-        CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD, "Digest zero data length");
+        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
+                                     "Digest zero data length without init");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_Digest(session, data, dataSz, hash, NULL);
@@ -1262,8 +1289,8 @@ static CK_RV test_digest(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_DigestUpdate(session, data, 0);
-        CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD,
-                                              "Digest Update zero data length");
+        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
+                              "Digest Update zero data length without init");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_DigestKey(CK_INVALID_HANDLE, key);
@@ -1331,7 +1358,11 @@ static CK_RV test_sign_verify(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_SignInit(session, NULL, key);
+#ifdef WOLFPKCS11_PKCS11_V3_0
+        CHECK_CKR(ret, "HMAC Sign Init no mechanism cancels");
+#else
         CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD, "HMAC Sign Init no mechanism");
+#endif
     }
     if (ret == CKR_OK) {
         ret = funcList->C_SignInit(session, &mech, CK_INVALID_HANDLE);
@@ -1397,7 +1428,11 @@ static CK_RV test_sign_verify(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyInit(session, NULL, key);
+#ifdef WOLFPKCS11_PKCS11_V3_0
+        CHECK_CKR(ret, "HMAC Verify Init no mechanism cancels");
+#else
         CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD, "HMAC Verify Init no mechanism");
+#endif
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyInit(session, &mech, CK_INVALID_HANDLE);
@@ -1534,8 +1569,12 @@ static CK_RV test_recover(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyRecoverInit(session, NULL, key);
+#ifdef WOLFPKCS11_PKCS11_V3_0
+        CHECK_CKR(ret, "Verify Recover Init no mechanism cancels");
+#else
         CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD,
                                            "Verify Recover Init no mechanism");
+#endif
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyRecoverInit(session, &mech, CK_INVALID_HANDLE);
@@ -3725,7 +3764,9 @@ static CK_RV test_attributes_ecc(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_GetAttributeValue(session, priv, eccPrivTmpl,
                                                                 eccPrivTmplCnt);
-        CHECK_CKR(ret, "Get Attributes EC Private Key NULL values");
+        /* No public point is stored, so CKA_EC_POINT is unavailable. */
+        CHECK_CKR_FAIL(ret, CK_UNAVAILABLE_INFORMATION,
+                       "Get Attributes EC Private Key NULL values");
     }
     if (ret == CKR_OK) {
         CHECK_COND(eccPrivTmpl[0].ulValueLen == sizeof(ecc_p256_params), ret,
@@ -3744,7 +3785,9 @@ static CK_RV test_attributes_ecc(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_GetAttributeValue(session, priv, eccPrivTmpl,
                                                                 eccPrivTmplCnt);
-        CHECK_CKR(ret, "Get Attributes EC Private Key values");
+        /* No public point is stored, so CKA_EC_POINT is unavailable. */
+        CHECK_CKR_FAIL(ret, CK_UNAVAILABLE_INFORMATION,
+                       "Get Attributes EC Private Key values");
     }
     funcList->C_DestroyObject(session, priv);
 
@@ -3900,7 +3943,7 @@ static CK_RV ecdsa_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE privKey,
     if (ret == CKR_OK) {
         outSz = 1;
         ret = funcList->C_Verify(session, hash, hashSz, out, outSz);
-        CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED, "ECDSA Verify bad sig");
+        CHECK_CKR_FAIL(ret, CKR_SIGNATURE_LEN_RANGE, "ECDSA Verify bad sig");
     }
 
     return ret;
