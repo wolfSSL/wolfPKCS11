@@ -60,7 +60,8 @@
 
 #include "testdata.h"
 
-#if !defined(NO_AES) && !defined(SINGLE_THREADED)
+#if !defined(NO_AES) && !defined(SINGLE_THREADED) && \
+    !defined(WOLFPKCS11_SINGLE_THREADED)
 
 #include <pthread.h>
 
