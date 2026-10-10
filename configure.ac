@@ -127,7 +127,7 @@ AS_IF([ test "x$ENABLED_SINGLETHREADED" = "xno" ],[
                       ])
       ])
 
-AS_IF([ test "x$ENABLED_SINGLETHREADED" = "xyes" ],[ AM_CFLAGS="-DSINGLE_THREADED $AM_CFLAGS" ])
+AS_IF([ test "x$ENABLED_SINGLETHREADED" = "xyes" ],[ AM_CFLAGS="-DWOLFPKCS11_SINGLE_THREADED $AM_CFLAGS" ])
 
 HAVE_PTHREAD=0
 AS_IF([test "x$ax_pthread_ok" = "xyes"],[HAVE_PTHREAD=1])

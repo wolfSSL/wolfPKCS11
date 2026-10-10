@@ -61,6 +61,11 @@
 #define PKCS11TEST_FUNC_SESS_DECL(func)                                    \
     PKCS11TEST_CASE(func, TEST_FLAG_INIT | TEST_FLAG_TOKEN | TEST_FLAG_SESSION)
 
+#ifndef WOLFPKCS11_NO_TIME
+    #define TOKEN_CLOCK_FLAG    CKF_CLOCK_ON_TOKEN
+#else
+    #define TOKEN_CLOCK_FLAG    0
+#endif
 
 #ifndef HAVE_PKCS11_STATIC
 static void* dlib;
@@ -468,7 +473,7 @@ static CK_RV test_no_token_init(void* args)
      * that has never had C_InitToken called. Pre-fix wp11_Token_Init
      * unconditionally marked the token state INITIALIZED, so the old
      * test included CKF_TOKEN_INITIALIZED in the expected mask. */
-    CK_FLAGS expFlags = CKF_RNG | CKF_CLOCK_ON_TOKEN;
+    CK_FLAGS expFlags = CKF_RNG | TOKEN_CLOCK_FLAG;
     int flags = CKF_SERIAL_SESSION | CKF_RW_SESSION;
 
     ret = funcList->C_GetTokenInfo(slot, &tokenInfo);
@@ -695,7 +700,7 @@ static CK_RV test_token(void* args)
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_RV ret;
     CK_TOKEN_INFO tokenInfo;
-    CK_FLAGS expFlags = CKF_RNG | CKF_CLOCK_ON_TOKEN | CKF_TOKEN_INITIALIZED;
+    CK_FLAGS expFlags = CKF_RNG | TOKEN_CLOCK_FLAG | CKF_TOKEN_INITIALIZED;
     unsigned char label[32];
     int flags = CKF_SERIAL_SESSION | CKF_RW_SESSION;
 
@@ -1002,7 +1007,7 @@ static CK_RV test_login_logout(void* args)
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_RV ret = 0;
     CK_TOKEN_INFO tokenInfo;
-    CK_FLAGS expFlags = CKF_RNG | CKF_CLOCK_ON_TOKEN | CKF_LOGIN_REQUIRED |
+    CK_FLAGS expFlags = CKF_RNG | TOKEN_CLOCK_FLAG | CKF_LOGIN_REQUIRED |
                         CKF_TOKEN_INITIALIZED | CKF_USER_PIN_INITIALIZED;
 
     funcList->C_Logout(session);
@@ -2021,8 +2026,9 @@ static CK_RV test_object(void* args)
         { CKA_TOKEN,             &ckTrue,           sizeof(ckTrue)            },
     };
     CK_ULONG tmplOnTokenCnt = sizeof(tmplOnToken) / sizeof(*tmplOnToken);
+    static byte copyLabel[] = "copy";
     CK_ATTRIBUTE copyTmpl[] = {
-        { CKA_VALUE,             keyData,           sizeof(keyData)           },
+        { CKA_LABEL,             copyLabel,         sizeof(copyLabel)-1       },
     };
     CK_ULONG copyTmplCnt = sizeof(copyTmpl) / sizeof(*copyTmpl);
     CK_ULONG count;
@@ -2451,10 +2457,22 @@ static CK_RV test_copy_object_deep_copy(void* args)
         }
     }
 
-    /* Test 3: Verify independence (deep copy) by modifying original object */
+    /* Test 3: Verify independence (deep copy) by modifying original object.
+     * Key material is read-only after creation, so modify CKA_ID instead. */
+    if (ret == CKR_OK) {
+        CK_ATTRIBUTE modifyValueTmpl[] = {
+            { CKA_VALUE,             modifiedKeyData,
+              sizeof(modifiedKeyData)   },
+        };
+
+        ret = funcList->C_SetAttributeValue(session, originalObj,
+                                            modifyValueTmpl, 1);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_READ_ONLY,
+                       "Modify original object key value is read-only");
+    }
     if (ret == CKR_OK) {
         CK_ATTRIBUTE modifyOriginalTmpl[] = {
-            { CKA_VALUE,             modifiedKeyData,
+            { CKA_ID,                modifiedKeyData,
               sizeof(modifiedKeyData)   },
         };
         CK_ULONG modifyOriginalTmplCnt = sizeof(modifyOriginalTmpl) /
@@ -2467,45 +2485,44 @@ static CK_RV test_copy_object_deep_copy(void* args)
     }
 
     if (ret == CKR_OK) {
-        /* Get the modified original object's value */
-        XMEMSET(origValue, 0, sizeof(origValue));
-        getOriginalAttrs[0].pValue = origValue;
-        getOriginalAttrs[0].ulValueLen = sizeof(origValue);
+        /* Get the modified original object's ID */
+        XMEMSET(origId, 0, sizeof(origId));
+        getOriginalAttrs[1].pValue = origId;
+        getOriginalAttrs[1].ulValueLen = sizeof(origId);
 
         ret = funcList->C_GetAttributeValue(session, originalObj,
-                                            getOriginalAttrs, 1);
-        CHECK_CKR(ret, "Get modified original object value");
+                                            &getOriginalAttrs[1], 1);
+        CHECK_CKR(ret, "Get modified original object ID");
     }
 
     if (ret == CKR_OK) {
-        /* Get the copied object's value (should be unchanged) */
-        XMEMSET(copiedValue, 0, sizeof(copiedValue));
-        getCopiedAttrs[0].pValue = copiedValue;
-        getCopiedAttrs[0].ulValueLen = sizeof(copiedValue);
+        /* Get the copied object's ID (should be unchanged) */
+        XMEMSET(copiedId, 0, sizeof(copiedId));
+        getCopiedAttrs[1].pValue = copiedId;
+        getCopiedAttrs[1].ulValueLen = sizeof(copiedId);
 
-        ret = funcList->C_GetAttributeValue(session, copiedObj, getCopiedAttrs,
-                                            1);
-        CHECK_CKR(ret, "Get copied object value after original "
+        ret = funcList->C_GetAttributeValue(session, copiedObj,
+                                            &getCopiedAttrs[1], 1);
+        CHECK_CKR(ret, "Get copied object ID after original "
                        "modification");
     }
 
     if (ret == CKR_OK) {
-        /* Verify original object has modified value */
-        if (getOriginalAttrs[0].ulValueLen != sizeof(modifiedKeyData) ||
-            XMEMCMP(origValue, modifiedKeyData,
+        /* Verify original object has modified ID */
+        if (getOriginalAttrs[1].ulValueLen != sizeof(modifiedKeyData) ||
+            XMEMCMP(origId, modifiedKeyData,
                     sizeof(modifiedKeyData)) != 0) {
             ret = -1;
-            CHECK_CKR(ret, "Original object should have modified value");
+            CHECK_CKR(ret, "Original object should have modified ID");
         }
     }
 
     if (ret == CKR_OK) {
-        /* Verify copied object still has original value (proving deep copy) */
-        if (getCopiedAttrs[0].ulValueLen != sizeof(keyData) ||
-            XMEMCMP(copiedValue, keyData,
-                    sizeof(keyData)) != 0) {
+        /* Verify copied object still has original ID (proving deep copy) */
+        if (getCopiedAttrs[1].ulValueLen != sizeof(keyId) ||
+            XMEMCMP(copiedId, keyId, sizeof(keyId)) != 0) {
             ret = -1;
-            CHECK_CKR(ret, "Copied object should retain original value "
+            CHECK_CKR(ret, "Copied object should retain original ID "
                            "(deep copy test)");
         }
     }
@@ -4809,8 +4826,12 @@ static CK_RV test_encrypt_decrypt(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_EncryptInit(session, NULL, key);
+#ifdef WOLFPKCS11_PKCS11_V3_0
+        CHECK_CKR(ret, "AES-CBC Encrypt Init no mechanism cancels");
+#else
         CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD,
                                            "AES-CBC Encrypt Init no mechanism");
+#endif
     }
     if (ret == CKR_OK) {
         ret = funcList->C_EncryptInit(session, &mech, CK_INVALID_HANDLE);
@@ -4879,8 +4900,12 @@ static CK_RV test_encrypt_decrypt(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_DecryptInit(session, NULL, key);
+#ifdef WOLFPKCS11_PKCS11_V3_0
+        CHECK_CKR(ret, "AES-CBC Decrypt Init no mechanism cancels");
+#else
         CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD,
                                            "AES-CBC Decrypt Init no mechanism");
+#endif
     }
     if (ret == CKR_OK) {
         ret = funcList->C_DecryptInit(session, &mech, CK_INVALID_HANDLE);
@@ -5353,7 +5378,11 @@ static CK_RV test_digest_fail(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_DigestInit(session, NULL);
+#ifdef WOLFPKCS11_PKCS11_V3_0
+        CHECK_CKR(ret, "Digest Init no mechanism cancels");
+#else
         CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD, "Digest Init no mechanism");
+#endif
     }
     if (ret == CKR_OK) {
         ret = funcList->C_Digest(CK_INVALID_HANDLE, data, dataSz, hash,
@@ -5493,7 +5522,11 @@ static CK_RV test_sign_verify(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_SignInit(session, NULL, key);
+#ifdef WOLFPKCS11_PKCS11_V3_0
+        CHECK_CKR(ret, "HMAC Sign Init no mechanism cancels");
+#else
         CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD, "HMAC Sign Init no mechanism");
+#endif
     }
     if (ret == CKR_OK) {
         ret = funcList->C_SignInit(session, &mech, CK_INVALID_HANDLE);
@@ -5559,7 +5592,11 @@ static CK_RV test_sign_verify(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyInit(session, NULL, key);
+#ifdef WOLFPKCS11_PKCS11_V3_0
+        CHECK_CKR(ret, "HMAC Verify Init no mechanism cancels");
+#else
         CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD, "HMAC Verify Init no mechanism");
+#endif
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyInit(session, &mech, CK_INVALID_HANDLE);
@@ -5752,8 +5789,12 @@ static CK_RV test_recover(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyRecoverInit(session, NULL, key);
+#ifdef WOLFPKCS11_PKCS11_V3_0
+        CHECK_CKR(ret, "Verify Recover Init no mechanism cancels");
+#else
         CHECK_CKR_FAIL(ret, CKR_ARGUMENTS_BAD,
                                            "Verify Recover Init no mechanism");
+#endif
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyRecoverInit(session, &mech, CK_INVALID_HANDLE);
@@ -10512,8 +10553,8 @@ static CK_RV aes_cbc_encrypt_data_test(CK_SESSION_HANDLE session,
     word32 outSz = sizeof(out);
     CK_OBJECT_HANDLE secret;
     CK_KEY_TYPE      keyType = CKK_GENERIC_SECRET;
-    CK_ULONG         secSz = outSz;
     CK_BYTE          data[16] = { 0 };
+    CK_ULONG         secSz = sizeof(data);
     CK_AES_CBC_ENCRYPT_DATA_PARAMS aesParams = {
         { 0 }, data, sizeof(data)
     };
@@ -16509,7 +16550,7 @@ static CK_RV test_derive_tls12_master_key(void* args) {
         ret = funcList->C_DeriveKey(session, &mechanism, hBaseKey,
                                     derivedKeyTemplate,
                                     ulDerivedKeyTemplateCount, &hDerivedKey);
-        CHECK_CKR_FAIL(ret, CKR_MECHANISM_INVALID, "Invalid version");
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID, "Invalid version");
         version.major = 3;
     }
 
@@ -17349,8 +17390,9 @@ static CK_RV test_create_session_obj_ro_session(void* args)
     CK_ULONG tmplOnTokenCnt = sizeof(tmplOnToken) / sizeof(*tmplOnToken);
     CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE, objOnToken = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE copyObj = CK_INVALID_HANDLE, copyBad = CK_INVALID_HANDLE;
+    static byte copyLabel[] = "copy";
     CK_ATTRIBUTE copyTmpl[] = {
-        { CKA_VALUE,             keyData,           sizeof(keyData)           },
+        { CKA_LABEL,             copyLabel,         sizeof(copyLabel)-1       },
     };
     CK_ULONG copyTmplCnt = sizeof(copyTmpl) / sizeof(*copyTmpl);
     char newLabel[] = "updated";
