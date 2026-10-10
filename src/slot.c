@@ -138,6 +138,8 @@ CK_RV C_GetSlotInfo(CK_SLOT_ID slotID, CK_SLOT_INFO_PTR pInfo)
     }
 
     XMEMCPY(pInfo, &slotInfoTemplate, sizeof(slotInfoTemplate));
+    WP11_BlankPad(pInfo->slotDescription, sizeof(pInfo->slotDescription));
+    WP11_BlankPad(pInfo->manufacturerID, sizeof(pInfo->manufacturerID));
     /* Put in the slot id value as two decimal digits. */
     pInfo->slotDescription[SLOT_ID_IDX + 0] = ((slotID / 10) % 10) + '0';
     pInfo->slotDescription[SLOT_ID_IDX + 1] = ((slotID     ) % 10) + '0';
@@ -164,8 +166,8 @@ static CK_TOKEN_INFO tokenInfoTemplate = {
     "wolfpkcs11",
     "wolfpkcs11",
     {
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+        '0', '0', '0', '0', '0', '0', '0', '0', '0',
+        '0', '0', '0', '0', '0', '0', '0'
     }, /* serialNumber */
     CKF_RNG | CKF_CLOCK_ON_TOKEN | CKF_LOGIN_REQUIRED,
     WP11_SESSION_CNT_MAX, /* ulMaxSessionCount */
@@ -202,6 +204,7 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
 #ifndef WOLFPKCS11_NO_TIME
     time_t now, expire;
     struct tm nowTM;
+    struct tm* utc;
 #endif
     WP11_Slot* slot;
     int cnt;
@@ -230,6 +233,8 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
     }
 
     XMEMCPY(pInfo, &tokenInfoTemplate, sizeof(tokenInfoTemplate));
+    WP11_BlankPad(pInfo->manufacturerID, sizeof(pInfo->manufacturerID));
+    WP11_BlankPad(pInfo->model, sizeof(pInfo->model));
     WP11_Slot_GetTokenLabel(slot, (char*)pInfo->label);
     pInfo->serialNumber[14] = ((slotID / 10) % 10) + '0';
     pInfo->serialNumber[15] = ((slotID /  1) % 10) + '0';
@@ -241,28 +246,33 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
 #ifndef WOLFPKCS11_NO_TIME
     now = XTIME(0);
     XMEMSET(&nowTM, 0, sizeof(nowTM));
-    if (XGMTIME(&now, &nowTM) != NULL) {
-        pInfo->utcTime[ 0] = (((1900 + nowTM.tm_year) / 1000) % 10) + '0';
-        pInfo->utcTime[ 1] = (((1900 + nowTM.tm_year) /  100) % 10) + '0';
-        pInfo->utcTime[ 2] = (((1900 + nowTM.tm_year) /   10) % 10) + '0';
-        pInfo->utcTime[ 3] = (((1900 + nowTM.tm_year) /    1) % 10) + '0';
-        pInfo->utcTime[ 4] = (((1 + nowTM.tm_mon) / 10) % 10) + '0';
-        pInfo->utcTime[ 5] = (((1 + nowTM.tm_mon) /  1) % 10) + '0';
-        pInfo->utcTime[ 6] = ((nowTM.tm_mday / 10) % 10) + '0';
-        pInfo->utcTime[ 7] = ((nowTM.tm_mday /  1) % 10) + '0';
-        pInfo->utcTime[ 8] = ((nowTM.tm_hour / 10) % 10) + '0';
-        pInfo->utcTime[ 9] = ((nowTM.tm_hour /  1) % 10) + '0';
-        pInfo->utcTime[10] = ((nowTM.tm_min / 10) % 10) + '0';
-        pInfo->utcTime[11] = ((nowTM.tm_min /  1) % 10) + '0';
-        pInfo->utcTime[12] = ((nowTM.tm_sec / 10) % 10) + '0';
-        pInfo->utcTime[13] = ((nowTM.tm_sec /  1) % 10) + '0';
+    /* XGMTIME may map to gmtime(), which ignores nowTM. */
+    utc = NULL;
+    if (now != (time_t)-1)
+        utc = XGMTIME(&now, &nowTM);
+    if (utc != NULL) {
+        pInfo->utcTime[ 0] = (((1900 + utc->tm_year) / 1000) % 10) + '0';
+        pInfo->utcTime[ 1] = (((1900 + utc->tm_year) /  100) % 10) + '0';
+        pInfo->utcTime[ 2] = (((1900 + utc->tm_year) /   10) % 10) + '0';
+        pInfo->utcTime[ 3] = (((1900 + utc->tm_year) /    1) % 10) + '0';
+        pInfo->utcTime[ 4] = (((1 + utc->tm_mon) / 10) % 10) + '0';
+        pInfo->utcTime[ 5] = (((1 + utc->tm_mon) /  1) % 10) + '0';
+        pInfo->utcTime[ 6] = ((utc->tm_mday / 10) % 10) + '0';
+        pInfo->utcTime[ 7] = ((utc->tm_mday /  1) % 10) + '0';
+        pInfo->utcTime[ 8] = ((utc->tm_hour / 10) % 10) + '0';
+        pInfo->utcTime[ 9] = ((utc->tm_hour /  1) % 10) + '0';
+        pInfo->utcTime[10] = ((utc->tm_min / 10) % 10) + '0';
+        pInfo->utcTime[11] = ((utc->tm_min /  1) % 10) + '0';
+        pInfo->utcTime[12] = ((utc->tm_sec / 10) % 10) + '0';
+        pInfo->utcTime[13] = ((utc->tm_sec /  1) % 10) + '0';
     }
     else {
-        /* Set date to all zeros. */
-        XMEMCPY(pInfo->utcTime, "00000000000000", 14);
+        pInfo->flags &= ~(CKF_CLOCK_ON_TOKEN);
+        XMEMSET(pInfo->utcTime, ' ', sizeof(pInfo->utcTime));
     }
 #else
-    XMEMCPY(pInfo->utcTime, "00000000000000", 14);
+    pInfo->flags &= ~(CKF_CLOCK_ON_TOKEN);
+    XMEMSET(pInfo->utcTime, ' ', sizeof(pInfo->utcTime));
 #endif
 
     cnt = WP11_Slot_TokenFailedLogin(slot, WP11_LOGIN_SO);
@@ -274,7 +284,7 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
     if (cnt == WP11_MAX_LOGIN_FAILS_SO - 1)
         pInfo->flags |= CKF_SO_PIN_FINAL_TRY;
 #ifndef WOLFPKCS11_NO_TIME
-    else if (cnt == WP11_MAX_LOGIN_FAILS_SO && now < expire)
+    else if (cnt >= WP11_MAX_LOGIN_FAILS_SO && now < expire)
         pInfo->flags |= CKF_SO_PIN_LOCKED;
 #endif
 
@@ -287,7 +297,7 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
     if (cnt == WP11_MAX_LOGIN_FAILS_USER - 1)
         pInfo->flags |= CKF_USER_PIN_FINAL_TRY;
 #ifndef WOLFPKCS11_NO_TIME
-    else if (cnt == WP11_MAX_LOGIN_FAILS_USER && now < expire)
+    else if (cnt >= WP11_MAX_LOGIN_FAILS_USER && now < expire)
         pInfo->flags |= CKF_USER_PIN_LOCKED;
 #endif
 
@@ -476,16 +486,20 @@ static CK_MECHANISM_TYPE mechanismList[] = {
 #ifdef WOLFPKCS11_NSS
     /* NSS uses this as a target-key marker when unwrapping TLS secrets. */
     CKM_SSL3_MASTER_KEY_DERIVE,
+#ifndef NO_HMAC
     CKM_NSS_PKCS12_PBE_SHA224_HMAC_KEY_GEN,
     CKM_NSS_PKCS12_PBE_SHA256_HMAC_KEY_GEN,
     CKM_NSS_PKCS12_PBE_SHA384_HMAC_KEY_GEN,
     CKM_NSS_PKCS12_PBE_SHA512_HMAC_KEY_GEN,
 #endif
+#endif
 #ifdef WOLFSSL_HAVE_PRF
     CKM_TLS_MAC,
 #endif
     CKM_GENERIC_SECRET_KEY_GEN,
+#ifndef NO_HMAC
     CKM_PKCS5_PBKD2
+#endif
 };
 
 /* Count of mechanisms in list. */
@@ -504,7 +518,6 @@ static int mechanismCnt = ((int)(sizeof(mechanismList)/sizeof(*mechanismList)));
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SLOT_ID_INVALID when no slot with id can be found.
  *          CKR_ARGUMENTS_BAD when pulCount is NULL.
- *          CKR_BUFFER_TOO_SMALL when pulCount is NULL.
  *          CKR_BUFFER_TOO_SMALL when there are more mechanisms than entries in
  *          array.
  *          CKR_OK on success.
@@ -564,6 +577,14 @@ CK_RV C_GetMechanismList(CK_SLOT_ID slotID,
     return rv;
 }
 
+/* Matches the key serialization C_WrapKey compiles in for RSA and secret
+ * keys; without any, every wrap fails with CKR_KEY_NOT_WRAPPABLE. */
+#if defined(WOLFSSL_STM32U5_DHUK) || !defined(WOLFPKCS11_NO_STORE)
+    #define WP11_MECH_WRAP_FLAG    CKF_WRAP
+#else
+    #define WP11_MECH_WRAP_FLAG    0
+#endif
+
 #ifndef NO_RSA
 #ifdef WOLFSSL_KEY_GEN
 /* Info on RSA key generation mechanism. */
@@ -573,13 +594,17 @@ static CK_MECHANISM_INFO rsaKgMechInfo = {
 #endif
 /* Info on RSA X.509 mechanism. */
 static CK_MECHANISM_INFO rsaX509MechInfo = {
-    1024, 4096, CKF_ENCRYPT | CKF_DECRYPT | CKF_SIGN | CKF_VERIFY | CKF_WRAP |
-    CKF_UNWRAP | CKF_VERIFY_RECOVER
+#ifdef WC_RSA_DIRECT
+    1024, 4096, CKF_ENCRYPT | CKF_DECRYPT | CKF_SIGN | CKF_VERIFY |
+    CKF_VERIFY_RECOVER
+#else
+    1024, 4096, CKF_ENCRYPT | CKF_DECRYPT
+#endif
 };
 /* Info on RSA PKCS#1.5 mechanism. */
 static CK_MECHANISM_INFO rsaPkcsMechInfo = {
     1024, 4096, CKF_ENCRYPT | CKF_DECRYPT | CKF_SIGN | CKF_VERIFY |
-    CKF_VERIFY_RECOVER
+    CKF_VERIFY_RECOVER | WP11_MECH_WRAP_FLAG | CKF_UNWRAP
 };
 #ifndef WC_NO_RSA_OAEP
 /* Info on RSA PKCS#1 OAEP mechanism. */
@@ -712,6 +737,7 @@ static CK_MECHANISM_INFO nssTls12MasterKeyDeriveDhInfo = {
 static CK_MECHANISM_INFO nssTls12MasterKeyDeriveInfo = {
     48, 128, CKF_DERIVE
 };
+#ifndef NO_HMAC
 static CK_MECHANISM_INFO nssPkcs12PbeSha224HmacKeyGenMechInfo = {
     224, 224, CKF_GENERATE
 };
@@ -724,6 +750,7 @@ static CK_MECHANISM_INFO nssPkcs12PbeSha384HmacKeyGenMechInfo = {
 static CK_MECHANISM_INFO nssPkcs12PbeSha512HmacKeyGenMechInfo = {
     512, 512, CKF_GENERATE
 };
+#endif
 /* NSS requires this mechanism identifier when selecting the slot used to
  * unwrap cached TLS secrets. C_DeriveKey does not implement the mechanism, so
  * do not advertise CKF_DERIVE. */
@@ -743,13 +770,16 @@ static CK_MECHANISM_INFO aesKeyGenMechInfo = {
 };
 #ifdef HAVE_AES_KEYWRAP
 static CK_MECHANISM_INFO aesKeyWrapMechInfo = {
-    16, 32, CKF_ENCRYPT | CKF_DECRYPT | CKF_WRAP | CKF_UNWRAP
+    16, 32, CKF_ENCRYPT | CKF_DECRYPT | WP11_MECH_WRAP_FLAG | CKF_UNWRAP
 };
 #endif
 #ifdef HAVE_AES_CBC
 /* Info on AES-CBC mechanism. */
 static CK_MECHANISM_INFO aesCbcMechInfo = {
     16, 32, CKF_ENCRYPT | CKF_DECRYPT
+};
+static CK_MECHANISM_INFO aesCbcPadMechInfo = {
+    16, 32, CKF_ENCRYPT | CKF_DECRYPT | WP11_MECH_WRAP_FLAG | CKF_UNWRAP
 };
 static CK_MECHANISM_INFO aesCbcEncryptDataMechInfo = {
     1, 32, CKF_DERIVE
@@ -776,7 +806,7 @@ static CK_MECHANISM_INFO aesCcmMechInfo = {
 #ifdef HAVE_AESECB
 /* Info on AES-ECB mechanism. */
 static CK_MECHANISM_INFO aesEcbMechInfo = {
-    16, 32, CKF_ENCRYPT | CKF_DECRYPT
+    16, 32, CKF_ENCRYPT | CKF_DECRYPT | WP11_MECH_WRAP_FLAG | CKF_UNWRAP
 };
 #endif
 #ifdef HAVE_AESCTS
@@ -872,13 +902,16 @@ static CK_MECHANISM_INFO sha3MechInfo = {
 };
 #endif
 #endif
+/* Key sizes in bits. */
 static CK_MECHANISM_INFO genSecKeyGenMechInfo = {
-    1, 32, CKF_GENERATE
+    8, WP11_MAX_SYM_KEY_SZ * 8, CKF_GENERATE
 };
 
+#ifndef NO_HMAC
 static CK_MECHANISM_INFO pkcs5Pbkdf2MechInfo = {
     1, 256, CKF_GENERATE
 };
+#endif
 
 /**
  * Get information on a mechanism.
@@ -1073,6 +1106,8 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
 #endif
 #ifdef HAVE_AES_CBC
         case CKM_AES_CBC_PAD:
+            XMEMCPY(pInfo, &aesCbcPadMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
         case CKM_AES_CBC:
             XMEMCPY(pInfo, &aesCbcMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
@@ -1221,6 +1256,7 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
             XMEMCPY(pInfo, &nssTls12MasterKeyDeriveDhInfo,
                     sizeof(CK_MECHANISM_INFO));
             break;
+#ifndef NO_HMAC
         case CKM_NSS_PKCS12_PBE_SHA224_HMAC_KEY_GEN:
             XMEMCPY(pInfo, &nssPkcs12PbeSha224HmacKeyGenMechInfo,
                     sizeof(CK_MECHANISM_INFO));
@@ -1237,6 +1273,7 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
             XMEMCPY(pInfo, &nssPkcs12PbeSha512HmacKeyGenMechInfo,
                     sizeof(CK_MECHANISM_INFO));
             break;
+#endif
         case CKM_SSL3_MASTER_KEY_DERIVE:
             XMEMCPY(pInfo, &ssl3MasterKeyTargetInfo,
                     sizeof(CK_MECHANISM_INFO));
@@ -1253,10 +1290,12 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
             XMEMCPY(pInfo, &genSecKeyGenMechInfo,
                     sizeof(CK_MECHANISM_INFO));
             break;
+#ifndef NO_HMAC
         case CKM_PKCS5_PBKD2:
             XMEMCPY(pInfo, &pkcs5Pbkdf2MechInfo,
                     sizeof(CK_MECHANISM_INFO));
             break;
+#endif
         default:
             return CKR_MECHANISM_INVALID;
     }
@@ -1274,8 +1313,8 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SLOT_ID_INVALID when no slot with id can be found.
  *          CKR_ARGUMENTS_BAD when pPin or pLabel is NULL.
- *          CKR_PIN_INCORRECT when length of PIN is not valid or PIN does not
- *          match initialized PIN.
+ *          CKR_PIN_LEN_RANGE when length of PIN is not valid.
+ *          CKR_PIN_INCORRECT when PIN does not match initialized PIN.
  *          CKR_SESSION_EXISTS when a session is open on the token.
  *          CKR_FUNCTION_FAILED when resetting token fails.
  *          CKR_OK on success.
@@ -1363,7 +1402,7 @@ CK_RV C_InitToken(CK_SLOT_ID slotID, CK_UTF8CHAR_PTR pPin,
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pPin is NULL.
  *          CKR_USER_NOT_LOGGED_IN when not logged in as Security Officer.
- *          CKR_PIN_INCORRECT when length of PIN is not valid.
+ *          CKR_PIN_LEN_RANGE when length of PIN is not valid.
  *          CKR_FUNCTION_FAILED when setting User PIN fails.
  *          CKR_OK on success.
  */
@@ -1433,8 +1472,9 @@ CK_RV C_InitPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pPin,
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pOldPin or pNewPin is NULL.
- *          CKR_PIN_INCORRECT when length of old or new PIN is not valid or
- *          old PIN does not verify.
+ *          CKR_PIN_INCORRECT when length of old PIN is not valid or old PIN
+ *          does not verify.
+ *          CKR_PIN_LEN_RANGE when length of new PIN is not valid.
  *          CKR_SESSION_READ_ONLY when session not read/write.
  *          CKR_USER_PIN_NOT_INITIALIZED when no previous PIN set for user.
  *          CKR_FUNCTION_FAILED when setting user PIN fails.
@@ -1494,7 +1534,7 @@ CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
 
     slot = WP11_Session_GetSlot(session);
     if (state == WP11_APP_STATE_RW_SO) {
-        ret = WP11_Slot_CheckSOPin(slot, (char*)pOldPin, (int)ulOldLen);
+        ret = WP11_Slot_CheckSOPinLockout(slot, (char*)pOldPin, (int)ulOldLen);
         if (ret == PIN_NOT_SET_E) {
             rv = CKR_USER_PIN_NOT_INITIALIZED;
             WOLFPKCS11_LEAVE("C_SetPIN", rv);
@@ -1514,7 +1554,8 @@ CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
         }
     }
     else {
-        ret = WP11_Slot_CheckUserPin(slot, (char*)pOldPin, (int)ulOldLen);
+        ret = WP11_Slot_CheckUserPinLockout(slot, (char*)pOldPin,
+                                            (int)ulOldLen);
         if (ret == PIN_NOT_SET_E) {
             rv = CKR_USER_PIN_NOT_INITIALIZED;
             WOLFPKCS11_LEAVE("C_SetPIN", rv);
@@ -1558,6 +1599,8 @@ CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
  *          CKR_SESSION_READ_WRITE_SO_EXISTS when there is an existing open
  *          Security Officer session.
  *          CKR_SESSION_COUNT when no more sessions can be opened on token.
+ *          CKR_HOST_MEMORY when allocating the session fails.
+ *          CKR_FUNCTION_FAILED when opening the session fails otherwise.
  *          CKR_OK on success.
  */
 CK_RV C_OpenSession(CK_SLOT_ID slotID, CK_FLAGS flags,
@@ -1604,6 +1647,16 @@ CK_RV C_OpenSession(CK_SLOT_ID slotID, CK_FLAGS flags,
     }
     if (ret == SESSION_COUNT_E) {
         rv = CKR_SESSION_COUNT;
+        WOLFPKCS11_LEAVE("C_OpenSession", rv);
+        return rv;
+    }
+    if (ret == MEMORY_E) {
+        rv = CKR_HOST_MEMORY;
+        WOLFPKCS11_LEAVE("C_OpenSession", rv);
+        return rv;
+    }
+    if (ret != 0) {
+        rv = CKR_FUNCTION_FAILED;
         WOLFPKCS11_LEAVE("C_OpenSession", rv);
         return rv;
     }
@@ -1838,8 +1891,13 @@ CK_RV C_SetOperationState(CK_SESSION_HANDLE hSession,
         return rv;
     }
 
-    (void)hEncryptionKey;
-    (void)hAuthenticationKey;
+    /* Only keyless digest states can be saved, so no key is ever needed. */
+    if (hEncryptionKey != CK_INVALID_HANDLE ||
+            hAuthenticationKey != CK_INVALID_HANDLE) {
+        rv = CKR_KEY_NOT_NEEDED;
+        WOLFPKCS11_LEAVE("C_SetOperationState", rv);
+        return rv;
+    }
 
     rv = WP11_SetOperationState(session, pOperationState, ulOperationStateLen);
     WOLFPKCS11_LEAVE("C_SetOperationState", rv);
