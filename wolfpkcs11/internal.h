@@ -384,6 +384,7 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 typedef struct WP11_Object WP11_Object;
 typedef struct WP11_Session WP11_Session;
 typedef struct WP11_Slot WP11_Slot;
+typedef struct WP11_ObjectCalls WP11_ObjectCalls;
 
 
 WP11_LOCAL int WP11_Library_Init(void);
@@ -404,6 +405,8 @@ WP11_LOCAL int WP11_Slot_CheckSOPin(WP11_Slot* slot, char* pin, int pinLen);
 WP11_LOCAL int WP11_Slot_CheckSOPinLockout(WP11_Slot* slot, char* pin,
                                            int pinLen);
 WP11_LOCAL int WP11_Slot_CheckUserPin(WP11_Slot* slot, char* pin, int pinLen);
+WP11_LOCAL int WP11_Slot_CheckUserPinLockout(WP11_Slot* slot, char* pin,
+                                             int pinLen);
 WP11_LOCAL int WP11_Slot_Has_Empty_Pin(WP11_Slot* slot);
 WP11_LOCAL int WP11_Slot_SOPin_IsSet(WP11_Slot* slot);
 WP11_LOCAL int WP11_Slot_SOLogin(WP11_Slot* slot, char* pin, int pinLen);
@@ -411,8 +414,21 @@ WP11_LOCAL int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen);
 WP11_LOCAL int WP11_Slot_IsLoggedIn(WP11_Slot* slot);
 WP11_LOCAL int WP11_Slot_IsUserLoggedIn(WP11_Slot* slot);
 WP11_LOCAL void WP11_Slot_Logout(WP11_Slot* slot);
+WP11_LOCAL WP11_ObjectCalls* WP11_Slot_ObjectCallEnter(
+    CK_SESSION_HANDLE hSession);
+WP11_LOCAL void WP11_Slot_ObjectCallLeave(WP11_ObjectCalls* calls);
+WP11_LOCAL void WP11_Slot_DiscardObject(WP11_Slot* slot, WP11_Object* object);
 #ifdef DEBUG_WOLFPKCS11
 WP11_API int WP11_Slot_TokenKeyIsZero(CK_SLOT_ID slotId);
+WP11_API int WP11_Slot_TokenDecodedObjectCount(CK_SLOT_ID slotId);
+WP11_API void WP11_Session_SetFindHook(void (*hook)(void));
+WP11_API void WP11_Object_SetFindHook(void (*hook)(void));
+#if !defined(WOLFPKCS11_NO_STORE) && !defined(WOLFPKCS11_CUSTOM_STORE) && \
+    !defined(WOLFPKCS11_TPM_STORE) && !defined(_WIN32) && !defined(_MSC_VER)
+/* Exit status of a process ended by the store rename test hook. */
+#define WP11_TEST_STORE_EXIT_CODE 75
+WP11_API void WP11_Test_StoreExitAfterRenames(int renames);
+#endif
 #if defined(WOLFPKCS11_TPM) && (!defined(NO_RSA) || defined(HAVE_ECC))
 WP11_API int WP11_Test_DecodeTpmKey(CK_SLOT_ID slotId, unsigned char* keyData,
     int keyDataLen);
