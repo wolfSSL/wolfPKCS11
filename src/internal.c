@@ -4165,11 +4165,12 @@ static int wp11_DecryptData(byte* out, byte* data, int len, byte* key,
     return ret;
 }
 
-/* Set by the SO, who never holds the user's key, or by the library itself. */
+/* Flags left out of the bound policy: set by the SO, who never holds the
+ * user's key, or by the library itself. */
 #ifdef WOLFPKCS11_TPM
-#define WP11_FLAG_UNBOUND   (WP11_FLAG_TRUSTED | WP11_FLAG_TPM)
+#define WP11_FLAG_POLICY_EXCLUDED   (WP11_FLAG_TRUSTED | WP11_FLAG_TPM)
 #else
-#define WP11_FLAG_UNBOUND   WP11_FLAG_TRUSTED
+#define WP11_FLAG_POLICY_EXCLUDED   WP11_FLAG_TRUSTED
 #endif
 
 #define WP11_POLICY_AAD_VER 1
@@ -4184,7 +4185,7 @@ static int wp11_DecryptData(byte* out, byte* data, int len, byte* key,
 static void wp11_Object_PolicyAad(WP11_Object* object, byte* aad)
 {
     CK_ULONG vals[3];
-    word32 flags = object->opFlag & ~(word32)WP11_FLAG_UNBOUND;
+    word32 flags = object->opFlag & ~(word32)WP11_FLAG_POLICY_EXCLUDED;
     int idx = 0;
     int i;
     int j;
@@ -15382,7 +15383,7 @@ static int wp11_Object_PolicyChanged(WP11_Object* object,
 
     if (object->onToken && wp11_Object_IsEncrypted(object) &&
             (object->objClass != prevClass ||
-             ((object->opFlag ^ prevFlag) & ~(word32)WP11_FLAG_UNBOUND) != 0)) {
+             ((object->opFlag ^ prevFlag) & ~(word32)WP11_FLAG_POLICY_EXCLUDED) != 0)) {
         if (object->encoded || object->undecoded) {
             object->objClass = prevClass;
             object->opFlag = prevFlag;
