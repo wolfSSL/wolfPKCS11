@@ -49,13 +49,20 @@
 #include "testdata.h"
 #include "pkcs11_test_util.h"
 
+#define TEST_DIR "./store/secret_scrub_test"
+
+/* The scrub checks hook the allocator the way attribute_validation_test does. */
+#if defined(USE_WOLFSSL_MEMORY) && !defined(WOLFSSL_STATIC_MEMORY) && \
+    !defined(WOLFSSL_NO_MALLOC) && !defined(WOLFSSL_DEBUG_MEMORY)
+    #define SCRUB_ALLOC_HOOK
+#endif
+
+#ifdef SCRUB_ALLOC_HOOK
 #if (!defined(NO_AES) && (defined(HAVE_AES_CBC) || \
     (defined(HAVE_AESGCM) && !defined(WOLFSSL_AESGCM_STREAM)))) || \
     (defined(WOLFSSL_HAVE_PRF) && !defined(NO_SHA256))
     #define SCRUB_SESSION_TESTS
 #endif
-
-#define TEST_DIR "./store/secret_scrub_test"
 
 static const char* soPin = "password123456";
 static const char* userPin = "wolfpkcs11-test";
@@ -515,22 +522,29 @@ static void tls_mac_verify_scrub_test(int multiPart, const char* op)
     funcList->C_Finalize(NULL);
 }
 #endif
+#endif /* SCRUB_ALLOC_HOOK */
 
 int main(int argc, char* argv[])
 {
+#ifdef SCRUB_ALLOC_HOOK
     CK_RV rv;
     CK_SLOT_ID slot = 0;
+#endif
 
     (void)argc;
     (void)argv;
-    (void)ckTrue;
-    (void)ckFalse;
 
 #ifndef WOLFPKCS11_NO_ENV
     XSETENV("WOLFPKCS11_TOKEN_PATH", TEST_DIR, 1);
 #endif
 
     printf("=== wolfPKCS11 secret scrub test ===\n");
+#ifndef SCRUB_ALLOC_HOOK
+    printf("Skipped: needs the wolfSSL allocator hooks\n");
+    return 77;
+#else
+    (void)ckTrue;
+    (void)ckFalse;
 #ifdef WOLFPKCS11_NO_STORE
     /* The user PIN set by token_setup does not survive C_Finalize. */
     printf("Skipped: needs the key store\n");
@@ -576,4 +590,5 @@ int main(int argc, char* argv[])
     pkcs11_unload();
 
     return pkcs11_test_summary();
+#endif /* SCRUB_ALLOC_HOOK */
 }
