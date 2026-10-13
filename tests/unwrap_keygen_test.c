@@ -607,6 +607,7 @@ static void test_hkdf_keygen_matches_support(CK_SESSION_HANDLE session)
 static CK_FUNCTION_LIST_3_2* get_v32_list(void)
 {
     CK_INTERFACE* iface = NULL;
+    CK_VERSION ver = { 3, 2 };
     CK_RV rv;
 #ifndef HAVE_PKCS11_STATIC
     CK_C_GetInterface func;
@@ -614,9 +615,9 @@ static CK_FUNCTION_LIST_3_2* get_v32_list(void)
     func = (CK_C_GetInterface)dlsym(dlib, "C_GetInterface");
     if (func == NULL)
         return NULL;
-    rv = func((CK_UTF8CHAR_PTR)"PKCS 11", NULL, &iface, 0);
+    rv = func((CK_UTF8CHAR_PTR)"PKCS 11", &ver, &iface, 0);
 #else
-    rv = C_GetInterface((CK_UTF8CHAR_PTR)"PKCS 11", NULL, &iface, 0);
+    rv = C_GetInterface((CK_UTF8CHAR_PTR)"PKCS 11", &ver, &iface, 0);
 #endif
     if (rv != CKR_OK || iface == NULL)
         return NULL;
@@ -692,7 +693,8 @@ static void test_decapsulate_ct_len_beyond_word32(CK_SESSION_HANDLE session)
         if (rv == CKR_OK) {
             funcList->C_DestroyObject(session, key);
         }
-    }    funcList->C_DestroyObject(session, pub);
+    }
+    funcList->C_DestroyObject(session, pub);
     funcList->C_DestroyObject(session, priv);
 }
 #endif /* MLKEM_TEST && WIDE_CK_ULONG */
