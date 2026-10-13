@@ -1239,6 +1239,14 @@ static void test_unbound_store_upgraded(void)
 
 static byte otherUserPin[] = "wolfpkcs11-other";
 
+/* A directory at the lock file name makes every store pass fail. */
+static int block_store(char* lockPath, size_t sz)
+{
+    (void)snprintf(lockPath, sz, "%s/wp11_txn_%016lx_lock", TEST_DIR, 1UL);
+    (void)unlink(lockPath);
+    return (mkdir(lockPath, 0700) == 0) ? 0 : -1;
+}
+
 /* Store passes that cannot start must leave the PIN and token in effect. */
 static int child_failed_store_keeps_state(void)
 {
@@ -1252,17 +1260,13 @@ static int child_failed_store_keeps_state(void)
     byte out[BLOCK_SZ];
     char lockPath[256];
 
-    (void)snprintf(lockPath, sizeof(lockPath), "%s/wp11_txn_%016lx_lock",
-                   TEST_DIR, 1UL);
     XMEMSET(label, ' ', sizeof(label));
     if (pkcs11_load() != CKR_OK)
         return CHILD_SETUP;
     rv = init_slot(&slot);
     if (rv == CKR_OK)
         rv = open_session(slot, 1, &session);
-    /* A directory at the lock file name makes every store pass fail. */
-    (void)unlink(lockPath);
-    if (rv == CKR_OK && mkdir(lockPath, 0700) != 0)
+    if (rv == CKR_OK && block_store(lockPath, sizeof(lockPath)) != 0)
         rv = CKR_GENERAL_ERROR;
     if (rv == CKR_OK) {
         setRv = funcList->C_SetPIN(session, userPin, sizeof(userPin) - 1,
@@ -1302,6 +1306,269 @@ static void test_failed_store_keeps_state(void)
     if (rv == CKR_OK) {
         CHECK_TRUE(run_in_child(child_failed_store_keeps_state) == CHILD_PASS,
                    "old PIN and key work after failed stores");
+    }
+    cleanup_test_files();
+}
+
+/* Create a public AES key on the token and change its policy so the next
+ * store pass has to rebind it. The key is only decoded in this process. */
+static CK_RV create_unbound_public_key(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS cls = CKO_SECRET_KEY;
+    CK_KEY_TYPE keyType = CKK_AES;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,    &cls,        sizeof(cls)         },
+        { CKA_KEY_TYPE, &keyType,    sizeof(keyType)     },
+        { CKA_TOKEN,    &ckTrue,     sizeof(ckTrue)      },
+        { CKA_PRIVATE,  &ckFalse,    sizeof(ckFalse)     },
+        { CKA_ENCRYPT,  &ckTrue,     sizeof(ckTrue)      },
+        { CKA_DECRYPT,  &ckTrue,     sizeof(ckTrue)      },
+        { CKA_VALUE,    aesKeyValue, sizeof(aesKeyValue) },
+    };
+    CK_ATTRIBUTE policy[] = {
+        { CKA_DECRYPT, &ckFalse, sizeof(ckFalse) },
+    };
+
+    rv = funcList->C_CreateObject(session, tmpl,
+                                  sizeof(tmpl) / sizeof(*tmpl), &obj);
+    if (rv == CKR_OK)
+        rv = funcList->C_SetAttributeValue(session, obj, policy, 1);
+    return rv;
+}
+
+/* With the user's key never decoded in this process, a PIN change whose
+ * store fails must not touch the stored key. */
+static int child_undecoded_keys_survive_failed_pin_change(int asSO)
+{
+    CK_RV rv;
+    CK_RV setRv = CKR_OK;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    char lockPath[256];
+
+    if (pkcs11_load() != CKR_OK)
+        return CHILD_SETUP;
+    rv = init_slot(&slot);
+    if (rv == CKR_OK)
+        rv = open_session(slot, 0, &session);
+    if (rv == CKR_OK && asSO)
+        rv = funcList->C_Login(session, CKU_SO, soPin, sizeof(soPin) - 1);
+    if (rv == CKR_OK)
+        rv = create_unbound_public_key(session);
+    if (rv == CKR_OK && block_store(lockPath, sizeof(lockPath)) != 0)
+        rv = CKR_GENERAL_ERROR;
+    if (rv == CKR_OK && asSO) {
+        setRv = funcList->C_InitPIN(session, otherUserPin,
+                                    sizeof(otherUserPin) - 1);
+    }
+    else if (rv == CKR_OK) {
+        setRv = funcList->C_SetPIN(session, userPin, sizeof(userPin) - 1,
+                                   otherUserPin, sizeof(otherUserPin) - 1);
+    }
+    (void)rmdir(lockPath);
+    if (rv == CKR_OK && setRv == CKR_OK)
+        rv = CKR_GENERAL_ERROR;
+    (void)funcList->C_Finalize(NULL);
+    if (rv != CKR_OK) {
+        fprintf(stderr, "  forced PIN change failure not set up: 0x%lx\n",
+                (unsigned long)rv);
+        return CHILD_FAIL;
+    }
+    return CHILD_PASS;
+}
+
+static int child_public_pin_change_fails(void)
+{
+    return child_undecoded_keys_survive_failed_pin_change(0);
+}
+
+static int child_so_init_pin_fails(void)
+{
+    return child_undecoded_keys_survive_failed_pin_change(1);
+}
+
+/* The user's key still works under the PIN that stayed in storage. */
+static int child_user_key_works(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    byte out[BLOCK_SZ];
+
+    if (pkcs11_load() != CKR_OK)
+        return CHILD_SETUP;
+    rv = init_slot(&slot);
+    if (rv == CKR_OK)
+        rv = open_session(slot, 1, &session);
+    if (rv == CKR_OK)
+        rv = find_key(session, &obj);
+    if (rv == CKR_OK)
+        rv = aes_encrypt_block(session, obj, out);
+    if (rv == CKR_OK && XMEMCMP(out, refCipher, sizeof(out)) != 0)
+        rv = CKR_FUNCTION_FAILED;
+    (void)funcList->C_Finalize(NULL);
+    if (rv != CKR_OK) {
+        fprintf(stderr, "  stored key lost by a failed PIN change: 0x%lx\n",
+                (unsigned long)rv);
+        return CHILD_FAIL;
+    }
+    return CHILD_PASS;
+}
+
+static void test_failed_store_keeps_undecoded_keys(void)
+{
+    CK_RV rv;
+
+    printf("\n--- failed PIN change with undecoded keys keeps them ---\n");
+    set_aes_check();
+    rv = store_objects(create_aes_key);
+    CHECK_RV(rv, "store AES key", CKR_OK);
+    if (rv == CKR_OK) {
+        CHECK_TRUE(run_in_child(child_public_pin_change_fails) == CHILD_PASS,
+                   "public session PIN change store failure is forced");
+        CHECK_TRUE(run_in_child(child_user_key_works) == CHILD_PASS,
+                   "key survives a failed public session PIN change");
+    }
+    cleanup_test_files();
+    rv = store_objects(create_aes_key);
+    CHECK_RV(rv, "store AES key", CKR_OK);
+    if (rv == CKR_OK) {
+        CHECK_TRUE(run_in_child(child_so_init_pin_fails) == CHILD_PASS,
+                   "SO user PIN init store failure is forced");
+        CHECK_TRUE(run_in_child(child_user_key_works) == CHILD_PASS,
+                   "key survives a failed SO user PIN init");
+    }
+    cleanup_test_files();
+}
+
+/* A token init whose store fails leaves nothing behind, and a retry works. */
+static int child_init_token_retry(void)
+{
+    CK_RV rv;
+    CK_RV initRv = CKR_OK;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_TOKEN_INFO info;
+    char lockPath[256];
+
+    if (pkcs11_load() != CKR_OK)
+        return CHILD_SETUP;
+    rv = init_slot(&slot);
+    if (rv == CKR_OK && block_store(lockPath, sizeof(lockPath)) != 0)
+        rv = CKR_GENERAL_ERROR;
+    if (rv == CKR_OK) {
+        initRv = funcList->C_InitToken(slot, soPin, sizeof(soPin) - 1,
+                                       (CK_UTF8CHAR*)"wolfpkcs11            "
+                                                     "          ");
+        (void)rmdir(lockPath);
+        if (initRv == CKR_OK)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = funcList->C_GetTokenInfo(slot, &info);
+    if (rv == CKR_OK && (info.flags & CKF_TOKEN_INITIALIZED) != 0)
+        rv = CKR_GENERAL_ERROR;
+    if (rv == CKR_OK)
+        rv = provision_token(slot);
+    if (rv == CKR_OK)
+        rv = open_session(slot, 1, &session);
+    (void)funcList->C_Finalize(NULL);
+    if (rv != CKR_OK) {
+        fprintf(stderr, "  token init retry failed: 0x%lx\n",
+                (unsigned long)rv);
+        return CHILD_FAIL;
+    }
+    return CHILD_PASS;
+}
+
+static void test_init_token_failure_on_fresh_store(void)
+{
+    printf("\n--- failed token init on a fresh store can be retried ---\n");
+    cleanup_test_files();
+    CHECK_TRUE(run_in_child(child_init_token_retry) == CHILD_PASS,
+               "token init works after a failed init of a fresh store");
+    cleanup_test_files();
+}
+
+#define ALT_TEST_DIR    "store/./object_policy_integrity_test"
+
+static byte stagedRecord[] = "staged-record";
+
+/* Load the token with the store directory spelled differently. */
+static int child_load_from_alt_dir(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+
+    XSETENV("WOLFPKCS11_TOKEN_PATH", ALT_TEST_DIR, 1);
+    if (pkcs11_load() != CKR_OK)
+        return CHILD_SETUP;
+    rv = init_slot(&slot);
+    if (rv == CKR_OK)
+        rv = open_session(slot, 1, &session);
+    if (rv == CKR_OK)
+        rv = find_key(session, &obj);
+    (void)funcList->C_Finalize(NULL);
+    if (rv != CKR_OK) {
+        fprintf(stderr, "  load from the renamed store dir failed: 0x%lx\n",
+                (unsigned long)rv);
+        return CHILD_FAIL;
+    }
+    return CHILD_PASS;
+}
+
+/* A committed pass left by a crash is finished by a process that reaches the
+ * store directory through a different path, whether the marker lists the
+ * records by basename or by the path the crashed process used. */
+static void test_recovery_ignores_dir_spelling(void)
+{
+    CK_RV rv;
+    char path[256];
+    char fullPath[256];
+    char staged[280];
+    char marker[256];
+    char lines[600];
+    static byte data[MAX_FILE_SZ];
+    size_t sz = 0;
+    int res;
+
+    printf("\n--- committed pass is finished from any store dir path ---\n");
+    set_aes_check();
+    rv = store_objects(create_aes_key);
+    CHECK_RV(rv, "store AES key", CKR_OK);
+    store_path(path, sizeof(path), "data", MAX_OBJ_ID - 1);
+    store_path(fullPath, sizeof(fullPath), "data", MAX_OBJ_ID - 2);
+    (void)snprintf(marker, sizeof(marker), "%s/wp11_txn_%016lx_commit",
+                   TEST_DIR, 1UL);
+    (void)snprintf(lines, sizeof(lines), "wp11_data_%016lx_%016lx\n%s\n", 1UL,
+                   (unsigned long)(MAX_OBJ_ID - 1), fullPath);
+    if (rv == CKR_OK) {
+        (void)snprintf(staged, sizeof(staged), "%s.new", path);
+        CHECK_TRUE(write_file(staged, stagedRecord, sizeof(stagedRecord)) == 0,
+                   "stage a record");
+        (void)snprintf(staged, sizeof(staged), "%s.new", fullPath);
+        CHECK_TRUE(write_file(staged, stagedRecord, sizeof(stagedRecord)) == 0,
+                   "stage a second record");
+        CHECK_TRUE(write_file(marker, (const byte*)lines, XSTRLEN(lines)) == 0,
+                   "write a commit marker naming both");
+        res = run_in_child(child_load_from_alt_dir);
+        CHECK_TRUE(res == CHILD_PASS, "token loads through the other path");
+        CHECK_TRUE(read_file(path, data, sizeof(data), &sz) == 0 &&
+                   sz == sizeof(stagedRecord) &&
+                   XMEMCMP(data, stagedRecord, sz) == 0,
+                   "record listed by basename was put in place");
+        CHECK_TRUE(read_file(fullPath, data, sizeof(data), &sz) == 0 &&
+                   sz == sizeof(stagedRecord) &&
+                   XMEMCMP(data, stagedRecord, sz) == 0,
+                   "record listed by full path was put in place");
+        (void)snprintf(staged, sizeof(staged), "%s.new", path);
+        CHECK_TRUE(access(staged, F_OK) != 0, "staged copy is gone");
+        CHECK_TRUE(access(marker, F_OK) != 0, "commit marker is gone");
     }
     cleanup_test_files();
 }
@@ -1527,6 +1794,9 @@ int main(int argc, char* argv[])
     test_stored_policy_is_authenticated();
     test_legitimate_updates_round_trip();
     test_failed_store_keeps_state();
+    test_failed_store_keeps_undecoded_keys();
+    test_init_token_failure_on_fresh_store();
+    test_recovery_ignores_dir_spelling();
 #ifdef DEBUG_WOLFPKCS11
     test_store_pass_is_atomic();
     test_pin_change_pass_is_atomic();
