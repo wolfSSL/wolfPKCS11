@@ -293,6 +293,7 @@ static void retired_objects_bounded_test(CK_SLOT_ID slot)
 
 #ifdef DEBUG_WOLFPKCS11
 extern void WP11_Object_SetFindHook(void (*hook)(void));
+extern void WP11_Session_SetAddObjectHook(void (*hook)(void));
 
 static CK_SESSION_HANDLE hookLogoutSession = CK_INVALID_HANDLE;
 static CK_RV hookLogoutRv = CKR_GENERAL_ERROR;
@@ -425,6 +426,151 @@ static void logout_during_destroy_test(CK_SLOT_ID slot)
     if (session != CK_INVALID_HANDLE)
         funcList->C_CloseSession(session);
 }
+
+static CK_SESSION_HANDLE hookCloseSession = CK_INVALID_HANDLE;
+static CK_RV hookCloseRv = CKR_GENERAL_ERROR;
+static int hookCloseKeyLive = 0;
+
+/* Runs inside C_GetAttributeValue on another session's object. */
+static void hook_logout_close(void)
+{
+    WP11_Object_SetFindHook(NULL);
+    hookLogoutRv = funcList->C_Logout(hookLogoutSession);
+    hookCloseRv = funcList->C_CloseSession(hookCloseSession);
+    hookCloseKeyLive = live_holds_key();
+}
+
+/* Closing a session with a retired key keeps it until the running call ends. */
+static void close_with_retired_test(CK_SLOT_ID slot)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_SESSION_HANDLE other = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE data = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    CK_OBJECT_CLASS cls;
+    CK_BBOOL no = CK_FALSE;
+    unsigned char dataValue[] = "hold";
+    CK_ATTRIBUTE dataTmpl[] = {
+        { CKA_CLASS,   &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN,   &no,        sizeof(no)        },
+        { CKA_PRIVATE, &no,        sizeof(no)        },
+        { CKA_VALUE,   dataValue,  sizeof(dataValue) },
+    };
+    CK_ATTRIBUTE clsAttr = { CKA_CLASS, &cls, sizeof(cls) };
+
+    printf("--- close session with retired key during a call ---\n");
+    rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                 NULL, NULL, &session);
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL, NULL, &other);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(other, dataTmpl,
+                sizeof(dataTmpl) / sizeof(*dataTmpl), &data);
+    }
+    if (rv == CKR_OK)
+        rv = login_create_key(session, &key);
+    CHECK_RV(rv, "log in and create private session key", CKR_OK);
+    if (rv == CKR_OK) {
+        hookLogoutSession = other;
+        hookCloseSession = session;
+        hookLogoutRv = CKR_GENERAL_ERROR;
+        hookCloseRv = CKR_GENERAL_ERROR;
+        hookCloseKeyLive = 0;
+        WP11_Object_SetFindHook(hook_logout_close);
+        rv = funcList->C_GetAttributeValue(other, data, &clsAttr, 1);
+        WP11_Object_SetFindHook(NULL);
+        session = CK_INVALID_HANDLE;
+        CHECK_RV(hookLogoutRv, "C_Logout inside the call", CKR_OK);
+        CHECK_RV(hookCloseRv, "C_CloseSession inside the call", CKR_OK);
+        CHECK_TRUE(hookCloseKeyLive, "retired key kept while the call runs");
+        CHECK_RV(rv, "C_GetAttributeValue", CKR_OK);
+        CHECK_TRUE(!live_holds_key(), "key freed once the call ends");
+    }
+    if (other != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(other);
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+}
+
+#ifdef HAVE_ECC
+static int hookAddCalls = 0;
+
+/* Runs at the start of each object add; logs out before the second one. */
+static void hook_add_logout(void)
+{
+    hookAddCalls++;
+    if (hookAddCalls == 2) {
+        WP11_Session_SetAddObjectHook(NULL);
+        hookLogoutRv = funcList->C_Logout(hookLogoutSession);
+    }
+}
+
+/* A logout between the two adds of a key pair retires the first key; the
+ * rollback must get it back and free it exactly once. */
+static void keypair_rollback_after_logout_test(CK_SLOT_ID slot)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_SESSION_HANDLE other = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_EC_KEY_PAIR_GEN, NULL, 0 };
+    CK_BBOOL yes = CK_TRUE;
+    CK_BBOOL no = CK_FALSE;
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_EC_PARAMS, ecc_p256_params, sizeof(ecc_p256_params) },
+        { CKA_TOKEN,     &no,             sizeof(no)              },
+        { CKA_PRIVATE,   &yes,            sizeof(yes)             },
+        { CKA_VERIFY,    &yes,            sizeof(yes)             },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_TOKEN,   &no,  sizeof(no)  },
+        { CKA_PRIVATE, &yes, sizeof(yes) },
+        { CKA_SIGN,    &yes, sizeof(yes) },
+    };
+    long before;
+
+    printf("--- key pair rollback after a logout between the adds ---\n");
+    rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                 NULL, NULL, &session);
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL, NULL, &other);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(session, CKU_USER, (CK_UTF8CHAR_PTR)userPin,
+                               (CK_ULONG)XSTRLEN(userPin));
+    }
+    CHECK_RV(rv, "open sessions and log in", CKR_OK);
+    if (rv == CKR_OK) {
+        hookLogoutSession = other;
+        hookLogoutRv = CKR_GENERAL_ERROR;
+        hookAddCalls = 0;
+        before = liveBlocks;
+        WP11_Session_SetAddObjectHook(hook_add_logout);
+        rv = funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+                sizeof(pubTmpl) / sizeof(*pubTmpl), privTmpl,
+                sizeof(privTmpl) / sizeof(*privTmpl), &pub, &priv);
+        WP11_Session_SetAddObjectHook(NULL);
+        CHECK_RV(hookLogoutRv, "C_Logout between the two adds", CKR_OK);
+        CHECK_RV(rv, "C_GenerateKeyPair after the logout",
+                 CKR_USER_NOT_LOGGED_IN);
+        if (liveBlocks != before) {
+            fprintf(stderr, "  live blocks went from %ld to %ld\n", before,
+                    liveBlocks);
+        }
+        CHECK_TRUE(liveBlocks == before, "rolled back key pair freed");
+    }
+    if (other != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(other);
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+}
+#endif
 
 #ifdef RETIRE_TEST_THREADS
 #define OVERLAP_STEPS 5
@@ -589,6 +735,85 @@ static void destroy_while_calls_overlap_test(CK_SLOT_ID slot)
 #endif
 #endif
 
+#if !defined(NO_AES) && defined(HAVE_AES_CBC)
+/* Right after C_InitPIN("") the empty PIN verdict is not cached yet; deriving
+ * a private session key without a login must still be allowed. */
+static void empty_pin_derive_test(CK_SLOT_ID slot)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE aesType = CKK_AES;
+    CK_KEY_TYPE genericType = CKK_GENERIC_SECRET;
+    CK_BBOOL yes = CK_TRUE;
+    CK_BBOOL no = CK_FALSE;
+    unsigned char aesKey[16] = "empty-pin-base";
+    unsigned char plain[32] = "empty-pin-derive-data-012345678";
+    CK_ULONG len = sizeof(plain);
+    CK_AES_CBC_ENCRYPT_DATA_PARAMS params;
+    CK_MECHANISM mech = { CKM_AES_CBC_ENCRYPT_DATA, &params, sizeof(params) };
+    CK_ATTRIBUTE baseTmpl[] = {
+        { CKA_CLASS,    &keyClass, sizeof(keyClass) },
+        { CKA_KEY_TYPE, &aesType,  sizeof(aesType)  },
+        { CKA_TOKEN,    &no,       sizeof(no)       },
+        { CKA_PRIVATE,  &no,       sizeof(no)       },
+        { CKA_DERIVE,   &yes,      sizeof(yes)      },
+        { CKA_VALUE,    aesKey,    sizeof(aesKey)   },
+    };
+    CK_ATTRIBUTE derivedTmpl[] = {
+        { CKA_CLASS,     &keyClass,    sizeof(keyClass)    },
+        { CKA_KEY_TYPE,  &genericType, sizeof(genericType) },
+        { CKA_TOKEN,     &no,          sizeof(no)          },
+        { CKA_VALUE_LEN, &len,         sizeof(len)         },
+    };
+
+    printf("--- derive a private session key right after an empty PIN ---\n");
+    rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                 NULL, NULL, &session);
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(session, CKU_SO, (CK_UTF8CHAR_PTR)soPin,
+                               (CK_ULONG)XSTRLEN(soPin));
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_InitPIN(session, (CK_UTF8CHAR_PTR)"", 0);
+        if (rv == CKR_PIN_LEN_RANGE) {
+            printf("  empty PIN not allowed by this build, skipping\n");
+            funcList->C_Logout(session);
+            funcList->C_CloseSession(session);
+            return;
+        }
+    }
+    CHECK_RV(rv, "log in as SO and set an empty user PIN", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_Logout(session);
+        if (rv == CKR_OK) {
+            rv = funcList->C_CreateObject(session, baseTmpl,
+                    sizeof(baseTmpl) / sizeof(*baseTmpl), &base);
+        }
+        if (rv == CKR_OK) {
+            XMEMSET(&params, 0, sizeof(params));
+            params.pData = plain;
+            params.length = sizeof(plain);
+            rv = funcList->C_DeriveKey(session, &mech, base, derivedTmpl,
+                    sizeof(derivedTmpl) / sizeof(*derivedTmpl), &derived);
+        }
+        CHECK_RV(rv, "derive a private session key without login", CKR_OK);
+        rv = funcList->C_Login(session, CKU_SO, (CK_UTF8CHAR_PTR)soPin,
+                               (CK_ULONG)XSTRLEN(soPin));
+        if (rv == CKR_OK) {
+            rv = funcList->C_InitPIN(session, (CK_UTF8CHAR_PTR)userPin,
+                                     (CK_ULONG)XSTRLEN(userPin));
+            funcList->C_Logout(session);
+        }
+        CHECK_RV(rv, "restore the user PIN", CKR_OK);
+    }
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+}
+#endif
+
 int main(int argc, char* argv[])
 {
     CK_RV rv;
@@ -619,9 +844,16 @@ int main(int argc, char* argv[])
         logout_during_call_test(slot);
         destroy_during_call_test(slot);
         logout_during_destroy_test(slot);
+        close_with_retired_test(slot);
+#ifdef HAVE_ECC
+        keypair_rollback_after_logout_test(slot);
+#endif
 #endif
 #ifdef RETIRE_TEST_THREADS
         destroy_while_calls_overlap_test(slot);
+#endif
+#if !defined(NO_AES) && defined(HAVE_AES_CBC)
+        empty_pin_derive_test(slot);
 #endif
     }
     if (funcList != NULL)

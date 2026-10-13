@@ -10976,6 +10976,20 @@ static int wp11_Session_RetiredHeld(WP11_Session* session)
 }
 #endif
 
+#ifdef DEBUG_WOLFPKCS11
+static void (*wp11_addObjectHook)(void) = NULL;
+
+/**
+ * Test hook: called by WP11_Session_AddObject before it takes any lock.
+ *
+ * @param  hook  [in]  Function to call, or NULL to remove the hook.
+ */
+WP11_API void WP11_Session_SetAddObjectHook(void (*hook)(void))
+{
+    wp11_addObjectHook = hook;
+}
+#endif
+
 /**
  * Add object to the session or token.
  *
@@ -10992,8 +11006,13 @@ int WP11_Session_AddObject(WP11_Session* session, int onToken,
     WP11_Token* token;
 #ifndef WOLFPKCS11_NSS
     int privSession;
+    int emptyPin = 0;
 #endif
 
+#ifdef DEBUG_WOLFPKCS11
+    if (wp11_addObjectHook != NULL)
+        wp11_addObjectHook();
+#endif
     object->onToken = onToken;
     if (!onToken)
         object->session = session;
@@ -11003,10 +11022,11 @@ int WP11_Session_AddObject(WP11_Session* session, int onToken,
     privSession = !onToken &&
         (object->opFlag & WP11_FLAG_PRIVATE) == WP11_FLAG_PRIVATE;
     if (privSession) {
+        /* The cached verdict may be unset, so compute it before locking. */
+        emptyPin = WP11_Slot_Has_Empty_Pin(session->slot);
         /* Held to the add so a logout cannot slip between check and add. */
         WP11_Lock_LockRO(&session->slot->lock);
-        if ((token->tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET) &&
-                token->userPinEmpty != 1 &&
+        if ((token->tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET) && !emptyPin &&
                 !wp11_LoginStateIsUser(token->loginState)) {
             ret = PIN_INVALID_E;
         }

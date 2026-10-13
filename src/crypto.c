@@ -1298,6 +1298,8 @@ static CK_RV AddObject(WP11_Session* session, WP11_Object* object,
     }
 
     ret = WP11_Session_AddObject(session, onToken, object);
+    if (ret == PIN_INVALID_E)
+        return CKR_USER_NOT_LOGGED_IN;
     if (ret != 0)
         return CKR_FUNCTION_FAILED;
 
@@ -1837,7 +1839,8 @@ static CK_RV wp11_C_CopyObject(CK_SESSION_HANDLE hSession,
     ret = WP11_Session_AddObject(session, onToken, newObj);
     if (ret != 0) {
         WP11_Object_Free(newObj);
-        return CKR_FUNCTION_FAILED;
+        return (ret == PIN_INVALID_E) ? CKR_USER_NOT_LOGGED_IN :
+                                        CKR_FUNCTION_FAILED;
     }
 
     *phNewObject = WP11_Object_GetHandle(newObj);
