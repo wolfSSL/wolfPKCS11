@@ -367,6 +367,98 @@ static void test_create_reports_commit_failure(void)
     funcList->C_Finalize(NULL);
 }
 
+#if !defined(NO_AES) && defined(HAVE_AES_CBC)
+static CK_KEY_TYPE aesType = CKK_AES;
+static byte deriveBaseKey[16] = {
+    0x4b, 0x1d, 0x8e, 0x3f, 0xa2, 0x57, 0xc0, 0x69,
+    0x9d, 0x24, 0x6b, 0xf8, 0x13, 0xe5, 0x70, 0xac
+};
+static byte deriveData[16] = { 0 };
+
+/* Derive a token key from an AES base key with CKM_AES_CBC_ENCRYPT_DATA. */
+static CK_RV derive_token_secret(CK_SESSION_HANDLE session,
+                                 CK_OBJECT_HANDLE base, const char* label,
+                                 CK_OBJECT_HANDLE* obj)
+{
+    CK_MECHANISM mech;
+    CK_AES_CBC_ENCRYPT_DATA_PARAMS params;
+    CK_ULONG valueLen = sizeof(deriveData);
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,     &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE,  &genericType, sizeof(genericType) },
+        { CKA_VALUE_LEN, &valueLen,    sizeof(valueLen)    },
+        { CKA_TOKEN,     &ckTrue,      sizeof(ckTrue)      },
+        { CKA_PRIVATE,   &ckFalse,     sizeof(ckFalse)     },
+        { CKA_LABEL,     NULL,         0                   },
+    };
+
+    XMEMSET(&params, 0, sizeof(params));
+    params.pData = deriveData;
+    params.length = sizeof(deriveData);
+    mech.mechanism = CKM_AES_CBC_ENCRYPT_DATA;
+    mech.pParameter = &params;
+    mech.ulParameterLen = sizeof(params);
+    tmpl[5].pValue = (CK_VOID_PTR)label;
+    tmpl[5].ulValueLen = (CK_ULONG)XSTRLEN(label);
+    return funcList->C_DeriveKey(session, &mech, base, tmpl,
+                                 sizeof(tmpl) / sizeof(*tmpl), obj);
+}
+
+/* A derived token key whose record cannot be committed is not reported
+ * created, and deriving works again once it can be. */
+static void test_derive_reports_commit_failure(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    char path[512];
+    int blocked = 0;
+    CK_ATTRIBUTE baseTmpl[] = {
+        { CKA_CLASS,    &secretClass,  sizeof(secretClass)   },
+        { CKA_KEY_TYPE, &aesType,      sizeof(aesType)       },
+        { CKA_VALUE,    deriveBaseKey, sizeof(deriveBaseKey) },
+        { CKA_TOKEN,    &ckTrue,       sizeof(ckTrue)        },
+        { CKA_DERIVE,   &ckTrue,       sizeof(ckTrue)        },
+        { CKA_LABEL,    (CK_VOID_PTR)"derive-base", 11       },
+    };
+
+    printf("\n--- derived token key reports a commit failure ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, baseTmpl,
+                                      sizeof(baseTmpl) / sizeof(*baseTmpl),
+                                      &base);
+        CHECK_RV(rv, "create base token key", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        object_record_path(slot, 1, path, sizeof(path));
+        blocked = (mkdir(path, 0700) == 0);
+        CHECK_TRUE(blocked, "occupy the next object record path");
+    }
+    if (blocked) {
+        rv = derive_token_secret(session, base, "derive-token", &derived);
+        CHECK_TRUE(rv != CKR_OK,
+                   "derive fails when the key cannot be committed");
+        CHECK_TRUE(count_label(session, "derive-token") == 0,
+                   "uncommitted derived key is not in the token");
+        CHECK_TRUE(count_label(session, "derive-base") == 1,
+                   "base key is still in the token");
+        (void)rmdir(path);
+        rv = derive_token_secret(session, base, "derive-token", &derived);
+        CHECK_RV(rv, "derive succeeds once the key can be committed", CKR_OK);
+        CHECK_TRUE(count_label(session, "derive-token") == 1,
+                   "committed derived key is in the token");
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
 #ifdef DEBUG_WOLFPKCS11
 /* Debug-only hook exported by libwolfpkcs11. */
 extern void WP11_Test_StoreCloseFailAfter(int closes);
@@ -860,9 +952,12 @@ static int run_tests(void)
 
     test_objects_persist_across_storage_pause();
     test_create_reports_commit_failure();
+#if !defined(NO_AES) && defined(HAVE_AES_CBC)
+    test_derive_reports_commit_failure();
 #endif
 #ifdef DEBUG_WOLFPKCS11
     test_create_reports_close_failure();
+#endif
     test_token_record_kept_on_failed_store();
     test_pin_change_store_failure();
     test_init_pin_store_failure();
