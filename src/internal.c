@@ -1942,6 +1942,11 @@ static int wolfPKCS11_StoreBatchCheck(int tokenId)
     XFILE marker;
     WP11_Slot* slot;
 
+#ifndef WOLFPKCS11_NO_ENV
+    /* Storage is turned off, so nothing is read and nothing is finished. */
+    if (XGETENV("WOLFPKCS11_NO_STORE") != NULL)
+        return 0;
+#endif
     if (WP11_Slot_Get((CK_SLOT_ID)tokenId, &slot) != 0)
         return 0;
     WP11_Lock_LockRW(&slot->storeLock);
