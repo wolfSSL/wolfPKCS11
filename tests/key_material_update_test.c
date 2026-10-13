@@ -593,12 +593,14 @@ static void test_ec_point_needs_curve(CK_SESSION_HANDLE session)
 
     /* Leave out CKA_EC_PARAMS. */
     rv = funcList->C_CreateObject(session, pubTmpl, 4, &key);
-    CHECK_TRUE(rv != CKR_OK, "EC public key without curve rejected");
+    CHECK_RV(rv, "EC public key without curve rejected",
+             CKR_TEMPLATE_INCOMPLETE);
     destroy_obj(session, &key);
     rv = funcList->C_CreateObject(session, privNoCurve,
                                   sizeof(privNoCurve) / sizeof(*privNoCurve),
                                   &key);
-    CHECK_TRUE(rv != CKR_OK, "EC private key without curve rejected");
+    CHECK_RV(rv, "EC private key without curve rejected",
+             CKR_TEMPLATE_INCOMPLETE);
     destroy_obj(session, &key);
 
     rv = funcList->C_CreateObject(session, pubTmpl,
@@ -644,7 +646,7 @@ static void test_rsa_modulus_bits_range(CK_SESSION_HANDLE session)
                                      privTmpl,
                                      sizeof(privTmpl) / sizeof(*privTmpl),
                                      &pub, &priv);
-    CHECK_TRUE(rv != CKR_OK, "oversized modulus bits rejected");
+    CHECK_RV(rv, "oversized modulus bits rejected", CKR_ATTRIBUTE_VALUE_INVALID);
     if (rv == CKR_OK) {
         destroy_obj(session, &pub);
         destroy_obj(session, &priv);
@@ -823,7 +825,7 @@ static void test_dh_param_size_range(CK_SESSION_HANDLE session)
     XMEMSET(bigPrime, 0xff, sizeof(bigPrime));
     rv = funcList->C_CreateObject(session, keyTmpl,
                                   sizeof(keyTmpl) / sizeof(*keyTmpl), &key);
-    CHECK_TRUE(rv != CKR_OK, "oversized DH prime rejected");
+    CHECK_RV(rv, "oversized DH prime rejected", CKR_ATTRIBUTE_VALUE_INVALID);
     if (rv == CKR_OK)
         destroy_obj(session, &key);
 }

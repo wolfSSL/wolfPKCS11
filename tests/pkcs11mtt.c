@@ -4052,7 +4052,7 @@ static CK_RV test_ecc_create_key_fail(void* args)
         ecc_p256_priv_key[3].ulValueLen = sizeof(paramsBadOid);
         ret = funcList->C_CreateObject(session, ecc_p256_priv_key,
                                                    ecc_p256_priv_key_cnt, &obj);
-        CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED,
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
                             "EC Private Key Create Object - bad OID in params");
         ecc_p256_priv_key[3].pValue = ecc_p256_params;
         ecc_p256_priv_key[3].ulValueLen = sizeof(ecc_p256_params);

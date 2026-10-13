@@ -1219,11 +1219,19 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
         #ifndef NO_RSA
                 case CKK_RSA:
                     ret = WP11_Object_SetRsaKey(obj, data, len);
+                    /* A modulus size or component the key cannot take. */
+                    if (ret == BAD_FUNC_ARG)
+                        return CKR_ATTRIBUTE_VALUE_INVALID;
                     break;
         #endif
         #ifdef HAVE_ECC
                 case CKK_EC:
                     ret = WP11_Object_SetEcKey(obj, data, len);
+                    /* Key material without CKA_EC_PARAMS, or a bad value. */
+                    if (ret == BAD_FUNC_ARG && data[0] == NULL)
+                        return CKR_TEMPLATE_INCOMPLETE;
+                    if (ret == BAD_FUNC_ARG)
+                        return CKR_ATTRIBUTE_VALUE_INVALID;
                     break;
         #endif
         #ifdef WOLFPKCS11_MLDSA
@@ -1234,6 +1242,9 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
         #ifndef NO_DH
                 case CKK_DH:
                     ret = WP11_Object_SetDhKey(obj, data, len);
+                    /* Parameters or a value larger than the key can hold. */
+                    if (ret == BAD_FUNC_ARG)
+                        return CKR_ATTRIBUTE_VALUE_INVALID;
                     break;
         #endif
         #ifdef WOLFPKCS11_MLKEM
