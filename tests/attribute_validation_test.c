@@ -229,27 +229,34 @@ static void test_find_objects_large_max(CK_SESSION_HANDLE session)
 {
     CK_RV rv;
     CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
-    CK_OBJECT_HANDLE found = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE found[8];
     CK_ULONG count = 0;
+    static const byte label[] = "attribute-validation-large-max";
+    CK_ATTRIBUTE labelTmpl[] = {
+        { CKA_LABEL, (void*)label, sizeof(label) - 1 },
+    };
     CK_ATTRIBUTE findTmpl[] = {
-        { CKA_CLASS, &dataClass,       sizeof(dataClass)     },
-        { CKA_TOKEN, &ckFalse,         sizeof(ckFalse)       },
-        { CKA_LABEL, (void*)dataLabel, sizeof(dataLabel) - 1 },
+        { CKA_CLASS, &dataClass,   sizeof(dataClass) },
+        { CKA_TOKEN, &ckFalse,     sizeof(ckFalse)   },
+        { CKA_LABEL, (void*)label, sizeof(label) - 1 },
     };
 
     rv = create_data_object(session, &obj);
     CHECK_RV(rv, "create data object", CKR_OK);
     if (rv != CKR_OK)
         return;
+    rv = funcList->C_SetAttributeValue(session, obj, labelTmpl, 1);
+    CHECK_RV(rv, "set a label only this test uses", CKR_OK);
 
+    XMEMSET(found, 0, sizeof(found));
     rv = funcList->C_FindObjectsInit(session, findTmpl,
                                      sizeof(findTmpl) / sizeof(*findTmpl));
     CHECK_RV(rv, "find init", CKR_OK);
     if (rv == CKR_OK) {
-        rv = funcList->C_FindObjects(session, &found, (CK_ULONG)INT_MAX + 1,
+        rv = funcList->C_FindObjects(session, found, (CK_ULONG)INT_MAX + 1,
                                      &count);
         CHECK_RV(rv, "find with large maximum", CKR_OK);
-        CHECK_TRUE(count == 1 && found == obj,
+        CHECK_TRUE(count == 1 && found[0] == obj,
                    "find with large maximum returns the object");
         funcList->C_FindObjectsFinal(session);
     }
