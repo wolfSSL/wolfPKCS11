@@ -1298,6 +1298,7 @@ static void wolfPKCS11_StoreAbortTemp(WP11_FileStoreCtx* ctx)
 
 #if defined(DEBUG_WOLFPKCS11) && !defined(_WIN32) && !defined(_MSC_VER)
 static int wp11_storeExitAfter = 0;
+static int wp11_storeCloseFailAfter = -1;
 
 /**
  * Test hook: end the process right after the given number of store renames,
@@ -1308,6 +1309,17 @@ static int wp11_storeExitAfter = 0;
 WP11_API void WP11_Test_StoreExitAfterRenames(int renames)
 {
     wp11_storeExitAfter = renames;
+}
+
+/**
+ * Test hook: make the close of a written store record fail once, after the
+ * given number of closes succeed.
+ *
+ * @param  closes  [in]  Closes to allow first, or -1 to disable the hook.
+ */
+WP11_API void WP11_Test_StoreCloseFailAfter(int closes)
+{
+    wp11_storeCloseFailAfter = closes;
 }
 #endif
 
@@ -2599,6 +2611,13 @@ static int wolfPKCS11_Store_CloseCommit(void* store, int commit)
                 commit = 0;
                 ret = BUFFER_E;
             }
+        #if defined(DEBUG_WOLFPKCS11) && !defined(_WIN32) && !defined(_MSC_VER)
+            if (ctx->is_write && wp11_storeCloseFailAfter >= 0 &&
+                    wp11_storeCloseFailAfter-- == 0) {
+                /* Test hook: with the descriptor gone the close fails. */
+                (void)close(fileno(ctx->file));
+            }
+        #endif
             if (XFCLOSE(ctx->file) != 0 && ctx->is_write) {
                 commit = 0;
                 ret = BUFFER_E;

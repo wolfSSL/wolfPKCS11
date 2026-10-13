@@ -367,6 +367,53 @@ static void test_create_reports_commit_failure(void)
     funcList->C_Finalize(NULL);
 }
 
+#ifdef DEBUG_WOLFPKCS11
+/* Debug-only hook exported by libwolfpkcs11. */
+extern void WP11_Test_StoreCloseFailAfter(int closes);
+
+/* A token object whose record cannot be closed is not reported created. */
+static void test_create_reports_close_failure(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+
+    printf("\n--- token object creation reports a close failure ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "close-first", &obj);
+        CHECK_RV(rv, "create first token object", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        WP11_Test_StoreCloseFailAfter(0);
+        rv = create_token_secret(session, "close-second", &obj);
+        WP11_Test_StoreCloseFailAfter(-1);
+        CHECK_TRUE(rv != CKR_OK,
+                   "create fails when the record cannot be closed");
+        CHECK_TRUE(count_label(session, "close-second") == 0,
+                   "unclosed object is not in the token");
+        close_session(session);
+        session = CK_INVALID_HANDLE;
+        rv = reload(slot, &session);
+        CHECK_RV(rv, "reload token", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        CHECK_TRUE(count_label(session, "close-first") == 1,
+                   "stored object is reloaded");
+        CHECK_TRUE(count_label(session, "close-second") == 0,
+                   "unclosed object was not stored");
+        rv = create_token_secret(session, "close-third", &obj);
+        CHECK_RV(rv, "create succeeds once records close", CKR_OK);
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
 /* A failed token object store leaves the stored token record unchanged. */
 static void test_token_record_kept_on_failed_store(void)
 {
@@ -813,6 +860,9 @@ static int run_tests(void)
 
     test_objects_persist_across_storage_pause();
     test_create_reports_commit_failure();
+#endif
+#ifdef DEBUG_WOLFPKCS11
+    test_create_reports_close_failure();
     test_token_record_kept_on_failed_store();
     test_pin_change_store_failure();
     test_init_pin_store_failure();

@@ -440,6 +440,7 @@ WP11_API void WP11_Test_FailTokenInit(int fail);
 /* Exit status of a process ended by the store rename test hook. */
 #define WP11_TEST_STORE_EXIT_CODE 75
 WP11_API void WP11_Test_StoreExitAfterRenames(int renames);
+WP11_API void WP11_Test_StoreCloseFailAfter(int closes);
 #endif
 #if defined(WOLFPKCS11_TPM) && (!defined(NO_RSA) || defined(HAVE_ECC))
 WP11_API int WP11_Test_DecodeTpmKey(CK_SLOT_ID slotId, unsigned char* keyData,
