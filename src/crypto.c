@@ -11410,6 +11410,12 @@ static CK_RV wp11_C_EncapsulateKey(CK_SESSION_HANDLE hSession,
         }
     }
 
+    /* Refuse before the size query or any ciphertext is written. */
+    rv = CheckPrivateLogin(session, pTemplate, ulAttributeCount,
+                           CKO_SECRET_KEY);
+    if (rv != CKR_OK)
+        return rv;
+
     switch (pMechanism->mechanism) {
         case CKM_ML_KEM:
             if (pMechanism->pParameter != NULL ||
@@ -11432,10 +11438,6 @@ static CK_RV wp11_C_EncapsulateKey(CK_SESSION_HANDLE hSession,
      * returns 0. In this case, we have to exit early. */
     if (rv == CKR_OK && pCiphertext == NULL)
         return CKR_OK;
-
-    if (rv == CKR_OK)
-        rv = CheckPrivateLogin(session, pTemplate, ulAttributeCount,
-                               CKO_SECRET_KEY);
 
     if (rv == CKR_OK) {
         rv = CreateObject(session, pTemplate, ulAttributeCount, &secretObj);
@@ -11551,6 +11553,12 @@ static CK_RV wp11_C_DecapsulateKey(CK_SESSION_HANDLE hSession,
         }
     }
 
+    /* Refuse before the private key is used. */
+    rv = CheckPrivateLogin(session, pTemplate, ulAttributeCount,
+                           CKO_SECRET_KEY);
+    if (rv != CKR_OK)
+        return rv;
+
     switch (pMechanism->mechanism) {
         case CKM_ML_KEM:
             if (pMechanism->pParameter != NULL ||
@@ -11569,10 +11577,6 @@ static CK_RV wp11_C_DecapsulateKey(CK_SESSION_HANDLE hSession,
         default:
             return CKR_MECHANISM_INVALID;
     }
-
-    if (rv == CKR_OK)
-        rv = CheckPrivateLogin(session, pTemplate, ulAttributeCount,
-                               CKO_SECRET_KEY);
 
     if (rv == CKR_OK) {
         rv = CreateObject(session, pTemplate, ulAttributeCount, &secretObj);

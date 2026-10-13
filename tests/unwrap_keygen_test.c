@@ -741,11 +741,22 @@ static void test_encapsulate_private_default_needs_login(void)
         CHECK_TRUE(list != NULL, "get v3.2 function list");
     }
     if (list != NULL) {
+        XMEMSET(ct, 0x5c, sizeof(ct));
         rv = list->C_EncapsulateKey(session, &mech, pub, defaultTmpl,
                  sizeof(defaultTmpl) / sizeof(*defaultTmpl), ct, &ctLen, &key);
 #ifndef WOLFPKCS11_LEGACY_PRIVATE_FALSE_DEFAULT
         CHECK_RV(rv, "encapsulate to a default secret key without login",
                  CKR_USER_NOT_LOGGED_IN);
+        CHECK_TRUE(ct[0] == 0x5c && ct[sizeof(ct) - 1] == 0x5c &&
+                   ctLen == sizeof(ct),
+                   "refused encapsulate leaves the ciphertext buffer alone");
+        ctLen = 0;
+        rv = list->C_EncapsulateKey(session, &mech, pub, defaultTmpl,
+                 sizeof(defaultTmpl) / sizeof(*defaultTmpl), NULL, &ctLen,
+                 &key);
+        CHECK_RV(rv, "encapsulate size query for a default secret key without "
+                 "login", CKR_USER_NOT_LOGGED_IN);
+        CHECK_TRUE(ctLen == 0, "refused size query leaves the length alone");
 #else
         CHECK_RV(rv, "encapsulate to a legacy public secret key without login",
                  CKR_OK);
@@ -761,6 +772,22 @@ static void test_encapsulate_private_default_needs_login(void)
                  CKR_OK);
         if (rv == CKR_OK) {
             funcList->C_DestroyObject(session, key);
+        }
+        key = CK_INVALID_HANDLE;
+        if (rv == CKR_OK) {
+            rv = list->C_DecapsulateKey(session, &mech, priv, defaultTmpl,
+                     sizeof(defaultTmpl) / sizeof(*defaultTmpl), ct, ctLen,
+                     &key);
+#ifndef WOLFPKCS11_LEGACY_PRIVATE_FALSE_DEFAULT
+            CHECK_RV(rv, "decapsulate to a default secret key without login",
+                     CKR_USER_NOT_LOGGED_IN);
+#else
+            CHECK_RV(rv, "decapsulate to a legacy public secret key without "
+                     "login", CKR_OK);
+#endif
+            if (rv == CKR_OK) {
+                funcList->C_DestroyObject(session, key);
+            }
         }
     }
     if (session != 0) {
