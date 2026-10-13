@@ -12637,7 +12637,8 @@ int WP11_Session_RemoveObjectByHandle(WP11_Session* session,
                 (int)session->slotId, storeRet);
         }
     #endif
-        if (ret == 0)
+        /* A token record left unwritten outranks a record left behind. */
+        if (storeRet != 0)
             ret = storeRet;
     #endif
     }
