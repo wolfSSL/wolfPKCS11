@@ -1983,6 +1983,7 @@ static int wolfPKCS11_StoreBatchBegin(int tokenId)
     HANDLE h;
 #endif
     int fd;
+    WP11_Slot* slot;
 
 #ifndef WOLFPKCS11_NO_ENV
     /* Storage is turned off, so the pass writes nothing. */
@@ -1990,9 +1991,11 @@ static int wolfPKCS11_StoreBatchBegin(int tokenId)
     if (str != NULL)
         return 0;
 #endif
-    if (WP11_Slot_Get((CK_SLOT_ID)tokenId, &storeBatch.slot) != 0)
+    if (WP11_Slot_Get((CK_SLOT_ID)tokenId, &slot) != 0)
         return BAD_FUNC_ARG;
-    WP11_Lock_LockRW(&storeBatch.slot->storeLock);
+    /* The batch state is only written while the store lock is held. */
+    WP11_Lock_LockRW(&slot->storeLock);
+    storeBatch.slot = slot;
     ret = wolfPKCS11_StoreBatchNames(tokenId);
     if (ret == 0)
         ret = wolfPKCS11_StoreEnsureDir(storeBatch.dir);
@@ -2030,8 +2033,8 @@ static int wolfPKCS11_StoreBatchBegin(int tokenId)
     }
     else {
         (void)wolfPKCS11_StoreBatchLockFile(0);
-        WP11_Lock_UnlockRW(&storeBatch.slot->storeLock);
         storeBatch.slot = NULL;
+        WP11_Lock_UnlockRW(&slot->storeLock);
     }
 
     return ret;
@@ -2082,6 +2085,7 @@ static int wolfPKCS11_StoreStageTemp(WP11_FileStoreCtx* ctx)
 static int wolfPKCS11_StoreBatchEnd(int commit)
 {
     int ret = 0;
+    WP11_Slot* slot;
 
     if (storeBatch.active) {
         storeBatch.active = 0;
@@ -2111,9 +2115,10 @@ static int wolfPKCS11_StoreBatchEnd(int commit)
         }
         (void)wolfPKCS11_StoreBatchLockFile(0);
     }
-    if (storeBatch.slot != NULL) {
-        WP11_Lock_UnlockRW(&storeBatch.slot->storeLock);
+    slot = storeBatch.slot;
+    if (slot != NULL) {
         storeBatch.slot = NULL;
+        WP11_Lock_UnlockRW(&slot->storeLock);
     }
 
     return ret;
