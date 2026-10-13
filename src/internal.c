@@ -1930,18 +1930,22 @@ static int wolfPKCS11_StoreBatchRecover(void)
 }
 
 /**
- * Bring the store for a token to a committed state before it is read.
+ * Bring the store for a token to a committed state before it is read. On
+ * return the batch locks are held, so the token and object records read
+ * until wolfPKCS11_StoreBatchRelease belong to one committed pass.
  *
- * @param [in]  tokenId  Id of token.
+ * @param [in]   tokenId  Id of token.
+ * @param [out]  held     Slot whose batch locks are held, or NULL.
  * @return  0 on success.
  * @return  Other value when an interrupted pass could not be finished.
  */
-static int wolfPKCS11_StoreBatchCheck(int tokenId)
+static int wolfPKCS11_StoreBatchCheck(int tokenId, WP11_Slot** held)
 {
     int ret = 0;
     XFILE marker;
     WP11_Slot* slot;
 
+    *held = NULL;
 #ifndef WOLFPKCS11_NO_ENV
     /* Storage is turned off, so nothing is read and nothing is finished. */
     if (XGETENV("WOLFPKCS11_NO_STORE") != NULL)
@@ -1950,10 +1954,10 @@ static int wolfPKCS11_StoreBatchCheck(int tokenId)
     if (WP11_Slot_Get((CK_SLOT_ID)tokenId, &slot) != 0)
         return 0;
     WP11_Lock_LockRW(&slot->storeLock);
+    *held = slot;
     if (wolfPKCS11_StoreBatchNames(tokenId) == 0) {
         if (wolfPKCS11_StoreBatchLockFile(1) == 0) {
             ret = wolfPKCS11_StoreBatchRecover();
-            (void)wolfPKCS11_StoreBatchLockFile(0);
         }
         else {
             /* A committed pass that cannot be finished must not be read. */
@@ -1964,9 +1968,21 @@ static int wolfPKCS11_StoreBatchCheck(int tokenId)
             }
         }
     }
-    WP11_Lock_UnlockRW(&slot->storeLock);
 
     return ret;
+}
+
+/**
+ * Release the batch locks held since wolfPKCS11_StoreBatchCheck.
+ *
+ * @param [in]  held  Slot returned by wolfPKCS11_StoreBatchCheck.
+ */
+static void wolfPKCS11_StoreBatchRelease(WP11_Slot* held)
+{
+    if (held != NULL) {
+        (void)wolfPKCS11_StoreBatchLockFile(0);
+        WP11_Lock_UnlockRW(&held->storeLock);
+    }
 }
 
 /**
@@ -8455,11 +8471,15 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
     WP11_Object** current;
     int objCnt = 0;
     word32 len;
+#ifdef WP11_STORE_BATCH
+    WP11_Slot* batchHeld = NULL;
+#endif
 
     ret = 0;
 #ifdef WP11_STORE_BATCH
-    /* Finish or drop a store pass that a crash interrupted. */
-    ret = wolfPKCS11_StoreBatchCheck(tokenId);
+    /* Finish or drop a store pass that a crash interrupted, then keep other
+     * store passes out until every record of the token has been read. */
+    ret = wolfPKCS11_StoreBatchCheck(tokenId, &batchHeld);
 #endif
     /* Open access to token object. */
     if (ret == 0) {
@@ -8606,6 +8626,9 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
         /* No data to read. */
         ret = 0;
     }
+#ifdef WP11_STORE_BATCH
+    wolfPKCS11_StoreBatchRelease(batchHeld);
+#endif
 
     return ret;
 }
