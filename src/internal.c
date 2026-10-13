@@ -10967,8 +10967,10 @@ static int wp11_Session_RetiredHeld(WP11_Session* session)
     WP11_Object* obj;
 
     for (obj = session->retired; obj != NULL; obj = obj->next) {
-        if (obj != session->curr || session->init == 0)
+        if (obj != session->curr ||
+                (session->init & ~WP11_INIT_DIGEST_MASK) == 0) {
             cnt++;
+        }
     }
     return cnt;
 }
