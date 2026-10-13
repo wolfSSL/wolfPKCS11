@@ -7433,6 +7433,20 @@ static int wp11_Object_Unstore(WP11_Object* object, int tokenId, int objId)
  *
  * @param  token  [in]  Token object.
  */
+#ifdef DEBUG_WOLFPKCS11
+static int wp11_tokenInitFail = 0;
+
+/**
+ * Test hook: make the next token initialization fail at the RNG step.
+ *
+ * @param  fail  [in]  Non-zero to fail the next initialization.
+ */
+WP11_API void WP11_Test_FailTokenInit(int fail)
+{
+    wp11_tokenInitFail = fail;
+}
+#endif
+
 static int wp11_Token_Init(WP11_Token* token, const char* label)
 {
     int ret;
@@ -7440,6 +7454,12 @@ static int wp11_Token_Init(WP11_Token* token, const char* label)
     ret = WP11_Lock_Init(&token->lock);
     if (ret == 0)
         ret = WP11_Lock_Init(&token->rngLock);
+#ifdef DEBUG_WOLFPKCS11
+    if (ret == 0 && wp11_tokenInitFail) {
+        wp11_tokenInitFail = 0;
+        ret = RNG_FAILURE_E;
+    }
+#endif
     if (ret == 0)
         ret = Rng_New(&globalRandom, &globalLock, &token->rng);
     if (ret == 0) {

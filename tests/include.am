@@ -260,6 +260,11 @@ noinst_PROGRAMS += tests/unique_id_test
 tests_unique_id_test_SOURCES = tests/unique_id_test.c
 tests_unique_id_test_LDADD =
 
+check_PROGRAMS += tests/token_reset_fail_test
+noinst_PROGRAMS += tests/token_reset_fail_test
+tests_token_reset_fail_test_SOURCES = tests/token_reset_fail_test.c
+tests_token_reset_fail_test_LDADD =
+
 check_PROGRAMS += tests/nss_email_store_test
 noinst_PROGRAMS += tests/nss_email_store_test
 tests_nss_email_store_test_SOURCES = tests/nss_email_store_test.c
@@ -368,6 +373,7 @@ tests_concurrent_destroy_object_test_LDADD += src/libwolfpkcs11.la
 tests_hbs_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_hkdf_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_unique_id_test_LDADD += src/libwolfpkcs11.la
+tests_token_reset_fail_test_LDADD += src/libwolfpkcs11.la
 tests_nss_email_store_test_LDADD += src/libwolfpkcs11.la
 tests_generate_key_class_test_LDADD += src/libwolfpkcs11.la
 tests_generate_keypair_class_test_LDADD += src/libwolfpkcs11.la
@@ -424,6 +430,7 @@ tests_concurrent_destroy_object_test_LDADD += src/libwolfpkcs11.la
 tests_hbs_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_hkdf_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_unique_id_test_LDADD += src/libwolfpkcs11.la
+tests_token_reset_fail_test_LDADD += src/libwolfpkcs11.la
 tests_nss_email_store_test_LDADD += src/libwolfpkcs11.la
 tests_generate_key_class_test_LDADD += src/libwolfpkcs11.la
 tests_generate_keypair_class_test_LDADD += src/libwolfpkcs11.la
