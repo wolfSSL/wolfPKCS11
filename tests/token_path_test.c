@@ -47,6 +47,7 @@
 
 #ifdef _WIN32
     #include <direct.h>
+    #include <io.h>
     #include <windows.h>
     #define MKDIR(path) _mkdir(path)
     #define ACCESS _access
@@ -220,15 +221,12 @@ static int test_default_home_path(void)
 #endif
 
 #ifdef _WIN32
-    const char* appdir = getenv("APPDATA");
-    if (!appdir) {
-        appdir = getenv("USERPROFILE");
-        if (!appdir) {
-            printf("SKIP: No APPDATA or USERPROFILE environment variable\n");
-            return 0;
-        }
+    const char* appdata = getenv("APPDATA");
+    if (!appdata) {
+        printf("SKIP: No APPDATA environment variable\n");
+        return 0;
     }
-    snprintf(expected_dir, sizeof(expected_dir), "%s\\wolfPKCS11", appdir);
+    snprintf(expected_dir, sizeof(expected_dir), "%s\\wolfPKCS11", appdata);
 #else
     const char* home = getenv("HOME");
     if (!home) {
@@ -326,7 +324,6 @@ static int test_missing_storage_path(void)
     unsetenv("WOLFPKCS11_TOKEN_PATH");
     unsetenv("HOME");
 #if defined(_WIN32)
-    unsetenv("APPDIR");
     unsetenv("APPDATA");
 #endif
 #endif

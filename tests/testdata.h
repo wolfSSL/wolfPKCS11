@@ -671,6 +671,12 @@ static inline int setenv(const char *name, const char *value, int overwrite)
     (void)overwrite;
     return EXIT_FAILURE;
 }
+
+/* _putenv("NAME=") removes NAME from the environment */
+static inline int unsetenv(const char *name)
+{
+    return setenv(name, "", 1);
+}
 #endif
 #endif /* !WOLFPKCS11_NO_ENV */
 

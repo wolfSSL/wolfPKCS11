@@ -293,10 +293,18 @@ with `-DWOLFSSL_AESCCM=yes`).
 
 Path into which files are stored that contain token data. If unset, wolfPKCS11
 tries, in order, the directory specified by `WOLFPKCS11_TOKEN_PATH`, any store
-directory configured by NSS, the user's home directory (`~/.wolfPKCS11` on
-POSIX or `%APPDIR%\wolfPKCS11` on Windows), and finally the optional
+directory configured by NSS, the user's home directory (`$HOME/.wolfPKCS11` on
+POSIX or `%APPDATA%\wolfPKCS11` on Windows), and finally the optional
 `WOLFPKCS11_DEFAULT_TOKEN_PATH` build-time setting. There is no fallback to
 `/tmp`; deployments must provide a secure storage location explicitly.
+
+Note: releases 2.0 and 2.1 looked up a non-existent `APPDIR` variable on
+Windows, so no per-user default was used there and token data went to
+`WOLFPKCS11_DEFAULT_TOKEN_PATH` (or token storage failed if it was unset).
+Windows builds now use `%APPDATA%\wolfPKCS11` ahead of
+`WOLFPKCS11_DEFAULT_TOKEN_PATH`. Deployments with existing tokens in the
+build-time default directory should set `WOLFPKCS11_TOKEN_PATH` to that
+directory, or move the token files into `%APPDATA%\wolfPKCS11`.
 
 ### WOLFPKCS11_NO_STORE
 
