@@ -1160,6 +1160,20 @@ typedef struct WP11_TpmStore {
 } WP11_TpmStore;
 static WP11_TpmStore tpmStores[1]; /* maximum of 1 open store */
 static word32 tpmNvIndexMax = 0;    /* TPM_PT_NV_INDEX_MAX, 0 when unknown */
+#ifdef DEBUG_WOLFPKCS11
+static int tpmStoreShortBy = 0;
+
+/**
+ * Test hook: stage every record in a buffer short by the given number of
+ * bytes, so a write runs past it.
+ *
+ * @param  bytes  [in]  Bytes to leave out, or 0 to disable the hook.
+ */
+WP11_API void WP11_Test_TpmStoreShortBy(int bytes)
+{
+    tpmStoreShortBy = bytes;
+}
+#endif
 
 /**
  * Read the largest NV index the TPM allows, so a record that cannot fit in
@@ -2484,6 +2498,10 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
         ret = BUFFER_E;
     }
     else if (ret == 0) {
+    #ifdef DEBUG_WOLFPKCS11
+        if (tpmStoreShortBy > 0 && maxSz > tpmStoreShortBy)
+            maxSz -= tpmStoreShortBy;
+    #endif
         /* Stage the record in its own context, NV is only touched on commit */
         tpmStore = (WP11_TpmStore*)XMALLOC(sizeof(*tpmStore) + (size_t)maxSz,
             NULL, DYNAMIC_TYPE_TMP_BUFFER);

@@ -1004,10 +1004,65 @@ static void test_load_record_without_trailing_fields(void)
 #endif /* TOKEN_STORE_FILE_TEST */
 
 #ifdef TOKEN_STORE_TPM_TEST
-/* Debug-only hook exported by libwolfpkcs11. */
+/* Debug-only hooks exported by libwolfpkcs11. */
 extern int WP11_Test_StoreWriteFailAfter(int writes);
+extern void WP11_Test_TpmStoreShortBy(int bytes);
 
 #define MAX_STORE_WRITES 500
+
+static byte privateValue[16] = {
+    0x5a, 0x0c, 0xe7, 0x31, 0x9b, 0x46, 0xd8, 0x2f,
+    0x74, 0xa1, 0x1e, 0xc3, 0x68, 0xf5, 0x0d, 0xb2
+};
+
+/* Create a private, readable token secret encrypted under the token key. */
+static CK_RV create_private_token_secret(CK_SESSION_HANDLE session,
+                                         const char* label,
+                                         CK_OBJECT_HANDLE* obj)
+{
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,       &secretClass, sizeof(secretClass)  },
+        { CKA_KEY_TYPE,    &genericType, sizeof(genericType)  },
+        { CKA_VALUE,       privateValue, sizeof(privateValue) },
+        { CKA_TOKEN,       &ckTrue,      sizeof(ckTrue)       },
+        { CKA_PRIVATE,     &ckTrue,      sizeof(ckTrue)       },
+        { CKA_SENSITIVE,   &ckFalse,     sizeof(ckFalse)      },
+        { CKA_EXTRACTABLE, &ckTrue,      sizeof(ckTrue)       },
+        { CKA_LABEL,       NULL,         0                    },
+    };
+
+    tmpl[7].pValue = (CK_VOID_PTR)label;
+    tmpl[7].ulValueLen = (CK_ULONG)XSTRLEN(label);
+    return funcList->C_CreateObject(session, tmpl,
+                                    sizeof(tmpl) / sizeof(*tmpl), obj);
+}
+
+/* The private secret with the label is found and its value decrypts. */
+static int private_secret_usable(CK_SESSION_HANDLE session, const char* label)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE found[8];
+    CK_ULONG foundCnt = 0;
+    byte value[sizeof(privateValue)];
+    CK_ATTRIBUTE valueAttr = { CKA_VALUE, value, sizeof(value) };
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_LABEL, NULL, 0 },
+    };
+
+    tmpl[0].pValue = (CK_VOID_PTR)label;
+    tmpl[0].ulValueLen = (CK_ULONG)XSTRLEN(label);
+    rv = funcList->C_FindObjectsInit(session, tmpl, 1);
+    if (rv == CKR_OK) {
+        rv = funcList->C_FindObjects(session, found, 8, &foundCnt);
+        funcList->C_FindObjectsFinal(session);
+    }
+    if (rv == CKR_OK && foundCnt != 1)
+        rv = CKR_OBJECT_HANDLE_INVALID;
+    if (rv == CKR_OK)
+        rv = funcList->C_GetAttributeValue(session, found[0], &valueAttr, 1);
+    return rv == CKR_OK && valueAttr.ulValueLen == sizeof(privateValue) &&
+           XMEMCMP(value, privateValue, sizeof(privateValue)) == 0;
+}
 
 /* Reload the token from what storage holds after storing was made to fail. */
 static CK_RV reload_stored(CK_SLOT_ID slot, CK_SESSION_HANDLE* session)
@@ -1086,6 +1141,10 @@ static void test_interrupted_pin_change_keeps_stored_pin(void)
         rv = create_token_secret(session, "tpm-pin-keep", &obj);
         CHECK_RV(rv, "create stored token object", CKR_OK);
     }
+    if (rv == CKR_OK) {
+        rv = create_private_token_secret(session, "tpm-pin-private", &obj);
+        CHECK_RV(rv, "create stored private token object", CKR_OK);
+    }
     for (writes = 0; intact && rv == CKR_OK && writes < MAX_STORE_WRITES;
          writes++) {
         (void)WP11_Test_StoreWriteFailAfter(writes);
@@ -1100,15 +1159,99 @@ static void test_interrupted_pin_change_keeps_stored_pin(void)
         close_session(session);
         session = CK_INVALID_HANDLE;
         rv = reload_stored(slot, &session);
-        if (rv != CKR_OK || count_label(session, "tpm-pin-keep") != 1) {
+        /* Records under the token key must still open with the stored PIN. */
+        if (rv != CKR_OK || count_label(session, "tpm-pin-keep") != 1 ||
+                !private_secret_usable(session, "tpm-pin-private")) {
             printf("Stored token changed by a store failing after %d "
                    "writes\n", writes);
             intact = 0;
         }
     }
-    CHECK_TRUE(intact, "stored PIN logs in after each failed PIN change");
+    CHECK_TRUE(intact, "stored PIN and private key work after each failed "
+               "PIN change");
     CHECK_TRUE(rv == CKR_OK && writes < MAX_STORE_WRITES,
                "PIN change succeeds once storing works");
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+/* A record that outgrows its NV index is moved to a larger one with its
+ * data and reloads from there. */
+static void test_grown_record_reloads(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    char longLabel[200];
+    CK_ATTRIBUTE labelAttr = { CKA_LABEL, longLabel, sizeof(longLabel) - 1 };
+
+    printf("\n--- record that outgrows its NV index reloads ---\n");
+    XMEMSET(longLabel, 'g', sizeof(longLabel) - 1);
+    longLabel[sizeof(longLabel) - 1] = '\0';
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "tpm-grow", &obj);
+        CHECK_RV(rv, "create stored token object", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_SetAttributeValue(session, obj, &labelAttr, 1);
+        CHECK_RV(rv, "grow the object record past its NV index", CKR_OK);
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    if (rv == CKR_OK) {
+        rv = reload_stored(slot, &session);
+        CHECK_RV(rv, "reload token", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        CHECK_TRUE(count_label(session, longLabel) == 1,
+                   "grown record reloads with its new data");
+        CHECK_TRUE(count_label(session, "tpm-grow") == 0,
+                   "old record is gone");
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+/* A record written past its staging buffer is reported, not committed. */
+static void test_record_overflow_reports_failure(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+
+    printf("\n--- record overflowing its staging buffer is reported ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "tpm-fit", &obj);
+        CHECK_RV(rv, "create stored token object", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        WP11_Test_TpmStoreShortBy(1);
+        rv = create_token_secret(session, "tpm-overflow", &obj);
+        WP11_Test_TpmStoreShortBy(0);
+        CHECK_TRUE(rv != CKR_OK, "create fails when a record overflows");
+        close_session(session);
+        session = CK_INVALID_HANDLE;
+        rv = reload_stored(slot, &session);
+        CHECK_RV(rv, "reload token", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        CHECK_TRUE(count_label(session, "tpm-fit") == 1,
+                   "stored object is still present");
+        CHECK_TRUE(count_label(session, "tpm-overflow") == 0,
+                   "overflowing object was not stored");
+        rv = create_token_secret(session, "tpm-overflow", &obj);
+        CHECK_RV(rv, "create succeeds once records fit", CKR_OK);
+    }
     close_session(session);
     funcList->C_Finalize(NULL);
 }
@@ -1150,6 +1293,8 @@ static int run_tests(void)
 #else
     test_interrupted_create_keeps_stored_token();
     test_interrupted_pin_change_keeps_stored_pin();
+    test_grown_record_reloads();
+    test_record_overflow_reports_failure();
 #endif
     pkcs11_unload();
     return 0;
