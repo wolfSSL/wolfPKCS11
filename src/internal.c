@@ -1159,6 +1159,45 @@ typedef struct WP11_TpmStore {
     int writeFailed;
 } WP11_TpmStore;
 static WP11_TpmStore tpmStores[1]; /* maximum of 1 open store */
+static word32 tpmNvIndexMax = 0;    /* TPM_PT_NV_INDEX_MAX, 0 when unknown */
+
+/**
+ * Read the largest NV index the TPM allows, so a record that cannot fit in
+ * one is refused before any NV index is touched.
+ *
+ * @return  0 on success.
+ * @return  TPM RC or BAD_FUNC_ARG when the limit could not be read.
+ */
+static int wolfPKCS11_Store_TpmReadLimits(void)
+{
+    int rc;
+    GetCapability_In in;
+    GetCapability_Out out;
+    TPML_TAGGED_TPM_PROPERTY* props;
+
+    XMEMSET(&in, 0, sizeof(in));
+    XMEMSET(&out, 0, sizeof(out));
+    in.capability = TPM_CAP_TPM_PROPERTIES;
+    in.property = TPM_PT_NV_INDEX_MAX;
+    in.propertyCount = 1;
+    rc = TPM2_GetCapability(&in, &out);
+    if (rc == TPM_RC_SUCCESS) {
+        props = &out.capabilityData.data.tpmProperties;
+        if (out.capabilityData.capability != TPM_CAP_TPM_PROPERTIES ||
+                props->count < 1 ||
+                props->tpmProperty[0].property != TPM_PT_NV_INDEX_MAX ||
+                props->tpmProperty[0].value == 0) {
+            rc = BAD_FUNC_ARG;
+        }
+        else {
+            tpmNvIndexMax = props->tpmProperty[0].value;
+        }
+    }
+    if (rc != 0)
+        printf("TPM NV index size limit unknown: %d\n", rc);
+
+    return rc;
+}
 
 /* Internal function to get maximum size for each store type */
 static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
@@ -2437,6 +2476,12 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
         if (ret != 0) {
             ret = NOT_AVAILABLE_E; /* read for handle that doesn't exist */
         }
+    }
+    else if (ret == 0 && tpmNvIndexMax != 0 && (word32)maxSz > tpmNvIndexMax) {
+        /* Too big for one NV index: refuse it before anything is written. */
+        printf("Store record of %d bytes exceeds the TPM NV index limit of "
+            "%u\n", maxSz, (unsigned int)tpmNvIndexMax);
+        ret = BUFFER_E;
     }
     else if (ret == 0) {
         /* Stage the record in its own context, NV is only touched on commit */
@@ -9212,6 +9257,10 @@ static int wp11_TpmInit(WP11_Slot* slot)
             "FIPS 140-2 %d, CC-EAL4 %d\n",
             caps.mfgStr, caps.mfg, caps.vendorStr, caps.fwVerMajor,
             caps.fwVerMinor, caps.fwVerVendor, caps.fips140_2, caps.cc_eal4);
+    #ifdef WOLFPKCS11_TPM_STORE
+        /* Without the limit, an oversized record fails at commit instead. */
+        (void)wolfPKCS11_Store_TpmReadLimits();
+    #endif
     }
     if (ret == 0) {
         ret = wolfTPM2_SetCryptoDevCb(&slot->tpmDev, wolfTPM2_CryptoDevCb,
