@@ -790,8 +790,10 @@ static void test_ecb_unwrap_aes_key(CK_SLOT_ID slot, CK_SESSION_HANDLE session)
 }
 #endif
 
-#if !defined(NO_RSA) && !defined(NO_AES) && !defined(WOLFPKCS11_NO_STORE)
-/* An RSA key AES-ECB wraps must unwrap without CKA_VALUE_LEN. */
+#if !defined(NO_RSA) && !defined(NO_AES) && defined(HAVE_AES_CBC) && \
+    !defined(WOLFPKCS11_NO_STORE)
+/* AES-ECB refuses an RSA key whose encoding is not block aligned, and the
+ * zero padded encoding unwraps under AES-ECB without CKA_VALUE_LEN. */
 static void test_ecb_wrap_rsa_key(CK_SLOT_ID slot, CK_SESSION_HANDLE session)
 {
     CK_RV rv;
@@ -805,8 +807,14 @@ static void test_ecb_wrap_rsa_key(CK_SLOT_ID slot, CK_SESSION_HANDLE session)
     CK_KEY_TYPE rsaType = CKK_RSA;
     CK_KEY_TYPE aesType = CKK_AES;
     CK_BYTE aesValue[16];
+    CK_BYTE iv[16];
     CK_BYTE wrapped[2048];
+    CK_BYTE encoded[2048];
+    CK_BYTE modulus[sizeof(rsa_2048_modulus)];
     CK_ULONG wrappedLen = sizeof(wrapped);
+    CK_ULONG encodedLen = sizeof(encoded);
+    CK_ULONG ecbLen = sizeof(encoded);
+    CK_ATTRIBUTE modAttr = { CKA_MODULUS, modulus, sizeof(modulus) };
     CK_ATTRIBUTE rsaPrivTmpl[] = {
         { CKA_CLASS,            &privClass,        sizeof(privClass)         },
         { CKA_KEY_TYPE,         &rsaType,          sizeof(rsaType)           },
@@ -842,6 +850,9 @@ static void test_ecb_wrap_rsa_key(CK_SLOT_ID slot, CK_SESSION_HANDLE session)
     if (rv != CKR_OK || (info.flags & CKF_WRAP) == 0)
         return;
     XMEMSET(aesValue, 0x4b, sizeof(aesValue));
+    XMEMSET(iv, 0x1c, sizeof(iv));
+    cbcMech.pParameter = iv;
+    cbcMech.ulParameterLen = sizeof(iv);
     rv = funcList->C_CreateObject(session, rsaPrivTmpl,
         sizeof(rsaPrivTmpl) / sizeof(*rsaPrivTmpl), &rsaPriv);
     if (rv == CKR_OK) {
@@ -849,20 +860,59 @@ static void test_ecb_wrap_rsa_key(CK_SLOT_ID slot, CK_SESSION_HANDLE session)
             sizeof(aesTmpl) / sizeof(*aesTmpl), &aesKey);
     }
     CHECK_RV(rv, "create RSA private key and AES wrapping key", CKR_OK);
+    /* Recover the key encoding through AES-CBC-PAD; it is zero padded below. */
     if (rv == CKR_OK) {
-        rv = funcList->C_WrapKey(session, &mech, aesKey, rsaPriv, wrapped,
+        rv = funcList->C_WrapKey(session, &cbcMech, aesKey, rsaPriv, wrapped,
                                  &wrappedLen);
+        if (rv == CKR_FUNCTION_FAILED) {
+            printf("Skipping AES-ECB RSA wrap: RSA key export unsupported\n");
+            rv = CKR_GENERAL_ERROR;
+        }
+        else {
+            CHECK_RV(rv, "C_WrapKey(AES-CBC-PAD) of the RSA key", CKR_OK);
+        }
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_WrapKey(session, &mech, aesKey, rsaPriv, encoded,
+                                 &ecbLen);
+        CHECK_RV(rv, "C_WrapKey(AES-ECB) refuses an unaligned RSA key",
+                 CKR_KEY_SIZE_RANGE);
+        rv = (rv == CKR_KEY_SIZE_RANGE) ? CKR_OK : CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_DecryptInit(session, &cbcMech, aesKey);
+        if (rv == CKR_OK) {
+            rv = funcList->C_Decrypt(session, wrapped, wrappedLen, encoded,
+                                     &encodedLen);
+        }
+        CHECK_RV(rv, "C_Decrypt(AES-CBC-PAD) of the wrapped RSA key", CKR_OK);
+        CHECK_TRUE(rv != CKR_OK || (encodedLen % 16) != 0,
+                   "RSA key encoding is not block aligned");
+    }
+    if (rv == CKR_OK) {
+        XMEMSET(encoded + encodedLen, 0, 16 - (encodedLen % 16));
+        encodedLen += 16 - (encodedLen % 16);
+        wrappedLen = sizeof(wrapped);
+        rv = funcList->C_EncryptInit(session, &mech, aesKey);
+        if (rv == CKR_OK) {
+            rv = funcList->C_Encrypt(session, encoded, encodedLen, wrapped,
+                                     &wrappedLen);
+        }
+        CHECK_RV(rv, "C_Encrypt(AES-ECB) of the padded RSA key", CKR_OK);
     }
     if (rv == CKR_OK) {
         rv = funcList->C_UnwrapKey(session, &mech, aesKey, wrapped,
                                    wrappedLen, unwrapTmpl,
                                    sizeof(unwrapTmpl) / sizeof(*unwrapTmpl),
                                    &unwrapped);
-        CHECK_RV(rv, "C_UnwrapKey(AES-ECB) of the RSA key it wrapped", CKR_OK);
+        CHECK_RV(rv, "C_UnwrapKey(AES-ECB) of an RSA key without CKA_VALUE_LEN",
+                 CKR_OK);
     }
-    else {
-        CHECK_TRUE(rsaPriv != CK_INVALID_HANDLE && aesKey != CK_INVALID_HANDLE,
-                   "C_WrapKey(AES-ECB) refuses an unaligned RSA key");
+    if (rv == CKR_OK) {
+        rv = funcList->C_GetAttributeValue(session, unwrapped, &modAttr, 1);
+        CHECK_TRUE(rv == CKR_OK && modAttr.ulValueLen == sizeof(modulus) &&
+                   XMEMCMP(modulus, rsa_2048_modulus, sizeof(modulus)) == 0,
+                   "AES-ECB unwrapped RSA key has the original modulus");
     }
     if (unwrapped != CK_INVALID_HANDLE)
         funcList->C_DestroyObject(session, unwrapped);
@@ -917,7 +967,8 @@ static int run_test(void)
         test_ecb_wrap_short_key(slotList[0], session);
         test_ecb_unwrap_aes_key(slotList[0], session);
 #endif
-#if !defined(NO_RSA) && !defined(NO_AES) && !defined(WOLFPKCS11_NO_STORE)
+#if !defined(NO_RSA) && !defined(NO_AES) && defined(HAVE_AES_CBC) && \
+    !defined(WOLFPKCS11_NO_STORE)
         test_ecb_wrap_rsa_key(slotList[0], session);
 #endif
         funcList->C_CloseSession(session);
