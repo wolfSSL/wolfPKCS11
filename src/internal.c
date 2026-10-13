@@ -2351,9 +2351,15 @@ int wolfPKCS11_Store_Remove(int type, CK_ULONG id1, CK_ULONG id2)
     XMEMSET(&parent, 0, sizeof(parent));
     parent.hndl = WOLFPKCS11_TPM_AUTH_TYPE;
     ret = wolfTPM2_NVDeleteAuth(tpmStore->dev, &parent, nvIndex);
-    if (ret != 0) {
+    /* TPM_RC_HANDLE carries the handle number: nothing is stored there. */
+    if (ret > 0 && (ret & (RC_FMT1 | 0x3F)) == TPM_RC_HANDLE) {
+        ret = 0;
+    }
+    else if (ret != 0) {
         printf("Error %d (%s) removing NV handle 0x%x: \n",
             ret, wolfTPM2_GetRCString(ret), nvIndex);
+        /* Callers take a negative value as failure, not a TPM RC. */
+        ret = WC_HW_E;
     }
 #else
     /* remove file */
