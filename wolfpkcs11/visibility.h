@@ -33,25 +33,28 @@
 */
 
 #if defined(BUILDING_WOLFPKCS11)
-    #if defined(HAVE_VISIBILITY) && HAVE_VISIBILITY
-        #define WP11_API   __attribute__ ((visibility("default")))
-        #define WP11_LOCAL __attribute__ ((visibility("hidden")))
-    #elif defined(__SUNPRO_C) && (__SUNPRO_C >= 0x550)
-        #define WP11_API   __global
-        #define WP11_LOCAL __hidden
-    #elif defined(_MSC_VER) || defined(__MINGW32__)
+    /* Check Windows targets first: PE/COFF does not support visibility
+     * attributes, but the configure probe can still report HAVE_VISIBILITY
+     * for MinGW/Cygwin/MSYS2 GCC, which then warns on every WP11_LOCAL. */
+    #if defined(_MSC_VER) || defined(__MINGW32__) || defined(__CYGWIN__)
         #if defined(WP11_DLL)
             #define WP11_API __declspec(dllexport)
         #else
             #define WP11_API
         #endif
         #define WP11_LOCAL
+    #elif defined(HAVE_VISIBILITY) && HAVE_VISIBILITY
+        #define WP11_API   __attribute__ ((visibility("default")))
+        #define WP11_LOCAL __attribute__ ((visibility("hidden")))
+    #elif defined(__SUNPRO_C) && (__SUNPRO_C >= 0x550)
+        #define WP11_API   __global
+        #define WP11_LOCAL __hidden
     #else
         #define WP11_API
         #define WP11_LOCAL
     #endif /* HAVE_VISIBILITY */
 #else /* BUILDING_WOLFPKCS11 */
-    #if defined(_MSC_VER) || defined(__MINGW32__)
+    #if defined(_MSC_VER) || defined(__MINGW32__) || defined(__CYGWIN__)
         #if defined(WP11_DLL)
             #define WP11_API __declspec(dllimport)
         #else
