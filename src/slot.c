@@ -1526,6 +1526,11 @@ CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
             WOLFPKCS11_LEAVE("C_SetPIN", rv);
             return rv;
         }
+        if (ret == MEMORY_E) {
+            rv = CKR_HOST_MEMORY;
+            WOLFPKCS11_LEAVE("C_SetPIN", rv);
+            return rv;
+        }
         if (ret != 0) {
             rv = CKR_FUNCTION_FAILED;
             WOLFPKCS11_LEAVE("C_SetPIN", rv);
@@ -1944,6 +1949,9 @@ CK_RV C_Login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
         case READ_ONLY_E:
             /* Only possible for SO login */
             rv = CKR_SESSION_READ_ONLY_EXISTS;
+            break;
+        case MEMORY_E:
+            rv = CKR_HOST_MEMORY;
             break;
         case 0:
             rv = CKR_OK;
