@@ -849,6 +849,80 @@ static void digest_key_value_test(CK_SESSION_HANDLE session)
 }
 #endif
 
+#if !defined(NO_SHA256) && !defined(WOLFPKCS11_NO_STORE) && !defined(NO_AES)
+/* Once C_DigestKey has fed key material into the hash, the operation state
+ * cannot be saved: it would hand out a sensitive key in the clear. */
+static void digest_key_state_unsaveable_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE keyType = CKK_AES;
+    byte value[16];
+    byte state[512];
+    byte hash[32];
+    CK_ULONG stateLen;
+    CK_ULONG hashLen;
+    CK_ULONG i;
+    int found = 0;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,       &keyClass, sizeof(keyClass) },
+        { CKA_KEY_TYPE,    &keyType,  sizeof(keyType)  },
+        { CKA_TOKEN,       &ckTrue,   sizeof(ckTrue)   },
+        { CKA_PRIVATE,     &ckTrue,   sizeof(ckTrue)   },
+        { CKA_SENSITIVE,   &ckTrue,   sizeof(ckTrue)   },
+        { CKA_EXTRACTABLE, &ckFalse,  sizeof(ckFalse)  },
+        { CKA_VALUE,       value,     sizeof(value)    },
+    };
+    CK_ATTRIBUTE valueAttr = { CKA_VALUE, hash, sizeof(hash) };
+
+    XMEMSET(value, 0x5d, sizeof(value));
+    rv = funcList->C_CreateObject(session, tmpl, sizeof(tmpl) / sizeof(*tmpl),
+                                  &key);
+    CHECK_RV(rv, "create sensitive non-extractable AES key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    rv = funcList->C_GetAttributeValue(session, key, &valueAttr, 1);
+    CHECK_RV(rv, "C_GetAttributeValue refuses the sensitive key value",
+             CKR_ATTRIBUTE_SENSITIVE);
+
+    rv = funcList->C_DigestInit(session, &sha256Mech);
+    CHECK_RV(rv, "C_DigestInit(SHA256) before C_DigestKey", CKR_OK);
+    rv = funcList->C_DigestKey(session, key);
+    CHECK_RV(rv, "C_DigestKey(sensitive AES key)", CKR_OK);
+    stateLen = 0;
+    rv = funcList->C_GetOperationState(session, NULL, &stateLen);
+    CHECK_RV(rv, "C_GetOperationState length query after C_DigestKey",
+             CKR_STATE_UNSAVEABLE);
+    stateLen = sizeof(state);
+    XMEMSET(state, 0, sizeof(state));
+    rv = funcList->C_GetOperationState(session, state, &stateLen);
+    CHECK_RV(rv, "C_GetOperationState after C_DigestKey",
+             CKR_STATE_UNSAVEABLE);
+    for (i = 0; i + sizeof(value) <= sizeof(state); i++) {
+        if (XMEMCMP(state + i, value, sizeof(value)) == 0)
+            found = 1;
+    }
+    CHECK_TRUE(!found, "saved operation state does not hold the key value");
+    hashLen = sizeof(hash);
+    rv = funcList->C_DigestFinal(session, hash, &hashLen);
+    CHECK_RV(rv, "C_DigestFinal after a refused state save", CKR_OK);
+
+    rv = funcList->C_DigestInit(session, &sha256Mech);
+    CHECK_RV(rv, "C_DigestInit(SHA256) without C_DigestKey", CKR_OK);
+    rv = funcList->C_DigestUpdate(session, value, sizeof(value));
+    CHECK_RV(rv, "C_DigestUpdate without C_DigestKey", CKR_OK);
+    stateLen = sizeof(state);
+    rv = funcList->C_GetOperationState(session, state, &stateLen);
+    CHECK_RV(rv, "C_GetOperationState without C_DigestKey", CKR_OK);
+    hashLen = sizeof(hash);
+    rv = funcList->C_DigestFinal(session, hash, &hashLen);
+    CHECK_RV(rv, "C_DigestFinal after a state save", CKR_OK);
+
+    funcList->C_DestroyObject(session, key);
+}
+#endif
+
 #if !defined(NO_AES) && defined(HAVE_AESCMAC)
 static CK_OBJECT_CLASS aesKeyClass = CKO_SECRET_KEY;
 static CK_KEY_TYPE aesKeyType = CKK_AES;
@@ -1337,6 +1411,9 @@ static int run_test(void)
         digest_empty_input_test(session);
 #ifndef WOLFPKCS11_NO_STORE
         digest_key_value_test(session);
+#ifndef NO_AES
+        digest_key_state_unsaveable_test(session);
+#endif
 #endif
 #endif
 #if !defined(NO_SHA256) && !defined(NO_HMAC)

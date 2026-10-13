@@ -453,6 +453,7 @@ typedef struct WP11_Hmac {
 typedef struct WP11_Digest {
     wc_HashAlg hash;
     enum wc_HashType hashType;
+    byte keyDigested;                  /* Key material fed by C_DigestKey     */
 } WP11_Digest;
 
 #ifdef HAVE_AESCMAC
@@ -20812,6 +20813,7 @@ int WP11_Digest_Init(CK_MECHANISM_TYPE mechanism, WP11_Session* session)
     if (ret == 0) {
         WP11_Session_AbortOp(session);
         digest->hashType = (enum wc_HashType)hashType;
+        digest->keyDigested = 0;
         ret = wc_HashInit(&digest->hash, (enum wc_HashType)hashType);
     }
 
@@ -20868,6 +20870,8 @@ int WP11_Digest_Key(WP11_Object* key, WP11_Session* session)
     if (key->onToken) {
         WP11_Lock_UnlockRO(key->lock);
     }
+    /* The hash context now holds key bytes: it must not leave the token. */
+    digest->keyDigested = 1;
 #else
     (void) session;
     (void) key;
@@ -20908,6 +20912,8 @@ int WP11_Digest_Final(unsigned char* data, word32* dataLen,
     ret = wc_HashFinal(&digest->hash, digest->hashType, data);
     *dataLen = blockLen;
     wc_HashFree(&digest->hash, digest->hashType);
+    wc_ForceZero(&digest->hash, sizeof(digest->hash));
+    digest->keyDigested = 0;
 
     return ret;
 }
@@ -20935,6 +20941,7 @@ int WP11_Digest_Single(unsigned char* data, word32 dataLen,
     blockLen = wc_HashGetDigestSize(digest->hashType);
     if (blockLen < 0) {
         wc_HashFree(&digest->hash, digest->hashType);
+        wc_ForceZero(&digest->hash, sizeof(digest->hash));
         session->init = 0;
         return CKR_FUNCTION_FAILED;
     }
@@ -20951,6 +20958,8 @@ int WP11_Digest_Single(unsigned char* data, word32 dataLen,
     *dataOutLen = (word32)blockLen;
 
     wc_HashFree(&digest->hash, digest->hashType);
+    wc_ForceZero(&digest->hash, sizeof(digest->hash));
+    digest->keyDigested = 0;
 
     return ret;
 }
@@ -21378,6 +21387,9 @@ int WP11_GetOperationState(WP11_Session* session, unsigned char* stateData,
         return CKR_OPERATION_NOT_INITIALIZED;
     if (!WP11_Session_IsOpInitialized(session, WP11_INIT_DIGEST))
         return CKR_STATE_UNSAVEABLE;
+    /* The saved hash context would carry the bytes of a digested key. */
+    if (session->params.digest.keyDigested)
+        return CKR_STATE_UNSAVEABLE;
 
     switch (session->mechanism) {
 #ifndef NO_MD5
@@ -21534,6 +21546,7 @@ int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
     session->mechanism = mechanism;
 
     session->params.digest.hashType = (enum wc_HashType)hashType;
+    session->params.digest.keyDigested = 0;
     ret = wc_HashInit(&session->params.digest.hash,
         (enum wc_HashType)hashType);
 
