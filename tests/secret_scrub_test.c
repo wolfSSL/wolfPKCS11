@@ -310,6 +310,56 @@ static void cbc_buffered_scrub_test(CK_MECHANISM_TYPE mechType, int decrypt,
     clean = watch_stop_clean();
     CHECK_TRUE(clean, op);
 }
+/* The last block decrypted for a retried CBC-PAD C_DecryptFinal must be wiped
+ * when the session is freed without the retry. */
+static void cbc_pad_final_retry_scrub_test(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = 0;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_MECHANISM mech;
+    CK_BYTE block[16];
+    CK_BYTE out[32];
+    CK_ULONG outLen = sizeof(block);
+    int clean;
+
+    mech.mechanism = CKM_AES_CBC_PAD;
+    mech.pParameter = cbcIv;
+    mech.ulParameterLen = sizeof(cbcIv);
+
+    rv = user_session_open(&session);
+    if (rv == CKR_OK)
+        rv = create_aes_key(session, &key);
+    if (rv == CKR_OK)
+        rv = funcList->C_EncryptInit(session, &mech, key);
+    if (rv == CKR_OK) {
+        rv = funcList->C_Encrypt(session, (CK_BYTE_PTR)cbcPlain,
+                                 sizeof(cbcPlain), block, &outLen);
+    }
+    if (rv == CKR_OK)
+        rv = funcList->C_DecryptInit(session, &mech, key);
+    if (rv == CKR_OK) {
+        outLen = sizeof(out);
+        rv = funcList->C_DecryptUpdate(session, block, sizeof(block), out,
+                                       &outLen);
+    }
+    CHECK_RV(rv, "CBC-PAD decrypt with a buffered block", CKR_OK);
+    if (rv == CKR_OK) {
+        outLen = 4;
+        rv = funcList->C_DecryptFinal(session, out, &outLen);
+        CHECK_RV(rv, "CBC-PAD C_DecryptFinal with a short buffer",
+                 CKR_BUFFER_TOO_SMALL);
+        CHECK_TRUE(outLen == sizeof(cbcPlain),
+                   "CBC-PAD C_DecryptFinal reports the length");
+    }
+
+    /* C_Finalize frees every session. */
+    watch_start(cbcPlain, sizeof(cbcPlain));
+    funcList->C_Finalize(NULL);
+    clean = watch_stop_clean();
+    CHECK_TRUE(clean,
+               "CBC-PAD decrypted final block wiped when the session is freed");
+}
 #endif
 
 #if !defined(NO_AES) && defined(HAVE_AESGCM) && !defined(WOLFSSL_AESGCM_STREAM)
@@ -511,6 +561,7 @@ int main(int argc, char* argv[])
             "CBC buffered input wiped after a rejected C_DecryptFinal");
         cbc_buffered_scrub_test(CKM_AES_CBC_PAD, 1, 1, CKR_OK,
             "CBC-PAD buffered block wiped after C_DecryptFinal");
+        cbc_pad_final_retry_scrub_test();
 #endif
 #if !defined(NO_AES) && defined(HAVE_AESGCM) && !defined(WOLFSSL_AESGCM_STREAM)
         gcm_buffered_plaintext_scrub_test();
