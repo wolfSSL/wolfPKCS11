@@ -592,7 +592,8 @@ struct WP11_Slot {
     WP11_ObjectCalls calls[2];         /* Object calls of the last two epochs */
     word32 epoch;                      /* Current object call epoch           */
     WP11_Object* discarded;            /* Destroyed objects awaiting free     */
-    byte reclaim:1;                    /* Retired objects may await free      */
+    WP11_Lock callLock;                /* Lock for object call epochs         */
+    byte reclaim:1;                    /* Unlinked objects await free         */
 };
 
 #if defined(HAVE_FIPS) && FIPS_VERSION_LT(6,0)
@@ -960,15 +961,20 @@ static int wp11_Slot_AddSession(WP11_Slot* slot, WP11_Session** session)
     return ret;
 }
 
+static void wp11_Slot_UnlinkObject(WP11_Slot* slot, WP11_Object* object,
+                                   WP11_Object** list);
+static void wp11_Slot_FreeUnlinkedObjects(WP11_Slot* slot);
+
 /**
  * Finalize a session - clean-up but don't clear out.
+ * Caller holds the slot lock for writing.
  *
  * @param  session  [in]  Session object.
  */
 static void wp11_Session_Final(WP11_Session* session)
 {
     WP11_Object* obj;
-    WP11_Object* retired;
+    WP11_Slot* slot = session->slot;
 
     if (session->inUse) {
         /* Free objects in session. */
@@ -979,16 +985,18 @@ static void wp11_Session_Final(WP11_Session* session)
         }
         session->inUse = 0;
     }
-    /* Retired objects change only under the slot lock, which callers hold
-     * (or the library is being torn down). */
-    retired = session->retired;
-    session->retired = NULL;
-    while (retired != NULL) {
-        obj = retired;
-        retired = retired->next;
-        WP11_Object_Free(obj);
-    }
     session->curr = NULL;
+    /* Rollback paths unlink retired objects under the token lock, and a call
+     * that found one before logout may still be running. */
+    if (session->retired != NULL) {
+        WP11_Lock_LockRW(&slot->token.lock);
+        while ((obj = session->retired) != NULL) {
+            session->retired = obj->next;
+            wp11_Slot_UnlinkObject(slot, obj, &slot->discarded);
+        }
+        wp11_Slot_FreeUnlinkedObjects(slot);
+        WP11_Lock_UnlockRW(&slot->token.lock);
+    }
     /* Finalize any find. */
     WP11_Session_FindFinal(session);
 
@@ -8036,6 +8044,7 @@ static void wp11_Slot_Final(WP11_Slot* slot)
 #ifdef WOLFPKCS11_TPM
     wp11_TpmFinal(slot);
 #endif
+    WP11_Lock_Free(&slot->callLock);
     WP11_Lock_Free(&slot->lock);
 }
 
@@ -8063,6 +8072,12 @@ static int wp11_Slot_Init(WP11_Slot* slot, int id)
     slot->calls[1].slot = slot;
 
     ret = WP11_Lock_Init(&slot->lock);
+    if (ret == 0) {
+        ret = WP11_Lock_Init(&slot->callLock);
+        if (ret != 0) {
+            WP11_Lock_Free(&slot->lock);
+        }
+    }
     if (ret == 0) {
     #if defined(WOLFPKCS11_TPM)
         ret = wp11_TpmInit(slot);
@@ -8432,7 +8447,6 @@ int WP11_Slot_OpenSession(WP11_Slot* slot, unsigned long flags, void* app,
 }
 
 static void wp11_Slot_Logout(WP11_Slot* slot);
-static void wp11_Slot_FreeDiscardedObjects(WP11_Slot* slot);
 
 /**
  * Close a session associated with a slot.
@@ -8474,7 +8488,7 @@ void WP11_Slot_CloseSession(WP11_Slot* slot, WP11_Session* session)
         wp11_Session_Final(session);
     /* Its operation no longer holds objects destroyed while it ran. */
     WP11_Lock_LockRW(&slot->token.lock);
-    wp11_Slot_FreeDiscardedObjects(slot);
+    wp11_Slot_FreeUnlinkedObjects(slot);
     WP11_Lock_UnlockRW(&slot->token.lock);
 
     /* Decide and log out under the same lock so a concurrent open is either
@@ -8949,7 +8963,10 @@ typedef struct WP11_UserLoginData {
 } WP11_UserLoginData;
 
 /**
- * Check whether a session's initialized operation uses the object as its key.
+ * Check whether a session's initialized key operation uses the object as its
+ * key. A digest-only operation and a finished operation leave a stale
+ * pointer behind that must not keep the object alive.
+ * Caller holds the slot lock.
  *
  * @param  slot    [in]  Slot object.
  * @param  object  [in]  Object to look for.
@@ -8960,8 +8977,10 @@ static int wp11_Slot_ObjectIsActive(WP11_Slot* slot, WP11_Object* object)
     WP11_Session* sess;
 
     for (sess = slot->session; sess != NULL; sess = sess->next) {
-        if (sess->curr == object && sess->init != 0)
+        if (sess->curr == object &&
+                (sess->init & ~WP11_INIT_DIGEST_MASK) != 0) {
             return 1;
+        }
     }
     return 0;
 }
@@ -8969,7 +8988,7 @@ static int wp11_Slot_ObjectIsActive(WP11_Slot* slot, WP11_Object* object)
 /**
  * Start a new object call epoch once no call from the previous one runs, so
  * calls only ever run in the current and previous epochs.
- * Caller holds the slot lock for writing.
+ * Caller holds the call lock.
  *
  * @param  slot  [in]  Slot object.
  */
@@ -8982,7 +9001,7 @@ static void wp11_Slot_AdvanceEpoch(WP11_Slot* slot)
 /**
  * Check whether an unlinked object can be freed: every object call that began
  * by the epoch it was unlinked in has ended and no operation uses it.
- * Caller holds the slot and token locks for writing.
+ * Caller holds the slot and call locks.
  *
  * @param  slot    [in]  Slot object.
  * @param  object  [in]  Unlinked object.
@@ -9005,44 +9024,88 @@ static int wp11_Slot_ObjectFreeable(WP11_Slot* slot, WP11_Object* object)
 }
 
 /**
- * Free an object nothing uses any more, dropping stale operation pointers.
- * Caller holds the slot and token locks for writing.
+ * Move the unlinked objects of a list that nothing can still use onto the
+ * free list. Caller holds the slot, token and call locks.
  *
- * @param  slot    [in]  Slot object.
- * @param  object  [in]  Object to free.
+ * @param  slot  [in]      Slot object.
+ * @param  list  [in,out]  Head of the list of unlinked objects.
+ * @param  free  [in,out]  Head of the list of objects to free.
+ * @return  1 when objects are left on the list, 0 otherwise.
  */
-static void wp11_Slot_FreeUnused(WP11_Slot* slot, WP11_Object* object)
+static int wp11_Slot_CollectFreeable(WP11_Slot* slot, WP11_Object** list,
+                                     WP11_Object** free)
 {
-    WP11_Session* sess;
+    WP11_Object* obj;
+    int left = 0;
 
-    for (sess = slot->session; sess != NULL; sess = sess->next) {
-        if (sess->curr == object)
-            sess->curr = NULL;
+    while (*list != NULL) {
+        obj = *list;
+        if (!wp11_Slot_ObjectFreeable(slot, obj)) {
+            list = &obj->next;
+            left = 1;
+        }
+        else {
+            *list = obj->next;
+            obj->next = *free;
+            *free = obj;
+        }
     }
-    WP11_Object_Free(object);
+
+    return left;
 }
 
 /**
- * Free the destroyed objects that no object call or operation can still use.
+ * Free (and so zeroize) the objects that destroy unlinked or logout retired
+ * once no object call or key operation can still use them.
  * Caller holds the slot and token locks for writing.
  *
  * @param  slot  [in]  Slot object.
  */
-static void wp11_Slot_FreeDiscardedObjects(WP11_Slot* slot)
+static void wp11_Slot_FreeUnlinkedObjects(WP11_Slot* slot)
 {
-    WP11_Object** curr = &slot->discarded;
+    WP11_Object* free = NULL;
     WP11_Object* obj;
+    int left;
+#ifndef WOLFPKCS11_NSS
+    WP11_Session* sess;
+#endif
 
-    while (*curr != NULL) {
-        obj = *curr;
-        if (!wp11_Slot_ObjectFreeable(slot, obj)) {
-            curr = &obj->next;
-        }
-        else {
-            *curr = obj->next;
-            wp11_Slot_FreeUnused(slot, obj);
-        }
+    WP11_Lock_LockRW(&slot->callLock);
+    wp11_Slot_AdvanceEpoch(slot);
+    left = wp11_Slot_CollectFreeable(slot, &slot->discarded, &free);
+#ifndef WOLFPKCS11_NSS
+    for (sess = slot->session; sess != NULL; sess = sess->next) {
+        if (wp11_Slot_CollectFreeable(slot, &sess->retired, &free))
+            left = 1;
     }
+#endif
+    slot->reclaim = (byte)left;
+    WP11_Lock_UnlockRW(&slot->callLock);
+
+    while (free != NULL) {
+        obj = free;
+        free = obj->next;
+        WP11_Object_Free(obj);
+    }
+}
+
+/**
+ * Put an unlinked object on a list of objects awaiting free, stamped with the
+ * current epoch. Caller holds the slot and token locks for writing.
+ *
+ * @param  slot    [in]      Slot object.
+ * @param  object  [in]      Unlinked object.
+ * @param  list    [in,out]  Head of the list to put it on.
+ */
+static void wp11_Slot_UnlinkObject(WP11_Slot* slot, WP11_Object* object,
+                                   WP11_Object** list)
+{
+    WP11_Lock_LockRW(&slot->callLock);
+    object->freeEpoch = slot->epoch;
+    object->next = *list;
+    *list = object;
+    slot->reclaim = 1;
+    WP11_Lock_UnlockRW(&slot->callLock);
 }
 
 /**
@@ -9056,48 +9119,11 @@ void WP11_Slot_DiscardObject(WP11_Slot* slot, WP11_Object* object)
 {
     WP11_Lock_LockRW(&slot->lock);
     WP11_Lock_LockRW(&slot->token.lock);
-    object->freeEpoch = slot->epoch;
-    object->next = slot->discarded;
-    slot->discarded = object;
-    wp11_Slot_AdvanceEpoch(slot);
-    wp11_Slot_FreeDiscardedObjects(slot);
+    wp11_Slot_UnlinkObject(slot, object, &slot->discarded);
+    wp11_Slot_FreeUnlinkedObjects(slot);
     WP11_Lock_UnlockRW(&slot->token.lock);
     WP11_Lock_UnlockRW(&slot->lock);
 }
-
-#ifndef WOLFPKCS11_NSS
-
-/**
- * Free (and so zeroize) the retired objects that nothing can still use: every
- * object call that began before logout retired them has ended and no
- * operation uses them. Caller holds the slot and token locks for writing.
- *
- * @param  slot  [in]  Slot object.
- */
-static void wp11_Slot_FreeRetiredObjects(WP11_Slot* slot)
-{
-    WP11_Session* sess;
-    WP11_Object** curr;
-    WP11_Object* obj;
-    int left = 0;
-
-    for (sess = slot->session; sess != NULL; sess = sess->next) {
-        curr = &sess->retired;
-        while (*curr != NULL) {
-            obj = *curr;
-            if (!wp11_Slot_ObjectFreeable(slot, obj)) {
-                curr = &obj->next;
-                left = 1;
-            }
-            else {
-                *curr = obj->next;
-                wp11_Slot_FreeUnused(slot, obj);
-            }
-        }
-    }
-    slot->reclaim = (byte)left;
-}
-#endif
 
 /**
  * Note the start of a call that may use object pointers looked up by handle.
@@ -9113,10 +9139,10 @@ WP11_ObjectCalls* WP11_Slot_ObjectCallEnter(CK_SESSION_HANDLE hSession)
 
     if (WP11_Library_IsInitialized() &&
             WP11_Slot_Get(SESS_HANDLE_SLOT_ID(hSession), &slot) == 0) {
-        WP11_Lock_LockRW(&slot->lock);
+        WP11_Lock_LockRW(&slot->callLock);
         calls = &slot->calls[slot->epoch & 1];
         calls->cnt++;
-        WP11_Lock_UnlockRW(&slot->lock);
+        WP11_Lock_UnlockRW(&slot->callLock);
     }
 
     return calls;
@@ -9131,21 +9157,22 @@ WP11_ObjectCalls* WP11_Slot_ObjectCallEnter(CK_SESSION_HANDLE hSession)
 void WP11_Slot_ObjectCallLeave(WP11_ObjectCalls* calls)
 {
     WP11_Slot* slot;
+    int scan;
 
     if (calls != NULL) {
         slot = calls->slot;
-        WP11_Lock_LockRW(&slot->lock);
+        WP11_Lock_LockRW(&slot->callLock);
         calls->cnt--;
-        wp11_Slot_AdvanceEpoch(slot);
-        if (slot->reclaim || slot->discarded != NULL) {
+        /* Only an epoch that drains can make an unlinked object freeable. */
+        scan = (calls->cnt == 0) && slot->reclaim;
+        WP11_Lock_UnlockRW(&slot->callLock);
+        if (scan) {
+            WP11_Lock_LockRW(&slot->lock);
             WP11_Lock_LockRW(&slot->token.lock);
-        #ifndef WOLFPKCS11_NSS
-            wp11_Slot_FreeRetiredObjects(slot);
-        #endif
-            wp11_Slot_FreeDiscardedObjects(slot);
+            wp11_Slot_FreeUnlinkedObjects(slot);
             WP11_Lock_UnlockRW(&slot->token.lock);
+            WP11_Lock_UnlockRW(&slot->lock);
         }
-        WP11_Lock_UnlockRW(&slot->lock);
     }
 }
 
@@ -9312,7 +9339,7 @@ int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen)
         if (ret == 0) {
             token->loginState = WP11_APP_STATE_RW_USER;
         #ifndef WOLFPKCS11_NSS
-            wp11_Slot_FreeRetiredObjects(slot);
+            wp11_Slot_FreeUnlinkedObjects(slot);
         #endif
         }
     }
@@ -9741,18 +9768,14 @@ static void wp11_Slot_RetirePrivateSessionObjects(WP11_Slot* slot)
             if ((obj->opFlag & WP11_FLAG_PRIVATE) == WP11_FLAG_PRIVATE) {
                 *curr = obj->next;
                 sess->objCnt--;
-                obj->freeEpoch = slot->epoch;
-                obj->next = sess->retired;
-                sess->retired = obj;
-                slot->reclaim = 1;
+                wp11_Slot_UnlinkObject(slot, obj, &sess->retired);
             }
             else {
                 curr = &obj->next;
             }
         }
     }
-    wp11_Slot_AdvanceEpoch(slot);
-    wp11_Slot_FreeRetiredObjects(slot);
+    wp11_Slot_FreeUnlinkedObjects(slot);
 }
 #endif
 
