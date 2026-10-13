@@ -661,6 +661,7 @@ static int test_derived_length_matches_template(CK_SESSION_HANDLE session)
     CK_KEY_TYPE dhType = CKK_DH;
     byte peer[2 * sizeof(dh_ffdhe2048_p)];
     byte value[sizeof(dh_ffdhe2048_p)];
+    byte expect[sizeof(dh_ffdhe2048_p)];
     CK_ATTRIBUTE valueAttr = { CKA_VALUE, value, sizeof(value) };
     CK_ATTRIBUTE dhTmpl[] = {
         { CKA_CLASS,       &privClass,     sizeof(privClass)      },
@@ -734,6 +735,23 @@ static int test_derived_length_matches_template(CK_SESSION_HANDLE session)
     if (valueAttr.ulValueLen != sizeof(dh_ffdhe2048_p) || value[0] != 0)
         ret = CKR_GENERAL_ERROR;
     CHECK_CKR(ret, "DH derived value keeps its leading zero byte");
+    destroy_obj(session, &derived);
+
+    /* The same peer value encoded without its leading zero bytes. */
+    XMEMCPY(expect, value, sizeof(expect));
+    mech.pParameter = peer + sizeof(peer) - 2;
+    mech.ulParameterLen = 2;
+    ret = derive_generic(session, &mech, base, sizeof(dh_ffdhe2048_p),
+                         &derived);
+    CHECK_CKR(ret, "DH derive of a prime-sized secret from a short peer value");
+    valueAttr.ulValueLen = sizeof(value);
+    ret = funcList->C_GetAttributeValue(session, derived, &valueAttr, 1);
+    CHECK_CKR(ret, "read DH derived value from a short peer value");
+    if (valueAttr.ulValueLen != sizeof(expect) ||
+            XMEMCMP(value, expect, sizeof(expect)) != 0) {
+        ret = CKR_GENERAL_ERROR;
+    }
+    CHECK_CKR(ret, "DH derived value matches the zero padded peer derive");
     destroy_obj(session, &derived);
 
     mech.pParameter = peer;

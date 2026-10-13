@@ -9814,7 +9814,13 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                 pMechanism->ulParameterLen > WP11_MAX_DH_KEY_SZ)
                 return CKR_MECHANISM_PARAM_INVALID;
 
+            /* The secret is bounded by the prime, not by the peer value. */
+            if (WP11_Object_GetAttr(obj, CKA_PRIME, NULL, &dhPrimeLen) != 0 ||
+                    dhPrimeLen > WP11_MAX_DH_KEY_SZ)
+                return CKR_FUNCTION_FAILED;
             keyLen = (word32)pMechanism->ulParameterLen;
+            if (dhPrimeLen > keyLen)
+                keyLen = (word32)dhPrimeLen;
             derivedKey = (byte*)XMALLOC(keyLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             if (derivedKey == NULL)
                 return CKR_DEVICE_MEMORY;
@@ -10053,10 +10059,7 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
         /* DH agreement drops leading zero bytes; restore up to the prime
          * length on request. */
         if ((pMechanism->mechanism == CKM_DH_PKCS_DERIVE) &&
-                (reqValueLen > keyLen) &&
-                (reqValueLen <= pMechanism->ulParameterLen) &&
-                (WP11_Object_GetAttr(obj, CKA_PRIME, NULL, &dhPrimeLen) == 0) &&
-                (reqValueLen <= dhPrimeLen)) {
+                (reqValueLen > keyLen) && (reqValueLen <= dhPrimeLen)) {
             XMEMMOVE(derivedKey + (reqValueLen - keyLen), derivedKey, keyLen);
             XMEMSET(derivedKey, 0, reqValueLen - keyLen);
             keyLen = (word32)reqValueLen;
