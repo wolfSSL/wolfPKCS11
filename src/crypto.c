@@ -1285,6 +1285,9 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
         #endif
                 case CKK_GENERIC_SECRET:
                     ret = WP11_Object_SetSecretKey(obj, data, len);
+                    /* A length the key type cannot take. */
+                    if (ret == BAD_FUNC_ARG)
+                        return CKR_ATTRIBUTE_VALUE_INVALID;
                     break;
                 default:
                     break;

@@ -335,7 +335,64 @@ static void test_token_key_value_fixed(CK_SESSION_HANDLE* session)
         check_token_secret_fixed(*session);
 }
 
-/* A rejected secret key update leaves the existing key usable. */
+#if defined(HAVE_ECC) && !defined(NO_AES) && !defined(WOLFPKCS11_NSS)
+/* A derive hands the new key to WP11_Object_SetSecretKey directly, so a
+ * length the key type cannot take is rejected by the setter itself. */
+static void test_derive_invalid_secret_length(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS privClass = CKO_PRIVATE_KEY;
+    CK_KEY_TYPE ecType = CKK_EC;
+    CK_KEY_TYPE aesType = CKK_AES;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    CK_ECDH1_DERIVE_PARAMS params;
+    CK_MECHANISM mech = { CKM_ECDH1_DERIVE, NULL, 0 };
+    CK_ULONG badLen = 17;
+    CK_ATTRIBUTE baseTmpl[] = {
+        { CKA_CLASS,     &privClass,      sizeof(privClass)       },
+        { CKA_KEY_TYPE,  &ecType,         sizeof(ecType)          },
+        { CKA_TOKEN,     &ckFalse,        sizeof(ckFalse)         },
+        { CKA_PRIVATE,   &ckFalse,        sizeof(ckFalse)         },
+        { CKA_DERIVE,    &ckTrue,         sizeof(ckTrue)          },
+        { CKA_EC_PARAMS, ecc_p256_params, sizeof(ecc_p256_params) },
+        { CKA_VALUE,     ecc_p256_priv,   sizeof(ecc_p256_priv)   },
+    };
+    CK_ATTRIBUTE deriveTmpl[] = {
+        { CKA_CLASS,       &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE,    &aesType,     sizeof(aesType)     },
+        { CKA_TOKEN,       &ckFalse,     sizeof(ckFalse)     },
+        { CKA_PRIVATE,     &ckFalse,     sizeof(ckFalse)     },
+        { CKA_SENSITIVE,   &ckFalse,     sizeof(ckFalse)     },
+        { CKA_EXTRACTABLE, &ckTrue,      sizeof(ckTrue)      },
+        { CKA_VALUE_LEN,   &badLen,      sizeof(badLen)      },
+    };
+
+    XMEMSET(&params, 0, sizeof(params));
+    params.kdf = CKD_NULL;
+    params.pPublicData = ecc_p256_point;
+    params.ulPublicDataLen = sizeof(ecc_p256_point);
+    mech.pParameter = &params;
+    mech.ulParameterLen = sizeof(params);
+
+    rv = funcList->C_CreateObject(session, baseTmpl,
+                                  sizeof(baseTmpl) / sizeof(*baseTmpl), &base);
+    CHECK_RV(rv, "create EC base key", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_DeriveKey(session, &mech, base, deriveTmpl,
+                                   sizeof(deriveTmpl) / sizeof(*deriveTmpl),
+                                   &derived);
+        CHECK_RV(rv, "derive an AES key with an invalid length",
+                 CKR_ATTRIBUTE_VALUE_INVALID);
+        if (rv == CKR_OK)
+            destroy_obj(session, &derived);
+    }
+    destroy_obj(session, &base);
+}
+#endif
+
+/* The read-only gate in SetAttributeValue rejects a secret key update before
+ * WP11_Object_SetSecretKey runs, so the existing key is left untouched. */
 static void test_rejected_secret_update_keeps_key(CK_SESSION_HANDLE session)
 {
     CK_RV rv;
@@ -849,6 +906,9 @@ static int run_test(void)
     }
     if (rv == CKR_OK) {
         test_token_key_value_fixed(&session);
+#if defined(HAVE_ECC) && !defined(NO_AES) && !defined(WOLFPKCS11_NSS)
+        test_derive_invalid_secret_length(session);
+#endif
         test_rejected_secret_update_keeps_key(session);
 #ifndef NO_DH
         test_dh_private_value_fixed(session);
