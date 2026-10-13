@@ -752,8 +752,9 @@ static void test_cert_type_update_keeps_value(CK_SESSION_HANDLE session)
 }
 
 #ifdef KMU_ALLOC_HOOK
-/* A certificate value that cannot be stored leaves a consistent object, and
- * an existing certificate's value cannot be replaced. */
+/* A certificate value that cannot be allocated at creation leaves no object,
+ * which reaches WP11_Object_SetCert directly. Replacing the value of an
+ * existing certificate stops at the read-only gate before the setter runs. */
 static void test_cert_value_failure_consistent(CK_SESSION_HANDLE session)
 {
     CK_RV rv;
@@ -785,10 +786,9 @@ static void test_cert_value_failure_consistent(CK_SESSION_HANDLE session)
                                   sizeof(certTmpl) / sizeof(*certTmpl), &cert);
     CHECK_RV(rv, "create certificate", CKR_OK);
     if (rv == CKR_OK) {
-        failAllocArmed = 1;
         rv = funcList->C_SetAttributeValue(session, cert, setValue, 1);
-        failAllocArmed = 0;
-        CHECK_TRUE(rv != CKR_OK, "certificate value replacement rejected");
+        CHECK_RV(rv, "certificate value replacement stops at the gate",
+                 CKR_ATTRIBUTE_READ_ONLY);
         CHECK_TRUE(attr_equals(session, cert, CKA_VALUE, certVal,
                                sizeof(certVal)),
                    "certificate value kept");
@@ -798,8 +798,9 @@ static void test_cert_value_failure_consistent(CK_SESSION_HANDLE session)
 #endif
 
 #ifndef WOLFPKCS11_NO_STORE
-/* A certificate loaded from the token keeps its value through a rejected
- * replacement and a rejected copy, and persists unchanged. */
+/* The read-only gate rejects replacing a loaded certificate's value before
+ * WP11_Object_SetCert can touch the storage buffer, a copy of it is rejected,
+ * and the value persists unchanged. */
 static void test_loaded_cert_value_fixed(CK_SESSION_HANDLE* session)
 {
     CK_RV rv;
