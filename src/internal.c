@@ -4165,8 +4165,7 @@ static int wp11_DecryptData(byte* out, byte* data, int len, byte* key,
     return ret;
 }
 
-/* Flags left out of the bound policy: set by the SO, who never holds the
- * user's key, or by the library itself. */
+/* Left out of the bound policy: set by the SO or the library, not the user. */
 #ifdef WOLFPKCS11_TPM
 #define WP11_FLAG_POLICY_EXCLUDED   (WP11_FLAG_TRUSTED | WP11_FLAG_TPM)
 #else
@@ -8636,8 +8635,7 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
 
     ret = 0;
 #ifdef WP11_STORE_BATCH
-    /* Finish or drop a store pass that a crash interrupted, then keep other
-     * store passes out until every record of the token has been read. */
+    /* Finish or drop an interrupted pass, then keep passes out until read. */
     ret = wolfPKCS11_StoreBatchCheck(tokenId, &batchHeld);
 #endif
     /* Open access to token object. */
@@ -9718,8 +9716,7 @@ int WP11_Slot_TokenReset(WP11_Slot* slot, char* pin, int pinLen, char* label)
 #ifdef WP11_STORE_BATCH
         /* Only a staged store pass is known to leave storage unchanged. */
         if (ret != 0) {
-            /* Reset not stored: restore the token that is still in storage,
-             * under the lock so no session sees it half loaded. */
+            /* Reload under the lock so no session sees a half loaded token. */
             XMEMSET(emptyLabel, 0, sizeof(emptyLabel));
             WP11_Lock_LockRW(&slot->lock);
             wp11_Token_Final(token);
@@ -10530,8 +10527,7 @@ int WP11_Slot_SetSOPin(WP11_Slot* slot, char* pin, int pinLen)
         token->soPinLen = sizeof(token->soPin);
         token->tokenFlags |= WP11_TOKEN_FLAG_SO_PIN_SET;
     #ifndef WOLFPKCS11_NO_STORE
-        /* Lock order is slot, token, then store: no object changes under
-         * the pass, as in C_CreateObject. */
+        /* Order is slot, token, storeLock: no object changes under the pass. */
         WP11_Lock_LockRW(&token->lock);
         ret = wp11_Token_Store(token, (int)slot->id);
     #ifdef WP11_STORE_BATCH
@@ -15416,7 +15412,8 @@ static int wp11_Object_PolicyChanged(WP11_Object* object,
 
     if (object->onToken && wp11_Object_IsEncrypted(object) &&
             (object->objClass != prevClass ||
-             ((object->opFlag ^ prevFlag) & ~(word32)WP11_FLAG_POLICY_EXCLUDED) != 0)) {
+             ((object->opFlag ^ prevFlag) &
+              ~(word32)WP11_FLAG_POLICY_EXCLUDED) != 0)) {
         if (object->encoded || object->undecoded) {
             object->objClass = prevClass;
             object->opFlag = prevFlag;
