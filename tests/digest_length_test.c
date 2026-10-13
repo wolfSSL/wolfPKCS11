@@ -59,7 +59,8 @@ static CK_BBOOL ckTrue = CK_TRUE;
 static CK_BBOOL ckFalse = CK_FALSE;
 
 #if !defined(NO_SHA256) || !defined(NO_RSA) || \
-    (!defined(NO_AES) && defined(HAVE_AESCMAC))
+    (!defined(NO_AES) && (defined(HAVE_AESCMAC) || defined(HAVE_AES_CBC) || \
+                          defined(HAVE_AESCTS)))
 /* A length above the 32-bit range whose low 32 bits equal small. */
 static CK_ULONG big_len(CK_ULONG small)
 {
@@ -678,6 +679,44 @@ static void rsa_sign_output_capacity_test(CK_SESSION_HANDLE session)
     funcList->C_DestroyObject(session, priv);
     funcList->C_DestroyObject(session, pub);
 }
+
+/* RSA encrypt and decrypt accept an output buffer length above 32 bits. */
+static void rsa_encrypt_output_capacity_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_RSA_PKCS, NULL, 0 };
+    byte data[16];
+    byte enc[2048 / 8];
+    byte dec[2048 / 8];
+    CK_ULONG encLen = big_len(0);
+    CK_ULONG decLen = big_len(0);
+
+    XMEMSET(data, 0x6d, sizeof(data));
+    rv = create_rsa_keys(session, &priv, &pub);
+    CHECK_RV(rv, "create RSA key pair", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_EncryptInit(session, &mech, pub);
+    if (rv == CKR_OK)
+        rv = funcList->C_Encrypt(session, data, sizeof(data), enc, &encLen);
+    CHECK_RV(rv, "C_Encrypt(RSA) with a buffer length above 32 bits", CKR_OK);
+    CHECK_TRUE(encLen == sizeof(enc), "C_Encrypt(RSA) reports the length");
+
+    if (rv == CKR_OK)
+        rv = funcList->C_DecryptInit(session, &mech, priv);
+    if (rv == CKR_OK)
+        rv = funcList->C_Decrypt(session, enc, encLen, dec, &decLen);
+    CHECK_RV(rv, "C_Decrypt(RSA) with a buffer length above 32 bits", CKR_OK);
+    CHECK_TRUE(rv == CKR_OK && decLen == sizeof(data) &&
+               XMEMCMP(dec, data, sizeof(data)) == 0,
+               "C_Decrypt(RSA) recovers the data");
+
+    funcList->C_DestroyObject(session, priv);
+    funcList->C_DestroyObject(session, pub);
+}
 #endif
 
 #if !defined(NO_SHA256) && !defined(WOLFPKCS11_NO_STORE)
@@ -931,7 +970,8 @@ static void cmac_sign_output_capacity_test(CK_SESSION_HANDLE session)
 }
 #endif
 
-#if !defined(NO_AES) && (defined(HAVE_AES_CBC) || defined(HAVE_AESGCM))
+#if !defined(NO_AES) && (defined(HAVE_AES_CBC) || defined(HAVE_AESGCM) || \
+                         defined(HAVE_AESCTS))
 static CK_OBJECT_CLASS aesEncKeyClass = CKO_SECRET_KEY;
 static CK_KEY_TYPE aesEncKeyType = CKK_AES;
 
@@ -969,6 +1009,11 @@ static void aes_buffer_too_small_len_test(CK_SESSION_HANDLE session)
 #ifdef HAVE_AESGCM
     CK_GCM_PARAMS gcmParams;
     CK_MECHANISM gcmMech;
+#endif
+#ifdef HAVE_AESCTS
+    CK_MECHANISM ctsMech;
+    byte single[48];
+    CK_ULONG singleLen;
 #endif
 
     XMEMSET(iv, 0x01, sizeof(iv));
@@ -1076,6 +1121,144 @@ static void aes_buffer_too_small_len_test(CK_SESSION_HANDLE session)
     CHECK_RV(rv, "C_EncryptFinal(AES GCM) retry", CKR_OK);
 #endif
 
+#ifdef HAVE_AESCTS
+    ctsMech.mechanism = CKM_AES_CTS;
+    ctsMech.pParameter = iv;
+    ctsMech.ulParameterLen = sizeof(iv);
+
+    rv = funcList->C_EncryptInit(session, &ctsMech, key);
+    CHECK_RV(rv, "C_EncryptInit(AES CTS)", CKR_OK);
+    singleLen = sizeof(data) - 1;
+    rv = funcList->C_Encrypt(session, data, sizeof(data), single, &singleLen);
+    CHECK_RV(rv, "C_Encrypt(AES CTS) short buffer", CKR_BUFFER_TOO_SMALL);
+    CHECK_TRUE(singleLen == sizeof(data),
+               "C_Encrypt(AES CTS) short buffer reports the length");
+    rv = funcList->C_Encrypt(session, data, sizeof(data), single, &singleLen);
+    CHECK_RV(rv, "C_Encrypt(AES CTS) retry with the reported length", CKR_OK);
+
+    rv = funcList->C_DecryptInit(session, &ctsMech, key);
+    CHECK_RV(rv, "C_DecryptInit(AES CTS)", CKR_OK);
+    decLen = 1;
+    rv = funcList->C_Decrypt(session, single, singleLen, dec, &decLen);
+    CHECK_RV(rv, "C_Decrypt(AES CTS) short buffer", CKR_BUFFER_TOO_SMALL);
+    CHECK_TRUE(decLen == singleLen,
+               "C_Decrypt(AES CTS) short buffer reports the length");
+    rv = funcList->C_Decrypt(session, single, singleLen, dec, &decLen);
+    CHECK_RV(rv, "C_Decrypt(AES CTS) retry with the reported length", CKR_OK);
+    CHECK_TRUE(decLen == sizeof(data) && XMEMCMP(dec, data, decLen) == 0,
+               "C_Decrypt(AES CTS) recovers the data");
+
+    /* Two blocks of input are held back for the final call. */
+    rv = funcList->C_EncryptInit(session, &ctsMech, key);
+    CHECK_RV(rv, "C_EncryptInit(AES CTS) multi-part", CKR_OK);
+    encLen = sizeof(enc);
+    rv = funcList->C_EncryptUpdate(session, data, sizeof(data), enc, &encLen);
+    CHECK_RV(rv, "C_EncryptUpdate(AES CTS)", CKR_OK);
+    CHECK_TRUE(encLen == 0, "C_EncryptUpdate(AES CTS) holds back the tail");
+    decLen = 16;
+    rv = funcList->C_EncryptFinal(session, enc, &decLen);
+    CHECK_RV(rv, "C_EncryptFinal(AES CTS) short buffer", CKR_BUFFER_TOO_SMALL);
+    CHECK_TRUE(decLen == 32,
+               "C_EncryptFinal(AES CTS) short buffer reports the length");
+    rv = funcList->C_EncryptFinal(session, enc, &decLen);
+    CHECK_RV(rv, "C_EncryptFinal(AES CTS) retry", CKR_OK);
+    CHECK_TRUE(rv == CKR_OK && decLen == singleLen &&
+               XMEMCMP(enc, single, singleLen) == 0,
+               "C_EncryptFinal(AES CTS) retry matches the single-part output");
+
+    rv = funcList->C_DecryptInit(session, &ctsMech, key);
+    CHECK_RV(rv, "C_DecryptInit(AES CTS) multi-part", CKR_OK);
+    decLen = sizeof(dec);
+    rv = funcList->C_DecryptUpdate(session, single, singleLen, dec, &decLen);
+    CHECK_RV(rv, "C_DecryptUpdate(AES CTS)", CKR_OK);
+    CHECK_TRUE(decLen == 0, "C_DecryptUpdate(AES CTS) holds back the tail");
+    decLen = 16;
+    rv = funcList->C_DecryptFinal(session, dec, &decLen);
+    CHECK_RV(rv, "C_DecryptFinal(AES CTS) short buffer", CKR_BUFFER_TOO_SMALL);
+    CHECK_TRUE(decLen == 32,
+               "C_DecryptFinal(AES CTS) short buffer reports the length");
+    rv = funcList->C_DecryptFinal(session, dec, &decLen);
+    CHECK_RV(rv, "C_DecryptFinal(AES CTS) retry", CKR_OK);
+    CHECK_TRUE(rv == CKR_OK && decLen == sizeof(data) &&
+               XMEMCMP(dec, data, sizeof(data)) == 0,
+               "C_DecryptFinal(AES CTS) retry recovers the data");
+#endif
+
+    funcList->C_DestroyObject(session, key);
+}
+#endif
+
+#if !defined(NO_AES) && (defined(HAVE_AES_CBC) || defined(HAVE_AESCTS))
+/* Encrypt and decrypt accept an output buffer length above 32 bits. */
+static void aes_output_capacity_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    byte iv[16];
+    byte data[32];
+    byte enc[48];
+    byte dec[48];
+    CK_ULONG encLen;
+    CK_ULONG decLen;
+    CK_MECHANISM mech;
+
+    XMEMSET(iv, 0x02, sizeof(iv));
+    XMEMSET(data, 0x6b, sizeof(data));
+    rv = create_aes_enc_key(session, &key);
+    CHECK_RV(rv, "create AES key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+#ifdef HAVE_AES_CBC
+    mech.mechanism = CKM_AES_CBC;
+#else
+    mech.mechanism = CKM_AES_CTS;
+#endif
+    mech.pParameter = iv;
+    mech.ulParameterLen = sizeof(iv);
+
+    rv = funcList->C_EncryptInit(session, &mech, key);
+    CHECK_RV(rv, "C_EncryptInit(AES)", CKR_OK);
+    encLen = big_len(0);
+    rv = funcList->C_Encrypt(session, data, sizeof(data), enc, &encLen);
+    CHECK_RV(rv, "C_Encrypt(AES) with a buffer length above 32 bits", CKR_OK);
+    CHECK_TRUE(encLen == sizeof(data), "C_Encrypt(AES) reports the length");
+
+    rv = funcList->C_DecryptInit(session, &mech, key);
+    CHECK_RV(rv, "C_DecryptInit(AES)", CKR_OK);
+    decLen = big_len(0);
+    rv = funcList->C_Decrypt(session, enc, encLen, dec, &decLen);
+    CHECK_RV(rv, "C_Decrypt(AES) with a buffer length above 32 bits", CKR_OK);
+    CHECK_TRUE(decLen == sizeof(data) && XMEMCMP(dec, data, decLen) == 0,
+               "C_Decrypt(AES) recovers the data");
+
+    rv = funcList->C_EncryptInit(session, &mech, key);
+    CHECK_RV(rv, "C_EncryptInit(AES) multi-part", CKR_OK);
+    encLen = big_len(0);
+    rv = funcList->C_EncryptUpdate(session, data, sizeof(data), enc, &encLen);
+    CHECK_RV(rv, "C_EncryptUpdate(AES) with a buffer length above 32 bits",
+             CKR_OK);
+    decLen = big_len(0);
+    rv = funcList->C_EncryptFinal(session, enc + encLen, &decLen);
+    CHECK_RV(rv, "C_EncryptFinal(AES) with a buffer length above 32 bits",
+             CKR_OK);
+    CHECK_TRUE(encLen + decLen == sizeof(data),
+               "C_EncryptUpdate(AES) and C_EncryptFinal report the length");
+
+    rv = funcList->C_DecryptInit(session, &mech, key);
+    CHECK_RV(rv, "C_DecryptInit(AES) multi-part", CKR_OK);
+    decLen = big_len(0);
+    rv = funcList->C_DecryptUpdate(session, enc, sizeof(data), dec, &decLen);
+    CHECK_RV(rv, "C_DecryptUpdate(AES) with a buffer length above 32 bits",
+             CKR_OK);
+    encLen = big_len(0);
+    rv = funcList->C_DecryptFinal(session, dec + decLen, &encLen);
+    CHECK_RV(rv, "C_DecryptFinal(AES) with a buffer length above 32 bits",
+             CKR_OK);
+    CHECK_TRUE(decLen + encLen == sizeof(data) &&
+               XMEMCMP(dec, data, sizeof(data)) == 0,
+               "C_DecryptUpdate(AES) and C_DecryptFinal recover the data");
+
     funcList->C_DestroyObject(session, key);
 }
 #endif
@@ -1162,7 +1345,8 @@ static int run_test(void)
 #ifndef NO_RSA
         rsa_buffer_too_small_len_test(session);
 #endif
-#if !defined(NO_AES) && (defined(HAVE_AES_CBC) || defined(HAVE_AESGCM))
+#if !defined(NO_AES) && (defined(HAVE_AES_CBC) || defined(HAVE_AESGCM) || \
+                         defined(HAVE_AESCTS))
         aes_buffer_too_small_len_test(session);
 #endif
 #if !defined(NO_AES) && defined(HAVE_AESCMAC)
@@ -1181,6 +1365,10 @@ static int run_test(void)
 #ifndef NO_RSA
             rsa_input_len_range_test(session);
             rsa_sign_output_capacity_test(session);
+            rsa_encrypt_output_capacity_test(session);
+#endif
+#if !defined(NO_AES) && (defined(HAVE_AES_CBC) || defined(HAVE_AESCTS))
+            aes_output_capacity_test(session);
 #endif
 #if !defined(NO_AES) && defined(HAVE_AESCMAC)
             cmac_verify_final_sig_len_range_test(session);

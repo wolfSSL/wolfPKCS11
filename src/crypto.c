@@ -3200,7 +3200,7 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
             }
-            if (encDataLen > (word32)*pulEncryptedDataLen) {
+            if ((CK_ULONG)encDataLen > *pulEncryptedDataLen) {
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_BUFFER_TOO_SMALL;
             }
@@ -3225,7 +3225,7 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
             }
-            if (encDataLen > (word32)*pulEncryptedDataLen) {
+            if ((CK_ULONG)encDataLen > *pulEncryptedDataLen) {
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_BUFFER_TOO_SMALL;
             }
@@ -3253,7 +3253,7 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
             }
-            if (encDataLen > (word32)*pulEncryptedDataLen) {
+            if ((CK_ULONG)encDataLen > *pulEncryptedDataLen) {
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_BUFFER_TOO_SMALL;
             }
@@ -3287,7 +3287,7 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
             }
-            if (encDataLen > (word32)*pulEncryptedDataLen) {
+            if ((CK_ULONG)encDataLen > *pulEncryptedDataLen) {
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_BUFFER_TOO_SMALL;
             }
@@ -3320,7 +3320,7 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
             }
-            if (encDataLen > (word32)*pulEncryptedDataLen) {
+            if ((CK_ULONG)encDataLen > *pulEncryptedDataLen) {
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_BUFFER_TOO_SMALL;
             }
@@ -3350,7 +3350,8 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 return CKR_BUFFER_TOO_SMALL;
             }
 
-            encDataLen = (word32)*pulEncryptedDataLen;
+            /* Output is the same length as the input, which fits the buffer. */
+            encDataLen = (word32)ulDataLen;
             ret = WP11_AesCtr_Do(pData, (word32)ulDataLen, pEncryptedData,
                                  &encDataLen, session);
             if (ret == WP11_CTR_OVERFLOW_E)
@@ -3375,7 +3376,7 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
             }
-            if (encDataLen > (word32)*pulEncryptedDataLen) {
+            if ((CK_ULONG)encDataLen > *pulEncryptedDataLen) {
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_BUFFER_TOO_SMALL;
             }
@@ -3402,7 +3403,7 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
             }
-            if (encDataLen > (word32)*pulEncryptedDataLen) {
+            if ((CK_ULONG)encDataLen > *pulEncryptedDataLen) {
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_BUFFER_TOO_SMALL;
             }
@@ -3432,7 +3433,7 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
             }
-            if (encDataLen > (word32)*pulEncryptedDataLen) {
+            if ((CK_ULONG)encDataLen > *pulEncryptedDataLen) {
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_BUFFER_TOO_SMALL;
             }
@@ -3453,7 +3454,6 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 return CKR_DATA_LEN_RANGE;
             }
 
-            encDataLen = (word32)*pulEncryptedDataLen;
             if (pEncryptedData == NULL) {
                 *pulEncryptedDataLen = ulDataLen;
                 return CKR_OK;
@@ -3463,6 +3463,8 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 return CKR_BUFFER_TOO_SMALL;
             }
 
+            /* Output is the same length as the input, which fits the buffer. */
+            encDataLen = (word32)ulDataLen;
             ret = WP11_AesCts_Encrypt(pData, (int)ulDataLen, pEncryptedData,
                                                           &encDataLen, session);
             if (ret < 0)
@@ -3485,7 +3487,7 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
             }
-            if (encDataLen > (word32)*pulEncryptedDataLen) {
+            if ((CK_ULONG)encDataLen > *pulEncryptedDataLen) {
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_BUFFER_TOO_SMALL;
             }
@@ -3515,7 +3517,7 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
             }
-            if (encDataLen > (word32)*pulEncryptedDataLen) {
+            if ((CK_ULONG)encDataLen > *pulEncryptedDataLen) {
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_BUFFER_TOO_SMALL;
             }
@@ -3641,7 +3643,7 @@ static CK_RV wp11_C_EncryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
                 WOLFPKCS11_LEAVE("C_EncryptUpdate", rv);
                 return rv;
             }
-            if (encPartLen > (word32)*pulEncryptedPartLen) {
+            if ((CK_ULONG)encPartLen > *pulEncryptedPartLen) {
                 *pulEncryptedPartLen = encPartLen;
                 rv = CKR_BUFFER_TOO_SMALL;
                 WOLFPKCS11_LEAVE("C_EncryptUpdate", rv);
@@ -3675,7 +3677,7 @@ static CK_RV wp11_C_EncryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
                 *pulEncryptedPartLen = encPartLen;
                 return CKR_OK;
             }
-            if (encPartLen > (word32)*pulEncryptedPartLen) {
+            if ((CK_ULONG)encPartLen > *pulEncryptedPartLen) {
                 *pulEncryptedPartLen = encPartLen;
                 return CKR_BUFFER_TOO_SMALL;
             }
@@ -3707,7 +3709,8 @@ static CK_RV wp11_C_EncryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
                 return CKR_BUFFER_TOO_SMALL;
             }
 
-            encPartLen = (word32)*pulEncryptedPartLen;
+            /* Output is the same length as the input, which fits the buffer. */
+            encPartLen = (word32)ulPartLen;
             ret = WP11_AesCtr_Update(pPart, (int)ulPartLen, pEncryptedPart,
                                      &encPartLen, session);
             if (ret == WP11_CTR_OVERFLOW_E) {
@@ -3737,7 +3740,7 @@ static CK_RV wp11_C_EncryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
                 *pulEncryptedPartLen = encPartLen;
                 return CKR_OK;
             }
-            if (encPartLen > (word32)*pulEncryptedPartLen) {
+            if ((CK_ULONG)encPartLen > *pulEncryptedPartLen) {
                 *pulEncryptedPartLen = encPartLen;
                 return CKR_BUFFER_TOO_SMALL;
             }
@@ -3766,7 +3769,7 @@ static CK_RV wp11_C_EncryptUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
                 return CKR_OK;
             }
 
-            encPartLen = (word32)*pulEncryptedPartLen;
+            encPartLen = CK_ULONG_CAP_WORD32(*pulEncryptedPartLen);
             ret = WP11_AesCts_EncryptUpdate(pPart, (word32)ulPartLen,
                                           pEncryptedPart, &encPartLen, session);
             if (ret == BUFFER_E) {
@@ -4389,7 +4392,7 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 *pulDataLen = decDataLen;
                 return CKR_OK;
             }
-            if (decDataLen > (word32)*pulDataLen) {
+            if ((CK_ULONG)decDataLen > *pulDataLen) {
                 *pulDataLen = decDataLen;
                 return CKR_BUFFER_TOO_SMALL;
             }
@@ -4415,7 +4418,7 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 *pulDataLen = decDataLen;
                 return CKR_OK;
             }
-            if (decDataLen > (word32)*pulDataLen) {
+            if ((CK_ULONG)decDataLen > *pulDataLen) {
                 *pulDataLen = decDataLen;
                 return CKR_BUFFER_TOO_SMALL;
             }
@@ -4444,7 +4447,7 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 *pulDataLen = decDataLen;
                 return CKR_OK;
             }
-            if (decDataLen > (word32)*pulDataLen) {
+            if ((CK_ULONG)decDataLen > *pulDataLen) {
                 *pulDataLen = decDataLen;
                 return CKR_BUFFER_TOO_SMALL;
             }
@@ -4478,7 +4481,7 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 *pulDataLen = decDataLen;
                 return CKR_OK;
             }
-            if (decDataLen > (word32)*pulDataLen) {
+            if ((CK_ULONG)decDataLen > *pulDataLen) {
                 *pulDataLen = decDataLen;
                 return CKR_BUFFER_TOO_SMALL;
             }
@@ -4518,7 +4521,7 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
              * this capacity and returns BUFFER_E (mapped to
              * CKR_BUFFER_TOO_SMALL below) rather than overflowing a buffer
              * that is too small for the recovered plaintext. */
-            decDataLen = (word32)*pulDataLen;
+            decDataLen = CK_ULONG_CAP_WORD32(*pulDataLen);
             ret = WP11_AesCbcPad_Decrypt(pEncryptedData,
                                                  (int)ulEncryptedDataLen, pData,
                                                  &decDataLen, session);
@@ -4550,7 +4553,8 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 return CKR_BUFFER_TOO_SMALL;
             }
 
-            decDataLen = (word32)*pulDataLen;
+            /* Output is the same length as the input, which fits the buffer. */
+            decDataLen = (word32)ulEncryptedDataLen;
             ret = WP11_AesCtr_Do(pEncryptedData,
                     (word32)ulEncryptedDataLen, pData, &decDataLen, session);
             if (ret == WP11_CTR_OVERFLOW_E)
@@ -4575,7 +4579,7 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 *pulDataLen = decDataLen;
                 return CKR_OK;
             }
-            if (decDataLen > (word32)*pulDataLen) {
+            if ((CK_ULONG)decDataLen > *pulDataLen) {
                 *pulDataLen = decDataLen;
                 return CKR_BUFFER_TOO_SMALL;
             }
@@ -4602,7 +4606,7 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 *pulDataLen = decDataLen;
                 return CKR_OK;
             }
-            if (decDataLen > (word32)*pulDataLen) {
+            if ((CK_ULONG)decDataLen > *pulDataLen) {
                 *pulDataLen = decDataLen;
                 return CKR_BUFFER_TOO_SMALL;
             }
@@ -4632,7 +4636,7 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 *pulDataLen = decDataLen;
                 return CKR_OK;
             }
-            if (decDataLen > (word32)*pulDataLen) {
+            if ((CK_ULONG)decDataLen > *pulDataLen) {
                 *pulDataLen = decDataLen;
                 return CKR_BUFFER_TOO_SMALL;
             }
@@ -4653,7 +4657,6 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 return CKR_ENCRYPTED_DATA_LEN_RANGE;
             }
 
-            decDataLen = (word32)*pulDataLen;
             if (pData == NULL) {
                 *pulDataLen = ulEncryptedDataLen;
                 return CKR_OK;
@@ -4663,6 +4666,8 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 return CKR_BUFFER_TOO_SMALL;
             }
 
+            /* Output is the same length as the input, which fits the buffer. */
+            decDataLen = (word32)ulEncryptedDataLen;
             ret = WP11_AesCts_Decrypt(pEncryptedData, (int)ulEncryptedDataLen,
                                               pData, &decDataLen, session);
             if (ret == BUFFER_E) {
@@ -4691,7 +4696,7 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 *pulDataLen = decDataLen;
                 return CKR_OK;
             }
-            if (decDataLen > (word32)*pulDataLen) {
+            if ((CK_ULONG)decDataLen > *pulDataLen) {
                 *pulDataLen = decDataLen;
                 return CKR_BUFFER_TOO_SMALL;
             }
@@ -4727,7 +4732,7 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
              * do not pre-reject against the upper bound. Unwrap into the caller
              * buffer; if it does not fit, the unwrap reports the exact required
              * size via decDataLen. */
-            decDataLen = (word32)*pulDataLen;
+            decDataLen = CK_ULONG_CAP_WORD32(*pulDataLen);
             ret = WP11_AesKeyWrapPad_Decrypt(pEncryptedData,
                     (word32)ulEncryptedDataLen, pData, &decDataLen, session);
             if (ret == BUFFER_E) {
@@ -4843,7 +4848,7 @@ static CK_RV wp11_C_DecryptUpdate(CK_SESSION_HANDLE hSession,
                 *pulPartLen = decPartLen;
                 return CKR_OK;
             }
-            if (decPartLen > (word32)*pulPartLen) {
+            if ((CK_ULONG)decPartLen > *pulPartLen) {
                 *pulPartLen = decPartLen;
                 return CKR_BUFFER_TOO_SMALL;
             }
@@ -4878,7 +4883,7 @@ static CK_RV wp11_C_DecryptUpdate(CK_SESSION_HANDLE hSession,
                 *pulPartLen = decPartLen;
                 return CKR_OK;
             }
-            if (decPartLen > (word32)*pulPartLen) {
+            if ((CK_ULONG)decPartLen > *pulPartLen) {
                 *pulPartLen = decPartLen;
                 return CKR_BUFFER_TOO_SMALL;
             }
@@ -4959,7 +4964,7 @@ static CK_RV wp11_C_DecryptUpdate(CK_SESSION_HANDLE hSession,
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CTS_DEC))
                 return CKR_OPERATION_NOT_INITIALIZED;
             if (!CK_ULONG_FITS_WORD32(ulEncryptedPartLen)) {
-                WP11_AesCts_Final(session);
+                WP11_Session_AbortOp(session);
                 return CKR_ENCRYPTED_DATA_LEN_RANGE;
             }
 
@@ -4968,7 +4973,7 @@ static CK_RV wp11_C_DecryptUpdate(CK_SESSION_HANDLE hSession,
                 return CKR_OK;
             }
 
-            decPartLen = (word32)*pulPartLen;
+            decPartLen = CK_ULONG_CAP_WORD32(*pulPartLen);
             ret = WP11_AesCts_DecryptUpdate(pEncryptedPart,
                     (word32)ulEncryptedPartLen, pPart, &decPartLen, session);
             if (ret == BUFFER_E) {
@@ -5180,7 +5185,11 @@ static CK_RV wp11_C_DecryptFinal(CK_SESSION_HANDLE hSession,
                 return CKR_OK;
             }
 
-            decPartLen = (word32)*pulLastPartLen;
+            /* The final output is at most two blocks; cap the capacity to
+             * avoid truncating a large CK_ULONG. */
+            decPartLen = (*pulLastPartLen < (CK_ULONG)(AES_BLOCK_SIZE * 2)) ?
+                         (word32)*pulLastPartLen :
+                         (word32)(AES_BLOCK_SIZE * 2);
             ret = WP11_AesCts_DecryptFinal(pLastPart, &decPartLen, session);
             if (ret == BUFFER_E) {
                 *pulLastPartLen = AES_BLOCK_SIZE * 2;
@@ -8221,7 +8230,7 @@ static CK_RV wp11_C_VerifyRecover(CK_SESSION_HANDLE hSession,
     }
     if (!CK_ULONG_FITS_WORD32(*pulDataLen))
         return CKR_ARGUMENTS_BAD;
-    if (decDataLen > (word32)*pulDataLen) {
+    if ((CK_ULONG)decDataLen > *pulDataLen) {
         /* Report the required size as mandated by PKCS#11. */
         *pulDataLen = decDataLen;
         return CKR_BUFFER_TOO_SMALL;

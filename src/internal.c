@@ -20521,9 +20521,11 @@ int WP11_AesCts_EncryptFinal(unsigned char* enc, word32* encSz,
     WP11_CtsParams* cts = &session->params.cts;
 
     ret = wc_AesCtsEncryptFinal(&cts->aes, enc, encSz);
-
-    wc_AesFree(&cts->aes);
-    session->init = 0;
+    /* A short buffer leaves the state untouched so the caller can retry. */
+    if (ret != BUFFER_E) {
+        wc_AesFree(&cts->aes);
+        session->init = 0;
+    }
 
     return ret;
 }
@@ -20601,26 +20603,13 @@ int WP11_AesCts_DecryptFinal(unsigned char* dec, word32* decSz,
     WP11_CtsParams* cts = &session->params.cts;
 
     ret = wc_AesCtsDecryptFinal(&cts->aes, dec, decSz);
-
-    wc_AesFree(&cts->aes);
-    session->init = 0;
+    /* A short buffer leaves the state untouched so the caller can retry. */
+    if (ret != BUFFER_E) {
+        wc_AesFree(&cts->aes);
+        session->init = 0;
+    }
 
     return ret;
-}
-
-/**
- * Abandon an AES-CTS operation, releasing the AES object.
- *
- * @param  session  [in]  Session object holding Aes object.
- */
-void WP11_AesCts_Final(WP11_Session* session)
-{
-    WP11_CtsParams* cts = &session->params.cts;
-
-    wc_AesFree(&cts->aes);
-    /* Older wolfSSL versions do not zeroize the key schedule in wc_AesFree. */
-    wc_ForceZero(cts, sizeof(*cts));
-    session->init = 0;
 }
 #endif /* HAVE_AESCTS */
 

@@ -1221,6 +1221,195 @@ static void test_ctr_decrypt_update_len(CK_SESSION_HANDLE session)
 }
 #endif
 
+#if !defined(NO_AES) && defined(HAVE_AESCTS)
+/* Multi-part AES-CTS decryption rejects a part length the token cannot
+ * represent and accepts output buffer lengths that do not fit in 32 bits. */
+static void test_cts_decrypt_update_len(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_MECHANISM mech;
+    byte iv[16];
+    byte data[32];
+    byte out[64];
+    CK_ULONG partLen;
+    CK_ULONG lastLen;
+    CK_ULONG wrap = ((CK_ULONG)1 << 16) << 16;
+
+    if (wrap == 0)
+        return;
+
+    XMEMSET(iv, 0xBD, sizeof(iv));
+    XMEMSET(data, 0xCE, sizeof(data));
+    mech.mechanism = CKM_AES_CTS;
+    mech.pParameter = iv;
+    mech.ulParameterLen = sizeof(iv);
+
+    rv = create_aes_key(session, aes_128_key, sizeof(aes_128_key), &key);
+    CHECK_RV(rv, "CTS decrypt update: create AES key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_DecryptInit(session, &mech, key);
+    CHECK_RV(rv, "CTS decrypt update: C_DecryptInit", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    partLen = wrap + sizeof(out);
+    rv = funcList->C_DecryptUpdate(session, data, wrap + sizeof(data), out,
+                                   &partLen);
+    CHECK_RV(rv, "CTS decrypt update: rejects oversized part",
+             CKR_ENCRYPTED_DATA_LEN_RANGE);
+    partLen = sizeof(out);
+    rv = funcList->C_DecryptUpdate(session, data, sizeof(data), out, &partLen);
+    CHECK_RV(rv, "CTS decrypt update: operation ended",
+             CKR_OPERATION_NOT_INITIALIZED);
+    if (rv == CKR_OK) {
+        /* End the still-active operation so the next check can start. */
+        partLen = sizeof(out);
+        (void)funcList->C_DecryptFinal(session, out, &partLen);
+    }
+
+    rv = funcList->C_DecryptInit(session, &mech, key);
+    CHECK_RV(rv, "CTS decrypt update: C_DecryptInit", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    partLen = wrap + 8;
+    rv = funcList->C_DecryptUpdate(session, data, sizeof(data), out, &partLen);
+    CHECK_RV(rv, "CTS decrypt update: large output buffer length", CKR_OK);
+    CHECK_TRUE(rv == CKR_OK && partLen == 0,
+               "CTS decrypt update: holds back the last two blocks");
+    if (rv == CKR_OK) {
+        lastLen = wrap + 8;
+        rv = funcList->C_DecryptFinal(session, out, &lastLen);
+        CHECK_RV(rv, "CTS decrypt update: C_DecryptFinal with large buffer "
+                 "length", CKR_OK);
+        CHECK_TRUE(rv == CKR_OK && lastLen == sizeof(data),
+                   "CTS decrypt update: C_DecryptFinal reports bytes written");
+    }
+}
+#endif
+
+#if !defined(NO_AES) && (defined(HAVE_AESCTR) || defined(HAVE_AESCTS))
+/* Single-part and multi-part calls accept an output buffer length that does
+ * not fit in 32 bits and use the whole buffer. */
+static void check_stream_output_capacity(CK_SESSION_HANDLE session,
+                                         CK_OBJECT_HANDLE key,
+                                         CK_MECHANISM* mech)
+{
+    CK_RV rv;
+    byte data[32];
+    byte enc[64];
+    byte out[64];
+    CK_ULONG encLen;
+    CK_ULONG outLen;
+    CK_ULONG lastLen;
+    CK_ULONG wrap = ((CK_ULONG)1 << 16) << 16;
+
+    XMEMSET(data, 0xDF, sizeof(data));
+
+    rv = funcList->C_EncryptInit(session, mech, key);
+    CHECK_RV(rv, "output capacity: C_EncryptInit", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    encLen = wrap + 8;
+    rv = funcList->C_Encrypt(session, data, sizeof(data), enc, &encLen);
+    CHECK_RV(rv, "output capacity: C_Encrypt with large buffer length",
+             CKR_OK);
+    CHECK_TRUE(rv == CKR_OK && encLen == sizeof(data),
+               "output capacity: C_Encrypt reports bytes written");
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_DecryptInit(session, mech, key);
+    CHECK_RV(rv, "output capacity: C_DecryptInit", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    outLen = wrap + 8;
+    rv = funcList->C_Decrypt(session, enc, encLen, out, &outLen);
+    CHECK_RV(rv, "output capacity: C_Decrypt with large buffer length",
+             CKR_OK);
+    CHECK_TRUE(rv == CKR_OK && outLen == sizeof(data) &&
+               XMEMCMP(out, data, sizeof(data)) == 0,
+               "output capacity: C_Decrypt round-trips");
+
+    rv = funcList->C_EncryptInit(session, mech, key);
+    CHECK_RV(rv, "output capacity: C_EncryptInit multi-part", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    outLen = wrap + 8;
+    rv = funcList->C_EncryptUpdate(session, data, sizeof(data), out, &outLen);
+    CHECK_RV(rv, "output capacity: C_EncryptUpdate with large buffer length",
+             CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    lastLen = wrap + 8;
+    rv = funcList->C_EncryptFinal(session, out + outLen, &lastLen);
+    CHECK_RV(rv, "output capacity: C_EncryptFinal with large buffer length",
+             CKR_OK);
+    CHECK_TRUE(rv == CKR_OK && outLen + lastLen == encLen &&
+               XMEMCMP(out, enc, encLen) == 0,
+               "output capacity: multi-part output matches single-part");
+
+    rv = funcList->C_DecryptInit(session, mech, key);
+    CHECK_RV(rv, "output capacity: C_DecryptInit multi-part", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    outLen = wrap + 8;
+    rv = funcList->C_DecryptUpdate(session, enc, encLen, out, &outLen);
+    CHECK_RV(rv, "output capacity: C_DecryptUpdate with large buffer length",
+             CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    lastLen = wrap + 8;
+    rv = funcList->C_DecryptFinal(session, out + outLen, &lastLen);
+    CHECK_RV(rv, "output capacity: C_DecryptFinal with large buffer length",
+             CKR_OK);
+    CHECK_TRUE(rv == CKR_OK && outLen + lastLen == sizeof(data) &&
+               XMEMCMP(out, data, sizeof(data)) == 0,
+               "output capacity: multi-part decrypt round-trips");
+}
+
+static void test_stream_output_capacity(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_MECHANISM mech;
+#ifdef HAVE_AESCTR
+    CK_AES_CTR_PARAMS ctrParams;
+#endif
+#ifdef HAVE_AESCTS
+    byte iv[16];
+#endif
+
+    if ((((CK_ULONG)1 << 16) << 16) == 0)
+        return;
+
+    rv = create_aes_key(session, aes_128_key, sizeof(aes_128_key), &key);
+    CHECK_RV(rv, "output capacity: create AES key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+#ifdef HAVE_AESCTR
+    XMEMSET(&ctrParams, 0, sizeof(ctrParams));
+    ctrParams.ulCounterBits = 32;
+    XMEMSET(ctrParams.cb, 0xE0, sizeof(ctrParams.cb));
+    mech.mechanism = CKM_AES_CTR;
+    mech.pParameter = &ctrParams;
+    mech.ulParameterLen = sizeof(ctrParams);
+    printf("AES-CTR\n");
+    check_stream_output_capacity(session, key, &mech);
+#endif
+#ifdef HAVE_AESCTS
+    XMEMSET(iv, 0xF1, sizeof(iv));
+    mech.mechanism = CKM_AES_CTS;
+    mech.pParameter = iv;
+    mech.ulParameterLen = sizeof(iv);
+    printf("AES-CTS\n");
+    check_stream_output_capacity(session, key, &mech);
+#endif
+}
+#endif
+
 #if !defined(NO_AES) && defined(HAVE_AESGCM)
 /* Multi-part AES-GCM decryption rejects a part that does not fit in 32 bits or
  * would grow the buffered ciphertext past INT_MAX, and ends the operation. */
@@ -1438,6 +1627,12 @@ static int run_test(void)
 #endif
 #if !defined(NO_AES) && defined(HAVE_AESCTR)
         run_in_session(slot, test_ctr_decrypt_update_len);
+#endif
+#if !defined(NO_AES) && defined(HAVE_AESCTS)
+        run_in_session(slot, test_cts_decrypt_update_len);
+#endif
+#if !defined(NO_AES) && (defined(HAVE_AESCTR) || defined(HAVE_AESCTS))
+        run_in_session(slot, test_stream_output_capacity);
 #endif
 #if !defined(NO_AES) && defined(HAVE_AESGCM)
         run_in_session(slot, test_gcm_decrypt_update_len_range);
