@@ -19922,38 +19922,6 @@ int WP11_AesGcm_DecryptFinal(unsigned char* dec, word32* decSz,
 
     return ret;
 }
-
-/**
- * Abandon an AES-GCM operation, releasing cached data and AES state.
- *
- * @param  session  [in]  Session object holding GCM parameters.
- */
-void WP11_AesGcm_Final(WP11_Session* session)
-{
-    WP11_GcmParams* gcm = &session->params.gcm;
-
-    if (gcm->enc != NULL) {
-        wc_ForceZero(gcm->enc, (word32)gcm->encSz);
-        XFREE(gcm->enc, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        gcm->enc = NULL;
-    }
-    gcm->encSz = 0;
-    if (gcm->aad != NULL) {
-        wc_ForceZero(gcm->aad, (word32)gcm->aadSz);
-        XFREE(gcm->aad, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        gcm->aad = NULL;
-    }
-    gcm->aadSz = 0;
-#ifdef WOLFSSL_AESGCM_STREAM
-    if (gcm->streamInit) {
-        wc_AesFree(&gcm->aes);
-        gcm->streamInit = 0;
-    }
-#endif
-    /* Older wolfSSL versions do not zeroize the key schedule in wc_AesFree. */
-    wc_ForceZero(gcm, sizeof(*gcm));
-    session->init = 0;
-}
 #endif /* HAVE_AESGCM */
 
 #ifdef HAVE_AESCCM
@@ -20227,21 +20195,6 @@ int WP11_AesKeyWrap_Decrypt(unsigned char* enc, word32 encSz,
         return ret;
     *decSz = ret;
     return 0;
-}
-
-/**
- * Abandon an AES key wrap operation, releasing the AES object.
- *
- * @param  session  [in]  Session object holding Aes object.
- */
-void WP11_AesKeyWrap_Final(WP11_Session* session)
-{
-    WP11_KeyWrapParams *wrap = &session->params.kw;
-
-    wc_AesFree(&wrap->aes);
-    /* Older wolfSSL versions do not zeroize the key schedule in wc_AesFree. */
-    wc_ForceZero(wrap, sizeof(*wrap));
-    session->init = 0;
 }
 
 /* Single-block AES encrypt/decrypt. FIPS modules before v5.3 declare
