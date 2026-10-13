@@ -4510,8 +4510,10 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 *pulDataLen = (decDataLen > 0) ? decDataLen - 1 : 0;
                 return CKR_OK;
             }
-            /* Ciphertext must be at least one full block. */
-            if (decDataLen < AES_BLOCK_SIZE) {
+            /* Padded ciphertext is a non-zero multiple of the block size. */
+            if (decDataLen < AES_BLOCK_SIZE ||
+                (decDataLen % AES_BLOCK_SIZE) != 0) {
+                WP11_Session_AbortOp(session);
                 return CKR_ENCRYPTED_DATA_LEN_RANGE;
             }
 

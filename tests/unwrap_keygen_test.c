@@ -266,6 +266,9 @@ static void test_unwrap_failure_codes(CK_SESSION_HANDLE session)
     byte plain[16];
     byte badPad[16];
     CK_ULONG badPadLen = sizeof(badPad);
+    byte unaligned[48];
+    static const CK_ULONG unalignedLens[] = { 17, 31, 33 };
+    CK_ULONG i;
 #endif
 #ifndef NO_RSA
     CK_OBJECT_HANDLE rsaPub = CK_INVALID_HANDLE;
@@ -297,6 +300,19 @@ static void test_unwrap_failure_codes(CK_SESSION_HANDLE session)
                                    badPadLen - 1, tmpl, tmplCnt, &key);
         CHECK_RV(rv, "AES-CBC-PAD unwrap with partial block",
                  CKR_WRAPPED_KEY_LEN_RANGE);
+        XMEMSET(unaligned, 0, sizeof(unaligned));
+        for (i = 0; i < sizeof(unalignedLens) / sizeof(*unalignedLens); i++) {
+            printf("AES-CBC-PAD unwrap of %lu bytes\n",
+                   (unsigned long)unalignedLens[i]);
+            rv = funcList->C_UnwrapKey(session, &padMech, aesKey, unaligned,
+                                       unalignedLens[i], tmpl, tmplCnt, &key);
+            CHECK_RV(rv, "AES-CBC-PAD unwrap with an unaligned length",
+                     CKR_WRAPPED_KEY_LEN_RANGE);
+            if (rv == CKR_OK) {
+                funcList->C_DestroyObject(session, key);
+                key = CK_INVALID_HANDLE;
+            }
+        }
     }
     funcList->C_DestroyObject(session, aesKey);
 #endif
