@@ -1151,6 +1151,133 @@ static void find_with_racing_logout_test(void)
 }
 #endif
 
+#if defined(DEBUG_WOLFPKCS11) && defined(LOGIN_TEST_THREADS) && \
+    !defined(WOLFPKCS11_NO_TIME)
+extern void WP11_Slot_SetPinCheckHook(void (*hook)(void));
+
+static pthread_mutex_t pinMutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t pinCond = PTHREAD_COND_INITIALIZER;
+static int pinHookCalls = 0;
+static int pinHookEntered = 0;
+static int pinHookRelease = 0;
+
+/* The first PIN check blocks here, before hashing, until released. */
+static void pin_check_hook(void)
+{
+    pthread_mutex_lock(&pinMutex);
+    pinHookCalls++;
+    if (pinHookCalls == 1) {
+        pinHookEntered = 1;
+        pthread_cond_broadcast(&pinCond);
+        while (!pinHookRelease)
+            pthread_cond_wait(&pinCond, &pinMutex);
+    }
+    pthread_mutex_unlock(&pinMutex);
+}
+
+static int pin_hook_calls(void)
+{
+    int calls;
+
+    pthread_mutex_lock(&pinMutex);
+    calls = pinHookCalls;
+    pthread_mutex_unlock(&pinMutex);
+    return calls;
+}
+
+/* With one failure left before lockout, a guess in flight must stop any other
+ * guess from being checked at all. */
+static void guess_in_flight_caps_attempts(CK_USER_TYPE type, const char* pin,
+                                          int maxFails, const char* what)
+{
+    CK_RV rv;
+    int i;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_SESSION_HANDLE other = CK_INVALID_HANDLE;
+    const char* newPin = "replacement-pin";
+    login_ctx ctx;
+    pthread_t thread;
+    int started = 0;
+
+    rv = token_setup(&slot, userPin);
+    if (rv == CKR_OK)
+        rv = open_rw(slot, &session);
+    if (rv == CKR_OK)
+        rv = open_rw(slot, &other);
+    for (i = 0; rv == CKR_OK && i < maxFails - 1; i++) {
+        rv = funcList->C_Login(session, type, (CK_UTF8CHAR_PTR)wrongPin,
+                               (CK_ULONG)XSTRLEN(wrongPin));
+        if (rv == CKR_PIN_INCORRECT)
+            rv = CKR_OK;
+    }
+    CHECK_RV(rv, "set up one failure short of lockout", CKR_OK);
+    if (rv == CKR_OK) {
+        ctx.session = session;
+        ctx.type = type;
+        ctx.rv = CKR_OK;
+        pthread_mutex_lock(&pinMutex);
+        pinHookCalls = 0;
+        pinHookEntered = 0;
+        pinHookRelease = 0;
+        goFlag = 1;
+        pthread_mutex_unlock(&pinMutex);
+        WP11_Slot_SetPinCheckHook(pin_check_hook);
+        started = (pthread_create(&thread, NULL, wrong_login, &ctx) == 0);
+        CHECK_TRUE(started, "start the guess that stays in flight");
+    }
+    if (started) {
+        pthread_mutex_lock(&pinMutex);
+        while (!pinHookEntered)
+            pthread_cond_wait(&pinCond, &pinMutex);
+        pthread_mutex_unlock(&pinMutex);
+        if (type == CKU_USER) {
+            rv = funcList->C_SetPIN(other, (CK_UTF8CHAR_PTR)wrongPin,
+                                    (CK_ULONG)XSTRLEN(wrongPin),
+                                    (CK_UTF8CHAR_PTR)newPin,
+                                    (CK_ULONG)XSTRLEN(newPin));
+        }
+        else {
+            rv = funcList->C_Login(other, type, (CK_UTF8CHAR_PTR)wrongPin,
+                                   (CK_ULONG)XSTRLEN(wrongPin));
+        }
+        CHECK_RV(rv, "second guess refused while one is in flight",
+                 CKR_PIN_INCORRECT);
+        CHECK_TRUE(pin_hook_calls() == 1, what);
+        pthread_mutex_lock(&pinMutex);
+        pinHookRelease = 1;
+        pthread_cond_broadcast(&pinCond);
+        pthread_mutex_unlock(&pinMutex);
+        pthread_join(thread, NULL);
+        WP11_Slot_SetPinCheckHook(NULL);
+        CHECK_RV(ctx.rv, "guess in flight rejected", CKR_PIN_INCORRECT);
+        rv = funcList->C_Login(other, type, (CK_UTF8CHAR_PTR)pin,
+                               (CK_ULONG)XSTRLEN(pin));
+        CHECK_TRUE(rv == CKR_PIN_INCORRECT || rv == CKR_PIN_LOCKED,
+                   "PIN locked once the guess in flight fails");
+        if (rv == CKR_OK)
+            funcList->C_Logout(other);
+    }
+    WP11_Slot_SetPinCheckHook(NULL);
+    if (other != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(other);
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+    /* The lockout is persisted; start later tests from a fresh token. */
+    cleanup_test_files();
+}
+
+static void guess_in_flight_test(void)
+{
+    printf("--- a guess in flight counts toward the lockout ---\n");
+    guess_in_flight_caps_attempts(CKU_USER, userPin, WP11_MAX_LOGIN_FAILS_USER,
+                                  "user C_SetPIN guess not checked");
+    guess_in_flight_caps_attempts(CKU_SO, soPin, WP11_MAX_LOGIN_FAILS_SO,
+                                  "SO login guess not checked");
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -1176,6 +1303,10 @@ static int run_test(void)
     concurrent_login_lockout_test();
 #endif
 #ifndef SINGLE_THREADED
+#if defined(DEBUG_WOLFPKCS11) && defined(LOGIN_TEST_THREADS) && \
+    !defined(WOLFPKCS11_NO_TIME)
+    guess_in_flight_test();
+#endif
     find_during_object_churn_test();
 #endif
 #if !defined(SINGLE_THREADED) && !defined(WOLFPKCS11_NO_STORE) && \

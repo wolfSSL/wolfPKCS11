@@ -422,6 +422,7 @@ WP11_API int WP11_Slot_TokenDecodedObjectCount(CK_SLOT_ID slotId);
 WP11_API void WP11_Session_SetFindHook(void (*hook)(void));
 WP11_API void WP11_Object_SetFindHook(void (*hook)(void));
 WP11_API void WP11_Session_SetAddObjectHook(void (*hook)(void));
+WP11_API void WP11_Slot_SetPinCheckHook(void (*hook)(void));
 #if defined(WOLFPKCS11_TPM) && (!defined(NO_RSA) || defined(HAVE_ECC))
 WP11_API int WP11_Test_DecodeTpmKey(CK_SLOT_ID slotId, unsigned char* keyData,
     int keyDataLen);
