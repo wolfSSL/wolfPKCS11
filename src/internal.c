@@ -8584,7 +8584,35 @@ static int wp11_token_write_seed(void* storage, WP11_Token* token)
 }
 
 /**
- * Load a token from storage.
+ * Check for an empty user PIN while loading, when the caller alone can reach
+ * the token, and cache the verdict as WP11_Slot_Has_Empty_Pin would.
+ *
+ * @param [in]       slot   Slot object.
+ * @param [in, out]  token  Token being loaded.
+ * @return  1 when the user PIN is set and empty, 0 otherwise.
+ */
+static int wp11_Token_HasEmptyPin(WP11_Slot* slot, WP11_Token* token)
+{
+    int ret = 0;
+    byte hash[PIN_HASH_SZ];
+
+    if ((token->tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET) != 0) {
+        if (HashPIN((char*)"", 0, token->userPinSeed,
+                sizeof(token->userPinSeed), hash, sizeof(hash), slot) == 0) {
+            ret = WP11_ConstantCompare(hash, token->userPin,
+                                       token->userPinLen) != 0;
+        }
+        token->userPinEmpty = ret ? 1 : 2;
+        wc_ForceZero(hash, sizeof(hash));
+    }
+
+    return ret;
+}
+
+/**
+ * Load a token from storage. Runs without the slot lock from library
+ * initialization and under it from a token reset; neither its callees nor
+ * this function take the slot lock.
  *
  * @param [in, out]  object   Token object.
  * @param [in]       tokenId  Id of token this key belongs to.
@@ -8736,7 +8764,7 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
         }
 
         /* If there is no pin, there is no login, so decode now */
-        if (WP11_Slot_Has_Empty_Pin(slot) && (ret == 0)) {
+        if (ret == 0 && wp11_Token_HasEmptyPin(slot, token)) {
 #ifndef WOLFPKCS11_NO_STORE
             /* Derive token->key from empty PIN + seed before decoding */
             ret = HashPIN((char*)"", 0, token->seed, sizeof(token->seed),
@@ -9690,17 +9718,18 @@ int WP11_Slot_TokenReset(WP11_Slot* slot, char* pin, int pinLen, char* label)
 #ifdef WP11_STORE_BATCH
         /* Only a staged store pass is known to leave storage unchanged. */
         if (ret != 0) {
-            /* Reset not stored: restore the token that is still in storage. */
+            /* Reset not stored: restore the token that is still in storage,
+             * under the lock so no session sees it half loaded. */
             XMEMSET(emptyLabel, 0, sizeof(emptyLabel));
             WP11_Lock_LockRW(&slot->lock);
             wp11_Token_Final(token);
-            if (wp11_Token_Init(token, emptyLabel) == 0) {
-                WP11_Lock_UnlockRW(&slot->lock);
-                (void)wp11_Slot_Load(slot, (int)slot->id);
+            if (wp11_Token_Init(token, emptyLabel) == 0 &&
+                    wp11_Slot_Load(slot, (int)slot->id) != 0) {
+                /* Storage still holds the token; leave a blank one here. */
+                wp11_Token_Final(token);
+                (void)wp11_Token_Init(token, emptyLabel);
             }
-            else {
-                WP11_Lock_UnlockRW(&slot->lock);
-            }
+            WP11_Lock_UnlockRW(&slot->lock);
         }
 #endif
     }
