@@ -3489,6 +3489,33 @@ static int wp11_DecryptData(byte* out, byte* data, int len, byte* key,
 }
 
 /**
+ * Finish encoding key data into a new buffer: on success release the previous
+ * record, on failure drop the new buffer and put the previous record back so
+ * the key still decodes at the next login.
+ *
+ * @param [in, out]  object   Key object.
+ * @param [in]       oldData  Key data buffer before the encode.
+ * @param [in]       oldLen   Length of key data before the encode.
+ * @param [in]       newLen   Size of the buffer allocated for the encode.
+ * @param [in]       ret      Result of the encode.
+ */
+static void wp11_Object_EncodeDone(WP11_Object* object, unsigned char* oldData,
+                                   int oldLen, word32 newLen, int ret)
+{
+    if (ret == 0) {
+        XFREE(oldData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    }
+    else {
+        if (object->keyData != oldData && object->keyData != NULL) {
+            wc_ForceZero(object->keyData, newLen);
+            XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        }
+        object->keyData = oldData;
+        object->keyDataLen = oldLen;
+    }
+}
+
+/**
  * "Decode" the certificate.
  *
  * Certificates are not encrypted.
@@ -4295,6 +4322,8 @@ static int wp11_Object_Decode_RsaKey(WP11_Object* object)
 static int wp11_Object_Encode_RsaKey(WP11_Object* object)
 {
     int ret;
+    unsigned char* oldData = object->keyData;
+    int oldLen = object->keyDataLen;
 
 #ifdef WOLFPKCS11_TPM
     ret = WP11_Object_EncodeTpmKey(object, NULL, 0);
@@ -4331,7 +4360,6 @@ static int wp11_Object_Encode_RsaKey(WP11_Object* object)
     }
 
     if (ret == 0) {
-        XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         /* Allocate buffer to hold encoded key. */
         object->keyData = (unsigned char*)XMALLOC(object->keyDataLen, NULL,
                                                        DYNAMIC_TYPE_TMP_BUFFER);
@@ -4373,13 +4401,8 @@ static int wp11_Object_Encode_RsaKey(WP11_Object* object)
         }
     }
 
-    if (ret != 0) {
-        if (object->keyData != NULL)
-            wc_ForceZero(object->keyData, object->keyDataLen);
-        XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        object->keyData = NULL;
-        object->keyDataLen = 0;
-    }
+    wp11_Object_EncodeDone(object, oldData, oldLen, (word32)object->keyDataLen,
+                           ret);
 
     return ret;
 }
@@ -4655,6 +4678,8 @@ static int wp11_Object_Decode_EccKey(WP11_Object* object)
 static int wp11_Object_Encode_EccKey(WP11_Object* object)
 {
     int ret;
+    unsigned char* oldData = object->keyData;
+    int oldLen = object->keyDataLen;
 
 #ifdef WOLFPKCS11_TPM
     ret = WP11_Object_EncodeTpmKey(object, NULL, 0);
@@ -4682,7 +4707,6 @@ static int wp11_Object_Encode_EccKey(WP11_Object* object)
     }
 
     if (ret == 0) {
-        XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         /* Allocate buffer to hold encoded key. */
         object->keyData = (unsigned char*)XMALLOC(object->keyDataLen, NULL,
                                                        DYNAMIC_TYPE_TMP_BUFFER);
@@ -4720,13 +4744,8 @@ static int wp11_Object_Encode_EccKey(WP11_Object* object)
         }
     }
 
-    if (ret != 0) {
-        if (object->keyData != NULL)
-            wc_ForceZero(object->keyData, object->keyDataLen);
-        XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        object->keyData = NULL;
-        object->keyDataLen = 0;
-    }
+    wp11_Object_EncodeDone(object, oldData, oldLen, (word32)object->keyDataLen,
+                           ret);
 
     return ret;
 }
@@ -4924,6 +4943,8 @@ static int wp11_Object_Decode_MldsaKey(WP11_Object* object)
 static int wp11_Object_Encode_MldsaKey(WP11_Object* object)
 {
     int ret;
+    unsigned char* oldData = object->keyData;
+    int oldLen = object->keyDataLen;
 
     if (object->objClass == CKO_PRIVATE_KEY) {
         /* Get length of encoded private key. */
@@ -4943,7 +4964,6 @@ static int wp11_Object_Encode_MldsaKey(WP11_Object* object)
     }
 
     if (ret == 0) {
-        XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         /* Allocate buffer to hold encoded key. */
         object->keyData = (unsigned char*)XMALLOC(object->keyDataLen, NULL,
                                                   DYNAMIC_TYPE_TMP_BUFFER);
@@ -4973,13 +4993,8 @@ static int wp11_Object_Encode_MldsaKey(WP11_Object* object)
         }
     }
 
-    if (ret != 0) {
-        if (object->keyData != NULL)
-            wc_ForceZero(object->keyData, object->keyDataLen);
-        XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        object->keyData = NULL;
-        object->keyDataLen = 0;
-    }
+    wp11_Object_EncodeDone(object, oldData, oldLen, (word32)object->keyDataLen,
+                           ret);
 
     return ret;
 }
@@ -5123,12 +5138,14 @@ static int wp11_Object_Decode_DhKey(WP11_Object* object)
 static int wp11_Object_Encode_DhKey(WP11_Object* object)
 {
     int ret = 0;
+    unsigned char* oldData = object->keyData;
+    int oldLen = object->keyDataLen;
+    word32 newLen = object->data.dhKey->len + AES_BLOCK_SIZE;
 
-    object->keyDataLen = object->data.dhKey->len + AES_BLOCK_SIZE;
-    XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    object->keyDataLen = (int)newLen;
     /* Allocate buffer to hold encoded key. */
-    object->keyData = (unsigned char*)XMALLOC(object->keyDataLen, NULL,
-                                                       DYNAMIC_TYPE_TMP_BUFFER);
+    object->keyData = (unsigned char*)XMALLOC(newLen, NULL,
+                                              DYNAMIC_TYPE_TMP_BUFFER);
     if (object->keyData == NULL)
         ret = MEMORY_E;
 
@@ -5148,14 +5165,7 @@ static int wp11_Object_Encode_DhKey(WP11_Object* object)
             object->keyDataLen = object->data.dhKey->len;
         }
     }
-
-    if (ret != 0) {
-        if (object->keyData != NULL)
-            wc_ForceZero(object->keyData, object->keyDataLen);
-        XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        object->keyData = NULL;
-        object->keyDataLen = 0;
-    }
+    wp11_Object_EncodeDone(object, oldData, oldLen, newLen, ret);
 
     return ret;
 }
@@ -5527,6 +5537,8 @@ static int wp11_Object_Encode_MlKemKey(WP11_Object* object)
 {
     int ret;
     word32 keyLen = 0;
+    unsigned char* oldData = object->keyData;
+    int oldLen = object->keyDataLen;
 
     if (object->objClass == CKO_PRIVATE_KEY) {
         ret = wc_MlKemKey_PrivateKeySize(object->data.mlKemKey, &keyLen);
@@ -5542,7 +5554,6 @@ static int wp11_Object_Encode_MlKemKey(WP11_Object* object)
     }
 
     if (ret == 0) {
-        XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         object->keyData = (unsigned char*)XMALLOC(object->keyDataLen, NULL,
                                                   DYNAMIC_TYPE_TMP_BUFFER);
         if (object->keyData == NULL)
@@ -5564,13 +5575,8 @@ static int wp11_Object_Encode_MlKemKey(WP11_Object* object)
                                           object->keyData, keyLen);
     }
 
-    if (ret != 0) {
-        if (object->keyData != NULL)
-            wc_ForceZero(object->keyData, object->keyDataLen);
-        XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        object->keyData = NULL;
-        object->keyDataLen = 0;
-    }
+    wp11_Object_EncodeDone(object, oldData, oldLen, (word32)object->keyDataLen,
+                           ret);
 
     return ret;
 }
@@ -5749,13 +5755,14 @@ static int wp11_Object_Encode_HssKey(WP11_Object* object)
 {
     int ret;
     word32 pubLen = 0;
+    unsigned char* oldData = object->keyData;
+    int oldLen = object->keyDataLen;
 
     if (object->objClass != CKO_PUBLIC_KEY)
         return NOT_AVAILABLE_E;  /* verify-only: no private-key objects */
 
     ret = wc_LmsKey_GetPubLen(object->data.lmsKey, &pubLen);
     if (ret == 0) {
-        XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         object->keyData = (unsigned char*)XMALLOC(pubLen, NULL,
             DYNAMIC_TYPE_TMP_BUFFER);
         if (object->keyData == NULL)
@@ -5767,14 +5774,7 @@ static int wp11_Object_Encode_HssKey(WP11_Object* object)
         if (ret == 0)
             object->keyDataLen = (int)pubLen;
     }
-    /* On failure release the buffer so a later store does not skip re-encoding
-     * (keyData != NULL) and persist an uninitialised buffer with a stale
-     * length. This is public key material only, so no zeroization is needed. */
-    if (ret != 0) {
-        XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        object->keyData = NULL;
-        object->keyDataLen = 0;
-    }
+    wp11_Object_EncodeDone(object, oldData, oldLen, pubLen, ret);
     return ret;
 }
 
@@ -6194,13 +6194,14 @@ static int wp11_Object_Encode_XmssKey(WP11_Object* object)
 {
     int ret;
     word32 pubLen = 0;
+    unsigned char* oldData = object->keyData;
+    int oldLen = object->keyDataLen;
 
     if (object->objClass != CKO_PUBLIC_KEY)
         return NOT_AVAILABLE_E;
 
     ret = wc_XmssKey_GetPubLen(object->data.xmssKey, &pubLen);
     if (ret == 0) {
-        XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         object->keyData = (unsigned char*)XMALLOC(pubLen, NULL,
             DYNAMIC_TYPE_TMP_BUFFER);
         if (object->keyData == NULL)
@@ -6212,14 +6213,7 @@ static int wp11_Object_Encode_XmssKey(WP11_Object* object)
         if (ret == 0)
             object->keyDataLen = (int)pubLen;
     }
-    /* On failure release the buffer so a later store does not skip re-encoding
-     * (keyData != NULL) and persist an uninitialised buffer with a stale
-     * length. This is public key material only, so no zeroization is needed. */
-    if (ret != 0) {
-        XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        object->keyData = NULL;
-        object->keyDataLen = 0;
-    }
+    wp11_Object_EncodeDone(object, oldData, oldLen, pubLen, ret);
     return ret;
 }
 
@@ -6519,12 +6513,14 @@ static int wp11_Object_Decode_SymmKey(WP11_Object* object)
 static int wp11_Object_Encode_SymmKey(WP11_Object* object)
 {
     int ret = 0;
+    unsigned char* oldData = object->keyData;
+    int oldLen = object->keyDataLen;
+    word32 newLen = object->data.symmKey->len + AES_BLOCK_SIZE;
 
-    object->keyDataLen = object->data.symmKey->len + AES_BLOCK_SIZE;
-    XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    object->keyDataLen = (int)newLen;
     /* Allocate buffer to hold encoded key. */
-    object->keyData = (unsigned char*)XMALLOC(object->keyDataLen, NULL,
-                                                       DYNAMIC_TYPE_TMP_BUFFER);
+    object->keyData = (unsigned char*)XMALLOC(newLen, NULL,
+                                              DYNAMIC_TYPE_TMP_BUFFER);
     if (object->keyData == NULL)
         ret = MEMORY_E;
 
@@ -6534,17 +6530,8 @@ static int wp11_Object_Encode_SymmKey(WP11_Object* object)
                                     object->slot->token.key,
                                     sizeof(object->slot->token.key), object->iv,
                                     sizeof(object->iv), object->devId);
-        if (ret == 0)
-            object->keyDataLen = object->data.symmKey->len + AES_BLOCK_SIZE;
     }
-
-    if (ret != 0) {
-        if (object->keyData != NULL)
-            wc_ForceZero(object->keyData, object->keyDataLen);
-        XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        object->keyData = NULL;
-        object->keyDataLen = 0;
-    }
+    wp11_Object_EncodeDone(object, oldData, oldLen, newLen, ret);
 
     return ret;
 }
@@ -7211,10 +7198,12 @@ static int wp11_Object_Encode(WP11_Object* object, int protect)
 {
     int ret = 0;
     int encrypt = wp11_Object_IsEncrypted(object);
+    byte oldIv[GCM_NONCE_MID_SZ];
 
     /* Every AES-GCM encryption under the token key needs a fresh nonce. Do
      * this immediately before encoding, while the plaintext is still the
      * source of the ciphertext that will be persisted. */
+    XMEMCPY(oldIv, object->iv, sizeof(oldIv));
     if (encrypt) {
         WP11_Lock_LockRW(&object->slot->token.rngLock);
         ret = wc_RNG_GenerateBlock(&object->slot->token.rng, object->iv,
@@ -7223,6 +7212,9 @@ static int wp11_Object_Encode(WP11_Object* object, int protect)
     }
     if (ret == 0)
         ret = wp11_Object_EncodeData(object, protect);
+    /* The previous record stays in use when the encode fails. */
+    if (ret != 0)
+        XMEMCPY(object->iv, oldIv, sizeof(object->iv));
 
     return ret;
 }

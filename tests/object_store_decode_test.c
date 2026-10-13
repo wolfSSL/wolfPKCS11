@@ -95,6 +95,7 @@ static size_t largestAlloc = 0;
 static size_t peakCap = 0;
 static size_t liveBytes = 0;
 static size_t peakLive = 0;
+static int refuseAllocs = 0;
 
 static void* track_malloc(size_t sz)
 {
@@ -102,7 +103,7 @@ static void* track_malloc(size_t sz)
 
     if (sz > largestAlloc)
         largestAlloc = sz;
-    if (sz >= ALLOC_REFUSE_SZ)
+    if (sz >= ALLOC_REFUSE_SZ || refuseAllocs)
         return NULL;
     p = (unsigned char*)malloc(sz + TRACK_HDR_SZ);
     if (p == NULL)
@@ -1133,6 +1134,90 @@ static CK_RV create_aes_key(CK_SESSION_HANDLE session)
 }
 #endif
 
+#ifndef NO_AES
+/* Count the AES keys visible after a login and check one still encrypts. */
+static CK_RV use_stored_aes_key(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE keyType = CKK_AES;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,    &keyClass, sizeof(keyClass) },
+        { CKA_KEY_TYPE, &keyType,  sizeof(keyType)  },
+    };
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_ULONG count = 0;
+    byte iv[16];
+    byte plain[16];
+    byte enc[32];
+    CK_ULONG encLen = sizeof(enc);
+    CK_MECHANISM mech = { CKM_AES_CBC, iv, sizeof(iv) };
+
+    XMEMSET(iv, 0, sizeof(iv));
+    XMEMSET(plain, 0, sizeof(plain));
+    rv = funcList->C_FindObjectsInit(session, tmpl,
+                                     sizeof(tmpl) / sizeof(*tmpl));
+    if (rv == CKR_OK) {
+        rv = funcList->C_FindObjects(session, &key, 1, &count);
+        (void)funcList->C_FindObjectsFinal(session);
+    }
+    if (rv == CKR_OK && count != 1)
+        rv = CKR_OBJECT_HANDLE_INVALID;
+    if (rv == CKR_OK)
+        rv = funcList->C_EncryptInit(session, &mech, key);
+    if (rv == CKR_OK)
+        rv = funcList->C_Encrypt(session, plain, sizeof(plain), enc, &encLen);
+    return rv;
+}
+
+/* A logout whose re-encryption of a stored key fails must leave the stored
+ * record in place, so the next login still decodes it. */
+static int child_login_after_failed_encode(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    int res = CHILD_FAIL;
+
+    if (wolfSSL_SetAllocators(track_malloc, track_free, track_realloc) != 0)
+        return CHILD_SETUP;
+    if (pkcs11_load() != CKR_OK)
+        return CHILD_SETUP;
+    rv = init_slot(&slot);
+    if (rv == CKR_OK)
+        rv = open_session(slot, 1, &session);
+    if (rv != CKR_OK)
+        return CHILD_SETUP;
+    refuseAllocs = 1;
+    (void)funcList->C_Logout(session);
+    refuseAllocs = 0;
+    rv = funcList->C_Login(session, CKU_USER, userPin, sizeof(userPin) - 1);
+    if (rv == CKR_OK)
+        rv = use_stored_aes_key(session);
+    if (rv == CKR_OK)
+        res = CHILD_PASS;
+    else
+        fprintf(stderr, "  login or key use after failed encode: 0x%lx\n",
+                (unsigned long)rv);
+    (void)funcList->C_Finalize(NULL);
+    return res;
+}
+
+static void test_login_after_failed_encode(void)
+{
+    CK_RV rv;
+    int res = CHILD_SETUP;
+
+    printf("\n--- stored key survives a failed re-encryption at logout ---\n");
+    rv = store_objects(create_aes_key);
+    CHECK_RV(rv, "store AES key", CKR_OK);
+    if (rv == CKR_OK)
+        res = run_in_child(child_login_after_failed_encode);
+    CHECK_TRUE(res == CHILD_PASS, "login decodes the key after a failed encode");
+    cleanup_test_files();
+}
+#endif
+
 static void test_failed_key_decrypt_scrubbed(void)
 {
     printf("\n--- secret key storage cleared after failed decrypt ---\n");
@@ -1174,6 +1259,9 @@ int main(int argc, char* argv[])
 #ifdef HAVE_ALLOC_TRACKING
     test_failed_decrypt_scrubbed();
     test_failed_key_decrypt_scrubbed();
+#ifndef NO_AES
+    test_login_after_failed_encode();
+#endif
 #endif
 
     return pkcs11_test_summary();
