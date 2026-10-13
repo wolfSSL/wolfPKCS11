@@ -9201,23 +9201,25 @@ static CK_RV wp11_C_UnwrapKey(CK_SESSION_HANDLE hSession,
             if (rv != CKR_OK)
                 goto err_out;
 
-            /* AES-ECB keeps no length: CKA_VALUE_LEN drops secret padding. */
+            /* ECB zero pads; a 32 byte AES value may be a padded AES-192 key. */
             if (pMechanism->mechanism == CKM_AES_ECB &&
                     keyClass == CKO_SECRET_KEY) {
                 FindAttributeType(pTemplate, ulAttributeCount, CKA_VALUE_LEN,
                     &attr);
-                if (attr == NULL) {
+                if (attr == NULL && (keyType != CKK_AES ||
+                        ulUnwrappedLen != AES_128_KEY_SIZE)) {
                     rv = CKR_TEMPLATE_INCOMPLETE;
                     goto err_out;
                 }
-                if (attr->pValue == NULL ||
+                if (attr != NULL && (attr->pValue == NULL ||
                         attr->ulValueLen != sizeof(CK_ULONG) ||
                         *(CK_ULONG*)attr->pValue == 0 ||
-                        *(CK_ULONG*)attr->pValue > ulUnwrappedLen) {
+                        *(CK_ULONG*)attr->pValue > ulUnwrappedLen)) {
                     rv = CKR_TEMPLATE_INCONSISTENT;
                     goto err_out;
                 }
-                ulUnwrappedLen = *(CK_ULONG*)attr->pValue;
+                if (attr != NULL)
+                    ulUnwrappedLen = *(CK_ULONG*)attr->pValue;
             }
 
             break;

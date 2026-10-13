@@ -640,6 +640,154 @@ static void test_ecb_wrap_short_key(CK_SLOT_ID slot, CK_SESSION_HANDLE session)
     if (secret != CK_INVALID_HANDLE)
         funcList->C_DestroyObject(session, secret);
 }
+
+/* An AES-128 key unwraps under AES-ECB without CKA_VALUE_LEN, a two block
+ * value needs it since it may be a padded AES-192 key, and a CKA_VALUE_LEN
+ * that is zero or longer than the decrypted data is rejected. */
+static void test_ecb_unwrap_aes_key(CK_SLOT_ID slot, CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_MECHANISM_INFO info;
+    CK_MECHANISM mech = { CKM_AES_ECB, NULL, 0 };
+    CK_OBJECT_HANDLE inner = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE aesKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE unwrapped = CK_INVALID_HANDLE;
+    CK_KEY_TYPE aesType = CKK_AES;
+    CK_ULONG valueLen = 0;
+    CK_BYTE innerValue[16];
+    CK_BYTE aes192Value[24];
+    CK_BYTE aesValue[16];
+    CK_BYTE wrapped[64];
+    CK_BYTE value[32];
+    CK_ULONG wrappedLen = sizeof(wrapped);
+    CK_ATTRIBUTE innerTmpl[] = {
+        { CKA_CLASS,       &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE,    &aesType,     sizeof(aesType)     },
+        { CKA_PRIVATE,     &ckFalse,     sizeof(ckFalse)     },
+        { CKA_SENSITIVE,   &ckFalse,     sizeof(ckFalse)     },
+        { CKA_EXTRACTABLE, &ckTrue,      sizeof(ckTrue)      },
+        { CKA_VALUE,       innerValue,   sizeof(innerValue)  },
+    };
+    CK_ATTRIBUTE aesTmpl[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &aesType,     sizeof(aesType)     },
+        { CKA_PRIVATE,  &ckFalse,     sizeof(ckFalse)     },
+        { CKA_WRAP,     &ckTrue,      sizeof(ckTrue)      },
+        { CKA_UNWRAP,   &ckTrue,      sizeof(ckTrue)      },
+        { CKA_VALUE,    aesValue,     sizeof(aesValue)    },
+    };
+    CK_ATTRIBUTE unwrapTmpl[] = {
+        { CKA_CLASS,       &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE,    &aesType,     sizeof(aesType)     },
+        { CKA_PRIVATE,     &ckFalse,     sizeof(ckFalse)     },
+        { CKA_SENSITIVE,   &ckFalse,     sizeof(ckFalse)     },
+        { CKA_EXTRACTABLE, &ckTrue,      sizeof(ckTrue)      },
+        { CKA_VALUE_LEN,   &valueLen,    sizeof(valueLen)    },
+    };
+    CK_ULONG unwrapCnt = sizeof(unwrapTmpl) / sizeof(*unwrapTmpl);
+    CK_ATTRIBUTE valueAttr = { CKA_VALUE, value, sizeof(value) };
+
+    rv = funcList->C_GetMechanismInfo(slot, CKM_AES_ECB, &info);
+    if (rv != CKR_OK || (info.flags & CKF_WRAP) == 0)
+        return;
+    XMEMSET(innerValue, 0x6d, sizeof(innerValue));
+    XMEMSET(aes192Value, 0x7b, sizeof(aes192Value));
+    XMEMSET(aesValue, 0x2e, sizeof(aesValue));
+    rv = funcList->C_CreateObject(session, innerTmpl,
+        sizeof(innerTmpl) / sizeof(*innerTmpl), &inner);
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, aesTmpl,
+            sizeof(aesTmpl) / sizeof(*aesTmpl), &aesKey);
+    }
+    CHECK_RV(rv, "create AES-128 key and AES wrapping key", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_WrapKey(session, &mech, aesKey, inner, wrapped,
+                                 &wrappedLen);
+        CHECK_RV(rv, "C_WrapKey(AES-ECB) of an AES-128 key", CKR_OK);
+        CHECK_TRUE(rv != CKR_OK || wrappedLen == sizeof(innerValue),
+                   "AES-ECB wrapped AES-128 key is one block");
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_UnwrapKey(session, &mech, aesKey, wrapped,
+                                   wrappedLen, unwrapTmpl, unwrapCnt - 1,
+                                   &unwrapped);
+        CHECK_RV(rv, "C_UnwrapKey(AES-ECB) of an AES key without CKA_VALUE_LEN",
+                 CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_GetAttributeValue(session, unwrapped, &valueAttr, 1);
+        CHECK_TRUE(rv == CKR_OK && valueAttr.ulValueLen == sizeof(innerValue)
+                   && XMEMCMP(value, innerValue, sizeof(innerValue)) == 0,
+                   "AES-ECB unwrapped AES key keeps the full value");
+        funcList->C_DestroyObject(session, unwrapped);
+        unwrapped = CK_INVALID_HANDLE;
+    }
+    if (rv == CKR_OK) {
+        valueLen = 0;
+        rv = funcList->C_UnwrapKey(session, &mech, aesKey, wrapped,
+                                   wrappedLen, unwrapTmpl, unwrapCnt,
+                                   &unwrapped);
+        CHECK_RV(rv, "C_UnwrapKey(AES-ECB) rejects a zero CKA_VALUE_LEN",
+                 CKR_TEMPLATE_INCONSISTENT);
+        valueLen = wrappedLen + 1;
+        rv = funcList->C_UnwrapKey(session, &mech, aesKey, wrapped,
+                                   wrappedLen, unwrapTmpl, unwrapCnt,
+                                   &unwrapped);
+        CHECK_RV(rv, "C_UnwrapKey(AES-ECB) rejects an oversized CKA_VALUE_LEN",
+                 CKR_TEMPLATE_INCONSISTENT);
+        valueLen = wrappedLen;
+        rv = funcList->C_UnwrapKey(session, &mech, aesKey, wrapped,
+                                   wrappedLen, unwrapTmpl, unwrapCnt,
+                                   &unwrapped);
+        CHECK_RV(rv, "C_UnwrapKey(AES-ECB) of an AES key with CKA_VALUE_LEN",
+                 CKR_OK);
+        funcList->C_DestroyObject(session, unwrapped);
+        unwrapped = CK_INVALID_HANDLE;
+    }
+    if (rv == CKR_OK) {
+        funcList->C_DestroyObject(session, inner);
+        inner = CK_INVALID_HANDLE;
+        innerTmpl[5].pValue = aes192Value;
+        innerTmpl[5].ulValueLen = sizeof(aes192Value);
+        rv = funcList->C_CreateObject(session, innerTmpl,
+            sizeof(innerTmpl) / sizeof(*innerTmpl), &inner);
+        CHECK_RV(rv, "create AES-192 key", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        wrappedLen = sizeof(wrapped);
+        rv = funcList->C_WrapKey(session, &mech, aesKey, inner, wrapped,
+                                 &wrappedLen);
+        CHECK_RV(rv, "C_WrapKey(AES-ECB) pads an AES-192 key", CKR_OK);
+        CHECK_TRUE(rv != CKR_OK || wrappedLen == 32,
+                   "AES-ECB wrapped AES-192 key is two blocks");
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_UnwrapKey(session, &mech, aesKey, wrapped,
+                                   wrappedLen, unwrapTmpl, unwrapCnt - 1,
+                                   &unwrapped);
+        CHECK_RV(rv, "C_UnwrapKey(AES-ECB) of two blocks needs CKA_VALUE_LEN",
+                 CKR_TEMPLATE_INCOMPLETE);
+        valueLen = sizeof(aes192Value);
+        rv = funcList->C_UnwrapKey(session, &mech, aesKey, wrapped,
+                                   wrappedLen, unwrapTmpl, unwrapCnt,
+                                   &unwrapped);
+        CHECK_RV(rv, "C_UnwrapKey(AES-ECB) of an AES-192 key with CKA_VALUE_LEN",
+                 CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        valueAttr.ulValueLen = sizeof(value);
+        rv = funcList->C_GetAttributeValue(session, unwrapped, &valueAttr, 1);
+        CHECK_TRUE(rv == CKR_OK && valueAttr.ulValueLen == sizeof(aes192Value)
+                   && XMEMCMP(value, aes192Value, sizeof(aes192Value)) == 0,
+                   "AES-ECB unwrapped AES-192 key has its original value");
+    }
+    if (unwrapped != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, unwrapped);
+    if (aesKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, aesKey);
+    if (inner != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, inner);
+}
 #endif
 
 #if !defined(NO_RSA) && !defined(NO_AES) && !defined(WOLFPKCS11_NO_STORE)
@@ -649,6 +797,7 @@ static void test_ecb_wrap_rsa_key(CK_SLOT_ID slot, CK_SESSION_HANDLE session)
     CK_RV rv;
     CK_MECHANISM_INFO info;
     CK_MECHANISM mech = { CKM_AES_ECB, NULL, 0 };
+    CK_MECHANISM cbcMech = { CKM_AES_CBC_PAD, NULL, 0 };
     CK_OBJECT_HANDLE rsaPriv = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE aesKey = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE unwrapped = CK_INVALID_HANDLE;
@@ -766,6 +915,7 @@ static int run_test(void)
         test_wrap_flags(slotList[0], session);
 #ifndef NO_AES
         test_ecb_wrap_short_key(slotList[0], session);
+        test_ecb_unwrap_aes_key(slotList[0], session);
 #endif
 #if !defined(NO_RSA) && !defined(NO_AES) && !defined(WOLFPKCS11_NO_STORE)
         test_ecb_wrap_rsa_key(slotList[0], session);
