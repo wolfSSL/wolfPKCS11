@@ -854,6 +854,34 @@ static void test_destroy_unstored_object(void)
 }
 
 #ifdef TEST_ALLOC_FAILURE
+/* A library initialization that fails part way is undone and retried. */
+static void test_init_out_of_memory(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+
+    printf("\n--- library initializes after running out of memory ---\n");
+    clear_store_dir();
+    failAllocs = 1;
+    rv = lib_init();
+    failAllocs = 0;
+    CHECK_TRUE(rv != CKR_OK, "initialize fails when allocation fails");
+    if (rv == CKR_OK)
+        funcList->C_Finalize(NULL);
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup once memory is available", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "init-retry", &obj);
+        CHECK_RV(rv, "create token object after the retry", CKR_OK);
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
 /* Object creation fails cleanly when memory cannot be allocated. */
 static void test_create_object_out_of_memory(void)
 {
@@ -968,6 +996,7 @@ static int run_tests(void)
     test_destroy_unstored_object();
     test_load_record_without_trailing_fields();
 #ifdef TEST_ALLOC_FAILURE
+    test_init_out_of_memory();
     test_create_object_out_of_memory();
 #endif
 
