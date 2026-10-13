@@ -90,7 +90,33 @@ static int userPinLen = 15;
 
 #define CHECK_CKR(rv, op) CHECK_RV(rv, CKR_OK, op)
 
+#define CHECK_FAILS(rv, op) do {                                          \
+    if ((rv) == CKR_OK) {                                                 \
+        fprintf(stderr, "FAIL: %s: got CKR_OK\n", op);                    \
+        test_failed++;                                                    \
+        result = -1;                                                      \
+        goto cleanup;                                                     \
+    }                                                                     \
+    else {                                                                \
+        printf("PASS: %s\n", op);                                         \
+        test_passed++;                                                    \
+    }                                                                     \
+} while (0)
+
 #ifdef HAVE_ECC
+/* Uncompressed P-384 public point. */
+static byte ecc_p384_point[] = {
+    0x04, 0x2b, 0x46, 0xc2, 0xd4, 0x00, 0xbd, 0xba, 0xae, 0xa5, 0xd1, 0x4e,
+    0xcd, 0x6e, 0x06, 0x05, 0x02, 0x41, 0xec, 0x49, 0x2f, 0x3a, 0xf6, 0x90,
+    0xf4, 0x77, 0x8d, 0x2c, 0x77, 0x2e, 0x43, 0x21, 0x63, 0x47, 0x13, 0xd0,
+    0x9e, 0xaf, 0x8e, 0x6c, 0x02, 0x2e, 0xd0, 0x00, 0x80, 0x5d, 0x6b, 0x3c,
+    0xb8, 0x86, 0x69, 0x22, 0x1e, 0x58, 0x40, 0xdf, 0x2a, 0x8c, 0x64, 0x06,
+    0x41, 0x37, 0xa0, 0xdf, 0x77, 0xd7, 0x56, 0x0f, 0x5d, 0x92, 0x5e, 0x0d,
+    0x51, 0xdc, 0x79, 0xca, 0xa1, 0x7a, 0x84, 0x00, 0x98, 0x74, 0xd6, 0x82,
+    0xa2, 0x55, 0xc8, 0xc6, 0x00, 0x4f, 0xf7, 0x33, 0x30, 0xfb, 0x2f, 0x8a,
+    0x4a
+};
+
 static CK_OBJECT_CLASS privKeyClass = CKO_PRIVATE_KEY;
 static CK_OBJECT_CLASS secretKeyClass = CKO_SECRET_KEY;
 static CK_KEY_TYPE eccKeyType = CKK_EC;
@@ -198,6 +224,54 @@ static int test_null_kdf_shared_data(CK_SESSION_HANDLE session)
     ret = ecdh_derive(session, base, &params, &derived);
     CHECK_RV(ret, CKR_MECHANISM_PARAM_INVALID,
              "CKD_NULL derive rejects shared data pointer");
+
+cleanup:
+    if (derived != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, derived);
+    if (base != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, base);
+    return result;
+}
+
+/* A well-formed point of the wrong size for the base key's curve is rejected
+ * raw and DER wrapped, as is a raw point one byte short or long. */
+static int test_wrong_size_point_rejected(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    CK_ECDH1_DERIVE_PARAMS params;
+    byte wrapped[2 + sizeof(ecc_p384_point)];
+    byte longPoint[sizeof(ecc_p256_point) + 1];
+    int result = 0;
+
+    ret = create_ec_base(session, CK_FALSE, CK_TRUE, &base);
+    CHECK_CKR(ret, "create EC base key");
+
+    ecdh_params_init(&params, ecc_p384_point, sizeof(ecc_p384_point));
+    ret = ecdh_derive(session, base, &params, &derived);
+    CHECK_FAILS(ret, "raw P-384 point against a P-256 key rejected");
+
+    wrapped[0] = 0x04;
+    wrapped[1] = (byte)sizeof(ecc_p384_point);
+    XMEMCPY(wrapped + 2, ecc_p384_point, sizeof(ecc_p384_point));
+    ecdh_params_init(&params, wrapped, sizeof(wrapped));
+    ret = ecdh_derive(session, base, &params, &derived);
+    CHECK_FAILS(ret, "DER wrapped P-384 point against a P-256 key rejected");
+
+    ecdh_params_init(&params, ecc_p256_point, sizeof(ecc_p256_point) - 1);
+    ret = ecdh_derive(session, base, &params, &derived);
+    CHECK_FAILS(ret, "raw point one byte short rejected");
+
+    XMEMCPY(longPoint, ecc_p256_point, sizeof(ecc_p256_point));
+    longPoint[sizeof(longPoint) - 1] = 0x00;
+    ecdh_params_init(&params, longPoint, sizeof(longPoint));
+    ret = ecdh_derive(session, base, &params, &derived);
+    CHECK_FAILS(ret, "raw point one byte long rejected");
+
+    ecdh_params_init(&params, ecc_p256_point, sizeof(ecc_p256_point));
+    ret = ecdh_derive(session, base, &params, &derived);
+    CHECK_CKR(ret, "correctly sized point still derives");
 
 cleanup:
     if (derived != CK_INVALID_HANDLE)
@@ -874,6 +948,8 @@ static int ec_derive_test(void)
 
 #ifdef HAVE_ECC
     if (test_null_kdf_shared_data(session) != 0)
+        result = -1;
+    if (test_wrong_size_point_rejected(session) != 0)
         result = -1;
     if (test_public_data_length_bound(session) != 0)
         result = -1;
