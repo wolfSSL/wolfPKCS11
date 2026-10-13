@@ -6788,7 +6788,7 @@ static CK_RV wp11_C_SignFinal(CK_SESSION_HANDLE hSession,
             }
 
             WP11_Session_GetData(session, &data, &dataLen);
-            sigLen = (word32)*pulSignatureLen;
+            sigLen = CK_ULONG_CAP_WORD32(*pulSignatureLen);
             ret = WP11_TLS_MAC_sign(data, dataLen, pSignature, &sigLen,
                                     session);
             WP11_Session_FreeData(session);
