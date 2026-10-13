@@ -982,6 +982,15 @@ static CK_RV CheckAttributeUpdate(WP11_Session* session, WP11_Object* obj,
             *(CK_BBOOL*)attr->pValue == CK_TRUE) {
         return CKR_ATTRIBUTE_VALUE_INVALID;
     }
+    /* Certificate attributes; NSS trust objects carry them too. */
+    if ((attr->type == CKA_ISSUER || attr->type == CKA_SERIAL_NUMBER) &&
+            objClass != CKO_CERTIFICATE
+#ifdef WOLFPKCS11_NSS
+            && objClass != CKO_NSS_TRUST
+#endif
+            ) {
+        return CKR_ATTRIBUTE_TYPE_INVALID;
+    }
     /* The type-specific storage was allocated for the creation class. */
     if (newObject && attr->type == CKA_CLASS &&
             *(CK_OBJECT_CLASS*)attr->pValue != objClass) {

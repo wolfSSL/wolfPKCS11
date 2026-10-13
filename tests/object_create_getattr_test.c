@@ -684,6 +684,13 @@ static void test_key_subject_roundtrip(CK_SESSION_HANDLE session)
                             sizeof(keySubject) };
     CK_ATTRIBUTE serial = { CKA_SERIAL_NUMBER, (void*)keySerial,
                             sizeof(keySerial) };
+    byte labelBuf[8];
+    CK_ATTRIBUTE getLabel = { CKA_LABEL, labelBuf, sizeof(labelBuf) };
+    CK_ATTRIBUTE labelTmpl[] = { { CKA_LABEL, (void*)"A", 1 } };
+    CK_ATTRIBUTE mixedTmpl[] = {
+        { CKA_LABEL,  (void*)"B",        1                  },
+        { CKA_ISSUER, (void*)keySubject, sizeof(keySubject) },
+    };
     CK_ATTRIBUTE pubTmpl[] = {
         { CKA_CLASS,     &pubClass,          sizeof(pubClass)        },
         { CKA_KEY_TYPE,  &ecType,            sizeof(ecType)          },
@@ -707,10 +714,12 @@ static void test_key_subject_roundtrip(CK_SESSION_HANDLE session)
     CK_ULONG privCnt = sizeof(privTmpl) / sizeof(*privTmpl);
 
     rv = funcList->C_CreateObject(session, pubTmpl, pubCnt, &key);
-    CHECK_TRUE(rv != CKR_OK, "public key with CKA_ISSUER rejected");
+    CHECK_RV(rv, "public key with CKA_ISSUER rejected",
+             CKR_ATTRIBUTE_TYPE_INVALID);
     destroy_obj(session, &key);
     rv = funcList->C_CreateObject(session, privTmpl, privCnt, &key);
-    CHECK_TRUE(rv != CKR_OK, "private key with CKA_SERIAL_NUMBER rejected");
+    CHECK_RV(rv, "private key with CKA_SERIAL_NUMBER rejected",
+             CKR_ATTRIBUTE_TYPE_INVALID);
     destroy_obj(session, &key);
 
     rv = funcList->C_CreateObject(session, pubTmpl, pubCnt - 1, &key);
@@ -722,7 +731,17 @@ static void test_key_subject_roundtrip(CK_SESSION_HANDLE session)
                    XMEMCMP(buf, keySubject, sizeof(keySubject)) == 0,
                    "public key subject reads back");
         rv = funcList->C_SetAttributeValue(session, key, &issuer, 1);
-        CHECK_TRUE(rv != CKR_OK, "set CKA_ISSUER on public key rejected");
+        CHECK_RV(rv, "set CKA_ISSUER on public key rejected",
+                 CKR_ATTRIBUTE_TYPE_INVALID);
+        rv = funcList->C_SetAttributeValue(session, key, labelTmpl, 1);
+        CHECK_RV(rv, "set public key label", CKR_OK);
+        rv = funcList->C_SetAttributeValue(session, key, mixedTmpl, 2);
+        CHECK_RV(rv, "label with CKA_ISSUER on public key rejected",
+                 CKR_ATTRIBUTE_TYPE_INVALID);
+        rv = funcList->C_GetAttributeValue(session, key, &getLabel, 1);
+        CHECK_TRUE(rv == CKR_OK && getLabel.ulValueLen == 1 &&
+                   labelBuf[0] == 'A',
+                   "label unchanged after the rejected template");
     }
     destroy_obj(session, &key);
 
@@ -735,8 +754,8 @@ static void test_key_subject_roundtrip(CK_SESSION_HANDLE session)
                    XMEMCMP(buf, keySubject, sizeof(keySubject)) == 0,
                    "private key subject reads back");
         rv = funcList->C_SetAttributeValue(session, key, &serial, 1);
-        CHECK_TRUE(rv != CKR_OK,
-                   "set CKA_SERIAL_NUMBER on private key rejected");
+        CHECK_RV(rv, "set CKA_SERIAL_NUMBER on private key rejected",
+                 CKR_ATTRIBUTE_TYPE_INVALID);
     }
     destroy_obj(session, &key);
 }
