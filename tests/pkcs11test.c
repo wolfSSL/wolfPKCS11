@@ -3338,7 +3338,7 @@ static CK_RV test_attribute(void* args)
     if (ret == CKR_OK) {
         count = sizeof(attrNotAvail) / sizeof(*attrNotAvail);
         ret = funcList->C_GetAttributeValue(session, obj, attrNotAvail, count);
-        CHECK_CKR_FAIL(ret, CK_UNAVAILABLE_INFORMATION,
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_TYPE_INVALID,
                                  "Get Attribute Value attribute not available");
     }
 
@@ -3538,7 +3538,7 @@ static CK_RV test_attribute_types(void* args)
     }
     for (i = 0; i < (int)badAttrsTmplCnt; i++) {
         ret = funcList->C_GetAttributeValue(session, obj, &badAttrsTmpl[i], 1);
-        CHECK_CKR_FAIL(ret, CK_UNAVAILABLE_INFORMATION,
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_TYPE_INVALID,
                                                    "Get unavailable attribute");
     }
     if (ret == CKR_OK) {
@@ -4396,7 +4396,7 @@ static CK_RV test_attributes_secret(void* args)
     if (ret == CKR_OK) {
         for (i = 0; i < (int)badTmplCnt; i++) {
             ret = funcList->C_GetAttributeValue(session, key, &badTmpl[i], 1);
-            CHECK_CKR_FAIL(ret, CK_UNAVAILABLE_INFORMATION,
+            CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_TYPE_INVALID,
                                            "Get Attributes secret unavailable");
         }
     }
@@ -7393,7 +7393,7 @@ static CK_RV test_attributes_rsa(void* args)
         for (i = 0; i < (int)rsaPubBadTmplCnt; i++) {
             ret = funcList->C_GetAttributeValue(session, pub, &rsaPubBadTmpl[i],
                                                                              1);
-            CHECK_CKR_FAIL(ret, CK_UNAVAILABLE_INFORMATION,
+            CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_TYPE_INVALID,
                                               "Get Attributes RSA unavailable");
         }
     }
@@ -9212,7 +9212,7 @@ static CK_RV test_attributes_ecc(void* args)
         for (i = 0; i < (int)eccBadTmplCnt; i++) {
             ret = funcList->C_GetAttributeValue(session, pub, &eccBadTmpl[i],
                                                                              1);
-            CHECK_CKR_FAIL(ret, CK_UNAVAILABLE_INFORMATION,
+            CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_TYPE_INVALID,
                                                "Get Attributes EC unavailable");
         }
     }
@@ -10244,7 +10244,7 @@ static CK_RV test_attributes_dh(void* args)
     if (ret == CKR_OK) {
         for (i = 0; i < (int)dhBadTmplCnt; i++) {
             ret = funcList->C_GetAttributeValue(session, pub, &dhBadTmpl[i], 1);
-            CHECK_CKR_FAIL(ret, CK_UNAVAILABLE_INFORMATION,
+            CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_TYPE_INVALID,
                                                "Get Attributes DH unavailable");
         }
     }
@@ -17323,6 +17323,220 @@ static CK_RV test_get_attr_value_all_processed(void* args)
     return ret;
 }
 
+/* CKA_CERTIFICATE_TYPE is not valid for a key object. C_GetAttributeValue must
+ * mark it unavailable, still return the other attributes in the template and
+ * return CKR_ATTRIBUTE_TYPE_INVALID rather than failing the whole call. */
+static CK_RV test_get_attr_value_cert_type_on_key(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    static byte keyData[] = { 0x00 };
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
+        { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
+        { CKA_VALUE,             keyData,           sizeof(keyData)           },
+    };
+    CK_ULONG tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
+    CK_OBJECT_CLASS objClass = CKO_DATA;
+    CK_KEY_TYPE keyType = CKK_RSA;
+    CK_CERTIFICATE_TYPE certType = CKC_X_509;
+    CK_ATTRIBUTE lenTmpl[] = {
+        { CKA_CLASS,             NULL,              0                         },
+        { CKA_KEY_TYPE,          NULL,              0                         },
+        { CKA_CERTIFICATE_TYPE,  NULL,              0                         },
+    };
+    CK_ULONG lenTmplCnt = sizeof(lenTmpl) / sizeof(*lenTmpl);
+    CK_ATTRIBUTE valTmpl[] = {
+        { CKA_CLASS,             &objClass,         sizeof(objClass)          },
+        { CKA_CERTIFICATE_TYPE,  &certType,         sizeof(certType)          },
+        { CKA_KEY_TYPE,          &keyType,          sizeof(keyType)           },
+    };
+    CK_ULONG valTmplCnt = sizeof(valTmpl) / sizeof(*valTmpl);
+
+    ret = funcList->C_CreateObject(session, tmpl, tmplCnt, &obj);
+    CHECK_CKR(ret, "Create Object for certificate type on key test");
+
+    /* Length query with CKA_CERTIFICATE_TYPE last. */
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, obj, lenTmpl, lenTmplCnt);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_TYPE_INVALID,
+                       "Get lengths with CKA_CERTIFICATE_TYPE on key");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(lenTmpl[0].ulValueLen == sizeof(CK_OBJECT_CLASS), ret,
+                   "CKA_CLASS length returned");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(lenTmpl[1].ulValueLen == sizeof(CK_KEY_TYPE), ret,
+                   "CKA_KEY_TYPE length returned");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(lenTmpl[2].ulValueLen == CK_UNAVAILABLE_INFORMATION, ret,
+                   "CKA_CERTIFICATE_TYPE length unavailable");
+    }
+
+    /* Value query with CKA_CERTIFICATE_TYPE in the middle. */
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, obj, valTmpl, valTmplCnt);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_TYPE_INVALID,
+                       "Get values with CKA_CERTIFICATE_TYPE on key");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(valTmpl[0].ulValueLen == sizeof(CK_OBJECT_CLASS) &&
+                   objClass == CKO_SECRET_KEY, ret,
+                   "CKA_CLASS value returned");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(valTmpl[1].ulValueLen == CK_UNAVAILABLE_INFORMATION, ret,
+                   "CKA_CERTIFICATE_TYPE value unavailable");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(valTmpl[2].ulValueLen == sizeof(CK_KEY_TYPE) &&
+                   keyType == CKK_GENERIC_SECRET, ret,
+                   "CKA_KEY_TYPE value returned after invalid attribute");
+    }
+
+    if (obj != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, obj);
+
+    return ret;
+}
+
+/* CKA_KEY_TYPE is only valid for key objects. On a certificate or data object
+ * it must be reported as an invalid attribute type, not as a key type taken
+ * from unrelated object data (an X.509 certificate used to read back as
+ * CKK_RSA). It must also not match in C_FindObjects or be settable. */
+static CK_RV test_get_attr_value_key_type_on_non_key(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE cert = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE data = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE found[8];
+    CK_ULONG foundCnt;
+    CK_CERTIFICATE_TYPE x509 = CKC_X_509;
+    CK_KEY_TYPE rsaType = CKK_RSA;
+    CK_BYTE certData[] = { 0x30, 0x82, 0x01, 0x00 };
+    CK_BYTE dataValue[] = { 0x01, 0x02, 0x03 };
+    CK_ATTRIBUTE certTmpl[] = {
+        { CKA_CLASS,             &certificateClass, sizeof(certificateClass) },
+        { CKA_CERTIFICATE_TYPE,  &x509,             sizeof(x509)             },
+        { CKA_VALUE,             certData,          sizeof(certData)         },
+    };
+    CK_ULONG certTmplCnt = sizeof(certTmpl) / sizeof(*certTmpl);
+    CK_ATTRIBUTE dataTmpl[] = {
+        { CKA_CLASS,             &dataClass,        sizeof(dataClass)        },
+        { CKA_VALUE,             dataValue,         sizeof(dataValue)        },
+    };
+    CK_ULONG dataTmplCnt = sizeof(dataTmpl) / sizeof(*dataTmpl);
+    CK_OBJECT_CLASS objClass = CKO_DATA;
+    CK_KEY_TYPE keyType = CKK_RSA;
+    CK_CERTIFICATE_TYPE certType = CKC_WTLS;
+    CK_ATTRIBUTE certGetTmpl[] = {
+        { CKA_CLASS,             &objClass,         sizeof(objClass)         },
+        { CKA_KEY_TYPE,          &keyType,          sizeof(keyType)          },
+        { CKA_MODULUS,           NULL,              0                        },
+        { CKA_CERTIFICATE_TYPE,  &certType,         sizeof(certType)         },
+    };
+    CK_ULONG certGetTmplCnt = sizeof(certGetTmpl) / sizeof(*certGetTmpl);
+    CK_ATTRIBUTE dataGetTmpl[] = {
+        { CKA_CLASS,             &objClass,         sizeof(objClass)         },
+        { CKA_KEY_TYPE,          &keyType,          sizeof(keyType)          },
+    };
+    CK_ULONG dataGetTmplCnt = sizeof(dataGetTmpl) / sizeof(*dataGetTmpl);
+    CK_ATTRIBUTE keyTypeTmpl[] = {
+        { CKA_KEY_TYPE,          &rsaType,          sizeof(rsaType)          },
+    };
+    CK_ULONG i;
+
+    ret = funcList->C_CreateObject(session, certTmpl, certTmplCnt, &cert);
+    CHECK_CKR(ret, "Create certificate for key type test");
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, dataTmpl, dataTmplCnt, &data);
+        CHECK_CKR(ret, "Create data object for key type test");
+    }
+
+    /* Certificate: CKA_KEY_TYPE and CKA_MODULUS are not certificate
+     * attributes; the attributes after them must still be returned. */
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, cert, certGetTmpl,
+                                            certGetTmplCnt);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_TYPE_INVALID,
+                       "Get CKA_KEY_TYPE on certificate");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(certGetTmpl[0].ulValueLen == sizeof(CK_OBJECT_CLASS) &&
+                   objClass == CKO_CERTIFICATE, ret,
+                   "Certificate CKA_CLASS value returned");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(certGetTmpl[1].ulValueLen == CK_UNAVAILABLE_INFORMATION &&
+                   keyType == CKK_RSA, ret,
+                   "Certificate CKA_KEY_TYPE unavailable");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(certGetTmpl[2].ulValueLen == CK_UNAVAILABLE_INFORMATION,
+                   ret, "Certificate CKA_MODULUS unavailable");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(certGetTmpl[3].ulValueLen == sizeof(CK_CERTIFICATE_TYPE) &&
+                   certType == CKC_X_509, ret,
+                   "Certificate CKA_CERTIFICATE_TYPE value returned");
+    }
+
+    /* Data object. */
+    if (ret == CKR_OK) {
+        objClass = CKO_CERTIFICATE;
+        ret = funcList->C_GetAttributeValue(session, data, dataGetTmpl,
+                                            dataGetTmplCnt);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_TYPE_INVALID,
+                       "Get CKA_KEY_TYPE on data object");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(dataGetTmpl[0].ulValueLen == sizeof(CK_OBJECT_CLASS) &&
+                   objClass == CKO_DATA, ret, "Data CKA_CLASS value returned");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(dataGetTmpl[1].ulValueLen == CK_UNAVAILABLE_INFORMATION,
+                   ret, "Data CKA_KEY_TYPE unavailable");
+    }
+
+    /* Searching by key type must not find the certificate or data object. */
+    if (ret == CKR_OK) {
+        ret = funcList->C_FindObjectsInit(session, keyTypeTmpl, 1);
+        CHECK_CKR(ret, "Find objects by CKA_KEY_TYPE init");
+        if (ret == CKR_OK) {
+            do {
+                foundCnt = 0;
+                ret = funcList->C_FindObjects(session, found,
+                                              sizeof(found) / sizeof(*found),
+                                              &foundCnt);
+                CHECK_CKR(ret, "Find objects by CKA_KEY_TYPE");
+                for (i = 0; i < foundCnt && ret == CKR_OK; i++) {
+                    CHECK_COND(found[i] != cert && found[i] != data, ret,
+                               "Non-key object not matched by CKA_KEY_TYPE");
+                }
+            } while (ret == CKR_OK && foundCnt > 0);
+            funcList->C_FindObjectsFinal(session);
+        }
+    }
+
+    /* CKA_KEY_TYPE cannot be set on a certificate. */
+    if (ret == CKR_OK) {
+        ret = funcList->C_SetAttributeValue(session, cert, keyTypeTmpl, 1);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_TYPE_INVALID,
+                       "Set CKA_KEY_TYPE on certificate");
+    }
+
+    if (data != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, data);
+    if (cert != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, cert);
+
+    return ret;
+}
+
 #ifndef WOLFPKCS11_NSS
 /* Creating, copying, destroying, and setting attributes on session objects
  * should be allowed in read-only sessions per the PKCS#11 spec. Only token
@@ -18271,6 +18485,8 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_attributes_dh),
 #endif
     PKCS11TEST_FUNC_SESS_DECL(test_get_attr_value_all_processed),
+    PKCS11TEST_FUNC_SESS_DECL(test_get_attr_value_cert_type_on_key),
+    PKCS11TEST_FUNC_SESS_DECL(test_get_attr_value_key_type_on_non_key),
     PKCS11TEST_FUNC_SESS_DECL(test_find_objects),
     PKCS11TEST_FUNC_SESS_DECL(test_find_objects_many),
     PKCS11TEST_FUNC_SESS_DECL(test_private_object_access),

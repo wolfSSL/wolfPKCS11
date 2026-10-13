@@ -585,7 +585,7 @@ static CK_RV test_attribute(void* args)
     if (ret == CKR_OK) {
         count = sizeof(attrNotAvail) / sizeof(*attrNotAvail);
         ret = funcList->C_GetAttributeValue(session, obj, attrNotAvail, count);
-        CHECK_CKR_FAIL(ret, CK_UNAVAILABLE_INFORMATION,
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_TYPE_INVALID,
                                  "Get Attribute Value attribute not available");
     }
 
@@ -766,7 +766,7 @@ static CK_RV test_attribute_types(void* args)
     }
     for (i = 0; i < (int)badAttrsTmplCnt; i++) {
         ret = funcList->C_GetAttributeValue(session, obj, &badAttrsTmpl[i], 1);
-        CHECK_CKR_FAIL(ret, CK_UNAVAILABLE_INFORMATION,
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_TYPE_INVALID,
                                                    "Get unavailable attribute");
     }
     if (ret == CKR_OK) {
@@ -858,7 +858,7 @@ static CK_RV test_attributes_secret(void* args)
     if (ret == CKR_OK) {
         for (i = 0; i < (int)badTmplCnt; i++) {
             ret = funcList->C_GetAttributeValue(session, key, &badTmpl[i], 1);
-            CHECK_CKR_FAIL(ret, CK_UNAVAILABLE_INFORMATION,
+            CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_TYPE_INVALID,
                                            "Get Attributes secret unavailable");
         }
     }
@@ -2311,7 +2311,7 @@ static CK_RV test_attributes_rsa(void* args)
         for (i = 0; i < (int)rsaPubBadTmplCnt; i++) {
             ret = funcList->C_GetAttributeValue(session, pub, &rsaPubBadTmpl[i],
                                                                              1);
-            CHECK_CKR_FAIL(ret, CK_UNAVAILABLE_INFORMATION,
+            CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_TYPE_INVALID,
                                               "Get Attributes RSA unavailable");
         }
     }
@@ -3690,7 +3690,7 @@ static CK_RV test_attributes_ecc(void* args)
         for (i = 0; i < (int)eccBadTmplCnt; i++) {
             ret = funcList->C_GetAttributeValue(session, pub, &eccBadTmpl[i],
                                                                              1);
-            CHECK_CKR_FAIL(ret, CK_UNAVAILABLE_INFORMATION,
+            CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_TYPE_INVALID,
                                                "Get Attributes EC unavailable");
         }
     }
@@ -4413,7 +4413,7 @@ static CK_RV test_attributes_dh(void* args)
     if (ret == CKR_OK) {
         for (i = 0; i < (int)dhBadTmplCnt; i++) {
             ret = funcList->C_GetAttributeValue(session, pub, &dhBadTmpl[i], 1);
-            CHECK_CKR_FAIL(ret, CK_UNAVAILABLE_INFORMATION,
+            CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_TYPE_INVALID,
                                                "Get Attributes DH unavailable");
         }
     }

@@ -1170,7 +1170,12 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
                            attr->type == CKA_ALWAYS_SENSITIVE ||
                            attr->type == CKA_NEVER_EXTRACTABLE)) {
             roCurLen = sizeof(roCur);
-            if (WP11_Object_GetAttr(obj, attr->type, roCur, &roCurLen) == 0 &&
+            ret = WP11_Object_GetAttr(obj, attr->type, roCur, &roCurLen);
+            /* Not an attribute of this object, e.g. CKA_KEY_TYPE on a
+             * certificate. */
+            if (ret == CKR_ATTRIBUTE_TYPE_INVALID)
+                return CKR_ATTRIBUTE_TYPE_INVALID;
+            if (ret == 0 &&
                 (attr->pValue == NULL || attr->ulValueLen != roCurLen ||
                  XMEMCMP(attr->pValue, roCur, roCurLen) != 0)) {
                 return CKR_ATTRIBUTE_READ_ONLY;
@@ -1986,11 +1991,10 @@ CK_RV C_GetObjectSize(CK_SESSION_HANDLE hSession,
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pTemplate is NULL.
  *          CKR_OBJECT_HANDLE_INVALID when handle is not to a valid object.
- *          CKR_ATTRIBUTE_TYPE_INVALID if the attribute type is not supported.
- *          CKR_ATTRIBUTE_VALUE_INVALID if value is not valid for data type.
+ *          CKR_ATTRIBUTE_TYPE_INVALID if the attribute type is not supported
+ *          or not valid for the object.
+ *          CKR_ATTRIBUTE_SENSITIVE if an attribute value cannot be revealed.
  *          CKR_BUFFER_TOO_SMALL if an attribute length is too short.
- *          CK_UNAVAILABLE_INFORMATION when an attribute type is not supported
- *          for retrieval.
  *          CKR_FUNCTION_FAILED when getting a value fails.
  *          CKR_OK on success.
  */
@@ -2050,15 +2054,13 @@ CK_RV C_GetAttributeValue(CK_SESSION_HANDLE hSession,
 
         ret = WP11_Object_GetAttr(obj, attr->type, (byte*)attr->pValue,
                                                              &attr->ulValueLen);
-        if (ret == BAD_FUNC_ARG) {
+        /* Attribute not valid for, or not available from, this object: mark
+         * it unavailable and keep processing the rest of the template. */
+        if (ret == BAD_FUNC_ARG || ret == NOT_AVAILABLE_E ||
+                ret == CKR_ATTRIBUTE_TYPE_INVALID) {
             attr->ulValueLen = (CK_ULONG)-1;
             if (rv == CKR_OK)
                 rv = CKR_ATTRIBUTE_TYPE_INVALID;
-        }
-        else if (ret == NOT_AVAILABLE_E) {
-            attr->ulValueLen = (CK_ULONG)-1;
-            if (rv == CKR_OK)
-                rv = CK_UNAVAILABLE_INFORMATION;
         }
         else if (ret == BUFFER_E) {
             if (rv == CKR_OK)
