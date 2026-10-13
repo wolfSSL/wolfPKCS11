@@ -553,6 +553,26 @@ static void test_token_record_kept_on_failed_store(void)
     funcList->C_Finalize(NULL);
 }
 
+/* Some platforms, such as MSYS2, ignore a read-only mode on a directory. */
+static int block_store_dir(void)
+{
+    FILE* probe;
+    char path[256];
+
+    if (chmod(TEST_DIR, 0500) != 0)
+        return 0;
+    (void)snprintf(path, sizeof(path), "%s/wp11_probe", TEST_DIR);
+    probe = fopen(path, "wb");
+    if (probe != NULL) {
+        fclose(probe);
+        (void)remove(path);
+        (void)chmod(TEST_DIR, 0700);
+        printf("Skipping: store directory cannot be made read-only\n");
+        return 0;
+    }
+    return 1;
+}
+
 /* A PIN change that cannot be stored leaves the stored PIN in effect. */
 static void test_pin_change_store_failure(void)
 {
@@ -570,7 +590,7 @@ static void test_pin_change_store_failure(void)
     CHECK_RV(rv, "token setup", CKR_OK);
     if (rv == CKR_OK)
         rv = user_session(slot, &session);
-    if (rv == CKR_OK && chmod(TEST_DIR, 0500) == 0) {
+    if (rv == CKR_OK && block_store_dir()) {
         rv = funcList->C_SetPIN(session, (CK_UTF8CHAR_PTR)userPin,
                                 (CK_ULONG)XSTRLEN(userPin),
                                 (CK_UTF8CHAR_PTR)newPin,
@@ -620,7 +640,7 @@ static void test_init_pin_store_failure(void)
                                (CK_ULONG)XSTRLEN(soPin));
     }
     CHECK_RV(rv, "token setup", CKR_OK);
-    if (rv == CKR_OK && chmod(TEST_DIR, 0500) == 0) {
+    if (rv == CKR_OK && block_store_dir()) {
         rv = funcList->C_InitPIN(soSession, (CK_UTF8CHAR_PTR)userPin,
                                  (CK_ULONG)XSTRLEN(userPin));
         (void)chmod(TEST_DIR, 0700);
@@ -663,7 +683,7 @@ static void test_token_reset_store_failure(void)
     session = CK_INVALID_HANDLE;
     XMEMSET(label, ' ', sizeof(label));
     XMEMCPY(label, tokenLabel, XSTRLEN(tokenLabel));
-    if (rv == CKR_OK && chmod(TEST_DIR, 0500) == 0) {
+    if (rv == CKR_OK && block_store_dir()) {
         rv = funcList->C_InitToken(slot, (CK_UTF8CHAR_PTR)soPin,
                                    (CK_ULONG)XSTRLEN(soPin), label);
         (void)chmod(TEST_DIR, 0700);
@@ -705,7 +725,7 @@ static void test_finalize_reports_store_failure(void)
     }
     close_session(session);
     session = CK_INVALID_HANDLE;
-    if (rv == CKR_OK && chmod(TEST_DIR, 0500) == 0) {
+    if (rv == CKR_OK && block_store_dir()) {
         rv = funcList->C_Finalize(NULL);
         (void)chmod(TEST_DIR, 0700);
         CHECK_RV(rv, "finalize reports the store failure",
