@@ -1791,7 +1791,8 @@ static int wolfPKCS11_StoreBatchLockFile(int lock)
 }
 
 /**
- * Check that a listed name is a store file directly in the store directory.
+ * Check that a listed name is the basename of a store file. Lists hold
+ * basenames so a recovery does not depend on how the directory was spelled.
  *
  * @param [in]  name  Name read from a batch list.
  * @return  1 when acceptable, 0 otherwise.
@@ -1802,11 +1803,9 @@ static int wolfPKCS11_StoreBatchNameOk(const char* name)
     size_t i;
     int ok;
 
-    ok = len > storeBatch.dirLen + 6 &&
-         XSTRNCMP(name, storeBatch.dir, storeBatch.dirLen) == 0 &&
-         name[storeBatch.dirLen] == '/' &&
-         XSTRNCMP(name + storeBatch.dirLen + 1, "wp11_", 5) == 0;
-    for (i = storeBatch.dirLen + 1; ok && i < len; i++) {
+    ok = len > 5 && XSTRNCMP(name, "wp11_", 5) == 0 &&
+         storeBatch.dirLen + 1 + len < WP11_STORE_MAX_PATH;
+    for (i = 0; ok && i < len; i++) {
         if (name[i] == '/' || name[i] == '\\')
             ok = 0;
     }
@@ -1854,7 +1853,10 @@ static int wolfPKCS11_StoreBatchApply(const char* listName, int mode)
     XFILE list;
     XFILE staged;
     size_t len;
+    size_t i;
+    const char* base;
     char line[WP11_STORE_MAX_PATH + 2];
+    char finalName[WP11_STORE_MAX_PATH];
     char stagedName[WP11_STORE_STAGED_MAX];
 
     list = XFOPEN(listName, "rb");
@@ -1869,9 +1871,24 @@ static int wolfPKCS11_StoreBatchApply(const char* listName, int mode)
             continue;
         }
         line[len - 1] = '\0';
-        len = (size_t)XSNPRINTF(stagedName, sizeof(stagedName), "%s.new",
-            line);
-        if (!wolfPKCS11_StoreBatchNameOk(line) || len >= sizeof(stagedName)) {
+        /* A list written with full paths is read by its basenames too. */
+        base = line;
+        for (i = 0; i + 1 < len; i++) {
+            if (line[i] == '/' || line[i] == '\\')
+                base = line + i + 1;
+        }
+        if (!wolfPKCS11_StoreBatchNameOk(base)) {
+            if (mode != WP11_BATCH_DISCARD)
+                ret = READ_ONLY_E;
+            continue;
+        }
+        len = (size_t)XSNPRINTF(finalName, sizeof(finalName), "%s/%s",
+            storeBatch.dir, base);
+        if (len < sizeof(finalName)) {
+            len = (size_t)XSNPRINTF(stagedName, sizeof(stagedName), "%s.new",
+                finalName);
+        }
+        if (len >= sizeof(finalName) || len >= sizeof(stagedName)) {
             if (mode != WP11_BATCH_DISCARD)
                 ret = READ_ONLY_E;
             continue;
@@ -1880,10 +1897,10 @@ static int wolfPKCS11_StoreBatchApply(const char* listName, int mode)
             (void)remove(stagedName);
         }
         else if (mode == WP11_BATCH_CHECK) {
-            if (!wolfPKCS11_StoreBatchReplaceable(line))
+            if (!wolfPKCS11_StoreBatchReplaceable(finalName))
                 ret = READ_ONLY_E;
         }
-        else if (wolfPKCS11_StoreRename(stagedName, line) != 0) {
+        else if (wolfPKCS11_StoreRename(stagedName, finalName) != 0) {
             /* Already renamed by an earlier, interrupted roll forward. */
             staged = XFOPEN(stagedName, "rb");
             if (staged != XBADFILE) {
@@ -2062,7 +2079,8 @@ static int wolfPKCS11_StoreBatchBegin(int tokenId)
 }
 
 /**
- * Stage a written record as "<name>.new" and list it in the intent file.
+ * Stage a written record as "<name>.new" and list its basename in the intent
+ * file. The record must be in the store directory of the pass.
  *
  * @param [in, out]  ctx  File store context with a written temporary file.
  * @return  0 on success.
@@ -2072,17 +2090,26 @@ static int wolfPKCS11_StoreStageTemp(WP11_FileStoreCtx* ctx)
 {
     int ret = 0;
     int len;
+    const char* base;
     char stagedName[WP11_STORE_STAGED_MAX];
 
-    len = XSNPRINTF(stagedName, sizeof(stagedName), "%s.new",
-        ctx->final_name);
-    if (len <= 0 || len >= (int)sizeof(stagedName))
+    base = ctx->final_name + storeBatch.dirLen + 1;
+    if (XSTRNCMP(ctx->final_name, storeBatch.dir, storeBatch.dirLen) != 0 ||
+            ctx->final_name[storeBatch.dirLen] != '/' ||
+            !wolfPKCS11_StoreBatchNameOk(base)) {
         ret = READ_ONLY_E;
+    }
+    if (ret == 0) {
+        len = XSNPRINTF(stagedName, sizeof(stagedName), "%s.new",
+            ctx->final_name);
+        if (len <= 0 || len >= (int)sizeof(stagedName))
+            ret = READ_ONLY_E;
+    }
     if (ret == 0)
         ret = wolfPKCS11_StoreRename(ctx->temp_name, stagedName);
     if (ret == 0) {
         ctx->has_temp = 0;
-        if (fputs(ctx->final_name, storeBatch.intent) < 0 ||
+        if (fputs(base, storeBatch.intent) < 0 ||
                 fputc('\n', storeBatch.intent) == EOF ||
                 fflush(storeBatch.intent) != 0) {
             ret = READ_ONLY_E;
