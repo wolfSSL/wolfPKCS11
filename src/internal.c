@@ -2095,8 +2095,8 @@ static void wolfPKCS11_StoreBatchRelease(WP11_Slot* held)
 
 /**
  * Start a store pass: records closed from now on are staged, not committed.
- * On success the batch locks are held until wolfPKCS11_StoreBatchEnd. Without
- * a usable store directory the pass runs unstaged and fails as before.
+ * On success the batch locks are held until wolfPKCS11_StoreBatchEnd. When
+ * the pass cannot start, nothing is written and the error is returned.
  *
  * @param [in]  tokenId  Id of token being stored.
  * @return  0 on success.
