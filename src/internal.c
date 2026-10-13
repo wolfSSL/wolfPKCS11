@@ -21294,7 +21294,8 @@ int WP11_TLS_MAC_verify(byte* data, word32 dataLen, byte* sig, word32 sigLen,
     word32 genSigLen = sigLen;
     WP11_TlsMacParams *mac = &session->params.tlsMac;
 
-    if (sigLen != mac->macSz)
+    /* An unspecified MAC length takes the length of the signature. */
+    if (mac->macSz != 0 && sigLen != mac->macSz)
         return BUFFER_E;
 
     genSig = (byte*)XMALLOC(genSigLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);

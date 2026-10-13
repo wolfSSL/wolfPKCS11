@@ -6296,8 +6296,18 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 #ifdef WOLFPKCS11_NSS
         case CKM_NSS_TLS_PRF_GENERAL_SHA256:
 #endif
+        {
+            byte* data = NULL;
+            word32 dataLen = 0;
+
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_TLS_MAC_SIGN))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            /* C_Sign cannot finish a multi-part sign. */
+            WP11_Session_GetData(session, &data, &dataLen);
+            if (data != NULL || dataLen != 0) {
+                WP11_Session_AbortOp(session);
+                return CKR_FUNCTION_FAILED;
+            }
 
             if (pSignature == NULL) {
                 *pulSignatureLen = (CK_ULONG)WP11_TLS_MAC_get_len(session);
@@ -6311,6 +6321,7 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                     &sigLen, session);
             *pulSignatureLen = sigLen;
             break;
+        }
 #endif
         default:
             (void)sigLen;
@@ -6621,14 +6632,13 @@ static CK_RV wp11_C_SignFinal(CK_SESSION_HANDLE hSession,
                 return CKR_BUFFER_TOO_SMALL;
 
             WP11_Session_GetData(session, &data, &dataLen);
-            ret = (int)C_Sign(hSession, data, dataLen, pSignature,
-                pulSignatureLen);
+            sigLen = (word32)*pulSignatureLen;
+            ret = WP11_TLS_MAC_sign(data, dataLen, pSignature, &sigLen,
+                                    session);
             WP11_Session_FreeData(session);
-            if (ret != CKR_OK) {
-                WP11_Session_SetOpInitialized(session, 0);
-                return ret;
-            }
-
+            if (ret != 0)
+                break;
+            *pulSignatureLen = sigLen;
             break;
         }
 #endif
@@ -7471,8 +7481,13 @@ static CK_RV wp11_C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             /* C_Verify cannot finish a multi-part verify. */
             WP11_Session_GetData(session, &data, &dataLen);
             if (data != NULL || dataLen != 0) {
-                WP11_Session_FreeData(session);
+                WP11_Session_AbortOp(session);
                 return CKR_FUNCTION_FAILED;
+            }
+            if (WP11_TLS_MAC_get_len(session) != 0 &&
+                ulSignatureLen != (CK_ULONG)WP11_TLS_MAC_get_len(session)) {
+                WP11_Session_AbortOp(session);
+                return CKR_SIGNATURE_LEN_RANGE;
             }
 
             ret = WP11_TLS_MAC_verify(pData, (word32)ulDataLen, pSignature,
@@ -7616,6 +7631,9 @@ static CK_RV wp11_C_VerifyUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
 #endif
 #ifdef WOLFSSL_HAVE_PRF
         case CKM_TLS_MAC:
+#ifdef WOLFPKCS11_NSS
+        case CKM_NSS_TLS_PRF_GENERAL_SHA256:
+#endif
             if (!WP11_Session_IsOpInitialized(session,
                                               WP11_INIT_TLS_MAC_VERIFY)) {
                 return CKR_OPERATION_NOT_INITIALIZED;
@@ -7767,6 +7785,9 @@ static CK_RV wp11_C_VerifyFinal(CK_SESSION_HANDLE hSession,
 #endif
 #ifdef WOLFSSL_HAVE_PRF
         case CKM_TLS_MAC:
+#ifdef WOLFPKCS11_NSS
+        case CKM_NSS_TLS_PRF_GENERAL_SHA256:
+#endif
         {
             byte* data = NULL;
             word32 dataLen = 0;
@@ -7777,6 +7798,11 @@ static CK_RV wp11_C_VerifyFinal(CK_SESSION_HANDLE hSession,
             }
             if (!CK_ULONG_FITS_WORD32(ulSignatureLen)) {
                 WP11_Session_FreeData(session);
+                return CKR_SIGNATURE_LEN_RANGE;
+            }
+            if (WP11_TLS_MAC_get_len(session) != 0 &&
+                ulSignatureLen != (CK_ULONG)WP11_TLS_MAC_get_len(session)) {
+                WP11_Session_AbortOp(session);
                 return CKR_SIGNATURE_LEN_RANGE;
             }
 

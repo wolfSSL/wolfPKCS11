@@ -601,6 +601,66 @@ static void tls_mac_sign_final_retry_test(CK_SESSION_HANDLE session)
     funcList->C_DestroyObject(session, key);
 }
 
+#ifdef WOLFPKCS11_NSS
+/* The NSS TLS PRF mechanism verifies in multi-part calls like CKM_TLS_MAC. */
+static void nss_tls_prf_verify_multipart_test(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_NSS_TLS_PRF_GENERAL_SHA256, NULL, 0 };
+    byte mac[12];
+    CK_ULONG macLen = sizeof(mac);
+    CK_ULONG half = sizeof(tlsHandshakeHash) / 2;
+
+    rv = create_generic_key(session, &key);
+    CHECK_RV(rv, "create TLS secret", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_SignInit(session, &mech, key);
+    CHECK_RV(rv, "C_SignInit(NSS TLS PRF)", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_Sign(session, tlsHandshakeHash,
+                              sizeof(tlsHandshakeHash), mac, &macLen);
+        CHECK_RV(rv, "C_Sign(NSS TLS PRF)", CKR_OK);
+        CHECK_TRUE(macLen == sizeof(mac),
+                   "C_Sign(NSS TLS PRF) fills the buffer");
+    }
+
+    rv = funcList->C_VerifyInit(session, &mech, key);
+    CHECK_RV(rv, "C_VerifyInit(NSS TLS PRF multi-part)", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_VerifyUpdate(session, tlsHandshakeHash, half);
+        CHECK_RV(rv, "C_VerifyUpdate(NSS TLS PRF, first part)", CKR_OK);
+        rv = funcList->C_VerifyUpdate(session, tlsHandshakeHash + half,
+                                      sizeof(tlsHandshakeHash) - half);
+        CHECK_RV(rv, "C_VerifyUpdate(NSS TLS PRF, second part)", CKR_OK);
+        rv = funcList->C_VerifyFinal(session, mac, macLen);
+        CHECK_RV(rv, "C_VerifyFinal(NSS TLS PRF)", CKR_OK);
+    }
+
+    rv = funcList->C_VerifyInit(session, &mech, key);
+    CHECK_RV(rv, "C_VerifyInit(NSS TLS PRF single-part)", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_Verify(session, tlsHandshakeHash,
+                                sizeof(tlsHandshakeHash), mac, macLen);
+        CHECK_RV(rv, "C_Verify(NSS TLS PRF)", CKR_OK);
+    }
+
+    rv = funcList->C_VerifyInit(session, &mech, key);
+    CHECK_RV(rv, "C_VerifyInit(NSS TLS PRF, other data)", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_VerifyUpdate(session, tlsHandshakeHash, half);
+        CHECK_RV(rv, "C_VerifyUpdate(NSS TLS PRF, partial data)", CKR_OK);
+        rv = funcList->C_VerifyFinal(session, mac, macLen);
+        CHECK_RV(rv, "C_VerifyFinal(NSS TLS PRF, other data)",
+                 CKR_SIGNATURE_INVALID);
+    }
+
+    funcList->C_DestroyObject(session, key);
+}
+#endif
+
 /* A TLS MAC verify supports the multi-part update and final calls. */
 static void tls_mac_verify_multipart_test(CK_SESSION_HANDLE session)
 {
@@ -655,8 +715,11 @@ static void tls_mac_verify_multipart_test(CK_SESSION_HANDLE session)
         CHECK_RV(rv, "C_VerifyUpdate(TLS MAC, before single-part)", CKR_OK);
         rv = funcList->C_Verify(session, tlsHandshakeHash,
                                 sizeof(tlsHandshakeHash), mac, macLen);
-        CHECK_TRUE(rv != CKR_OK,
-                   "C_Verify(TLS MAC) does not finish a multi-part verify");
+        CHECK_RV(rv, "C_Verify(TLS MAC) does not finish a multi-part verify",
+                 CKR_FUNCTION_FAILED);
+        rv = funcList->C_VerifyFinal(session, mac, macLen);
+        CHECK_RV(rv, "C_Verify(TLS MAC) failure ends the operation",
+                 CKR_OPERATION_NOT_INITIALIZED);
     }
 
     rv = funcList->C_SignInit(session, &mech, key);
@@ -667,7 +730,39 @@ static void tls_mac_verify_multipart_test(CK_SESSION_HANDLE session)
         macLen = sizeof(mac);
         rv = funcList->C_Sign(session, tlsHandshakeHash,
                               sizeof(tlsHandshakeHash), mac, &macLen);
-        CHECK_RV(rv, "C_Sign(TLS MAC, after update)", CKR_OK);
+        CHECK_RV(rv, "C_Sign(TLS MAC) does not finish a multi-part sign",
+                 CKR_FUNCTION_FAILED);
+        macLen = sizeof(mac);
+        rv = funcList->C_SignFinal(session, mac, &macLen);
+        CHECK_RV(rv, "C_Sign(TLS MAC) failure ends the operation",
+                 CKR_OPERATION_NOT_INITIALIZED);
+    }
+
+    rv = funcList->C_SignInit(session, &mech, key);
+    CHECK_RV(rv, "C_SignInit(TLS MAC, regenerate)", CKR_OK);
+    if (rv == CKR_OK) {
+        macLen = sizeof(mac);
+        rv = funcList->C_Sign(session, tlsHandshakeHash,
+                              sizeof(tlsHandshakeHash), mac, &macLen);
+        CHECK_RV(rv, "C_Sign(TLS MAC, regenerate)", CKR_OK);
+    }
+    rv = funcList->C_VerifyInit(session, &mech, key);
+    CHECK_RV(rv, "C_VerifyInit(TLS MAC, wrong length)", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_Verify(session, tlsHandshakeHash,
+                                sizeof(tlsHandshakeHash), mac, macLen - 1);
+        CHECK_RV(rv, "C_Verify(TLS MAC, short signature)",
+                 CKR_SIGNATURE_LEN_RANGE);
+    }
+    rv = funcList->C_VerifyInit(session, &mech, key);
+    CHECK_RV(rv, "C_VerifyInit(TLS MAC, wrong length multi-part)", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_VerifyUpdate(session, tlsHandshakeHash,
+                                      sizeof(tlsHandshakeHash));
+        CHECK_RV(rv, "C_VerifyUpdate(TLS MAC, wrong length)", CKR_OK);
+        rv = funcList->C_VerifyFinal(session, mac, macLen + 1);
+        CHECK_RV(rv, "C_VerifyFinal(TLS MAC, long signature)",
+                 CKR_SIGNATURE_LEN_RANGE);
     }
     rv = funcList->C_VerifyInit(session, &mech, key);
     CHECK_RV(rv, "C_VerifyInit(TLS MAC, after sign)", CKR_OK);
@@ -983,6 +1078,9 @@ static int run_test(void)
 #endif
 #if defined(WOLFSSL_HAVE_PRF) && !defined(NO_SHA256)
         tls_mac_sign_final_retry_test(session);
+#ifdef WOLFPKCS11_NSS
+        nss_tls_prf_verify_multipart_test(session);
+#endif
         tls_mac_verify_multipart_test(session);
         tls_mac_verify_session_close_test(slot);
         tls_mac_len_param_test(session);
