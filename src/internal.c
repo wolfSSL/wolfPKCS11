@@ -1314,6 +1314,93 @@ static int wolfPKCS11_StoreRename(const char* from, const char* to)
     return ret;
 }
 
+/**
+ * Flush a written store file to stable storage.
+ *
+ * @param [in]  file  Open file written by the store.
+ * @return  0 on success.
+ * @return  READ_ONLY_E when the data may not have reached the device.
+ */
+static int wolfPKCS11_StoreSyncFile(XFILE file)
+{
+    int ret = 0;
+#if defined(_WIN32) || defined(_MSC_VER)
+    intptr_t osHandle;
+#endif
+
+    if (XFFLUSH(file) != 0)
+        ret = READ_ONLY_E;
+#if defined(_WIN32) || defined(_MSC_VER)
+    if (ret == 0) {
+        osHandle = _get_osfhandle(_fileno(file));
+        if (!FlushFileBuffers((HANDLE)osHandle))
+            ret = READ_ONLY_E;
+    }
+#else
+    if (ret == 0 && fsync(fileno(file)) != 0)
+        ret = READ_ONLY_E;
+#endif
+
+    return ret;
+}
+
+/**
+ * Make the renames done in a store directory durable. Windows has no
+ * directory flush; its renames are done write-through instead.
+ *
+ * @param [in]  dir  Store directory.
+ * @return  0 on success.
+ * @return  READ_ONLY_E when the directory could not be flushed.
+ */
+static int wolfPKCS11_StoreSyncDir(const char* dir)
+{
+    int ret = 0;
+#if !defined(_WIN32) && !defined(_MSC_VER)
+    int fd;
+
+    fd = open(dir, O_RDONLY);
+    if (fd < 0) {
+        ret = READ_ONLY_E;
+    }
+    else {
+        /* Filesystems without directory flushing answer EINVAL. */
+        if (fsync(fd) != 0 && errno != EINVAL)
+            ret = READ_ONLY_E;
+        close(fd);
+    }
+#else
+    (void)dir;
+#endif
+
+    return ret;
+}
+
+/**
+ * Make a rename of a store file durable by flushing its directory.
+ *
+ * @param [in]  name  Renamed store file.
+ * @return  0 on success.
+ * @return  READ_ONLY_E when the directory could not be flushed.
+ */
+static int wolfPKCS11_StoreSyncParent(const char* name)
+{
+    size_t len = XSTRLEN(name);
+    size_t i;
+    size_t sep = 0;
+    char dir[WP11_STORE_MAX_PATH];
+
+    for (i = 0; i < len; i++) {
+        if (name[i] == '/' || name[i] == '\\')
+            sep = i;
+    }
+    if (sep == 0 || sep >= sizeof(dir))
+        return READ_ONLY_E;
+    XMEMCPY(dir, name, sep);
+    dir[sep] = '\0';
+
+    return wolfPKCS11_StoreSyncDir(dir);
+}
+
 static int wolfPKCS11_StoreCommitTemp(WP11_FileStoreCtx* ctx)
 {
     int ret = 0;
@@ -1325,6 +1412,7 @@ static int wolfPKCS11_StoreCommitTemp(WP11_FileStoreCtx* ctx)
     ret = wolfPKCS11_StoreRename(ctx->temp_name, ctx->final_name);
     if (ret == 0) {
         ctx->has_temp = 0;
+        ret = wolfPKCS11_StoreSyncParent(ctx->final_name);
     }
 
     return ret;
@@ -1934,6 +2022,9 @@ static int wolfPKCS11_StoreBatchRecover(void)
         XFCLOSE(marker);
         ret = wolfPKCS11_StoreBatchApply(storeBatch.commitName,
             WP11_BATCH_APPLY);
+        /* The marker outlives the records it names until they are durable. */
+        if (ret == 0)
+            ret = wolfPKCS11_StoreSyncDir(storeBatch.dir);
         if (ret == 0)
             (void)remove(storeBatch.commitName);
     }
@@ -2137,6 +2228,8 @@ static int wolfPKCS11_StoreBatchEnd(int commit)
 
     if (storeBatch.active) {
         storeBatch.active = 0;
+        if (commit && wolfPKCS11_StoreSyncFile(storeBatch.intent) != 0)
+            storeBatch.failed = 1;
         if (XFCLOSE(storeBatch.intent) != 0)
             storeBatch.failed = 1;
         storeBatch.intent = XBADFILE;
@@ -2146,13 +2239,18 @@ static int wolfPKCS11_StoreBatchEnd(int commit)
             ret = wolfPKCS11_StoreBatchApply(storeBatch.intentName,
                 WP11_BATCH_CHECK);
         }
+        /* The staged records must be durable before the marker can be. */
+        if (ret == 0 && commit)
+            ret = wolfPKCS11_StoreSyncDir(storeBatch.dir);
         if (ret == 0 && commit) {
             ret = wolfPKCS11_StoreRename(storeBatch.intentName,
                 storeBatch.commitName);
         }
         if (ret == 0 && commit) {
+            (void)wolfPKCS11_StoreSyncDir(storeBatch.dir);
             if (wolfPKCS11_StoreBatchApply(storeBatch.commitName,
-                    WP11_BATCH_APPLY) == 0) {
+                    WP11_BATCH_APPLY) == 0 &&
+                    wolfPKCS11_StoreSyncDir(storeBatch.dir) == 0) {
                 (void)remove(storeBatch.commitName);
             }
         }
@@ -2466,17 +2564,22 @@ void wolfPKCS11_Store_Close(void* store)
         int commitRet = 0;
 
         if (ctx->file != XBADFILE && ctx->file != NULL) {
-            XFCLOSE(ctx->file);
+            if (ctx->is_write && wolfPKCS11_StoreSyncFile(ctx->file) != 0)
+                commitRet = BUFFER_E;
+            if (XFCLOSE(ctx->file) != 0 && ctx->is_write)
+                commitRet = BUFFER_E;
             ctx->file = XBADFILE;
         }
 
         if (ctx->is_write && ctx->has_temp) {
-        #ifdef WP11_STORE_BATCH
-            if (storeBatch.active)
-                commitRet = wolfPKCS11_StoreStageTemp(ctx);
-            else
-        #endif
-                commitRet = wolfPKCS11_StoreCommitTemp(ctx);
+            if (commitRet == 0) {
+            #ifdef WP11_STORE_BATCH
+                if (storeBatch.active)
+                    commitRet = wolfPKCS11_StoreStageTemp(ctx);
+                else
+            #endif
+                    commitRet = wolfPKCS11_StoreCommitTemp(ctx);
+            }
             if (commitRet != 0) {
             #ifdef WP11_STORE_BATCH
                 if (storeBatch.active)
