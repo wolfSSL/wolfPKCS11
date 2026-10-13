@@ -123,8 +123,18 @@ static void store_path(char* path, size_t sz, const char* kind, int objId)
     }
 }
 
+static void remove_record(const char* path)
+{
+    char staged[280];
+
+    (void)remove(path);
+    (void)snprintf(staged, sizeof(staged), "%s.new", path);
+    (void)remove(staged);
+}
+
 static void cleanup_test_files(void)
 {
+    static const char* txnKinds[] = { "lock", "intent", "commit" };
     char path[256];
     size_t k;
     int i;
@@ -132,11 +142,17 @@ static void cleanup_test_files(void)
     for (k = 0; k < sizeof(storeKinds) / sizeof(*storeKinds); k++) {
         for (i = 0; i < MAX_OBJ_ID; i++) {
             store_path(path, sizeof(path), storeKinds[k], i);
-            (void)remove(path);
+            remove_record(path);
         }
     }
     store_path(path, sizeof(path), "token", -1);
-    (void)remove(path);
+    remove_record(path);
+    for (k = 0; k < sizeof(txnKinds) / sizeof(*txnKinds); k++) {
+        (void)snprintf(path, sizeof(path), "%s/wp11_txn_%016lx_%s", TEST_DIR,
+                       1UL, txnKinds[k]);
+        if (remove(path) != 0)
+            (void)rmdir(path);
+    }
 }
 
 /* Locate the stored file of the given kind for its single object. */
