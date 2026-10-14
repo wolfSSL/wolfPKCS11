@@ -8933,6 +8933,12 @@ static CK_RV wp11_C_WrapKey(CK_SESSION_HANDLE hSession,
                 serialBuff = padBuff;
                 serialSize = padSize;
             }
+            /* Only a block aligned key encoding can be ECB wrapped. */
+            if (pMechanism->mechanism == CKM_AES_ECB &&
+                    (serialSize % AES_BLOCK_SIZE) != 0) {
+                rv = CKR_KEY_SIZE_RANGE;
+                goto err_out;
+            }
 
         #ifdef WOLFSSL_STM32U5_DHUK
             if (WP11_Object_GetDevId(wrappingKey) ==
@@ -8963,11 +8969,6 @@ static CK_RV wp11_C_WrapKey(CK_SESSION_HANDLE hSession,
                  * leaves C_Encrypt's operation active, which would make the
                  * caller's next C_WrapKey fail with CKR_OPERATION_ACTIVE. */
                 WP11_Session_AbortOp(session);
-                /* Only a block aligned key encoding can be ECB wrapped. */
-                if (rv == CKR_DATA_LEN_RANGE &&
-                        pMechanism->mechanism == CKM_AES_ECB) {
-                    rv = CKR_KEY_SIZE_RANGE;
-                }
                 if (rv != CKR_OK)
                     goto err_out;
             }

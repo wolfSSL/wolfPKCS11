@@ -877,6 +877,11 @@ static void test_ecb_wrap_rsa_key(CK_SLOT_ID slot, CK_SESSION_HANDLE session)
                                  &ecbLen);
         CHECK_RV(rv, "C_WrapKey(AES-ECB) refuses an unaligned RSA key",
                  CKR_KEY_SIZE_RANGE);
+        ecbLen = 0;
+        rv = funcList->C_WrapKey(session, &mech, aesKey, rsaPriv, NULL,
+                                 &ecbLen);
+        CHECK_RV(rv, "C_WrapKey(AES-ECB) length query refuses it too",
+                 CKR_KEY_SIZE_RANGE);
         rv = (rv == CKR_KEY_SIZE_RANGE) ? CKR_OK : CKR_GENERAL_ERROR;
     }
     if (rv == CKR_OK) {
