@@ -2649,7 +2649,8 @@ int wolfPKCS11_Store_Open(int type, CK_ULONG id1, CK_ULONG id2, int read,
  *
  * @param [in]  tpmStore  TPM store context holding the staged record.
  * @return  0 on success.
- * @return  Other value when the record could not be written.
+ * @return  WC_HW_E when the TPM reports an error.
+ * @return  Other negative value when the record could not be written.
  */
 static int wolfPKCS11_Store_TpmCommit(WP11_TpmStore* tpmStore)
 {
@@ -2716,6 +2717,9 @@ static int wolfPKCS11_Store_TpmCommit(WP11_TpmStore* tpmStore)
         ret = wolfTPM2_NVWriteAuth(tpmStore->dev, &tpmStore->nv,
             tpmStore->nv.handle.hndl, tpmStore->buf, tpmStore->offset, 0);
     }
+    /* Callers only treat a negative value as a failure. */
+    if (ret > 0)
+        ret = WC_HW_E;
     return ret;
 }
 #endif
