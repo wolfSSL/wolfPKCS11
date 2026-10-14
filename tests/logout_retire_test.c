@@ -733,6 +733,105 @@ static void destroy_while_calls_overlap_test(CK_SLOT_ID slot)
         funcList->C_CloseSession(session);
 }
 #endif
+#ifndef NO_HMAC
+/* A destroyed key an operation still used is freed after the operation ends,
+ * even though a new call always starts before the previous one ends. */
+static void destroyed_key_freed_after_op_test(CK_SLOT_ID slot)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_SESSION_HANDLE other = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE data = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    CK_BBOOL no = CK_FALSE;
+    unsigned char dataValue[] = "hold";
+    CK_ATTRIBUTE dataTmpl[] = {
+        { CKA_CLASS,   &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN,   &no,        sizeof(no)        },
+        { CKA_PRIVATE, &no,        sizeof(no)        },
+        { CKA_VALUE,   dataValue,  sizeof(dataValue) },
+    };
+    CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE keyType = CKK_GENERIC_SECRET;
+    CK_BBOOL yes = CK_TRUE;
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,    &keyClass, sizeof(keyClass) },
+        { CKA_KEY_TYPE, &keyType,  sizeof(keyType)  },
+        { CKA_TOKEN,    &no,       sizeof(no)       },
+        { CKA_PRIVATE,  &yes,      sizeof(yes)      },
+        { CKA_SIGN,     &yes,      sizeof(yes)      },
+        { CKA_VALUE,    keyValue,  sizeof(keyValue) },
+    };
+    CK_MECHANISM mech = { CKM_SHA256_HMAC, NULL, 0 };
+    unsigned char msg[] = "message";
+    unsigned char mac[64];
+    CK_ULONG macLen = sizeof(mac);
+    pthread_t th[2];
+    HoldArg arg[2];
+    unsigned char saved = keyValue[KEY_TAG_IDX];
+    int started = 0;
+
+    printf("--- destroyed key in use is freed once its operation ends ---\n");
+    keyValue[KEY_TAG_IDX] = 'z';
+    rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                 NULL, NULL, &session);
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL, NULL, &other);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(other, dataTmpl,
+                sizeof(dataTmpl) / sizeof(*dataTmpl), &data);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(session, CKU_USER, (CK_UTF8CHAR_PTR)userPin,
+                               (CK_ULONG)XSTRLEN(userPin));
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, keyTmpl,
+                sizeof(keyTmpl) / sizeof(*keyTmpl), &key);
+    }
+    if (rv == CKR_OK)
+        rv = funcList->C_SignInit(session, &mech, key);
+    if (rv == CKR_OK)
+        rv = funcList->C_DestroyObject(session, key);
+    keyValue[KEY_TAG_IDX] = saved;
+    CHECK_RV(rv, "destroy a key used by an active sign operation", CKR_OK);
+    if (rv == CKR_OK) {
+        WP11_Object_SetFindHook(hook_hold);
+        arg[0].session = other;
+        arg[0].object = data;
+        arg[0].rv = CKR_GENERAL_ERROR;
+        if (hold_start(&th[0], &arg[0], 0) != 0)
+            rv = CKR_GENERAL_ERROR;
+        else
+            started = 1;
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Sign(session, msg, sizeof(msg), mac, &macLen);
+        CHECK_RV(rv, "C_Sign ends the operation", CKR_OK);
+        arg[1].session = other;
+        arg[1].object = data;
+        arg[1].rv = CKR_GENERAL_ERROR;
+        if (hold_start(&th[1], &arg[1], 1) == 0)
+            started = 2;
+        hold_end(th[0], 0);
+        CHECK_TRUE(!live_holds_tagged_key('z' - 'a'),
+                   "key freed while a later call still runs");
+    }
+    if (started == 2)
+        hold_end(th[1], 1);
+    else if (started == 1)
+        hold_end(th[0], 0);
+    WP11_Object_SetFindHook(NULL);
+    funcList->C_Logout(session);
+    if (other != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(other);
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+}
+#endif
 #endif
 
 #if !defined(NO_AES) && defined(HAVE_AES_CBC)
@@ -851,6 +950,9 @@ int main(int argc, char* argv[])
 #endif
 #ifdef RETIRE_TEST_THREADS
         destroy_while_calls_overlap_test(slot);
+#ifndef NO_HMAC
+        destroyed_key_freed_after_op_test(slot);
+#endif
 #endif
 #if !defined(NO_AES) && defined(HAVE_AES_CBC)
         empty_pin_derive_test(slot);

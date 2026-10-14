@@ -9247,6 +9247,9 @@ void WP11_Slot_ObjectCallLeave(WP11_ObjectCalls* calls)
         slot = calls->slot;
         WP11_Lock_LockRW(&slot->callLock);
         calls->cnt--;
+        /* Move new calls on so this epoch can drain even if calls overlap. */
+        if (slot->reclaim)
+            wp11_Slot_AdvanceEpoch(slot);
         /* Only an epoch that drains can make an unlinked object freeable. */
         scan = (calls->cnt == 0) && slot->reclaim;
         WP11_Lock_UnlockRW(&slot->callLock);
