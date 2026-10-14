@@ -733,7 +733,7 @@ static void destroy_while_calls_overlap_test(CK_SLOT_ID slot)
         funcList->C_CloseSession(session);
 }
 #endif
-#ifndef NO_HMAC
+#if defined(RETIRE_TEST_THREADS) && !defined(NO_HMAC)
 /* A destroyed key an operation still used is freed after the operation ends,
  * even though a new call always starts before the previous one ends. */
 static void destroyed_key_freed_after_op_test(CK_SLOT_ID slot)
