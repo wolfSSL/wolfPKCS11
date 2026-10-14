@@ -1151,7 +1151,7 @@ static void find_with_racing_logout_test(void)
 }
 #endif
 
-#if defined(DEBUG_WOLFPKCS11) && defined(LOGIN_TEST_THREADS) && \
+#if defined(DEBUG_WOLFPKCS11) && !defined(SINGLE_THREADED) && \
     !defined(WOLFPKCS11_NO_TIME)
 extern void WP11_Slot_SetPinCheckHook(void (*hook)(void));
 
@@ -1303,7 +1303,7 @@ static int run_test(void)
     concurrent_login_lockout_test();
 #endif
 #ifndef SINGLE_THREADED
-#if defined(DEBUG_WOLFPKCS11) && defined(LOGIN_TEST_THREADS) && \
+#if defined(DEBUG_WOLFPKCS11) && !defined(SINGLE_THREADED) && \
     !defined(WOLFPKCS11_NO_TIME)
     guess_in_flight_test();
 #endif
