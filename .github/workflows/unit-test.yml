@@ -16,6 +16,11 @@ jobs:
     with:
       config: --enable-singlethreaded
 
+  aesecb:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --enable-aesecb
+
   tpm:
     uses: ./.github/workflows/build-workflow.yml
     with:
