@@ -1405,9 +1405,9 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
     /* Path order:
      * 1. Environment variable WOLFPKCS11_TOKEN_PATH
      * 2. NSS store directory, if set using C_Initialize
-     * 3. Home directory with .wolfPKCS11 (or %APPDATA% with wolfPKCS11 for
+     * 3. WOLFPKCS11_DEFAULT_TOKEN_PATH, if set at build time
+     * 4. Home directory with .wolfPKCS11 (or %APPDATA% with wolfPKCS11 for
      *    Windows)
-     * 4. WOLFPKCS11_DEFAULT_TOKEN_PATH, if set
      */
 #ifndef WOLFPKCS11_NO_ENV
     str = XGETENV("WOLFPKCS11_TOKEN_PATH");
@@ -1437,6 +1437,14 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
     }
 #endif
 
+#ifdef WOLFPKCS11_DEFAULT_TOKEN_PATH
+    /* Must be a string literal, e.g. "/var/lib/wolfpkcs11". An empty string
+     * is treated as unset. */
+    if (str == NULL && WOLFPKCS11_DEFAULT_TOKEN_PATH[0] != '\0') {
+        str = WOLFPKCS11_DEFAULT_TOKEN_PATH;
+    }
+#endif
+
     if (str == NULL) {
         const char* homeDir = NULL;
 
@@ -1460,12 +1468,6 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
         }
     #endif
     }
-
-#ifdef WOLFPKCS11_DEFAULT_TOKEN_PATH
-    if (str == NULL) {
-        str = WC_STRINGIFY(WOLFPKCS11_DEFAULT_TOKEN_PATH);
-    }
-#endif
 
     /* 47 is maximum number of character to a filename and path separator. */
     if (str == NULL) {

@@ -130,6 +130,10 @@ jobs:
     uses: ./.github/workflows/build-workflow.yml
     with:
       config: --enable-debug
+  default_token_path:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --with-default-token-path=./store/default_token_path
 
   # Build the library, examples and tests as C++ to catch regressions in
   # C++ compatibility (e.g. missing void* casts, enum-from-int conversions,

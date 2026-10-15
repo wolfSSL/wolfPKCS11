@@ -215,6 +215,11 @@ static int test_default_home_path(void)
     char expected_dir[256];
     char test_file[512];
 
+#if defined(WOLFPKCS11_DEFAULT_TOKEN_PATH)
+    printf("SKIP: WOLFPKCS11_DEFAULT_TOKEN_PATH is defined; it takes priority over the home directory\n");
+    return 0;
+#endif
+
     /* Clear environment variable to test default behavior */
 #ifndef WOLFPKCS11_NO_ENV
     unsetenv("WOLFPKCS11_TOKEN_PATH");
@@ -305,6 +310,51 @@ static int test_env_var_path(void)
     unsetenv("WOLFPKCS11_TOKEN_PATH");
 
     return 0;
+}
+
+static int test_build_default_path(void)
+{
+#if defined(WOLFPKCS11_DEFAULT_TOKEN_PATH)
+    CK_RV ret;
+    const char* default_dir = WOLFPKCS11_DEFAULT_TOKEN_PATH;
+    char test_file[512];
+
+    /* HOME (or APPDATA) is left set so the build-time default has to take
+     * priority over the per-user directory. */
+#ifndef WOLFPKCS11_NO_ENV
+    unsetenv("WOLFPKCS11_TOKEN_PATH");
+#endif
+
+    /* Ensure directory exists */
+    MKDIR(default_dir);
+
+    /* Clean up any existing test files */
+    cleanup_test_files(default_dir);
+
+    ret = create_test_token("Testing WOLFPKCS11_DEFAULT_TOKEN_PATH build-time default", 1);
+    if (ret != CKR_OK) {
+        return -1;
+    }
+
+    /* Check if token files were created in expected location */
+    snprintf(test_file, sizeof(test_file), "%s" PATH_SEP "wp11_token_0000000000000001", default_dir);
+    if (!file_exists(test_file)) {
+        printf("FAIL: Token file not found at expected location: %s\n", test_file);
+        test_failed++;
+        return -1;
+    }
+
+    printf("PASS: Token file found at: %s\n", test_file);
+    test_passed++;
+
+    /* Clean up */
+    cleanup_test_files(default_dir);
+
+    return 0;
+#else
+    printf("SKIP: WOLFPKCS11_DEFAULT_TOKEN_PATH is not defined\n");
+    return 0;
+#endif
 }
 
 static int test_missing_storage_path(void)
@@ -430,6 +480,10 @@ int main(int argc, char* argv[])
     }
 
     if (test_default_home_path() != 0) {
+        result = 1;
+    }
+
+    if (test_build_default_path() != 0) {
         result = 1;
     }
 
