@@ -18,12 +18,12 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  *
- * Test for GetEcbCheckValue error propagation (bug #496).
+ * Test for CKA_CHECK_VALUE on generic secret keys (bug #496, GitHub #245).
  *
- * Verifies that GetEcbCheckValue correctly propagates failures from
- * WP11_AesEcb_Encrypt. A generic secret key with an invalid AES key length
- * (e.g. 5 bytes) causes the encrypt to fail, and C_GetAttributeValue must
- * return CKR_FUNCTION_FAILED.
+ * The check value of a CKK_GENERIC_SECRET key is the first three bytes of the
+ * SHA-1 hash of CKA_VALUE, so it must not depend on AES-ECB. A key whose
+ * length is not a valid AES key length (e.g. 5 bytes) previously failed with
+ * CKR_FUNCTION_FAILED and must now return its check value.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -49,7 +49,7 @@
 
 #include "testdata.h"
 
-#ifdef HAVE_AESECB
+#ifndef NO_SHA
 
 #define ECB_CV_TEST_DIR "./store/ecb_check_value_error_test"
 #define WOLFPKCS11_TOKEN_FILENAME "wp11_token_0000000000000001"
@@ -207,7 +207,8 @@ static void cleanup_test_files(const char* dir)
 
 /*
  * Test 1 (positive control): Create a 16-byte CKK_GENERIC_SECRET key and
- * query CKA_CHECK_VALUE. Expect CKR_OK and a 3-byte result.
+ * query CKA_CHECK_VALUE. 16 bytes is also an AES key length, so check the
+ * exact value to make sure the SHA-1 form is used rather than AES-ECB.
  */
 static int test_valid_key_check_value(CK_SESSION_HANDLE session)
 {
@@ -218,6 +219,8 @@ static int test_valid_key_check_value(CK_SESSION_HANDLE session)
     unsigned char checkValue[3];
     CK_ULONG checkLen = sizeof(checkValue);
     int result = 0;
+    /* SHA-1 of sixteen 0xAA bytes is cc57b4bf... */
+    static const unsigned char expected[3] = { 0xCC, 0x57, 0xB4 };
 
     CK_ATTRIBUTE createTmpl[] = {
         { CKA_CLASS,    &secretKeyClass, sizeof(secretKeyClass) },
@@ -251,15 +254,15 @@ static int test_valid_key_check_value(CK_SESSION_HANDLE session)
     printf("PASS: Test1: check value length is 3\n");
     test_passed++;
 
-    /* Verify not all zeros (encrypt of zero block should produce non-zero) */
-    if (checkValue[0] == 0 && checkValue[1] == 0 && checkValue[2] == 0) {
-        fprintf(stderr,
-                "FAIL: Test1: check value is all zeros (likely not computed)\n");
+    if (XMEMCMP(checkValue, expected, sizeof(expected)) != 0) {
+        fprintf(stderr, "FAIL: Test1: check value %02x%02x%02x, expected "
+                "%02x%02x%02x\n", checkValue[0], checkValue[1], checkValue[2],
+                expected[0], expected[1], expected[2]);
         test_failed++;
         result = -1;
         goto cleanup;
     }
-    printf("PASS: Test1: check value is non-zero: %02x%02x%02x\n",
+    printf("PASS: Test1: check value is SHA-1 based: %02x%02x%02x\n",
            checkValue[0], checkValue[1], checkValue[2]);
     test_passed++;
 
@@ -269,11 +272,8 @@ cleanup:
 
 /*
  * Test 2: Create a 5-byte CKK_GENERIC_SECRET key and query CKA_CHECK_VALUE.
- * The 5-byte key is not a valid AES key length, so WP11_AesEcb_Encrypt
- * (called by GetEcbCheckValue) fails internally.
- *
- * Verifies the fix for BUG #496: GetEcbCheckValue now correctly propagates
- * the encrypt failure, returning CKR_FUNCTION_FAILED.
+ * The 5-byte key is not a valid AES key length. Expect CKR_OK and the first
+ * three bytes of SHA-1 over the key value.
  */
 static int test_invalid_key_check_value(CK_SESSION_HANDLE session)
 {
@@ -284,6 +284,8 @@ static int test_invalid_key_check_value(CK_SESSION_HANDLE session)
     unsigned char checkValue[3];
     CK_ULONG checkLen = sizeof(checkValue);
     int result = 0;
+    /* SHA-1 of five 0xBB bytes is 8b288ca9... */
+    static const unsigned char expected[3] = { 0x8B, 0x28, 0x8C };
 
     CK_ATTRIBUTE createTmpl[] = {
         { CKA_CLASS,    &secretKeyClass, sizeof(secretKeyClass) },
@@ -304,14 +306,22 @@ static int test_invalid_key_check_value(CK_SESSION_HANDLE session)
     CHECK_CKR(ret, "Test2: C_CreateObject (5-byte generic secret)", CKR_OK);
 
     ret = funcList->C_GetAttributeValue(session, key, getTmpl, 1);
-
-    /*
-     * BUG #496: GetEcbCheckValue returns CKR_OK even though
-     * WP11_AesEcb_Encrypt failed (5 bytes is not a valid AES key length).
-     * The correct behavior is to return CKR_FUNCTION_FAILED.
-     */
     CHECK_CKR(ret, "Test2: C_GetAttributeValue CKA_CHECK_VALUE (5-byte key)",
-              CKR_FUNCTION_FAILED);
+              CKR_OK);
+
+    if (getTmpl[0].ulValueLen != sizeof(expected) ||
+            XMEMCMP(checkValue, expected, sizeof(expected)) != 0) {
+        fprintf(stderr, "FAIL: Test2: check value %02x%02x%02x (len %lu), "
+                "expected %02x%02x%02x\n", checkValue[0], checkValue[1],
+                checkValue[2], (unsigned long)getTmpl[0].ulValueLen,
+                expected[0], expected[1], expected[2]);
+        test_failed++;
+        result = -1;
+        goto cleanup;
+    }
+    printf("PASS: Test2: check value is SHA-1 based: %02x%02x%02x\n",
+           checkValue[0], checkValue[1], checkValue[2]);
+    test_passed++;
 
 cleanup:
     return result;
@@ -323,7 +333,7 @@ static int ecb_check_value_error_test(void)
     CK_SESSION_HANDLE session = 0;
     int result = 0;
 
-    printf("\n=== Testing GetEcbCheckValue error propagation ===\n");
+    printf("\n=== Testing generic secret CKA_CHECK_VALUE ===\n");
 
     cleanup_test_files(ECB_CV_TEST_DIR);
 
@@ -389,11 +399,11 @@ static int ecb_check_value_error_test(void)
         return -1;
     }
 
-    /* Test 1: Valid 16-byte key — positive control */
+    /* Test 1: 16-byte key, positive control */
     if (test_valid_key_check_value(session) != 0)
         result = -1;
 
-    /* Test 2: Invalid 5-byte key — demonstrates bug #496 */
+    /* Test 2: 5-byte key, not a valid AES key length */
     if (test_invalid_key_check_value(session) != 0)
         result = -1;
 
@@ -424,7 +434,7 @@ int main(int argc, char* argv[])
     (void)argc;
     (void)argv;
 
-    printf("=== wolfPKCS11 GetEcbCheckValue Error Propagation Test ===\n");
+    printf("=== wolfPKCS11 Generic Secret Check Value Test ===\n");
 
     (void)ecb_check_value_error_test();
 
@@ -433,15 +443,15 @@ int main(int argc, char* argv[])
     return (test_failed == 0) ? 0 : 1;
 }
 
-#else /* !HAVE_AESECB */
+#else /* NO_SHA */
 
 int main(int argc, char* argv[])
 {
     (void)argc;
     (void)argv;
 
-    printf("AES-ECB not available, skipping GetEcbCheckValue test\n");
+    printf("SHA-1 not available, skipping generic secret check value test\n");
     return 0;
 }
 
-#endif /* HAVE_AESECB */
+#endif /* !NO_SHA */
