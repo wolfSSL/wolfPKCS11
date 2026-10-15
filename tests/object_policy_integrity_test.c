@@ -1444,6 +1444,81 @@ static void test_failed_store_keeps_undecoded_keys(void)
     cleanup_test_files();
 }
 
+/* Change the user PIN and end without logging out or finalizing. */
+static int child_change_pin_and_exit(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+
+    if (pkcs11_load() != CKR_OK)
+        return CHILD_SETUP;
+    rv = init_slot(&slot);
+    if (rv == CKR_OK)
+        rv = open_session(slot, 1, &session);
+    if (rv == CKR_OK) {
+        rv = funcList->C_SetPIN(session, userPin, sizeof(userPin) - 1,
+                                otherUserPin, sizeof(otherUserPin) - 1);
+    }
+    if (rv != CKR_OK) {
+        fprintf(stderr, "  PIN change failed: 0x%lx\n", (unsigned long)rv);
+        return CHILD_FAIL;
+    }
+    return CHILD_PASS;
+}
+
+/* The key works after logging in with the new PIN. */
+static int child_key_under_new_pin(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    byte out[BLOCK_SZ];
+
+    if (pkcs11_load() != CKR_OK)
+        return CHILD_SETUP;
+    rv = init_slot(&slot);
+    if (rv == CKR_OK)
+        rv = open_session(slot, 0, &session);
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(session, CKU_USER, otherUserPin,
+                               sizeof(otherUserPin) - 1);
+    }
+    if (rv == CKR_OK)
+        rv = find_key(session, &obj);
+    if (rv == CKR_OK)
+        rv = aes_encrypt_block(session, obj, out);
+    if (rv == CKR_OK && XMEMCMP(out, refCipher, sizeof(out)) != 0)
+        rv = CKR_FUNCTION_FAILED;
+    (void)funcList->C_Finalize(NULL);
+    if (rv != CKR_OK) {
+        fprintf(stderr, "  key not usable under the new PIN: 0x%lx\n",
+                (unsigned long)rv);
+        return CHILD_FAIL;
+    }
+    return CHILD_PASS;
+}
+
+/* The store pass of a PIN change must itself leave every key usable under
+ * the new PIN, without a later logout or finalize rewriting the records. */
+static void test_pin_change_is_complete_when_stored(void)
+{
+    CK_RV rv;
+
+    printf("\n--- a stored PIN change needs no logout to take effect ---\n");
+    set_aes_check();
+    rv = store_objects(create_aes_key);
+    CHECK_RV(rv, "store AES key", CKR_OK);
+    if (rv == CKR_OK) {
+        CHECK_TRUE(run_in_child(child_change_pin_and_exit) == CHILD_PASS,
+                   "PIN change stored");
+        CHECK_TRUE(run_in_child(child_key_under_new_pin) == CHILD_PASS,
+                   "key usable under the new PIN after an exit");
+    }
+    cleanup_test_files();
+}
+
 /* A token init whose store fails leaves nothing behind, and a retry works. */
 static int child_init_token_retry(void)
 {
@@ -1795,6 +1870,7 @@ int main(int argc, char* argv[])
     test_legitimate_updates_round_trip();
     test_failed_store_keeps_state();
     test_failed_store_keeps_undecoded_keys();
+    test_pin_change_is_complete_when_stored();
     test_init_token_failure_on_fresh_store();
     test_recovery_ignores_dir_spelling();
 #ifdef DEBUG_WOLFPKCS11
