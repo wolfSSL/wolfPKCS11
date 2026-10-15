@@ -63,7 +63,7 @@ jobs:
         make
 
     - name: Create test store directory
-      run: mkdir -p store/empty_pin_test store/private_object_empty_pin_test
+      run: mkdir -p store/empty_pin_test store/private_object_empty_pin_test store/empty_pin_cache_test
 
     - name: Run empty PIN store test
       run: |
@@ -82,6 +82,16 @@ jobs:
         echo "for public sessions even when the user PIN is empty (F-3835)."
         echo ""
         ./tests/private_object_empty_pin_test
+        echo ""
+        echo "=== Test completed ==="
+
+    - name: Run empty PIN cache test
+      run: |
+        echo "=== Running Empty PIN Cache Test ==="
+        echo "This test verifies that changing an empty user PIN while the"
+        echo "empty-PIN check is in progress does not leave it cached as empty."
+        echo ""
+        ./tests/empty_pin_cache_test
         echo ""
         echo "=== Test completed ==="
 

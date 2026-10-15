@@ -1085,6 +1085,24 @@ static int wp11_Session_New(WP11_Slot* slot, CK_OBJECT_HANDLE handle,
     return ret;
 }
 
+#ifdef DEBUG_WOLFPKCS11
+/* Set by WP11_Test_SetEmptyPinCheckHook(). */
+static void (*wp11_EmptyPinCheckHook)(void) = NULL;
+
+/**
+ * Test hook: set a function for WP11_Slot_Has_Empty_Pin() to call after its
+ * uncached empty-PIN check and before it caches the result, with no locks
+ * held. Exposed only in debug builds so a white-box test can change the PIN
+ * at exactly that point.
+ *
+ * @param  hook  [in]  Function to call, or NULL to remove the hook.
+ */
+WP11_API void WP11_Test_SetEmptyPinCheckHook(void (*hook)(void))
+{
+    wp11_EmptyPinCheckHook = hook;
+}
+#endif
+
 /**
  * Check if the slot has an empty user PIN.
  *
@@ -1122,6 +1140,10 @@ int WP11_Slot_Has_Empty_Pin(WP11_Slot* slot)
      * with the slot lock released, so only cache the result if the user PIN
      * was not changed in the meantime. */
     empty = (WP11_Slot_CheckUserPin(slot, (char*)"", 0) == 0);
+#ifdef DEBUG_WOLFPKCS11
+    if (wp11_EmptyPinCheckHook != NULL)
+        wp11_EmptyPinCheckHook();
+#endif
     WP11_Lock_LockRW(&slot->lock);
     if (slot->token.userPinEmpty == 0 &&
             WP11_ConstantCompare(userPin, slot->token.userPin,

@@ -191,6 +191,11 @@ noinst_PROGRAMS += tests/private_object_empty_pin_test
 tests_private_object_empty_pin_test_SOURCES = tests/private_object_empty_pin_test.c
 tests_private_object_empty_pin_test_LDADD =
 
+check_PROGRAMS += tests/empty_pin_cache_test
+noinst_PROGRAMS += tests/empty_pin_cache_test
+tests_empty_pin_cache_test_SOURCES = tests/empty_pin_cache_test.c
+tests_empty_pin_cache_test_LDADD =
+
 check_PROGRAMS += tests/key_sensitive_default_test
 noinst_PROGRAMS += tests/key_sensitive_default_test
 tests_key_sensitive_default_test_SOURCES = tests/key_sensitive_default_test.c
@@ -343,6 +348,7 @@ tests_set_attr_readonly_test_LDADD += src/libwolfpkcs11.la
 tests_derive_key_type_test_LDADD += src/libwolfpkcs11.la
 tests_trust_attr_bufsize_test_LDADD += src/libwolfpkcs11.la
 tests_private_object_empty_pin_test_LDADD += src/libwolfpkcs11.la
+tests_empty_pin_cache_test_LDADD += src/libwolfpkcs11.la
 tests_key_sensitive_default_test_LDADD += src/libwolfpkcs11.la
 tests_derive_disabled_key_test_LDADD += src/libwolfpkcs11.la
 tests_derive_inherit_protection_test_LDADD += src/libwolfpkcs11.la
@@ -397,6 +403,7 @@ tests_set_attr_readonly_test_LDADD += src/libwolfpkcs11.la
 tests_derive_key_type_test_LDADD += src/libwolfpkcs11.la
 tests_trust_attr_bufsize_test_LDADD += src/libwolfpkcs11.la
 tests_private_object_empty_pin_test_LDADD += src/libwolfpkcs11.la
+tests_empty_pin_cache_test_LDADD += src/libwolfpkcs11.la
 tests_key_sensitive_default_test_LDADD += src/libwolfpkcs11.la
 tests_derive_disabled_key_test_LDADD += src/libwolfpkcs11.la
 tests_derive_inherit_protection_test_LDADD += src/libwolfpkcs11.la
