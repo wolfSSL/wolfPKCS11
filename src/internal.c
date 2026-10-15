@@ -188,7 +188,36 @@ typedef int WP11_Lock;
 #define WP11_Lock_LockRO(l)            ({ 0; })
 #define WP11_Lock_UnlockRO(l)          ({ 0; })
 
+#elif defined(WOLFSSL_PTHREADS) || (defined(USE_WINDOWS_API) && \
+      !defined(_WIN32_WCE) && defined(_WIN32_WINNT) && _WIN32_WINNT >= 0x0600)
+/* Reader/writer lock built from a mutex and a condition variable. The mutex
+ * only guards the counters and is never held while the lock itself is held,
+ * so the last reader out can release the lock without unlocking a mutex it
+ * does not own. As with the two-mutex lock below, a waiting writer does not
+ * stop new readers, so a thread may take the read lock again while holding
+ * it. Uses the same threading API as wolfSSL_Mutex: pthreads, or a critical
+ * section and condition variable on Windows (Vista and later). */
+#define WP11_LOCK_COND
+
+#ifdef WOLFSSL_PTHREADS
+typedef pthread_mutex_t WP11_LockMutex;
+typedef pthread_cond_t WP11_LockCond;
 #else
+typedef CRITICAL_SECTION WP11_LockMutex;
+typedef CONDITION_VARIABLE WP11_LockCond;
+#endif
+
+typedef struct WP11_Lock {
+    WP11_LockMutex mutex;              /* Mutex for accessing counters        */
+    WP11_LockCond cond;                /* Signalled when lock may be free     */
+    int cnt;                           /* Count of readers                    */
+    int writer;                        /* Whether a writer holds the lock     */
+} WP11_Lock;
+#else
+/* Fallback for threading APIs without a condition variable. The first reader
+ * locks the write mutex and the last reader unlocks it, which may be a
+ * different thread: only correct where wolfSSL_Mutex may be released by a
+ * thread that did not lock it (e.g. a binary semaphore). */
 typedef struct WP11_Lock {
     wolfSSL_Mutex read;                /* Mutex for accessing count           */
     wolfSSL_Mutex write;               /* Mutex for writing                   */
@@ -676,7 +705,171 @@ static wolfSSL_Mutex storeDirLock
 #endif
 
 
-#ifndef SINGLE_THREADED
+#ifdef WP11_LOCK_COND
+/* Mutex and condition variable operations. The INIT, LOCK and WAIT operations
+ * evaluate to non-zero on success. */
+#ifdef WOLFSSL_PTHREADS
+#define WP11_LOCK_MUTEX_INIT(m)        (pthread_mutex_init((m), NULL) == 0)
+#define WP11_LOCK_MUTEX_FREE(m)        pthread_mutex_destroy(m)
+#define WP11_LOCK_MUTEX_LOCK(m)        (pthread_mutex_lock(m) == 0)
+#define WP11_LOCK_MUTEX_UNLOCK(m)      pthread_mutex_unlock(m)
+#define WP11_LOCK_COND_INIT(c)         (pthread_cond_init((c), NULL) == 0)
+#define WP11_LOCK_COND_FREE(c)         pthread_cond_destroy(c)
+#define WP11_LOCK_COND_WAIT(c, m)      (pthread_cond_wait((c), (m)) == 0)
+#define WP11_LOCK_COND_WAKE_ALL(c)     pthread_cond_broadcast(c)
+#else
+#define WP11_LOCK_MUTEX_INIT(m)        (InitializeCriticalSection(m), 1)
+#define WP11_LOCK_MUTEX_FREE(m)        DeleteCriticalSection(m)
+#define WP11_LOCK_MUTEX_LOCK(m)        (EnterCriticalSection(m), 1)
+#define WP11_LOCK_MUTEX_UNLOCK(m)      LeaveCriticalSection(m)
+#define WP11_LOCK_COND_INIT(c)         (InitializeConditionVariable(c), 1)
+/* A CONDITION_VARIABLE has nothing to free. */
+#define WP11_LOCK_COND_FREE(c)         (void)(c)
+#define WP11_LOCK_COND_WAIT(c, m)      \
+    (SleepConditionVariableCS((c), (m), INFINITE) != 0)
+#define WP11_LOCK_COND_WAKE_ALL(c)     WakeAllConditionVariable(c)
+#endif
+
+/**
+ * Initialize a lock.
+ *
+ * @param  lock  [in]  Lock object.
+ * @return  BAD_MUTEX_E on failure.
+ *          0 on success.
+ */
+static int WP11_Lock_Init(WP11_Lock* lock)
+{
+    int ret = 0;
+
+    if (!WP11_LOCK_MUTEX_INIT(&lock->mutex))
+        ret = BAD_MUTEX_E;
+    if (ret == 0 && !WP11_LOCK_COND_INIT(&lock->cond)) {
+        WP11_LOCK_MUTEX_FREE(&lock->mutex);
+        ret = BAD_MUTEX_E;
+    }
+    if (ret == 0) {
+        lock->cnt = 0;
+        lock->writer = 0;
+    }
+
+    return ret;
+}
+
+/**
+ * Free a lock.
+ *
+ * @param  lock  [in]  Lock object.
+ */
+static void WP11_Lock_Free(WP11_Lock* lock)
+{
+    WP11_LOCK_COND_FREE(&lock->cond);
+    WP11_LOCK_MUTEX_FREE(&lock->mutex);
+}
+
+/**
+ * Lock for read/write.
+ *
+ * Waits until there is no writer and no reader.
+ *
+ * @param  lock  [in]  Lock object.
+ * @return  BAD_MUTEX_E on failure.
+ *          0 on success.
+ */
+static int WP11_Lock_LockRW(WP11_Lock* lock)
+{
+    int ret = 0;
+
+    if (!WP11_LOCK_MUTEX_LOCK(&lock->mutex))
+        return BAD_MUTEX_E;
+    while (ret == 0 && (lock->writer || lock->cnt > 0)) {
+        if (!WP11_LOCK_COND_WAIT(&lock->cond, &lock->mutex))
+            ret = BAD_MUTEX_E;
+    }
+    if (ret == 0)
+        lock->writer = 1;
+#ifdef DEBUG_LOCK
+    fprintf(stderr, "LRW: %p - %d\n", (void*)lock, lock->cnt);
+#endif
+    WP11_LOCK_MUTEX_UNLOCK(&lock->mutex);
+
+    return ret;
+}
+
+/**
+ * Unlock after read/write.
+ *
+ * @param  lock  [in]  Lock object.
+ * @return  BAD_MUTEX_E on failure.
+ *          0 on success.
+ */
+static int WP11_Lock_UnlockRW(WP11_Lock* lock)
+{
+    if (!WP11_LOCK_MUTEX_LOCK(&lock->mutex))
+        return BAD_MUTEX_E;
+#ifdef DEBUG_LOCK
+    fprintf(stderr, "URW: %p - %d\n", (void*)lock, lock->cnt);
+#endif
+    lock->writer = 0;
+    WP11_LOCK_COND_WAKE_ALL(&lock->cond);
+    WP11_LOCK_MUTEX_UNLOCK(&lock->mutex);
+
+    return 0;
+}
+
+/**
+ * Lock for read-only.
+ *
+ * Waits only while a writer holds the lock: a waiting writer does not stop
+ * new readers, so a thread already holding the read lock can take it again.
+ *
+ * @param  lock  [in]  Lock object.
+ * @return  BAD_MUTEX_E on failure.
+ *          0 on success.
+ */
+static int WP11_Lock_LockRO(WP11_Lock* lock)
+{
+    int ret = 0;
+
+    if (!WP11_LOCK_MUTEX_LOCK(&lock->mutex))
+        return BAD_MUTEX_E;
+    while (ret == 0 && lock->writer) {
+        if (!WP11_LOCK_COND_WAIT(&lock->cond, &lock->mutex))
+            ret = BAD_MUTEX_E;
+    }
+    if (ret == 0)
+        lock->cnt++;
+#ifdef DEBUG_LOCK
+    fprintf(stderr, "LRO: %p - %d\n", (void*)lock, lock->cnt);
+#endif
+    WP11_LOCK_MUTEX_UNLOCK(&lock->mutex);
+
+    return ret;
+}
+
+/**
+ * Unlock after reading.
+ *
+ * @param  lock  [in]  Lock object.
+ * @return  BAD_MUTEX_E on failure.
+ *          0 on success.
+ */
+static int WP11_Lock_UnlockRO(WP11_Lock* lock)
+{
+    if (!WP11_LOCK_MUTEX_LOCK(&lock->mutex))
+        return BAD_MUTEX_E;
+    /* Wake waiting writers once the last reader has left. */
+    if (--lock->cnt == 0)
+        WP11_LOCK_COND_WAKE_ALL(&lock->cond);
+#ifdef DEBUG_LOCK
+    fprintf(stderr, "URO: %p - %d\n", (void*)lock, lock->cnt);
+#endif
+    WP11_LOCK_MUTEX_UNLOCK(&lock->mutex);
+
+    return 0;
+}
+#elif !defined(SINGLE_THREADED)
+/* Fallback two-mutex lock: see the WP11_Lock type for when it is used. */
+
 /**
  * Initialize a lock.
  *
