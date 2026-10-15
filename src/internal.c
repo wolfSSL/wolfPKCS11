@@ -709,13 +709,44 @@ static wolfSSL_Mutex storeDirLock
 /* Mutex and condition variable operations. The INIT, LOCK and WAIT operations
  * evaluate to non-zero on success. */
 #ifdef WOLFSSL_PTHREADS
+/**
+ * Wait on the lock's condition variable with thread cancellation disabled.
+ *
+ * pthread_cond_wait() is a cancellation point, but acquiring the lock was not
+ * one when it was built from mutexes alone. A thread cancelled while waiting
+ * would exit holding the mutex, hanging every later user of the lock
+ * (including the current holder's unlock), so keep acquisition
+ * non-cancellable.
+ *
+ * @param  cond   [in]  Condition variable to wait on.
+ * @param  mutex  [in]  Mutex held by the caller.
+ * @return  1 on success.
+ *          0 on failure.
+ */
+static int wp11_Lock_CondWait(pthread_cond_t* cond, pthread_mutex_t* mutex)
+{
+    int ret;
+#ifdef PTHREAD_CANCEL_DISABLE
+    int state;
+    int prevState;
+
+    pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &prevState);
+#endif
+    ret = pthread_cond_wait(cond, mutex);
+#ifdef PTHREAD_CANCEL_DISABLE
+    pthread_setcancelstate(prevState, &state);
+#endif
+
+    return ret == 0;
+}
+
 #define WP11_LOCK_MUTEX_INIT(m)        (pthread_mutex_init((m), NULL) == 0)
 #define WP11_LOCK_MUTEX_FREE(m)        pthread_mutex_destroy(m)
 #define WP11_LOCK_MUTEX_LOCK(m)        (pthread_mutex_lock(m) == 0)
 #define WP11_LOCK_MUTEX_UNLOCK(m)      pthread_mutex_unlock(m)
 #define WP11_LOCK_COND_INIT(c)         (pthread_cond_init((c), NULL) == 0)
 #define WP11_LOCK_COND_FREE(c)         pthread_cond_destroy(c)
-#define WP11_LOCK_COND_WAIT(c, m)      (pthread_cond_wait((c), (m)) == 0)
+#define WP11_LOCK_COND_WAIT(c, m)      wp11_Lock_CondWait((c), (m))
 #define WP11_LOCK_COND_WAKE_ALL(c)     pthread_cond_broadcast(c)
 #else
 #define WP11_LOCK_MUTEX_INIT(m)        (InitializeCriticalSection(m), 1)
