@@ -393,7 +393,7 @@ int main(int argc, char* argv[])
 
     printf("Debug hook or AES not available, skipping destroy stale handle "
            "test\n");
-    return 0;
+    return 77;  /* automake: test skipped */
 }
 
 #endif /* DEBUG_WOLFPKCS11 && !NO_AES */
