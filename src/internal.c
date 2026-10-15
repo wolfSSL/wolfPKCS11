@@ -12065,22 +12065,27 @@ int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
     WP11_Object* obj;
 #ifdef WOLFPKCS11_NSS
     WP11_Session* scan;
+#else
+    int isPrivate = 0;
 #endif
     int onToken = OBJ_HANDLE_ON_TOKEN(objHandle);
 
-    if (!onToken) {
 #ifdef WOLFPKCS11_NSS
-        /* The NSS cross-session walk below needs the slot lock so a concurrent
-         * remove-session can't reclaim a session node. Acquire it before the
-         * token lock to match the global lock order (slot then token) used by
-         * WP11_Session_RemoveObjectByHandle / WP11_Slot_CloseSessions; acquiring
-         * them in the opposite order would risk an AB-BA deadlock. */
+    /* The NSS cross-session walk below needs the slot lock so a concurrent
+     * remove-session can't reclaim a session node. Acquire it before the
+     * token lock to match the global lock order (slot then token) used by
+     * WP11_Session_RemoveObjectByHandle / WP11_Slot_CloseSessions; acquiring
+     * them in the opposite order would risk an AB-BA deadlock. */
+    if (!onToken)
         WP11_Lock_LockRO(&session->slot->lock);
 #endif
-        /* Hold the token lock across the session->object walk so a concurrent
-         * WP11_Session_RemoveObjectByHandle (which holds the same lock around
-         * the unlink) can't free a node we're stepping through. */
-        WP11_Lock_LockRO(&session->slot->token.lock);
+    /* The token lock guards every object list on the slot, and
+     * WP11_Session_RemoveObjectByHandle holds it around the unlink. Hold it
+     * across the walk and every read of the matched object: once it is
+     * released a concurrent C_DestroyObject on the same handle (token objects
+     * are shared by all sessions) can unlink and free the object. */
+    WP11_Lock_LockRO(&session->slot->token.lock);
+    if (!onToken) {
         obj = session->object;
         while (obj != NULL) {
             if (obj->handle == objHandle) {
@@ -12104,13 +12109,8 @@ int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
             }
         }
 #endif
-        WP11_Lock_UnlockRO(&session->slot->token.lock);
-#ifdef WOLFPKCS11_NSS
-        WP11_Lock_UnlockRO(&session->slot->lock);
-#endif
     }
     else {
-        WP11_Lock_LockRO(&session->slot->token.lock);
         obj = session->slot->token.object;
         while (obj != NULL) {
             if (obj->handle == objHandle) {
@@ -12119,15 +12119,26 @@ int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
             }
             obj = obj->next;
         }
-        WP11_Lock_UnlockRO(&session->slot->token.lock);
     }
+#ifndef WOLFPKCS11_NSS
+    if (ret == 0)
+        isPrivate = ((obj->opFlag & WP11_FLAG_PRIVATE) == WP11_FLAG_PRIVATE);
+#endif
+    WP11_Lock_UnlockRO(&session->slot->token.lock);
+#ifdef WOLFPKCS11_NSS
+    if (!onToken)
+        WP11_Lock_UnlockRO(&session->slot->lock);
+#endif
+    /* obj may already be freed by a concurrent destroy: do not dereference it
+     * from here on. */
 
-    if (ret == 0 && obj != NULL && (obj->handle == objHandle)) {
+    if (ret == 0) {
 #ifndef WOLFPKCS11_NSS
         /* Enforce CKA_PRIVATE: reject private objects from public sessions.
          * Skipped in NSS mode because NSS operates as the internal crypto
-         * module without calling C_Login. */
-        if ((obj->opFlag & WP11_FLAG_PRIVATE) == WP11_FLAG_PRIVATE) {
+         * module without calling C_Login. The slot lock is only taken after
+         * the token lock is released, keeping the slot-then-token order. */
+        if (isPrivate) {
             int loginState;
             WP11_Lock_LockRO(&session->slot->lock);
             loginState = session->slot->token.loginState;
