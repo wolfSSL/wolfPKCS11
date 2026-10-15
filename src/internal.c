@@ -13155,6 +13155,8 @@ static int GetSecretKeyCheckValue(WP11_Object* secret, byte* data,
             break;
 #endif
         default:
+            (void)data;
+            (void)len;
             ret = NOT_AVAILABLE_E;
             break;
     }
