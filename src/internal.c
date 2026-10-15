@@ -78,6 +78,11 @@
 
 #ifdef WOLFPKCS11_TPM
     #include <wolftpm/tpm2_wrap.h>
+    /* Hoisted: the store section's forward declaration is compiled out under
+     * WOLFPKCS11_NO_STORE, but the wrap path below still calls it. */
+    #if !defined(NO_RSA) || defined(HAVE_ECC)
+    static int WP11_Object_WrapTpmKey(WP11_Object* object);
+    #endif
     #include <wolftpm/version.h>
 
     #ifndef WOLFPKCS11_TPM_CUST_IO
@@ -3945,8 +3950,6 @@ WP11_API int WP11_Test_DecodeTpmKey(CK_SLOT_ID slotId, unsigned char* keyData,
     return WP11_Object_DecodeTpmKey(&object);
 }
 #endif /* DEBUG_WOLFPKCS11 */
-
-static int WP11_Object_WrapTpmKey(WP11_Object* object); /* forward declaration */
 
 static int WP11_Object_EncodeTpmKey(WP11_Object* object, byte* keyData,
     int keyDataLen)
