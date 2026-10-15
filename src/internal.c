@@ -1063,33 +1063,44 @@ static int wp11_Session_New(WP11_Slot* slot, CK_OBJECT_HANDLE handle,
  */
 int WP11_Slot_Has_Empty_Pin(WP11_Slot* slot)
 {
+    int pinSet;
+    int cached;
+    int empty;
+    byte userPin[PIN_HASH_SZ];
+
     if (slot == NULL)
         return 0;
 
-    if (slot->token.tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET) {
-        switch (slot->token.userPinEmpty) {
-            case 1:
-                /* Empty user PIN */
-                return 1;
-            case 2:
-                /* Non-empty user PIN */
-                return 0;
-            default:
-                /* Cache result as WP11_Slot_CheckUserPin is very expensive */
-                if (WP11_Slot_CheckUserPin(slot, (char*)"", 0) == 0) {
-                    /* Empty user PIN */
-                    slot->token.userPinEmpty = 1;
-                    return 1;
-                }
-                else {
-                    /* Non-empty user PIN */
-                    slot->token.userPinEmpty = 2;
-                    return 0;
-                }
-        }
+    /* The user PIN and its cached emptiness are changed under the slot lock
+     * (C_InitPIN / C_SetPIN), so read them under it too. */
+    WP11_Lock_LockRO(&slot->lock);
+    pinSet = (slot->token.tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET) != 0;
+    cached = slot->token.userPinEmpty;
+    if (pinSet && cached == 0)
+        XMEMCPY(userPin, slot->token.userPin, sizeof(userPin));
+    WP11_Lock_UnlockRO(&slot->lock);
+
+    if (!pinSet)
+        return 0;
+    if (cached != 0) {
+        /* 1: empty user PIN, 2: non-empty user PIN */
+        return cached == 1;
     }
 
-    return 0;
+    /* Cache result as WP11_Slot_CheckUserPin is very expensive. It hashes
+     * with the slot lock released, so only cache the result if the user PIN
+     * was not changed in the meantime. */
+    empty = (WP11_Slot_CheckUserPin(slot, (char*)"", 0) == 0);
+    WP11_Lock_LockRW(&slot->lock);
+    if (slot->token.userPinEmpty == 0 &&
+            WP11_ConstantCompare(userPin, slot->token.userPin,
+                                 sizeof(userPin))) {
+        slot->token.userPinEmpty = empty ? 1 : 2;
+    }
+    WP11_Lock_UnlockRW(&slot->lock);
+    wc_ForceZero(userPin, sizeof(userPin));
+
+    return empty;
 }
 
 /**
@@ -10871,7 +10882,8 @@ void WP11_Session_RemoveObject(WP11_Session* session, WP11_Object* object)
  *
  * The active object pointer (session->curr) is a raw pointer cached when an
  * operation is initialized. A token object can be the active object of more
- * than one session.
+ * than one session. Since this reaches into other sessions, session->curr is
+ * only accessed under the slot lock (see WP11_Session_GetObject()).
  *
  * Symmetric operations (AES, HMAC/generic-secret, HKDF) copy the key into the
  * operation context during their *Init and run to completion without referring
@@ -10924,23 +10936,32 @@ void WP11_Slot_ClearActiveObject(WP11_Slot* slot, WP11_Object* object)
 /**
  * Get the current object of the session - key for operation.
  *
+ * WP11_Slot_ClearActiveObject() may clear session->curr from another session's
+ * thread, holding the slot lock for write, so access it under the slot lock.
+ *
  * @param  session  [in]   Session object.
  * @param  object   [out]  Key Object object.
  */
 void WP11_Session_GetObject(WP11_Session* session, WP11_Object** object)
 {
+    WP11_Lock_LockRO(&session->slot->lock);
     *object = session->curr;
+    WP11_Lock_UnlockRO(&session->slot->lock);
 }
 
 /**
  * Set the current object on the session - key for operation.
+ *
+ * Writes session->curr under the slot lock; see WP11_Session_GetObject().
  *
  * @param  session  [in]  Session object.
  * @param  object   [in]  Key Object object.
  */
 void WP11_Session_SetObject(WP11_Session* session, WP11_Object* object)
 {
+    WP11_Lock_LockRO(&session->slot->lock);
     session->curr = object;
+    WP11_Lock_UnlockRO(&session->slot->lock);
 }
 
 /**

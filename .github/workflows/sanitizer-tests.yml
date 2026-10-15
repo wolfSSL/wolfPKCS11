@@ -15,8 +15,7 @@ jobs:
       fail-fast: false
       matrix:
         # msan disabled due to too many failures
-        # tsan disabled due to weird failures
-        sanitizer: [asan, ubsan]
+        sanitizer: [asan, ubsan, tsan]
         config:
           - name: "Standard Build"
             configure_flags: "--enable-aeskeywrap"
@@ -43,6 +42,12 @@ jobs:
           build-essential \
           libnss3-dev \
           libnspr4-dev
+
+#TSAN maps its shadow memory at fixed addresses, which can collide with the
+#higher ASLR entropy used by current runner kernels
+    - name: Reduce ASLR entropy for TSAN
+      if: matrix.sanitizer == 'tsan'
+      run: sudo sysctl vm.mmap_rnd_bits=28
 
 #setup wolfssl
     - uses: actions/checkout@v4
@@ -182,9 +187,6 @@ jobs:
         make
     - name: wolfpkcs11 make check
       run: |
-        if [ "${{ matrix.sanitizer }}" = "tsan" ]; then
-          export TSAN_OPTIONS="suppressions=$PWD/tsan_suppressions.txt"
-        fi
         if [[ "${{ matrix.config.configure_flags }}" == *"--enable-tpm"* ]]; then
           ./tests/pkcs11str && ./tests/pkcs11test
         else
