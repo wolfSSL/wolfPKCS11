@@ -481,10 +481,14 @@ WP11_LOCAL int WP11_Session_AddObject(WP11_Session* session, int onToken,
  * object is left in place and must not be freed. */
 #define WP11_OBJECT_NOT_DESTROYABLE 2
 WP11_LOCAL int WP11_Session_RemoveObjectByHandle(WP11_Session* session,
-                              WP11_Object* object, int onToken,
+                              WP11_Object* object, CK_OBJECT_HANDLE handle,
                               int checkDestroyable);
 WP11_LOCAL void WP11_Session_RemoveObject(WP11_Session* session,
                               WP11_Object* object);
+#ifdef DEBUG_WOLFPKCS11
+WP11_API int WP11_Test_RemoveObjectStale(CK_SESSION_HANDLE hSession,
+    CK_OBJECT_HANDLE liveHandle, CK_OBJECT_HANDLE staleHandle);
+#endif
 WP11_LOCAL int WP11_Object_HandleOnToken(CK_OBJECT_HANDLE handle);
 WP11_LOCAL void WP11_Slot_ClearActiveObject(WP11_Slot* slot,
                                             WP11_Object* object);
