@@ -295,6 +295,11 @@ noinst_PROGRAMS += tests/wrapkey_length_query_test
 tests_wrapkey_length_query_test_SOURCES = tests/wrapkey_length_query_test.c
 tests_wrapkey_length_query_test_LDADD =
 
+check_PROGRAMS += tests/set_pin_rekey_test
+noinst_PROGRAMS += tests/set_pin_rekey_test
+tests_set_pin_rekey_test_SOURCES = tests/set_pin_rekey_test.c
+tests_set_pin_rekey_test_LDADD =
+
 check_PROGRAMS += tests/nss_configdir_prefix_test
 noinst_PROGRAMS += tests/nss_configdir_prefix_test
 tests_nss_configdir_prefix_test_SOURCES = tests/nss_configdir_prefix_test.c
@@ -360,6 +365,7 @@ tests_copy_data_object_test_LDADD += src/libwolfpkcs11.la
 tests_copy_data_object_token_test_LDADD += src/libwolfpkcs11.la
 tests_data_object_partial_update_test_LDADD += src/libwolfpkcs11.la
 tests_wrapkey_length_query_test_LDADD += src/libwolfpkcs11.la
+tests_set_pin_rekey_test_LDADD += src/libwolfpkcs11.la
 tests_nss_configdir_prefix_test_LDADD += src/libwolfpkcs11.la
 else
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
@@ -413,6 +419,7 @@ tests_copy_data_object_test_LDADD += src/libwolfpkcs11.la
 tests_copy_data_object_token_test_LDADD += src/libwolfpkcs11.la
 tests_data_object_partial_update_test_LDADD += src/libwolfpkcs11.la
 tests_wrapkey_length_query_test_LDADD += src/libwolfpkcs11.la
+tests_set_pin_rekey_test_LDADD += src/libwolfpkcs11.la
 tests_nss_configdir_prefix_test_LDADD += src/libwolfpkcs11.la
 endif
 

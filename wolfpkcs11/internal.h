@@ -420,6 +420,8 @@ WP11_API int WP11_Test_DecodeTpmKey(CK_SLOT_ID slotId, unsigned char* keyData,
 #endif
 WP11_LOCAL int WP11_Slot_SetSOPin(WP11_Slot* slot, char* pin, int pinLen);
 WP11_LOCAL int WP11_Slot_SetUserPin(WP11_Slot* slot, char* pin, int pinLen);
+WP11_LOCAL int WP11_Slot_ChangeUserPin(WP11_Slot* slot, char* oldPin,
+                                       int oldPinLen, char* pin, int pinLen);
 WP11_LOCAL int WP11_Slot_TokenReset(WP11_Slot* slot, char* pin, int pinLen,
                          char* label);
 WP11_LOCAL void WP11_Slot_GetTokenLabel(WP11_Slot* slot, char* label);
