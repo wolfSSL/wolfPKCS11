@@ -1006,6 +1006,7 @@ static void test_load_record_without_trailing_fields(void)
 #ifdef TOKEN_STORE_TPM_TEST
 /* Debug-only hooks exported by libwolfpkcs11. */
 extern int WP11_Test_StoreWriteFailAfter(int writes);
+extern int WP11_Test_StoreWriteFailOnce(int writes);
 extern void WP11_Test_TpmStoreShortBy(int bytes);
 
 #define MAX_STORE_WRITES 500
@@ -1121,7 +1122,8 @@ static void test_interrupted_create_keeps_stored_token(void)
     funcList->C_Finalize(NULL);
 }
 
-/* A PIN change that fails at any storage write keeps the stored PIN. */
+/* A PIN change that fails at any one storage write keeps the stored PIN.
+ * TPM records commit one at a time, so the old records are written back. */
 static void test_interrupted_pin_change_keeps_stored_pin(void)
 {
     CK_RV rv;
@@ -1147,7 +1149,7 @@ static void test_interrupted_pin_change_keeps_stored_pin(void)
     }
     for (writes = 0; intact && rv == CKR_OK && writes < MAX_STORE_WRITES;
          writes++) {
-        (void)WP11_Test_StoreWriteFailAfter(writes);
+        (void)WP11_Test_StoreWriteFailOnce(writes);
         rv = funcList->C_SetPIN(session, (CK_UTF8CHAR_PTR)userPin,
                                 (CK_ULONG)XSTRLEN(userPin),
                                 (CK_UTF8CHAR_PTR)newPin,

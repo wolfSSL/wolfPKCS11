@@ -444,6 +444,7 @@ WP11_API void WP11_Test_StoreCloseFailAfter(int closes);
 #endif
 #ifndef WOLFPKCS11_NO_STORE
 WP11_API int WP11_Test_StoreWriteFailAfter(int writes);
+WP11_API int WP11_Test_StoreWriteFailOnce(int writes);
 #endif
 #if defined(WOLFPKCS11_TPM_STORE) && !defined(WOLFPKCS11_NO_STORE)
 WP11_API void WP11_Test_TpmStoreShortBy(int bytes);

@@ -3091,6 +3091,7 @@ static int wp11_storage_read(void* storage, unsigned char* buffer, int len)
 
 #ifdef DEBUG_WOLFPKCS11
 static int storeWriteFailAfter = -1;
+static int storeWriteFailOnce = 0;
 
 /**
  * Test hook: make storage writes fail after a number of them succeed.
@@ -3103,6 +3104,20 @@ static int storeWriteFailAfter = -1;
 WP11_API int WP11_Test_StoreWriteFailAfter(int writes)
 {
     storeWriteFailAfter = writes;
+    storeWriteFailOnce = 0;
+    return 0;
+}
+
+/**
+ * Test hook: make one storage write fail after a number of them succeed.
+ *
+ * @param  writes  [in]  Writes that succeed before the one that fails.
+ * @return  0 always.
+ */
+WP11_API int WP11_Test_StoreWriteFailOnce(int writes)
+{
+    storeWriteFailAfter = writes;
+    storeWriteFailOnce = 1;
     return 0;
 }
 #endif
@@ -3122,8 +3137,11 @@ static int wp11_storage_write(void* storage, unsigned char* buffer, int len)
     unsigned char* p = buffer;
 
 #ifdef DEBUG_WOLFPKCS11
-    if (storeWriteFailAfter == 0)
+    if (storeWriteFailAfter == 0) {
+        if (storeWriteFailOnce)
+            storeWriteFailAfter = -1;
         return BUFFER_E;
+    }
     if (storeWriteFailAfter > 0)
         storeWriteFailAfter--;
 #endif
