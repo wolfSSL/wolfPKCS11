@@ -64,7 +64,7 @@ jobs:
   no_env:
     uses: ./.github/workflows/build-workflow.yml
     with:
-      config: C_EXTRA_FLAGS="-DWOLFPKCS11_NO_ENV -DWOLFPKCS11_DEFAULT_TOKEN_PATH=./store/default"
+      config: C_EXTRA_FLAGS="-DWOLFPKCS11_NO_ENV" --with-default-token-path=./store/default
       check: mkdir -p store && ./tests/pkcs11test
   no_aesgcm:
     uses: ./.github/workflows/build-workflow.yml
