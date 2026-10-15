@@ -4434,139 +4434,168 @@ static CK_RV test_attributes_secret(void* args)
     return ret;
 }
 
+#if defined(HAVE_AESECB) || !defined(NO_SHA) || defined(WOLFPKCS11_HKDF)
+/* Create a secret key and read CKA_CHECK_VALUE together with other attributes.
+ * When expected is NULL the key type has no check value, so the attribute must
+ * be reported as unavailable while the rest of the template is still filled.
+ */
+static CK_RV check_secret_key_check_value(CK_SESSION_HANDLE session,
+    CK_KEY_TYPE keyType, unsigned char* keyData, CK_ULONG keyLen,
+    const unsigned char* expected, const char* msg)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &keyType,        sizeof(keyType)        },
+        { CKA_VALUE,       keyData,         keyLen                 },
+    };
+    CK_ULONG keyTmplCnt = sizeof(keyTmpl) / sizeof(*keyTmpl);
+    CK_OBJECT_CLASS getClass = 0;
+    CK_KEY_TYPE getKeyType = 0;
+    CK_ULONG getValueLen = 0;
+    CK_BYTE checkValue[3];
+    CK_ATTRIBUTE getTmpl[] = {
+        { CKA_CLASS,       &getClass,       sizeof(getClass)       },
+        { CKA_CHECK_VALUE, NULL,            0                      },
+        { CKA_KEY_TYPE,    &getKeyType,     sizeof(getKeyType)     },
+        { CKA_VALUE_LEN,   &getValueLen,    sizeof(getValueLen)    },
+    };
+    CK_ULONG getTmplCnt = sizeof(getTmpl) / sizeof(*getTmpl);
+    CK_RV expRet = (expected != NULL) ? CKR_OK : CKR_ATTRIBUTE_TYPE_INVALID;
+    CK_ULONG expLen = (expected != NULL) ? sizeof(checkValue) :
+                                           CK_UNAVAILABLE_INFORMATION;
+
+    ret = funcList->C_CreateObject(session, keyTmpl, keyTmplCnt, &key);
+    CHECK_CKR(ret, msg);
+
+    /* Length query */
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, key, getTmpl, getTmplCnt);
+        CHECK_CKR_FAIL(ret, expRet, msg);
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(getTmpl[1].ulValueLen == expLen, ret, msg);
+    }
+
+    /* Value read */
+    if (ret == CKR_OK) {
+        getTmpl[1].pValue = checkValue;
+        getTmpl[1].ulValueLen = sizeof(checkValue);
+        XMEMSET(checkValue, 0, sizeof(checkValue));
+        getClass = 0;
+        getKeyType = 0;
+        getValueLen = 0;
+        ret = funcList->C_GetAttributeValue(session, key, getTmpl, getTmplCnt);
+        CHECK_CKR_FAIL(ret, expRet, msg);
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(getTmpl[1].ulValueLen == expLen, ret, msg);
+    }
+    if (ret == CKR_OK && expected != NULL) {
+        CHECK_COND(XMEMCMP(checkValue, expected, sizeof(checkValue)) == 0,
+            ret, msg);
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(getClass == CKO_SECRET_KEY && getKeyType == keyType &&
+            getValueLen == keyLen, ret, msg);
+    }
+
+    if (key != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, key);
+
+    return ret;
+}
+#endif
+
 #ifdef HAVE_AESECB
 static CK_RV test_secret_key_check_value(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
-    CK_RV ret = CKR_OK;
-    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
-    CK_ATTRIBUTE checkValueTmpl[] = {
-        { CKA_CHECK_VALUE, NULL, 0 }
-    };
-    CK_ULONG checkValueTmplCnt = sizeof(checkValueTmpl) / sizeof(*checkValueTmpl);
-    CK_BYTE checkValue[3];
+    CK_RV ret;
+    unsigned char key192[24];
+    unsigned char key256[32];
+    int i;
 
-    static unsigned char expectedAes128CheckValue[] = {0x00, 0x1B, 0x7D};
+    /* First three bytes of AES-ECB of a zero block under each key */
+    static const unsigned char expAes128[] = { 0x00, 0x1B, 0x7D };
+    static const unsigned char expAes192[] = { 0x91, 0x62, 0x51 };
+    static const unsigned char expAes256[] = { 0xF2, 0x90, 0x00 };
 
-    static unsigned char genericKeyData[] = {
-        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-        0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F
-    };
+    for (i = 0; i < (int)sizeof(key192); i++)
+        key192[i] = (unsigned char)i;
+    for (i = 0; i < (int)sizeof(key256); i++)
+        key256[i] = (unsigned char)i;
 
-    static unsigned char expectedGeneralCheckValue[] = {0xC6, 0xA1, 0x3B};
-
-    /* Test AES-128 */
+    ret = check_secret_key_check_value(session, CKK_AES, aes_128_key,
+        sizeof(aes_128_key), expAes128, "AES-128 key check value");
     if (ret == CKR_OK) {
-        CK_ATTRIBUTE aes128Tmpl[] = {
-            { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
-            { CKA_KEY_TYPE,    &aesKeyType,     sizeof(aesKeyType)     },
-            { CKA_VALUE,       aes_128_key,     sizeof(aes_128_key)    },
-            { CKA_ENCRYPT,     &ckTrue,         sizeof(ckTrue)         },
-            { CKA_DECRYPT,     &ckTrue,         sizeof(ckTrue)         }
-        };
-        CK_ULONG aes128TmplCnt = sizeof(aes128Tmpl) / sizeof(*aes128Tmpl);
-
-        ret = funcList->C_CreateObject(session, aes128Tmpl, aes128TmplCnt,
-            &key);
-        CHECK_CKR(ret, "Create AES-128 key for check value test");
-    }
-
-    if (ret == CKR_OK) {
-        /* Get the length of the check value first */
-        ret = funcList->C_GetAttributeValue(session, key, checkValueTmpl,
-            checkValueTmplCnt);
-        CHECK_CKR(ret, "Get AES-128 check value length");
-    }
-
-    if (ret == CKR_OK) {
-        /* Verify expected check value length is 3 bytes */
-        if (checkValueTmpl[0].ulValueLen != 3) {
-            ret = CKR_GENERAL_ERROR;
-            CHECK_CKR(ret, "AES-128 check value length should be 3 bytes");
-        }
-    }
-
-    if (ret == CKR_OK) {
-        /* Get the actual check value */
-        checkValueTmpl[0].pValue = checkValue;
-        checkValueTmpl[0].ulValueLen = sizeof(checkValue);
-
-        ret = funcList->C_GetAttributeValue(session, key, checkValueTmpl,
-            checkValueTmplCnt);
-        CHECK_CKR(ret, "Get AES-128 check value");
-
-        if (ret == CKR_OK) {
-            /* Verify the check value matches expected value */
-            if (XMEMCMP(checkValue, expectedAes128CheckValue, 3) != 0) {
-                ret = CKR_GENERAL_ERROR;
-                CHECK_CKR(ret, "AES-128 check value doesn't match expected");
-            }
-        }
-    }
-
-    funcList->C_DestroyObject(session, key);
-
-    /* Test Generic Secret Key */
-    if (ret == CKR_OK) {
-
-        CK_ATTRIBUTE genericTmpl[] = {
-            { CKA_CLASS,       &secretKeyClass,   sizeof(secretKeyClass)   },
-            { CKA_KEY_TYPE,    &genericKeyType,   sizeof(genericKeyType)   },
-            { CKA_VALUE,       genericKeyData,    sizeof(genericKeyData)   },
-            { CKA_SIGN,        &ckTrue,           sizeof(ckTrue)           },
-            { CKA_VERIFY,      &ckTrue,           sizeof(ckTrue)           }
-        };
-        CK_ULONG genericTmplCnt = sizeof(genericTmpl) / sizeof(*genericTmpl);
-
-        ret = funcList->C_CreateObject(session, genericTmpl, genericTmplCnt,
-            &key);
-        CHECK_CKR(ret, "Create Generic Secret key for check value test");
-    }
-
-    if (ret == CKR_OK) {
-        checkValueTmpl[0].pValue = NULL;
-        checkValueTmpl[0].ulValueLen = 0;
-
-        ret = funcList->C_GetAttributeValue(session, key, checkValueTmpl,
-            checkValueTmplCnt);
-        CHECK_CKR(ret, "Get Generic Secret key check value length");
-    }
-
-    if (ret == CKR_OK) {
-        if (checkValueTmpl[0].ulValueLen != 3) {
-            ret = CKR_GENERAL_ERROR;
-            CHECK_CKR(ret,
-                "Generic Secret key check value length should be 3 bytes");
-        }
-    }
-
-    if (ret == CKR_OK) {
-        checkValueTmpl[0].pValue = checkValue;
-        checkValueTmpl[0].ulValueLen = sizeof(checkValue);
-
-        ret = funcList->C_GetAttributeValue(session, key, checkValueTmpl,
-            checkValueTmplCnt);
-        CHECK_CKR(ret, "Get Generic Secret key check value");
+        ret = check_secret_key_check_value(session, CKK_AES, key192,
+            sizeof(key192), expAes192, "AES-192 key check value");
     }
     if (ret == CKR_OK) {
-        if (checkValueTmpl[0].ulValueLen != 3) {
-            ret = CKR_GENERAL_ERROR;
-            CHECK_CKR(ret,
-                "Generic Secret key check value should return 3 bytes");
-        }
-
+        ret = check_secret_key_check_value(session, CKK_AES, key256,
+            sizeof(key256), expAes256, "AES-256 key check value");
     }
-    if (ret == CKR_OK) {
-        if (XMEMCMP(checkValue, expectedGeneralCheckValue, 3) != 0) {
-            ret = CKR_GENERAL_ERROR;
-            CHECK_CKR(ret,
-                "Generic Secret key check value doesn't match expected");
-        }
-    }
-
-    funcList->C_DestroyObject(session, key);
 
     return ret;
+}
+#endif
+
+#ifndef NO_SHA
+static CK_RV test_generic_secret_check_value(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    unsigned char key16[16];
+    unsigned char key5[5];
+    unsigned char key48[48];
+    unsigned char key64[64];
+    int i;
+
+    /* First three bytes of the SHA-1 hash of each key value. None of these
+     * lengths except 16 is a valid AES key length. */
+    static const unsigned char exp16[] = { 0x56, 0x17, 0x8B };
+    static const unsigned char exp5[]  = { 0x8B, 0x28, 0x8C };
+    static const unsigned char exp48[] = { 0xB2, 0x61, 0x3D };
+    static const unsigned char exp64[] = { 0xEE, 0xCE, 0x72 };
+
+    for (i = 0; i < (int)sizeof(key16); i++)
+        key16[i] = (unsigned char)i;
+    XMEMSET(key5, 0xBB, sizeof(key5));
+    XMEMSET(key48, 0x5A, sizeof(key48));
+    XMEMSET(key64, 0x5A, sizeof(key64));
+
+    ret = check_secret_key_check_value(session, CKK_GENERIC_SECRET, key16,
+        sizeof(key16), exp16, "16-byte generic secret check value");
+    if (ret == CKR_OK) {
+        ret = check_secret_key_check_value(session, CKK_GENERIC_SECRET, key5,
+            sizeof(key5), exp5, "5-byte generic secret check value");
+    }
+    if (ret == CKR_OK) {
+        ret = check_secret_key_check_value(session, CKK_GENERIC_SECRET, key48,
+            sizeof(key48), exp48, "48-byte generic secret check value");
+    }
+    if (ret == CKR_OK) {
+        ret = check_secret_key_check_value(session, CKK_GENERIC_SECRET, key64,
+            sizeof(key64), exp64, "64-byte generic secret check value");
+    }
+
+    return ret;
+}
+#endif
+
+#ifdef WOLFPKCS11_HKDF
+static CK_RV test_hkdf_key_check_value(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    unsigned char keyData[32];
+
+    XMEMSET(keyData, 0x3C, sizeof(keyData));
+
+    /* No check value is defined for HKDF keys */
+    return check_secret_key_check_value(session, CKK_HKDF, keyData,
+        sizeof(keyData), NULL, "HKDF key check value unavailable");
 }
 #endif
 
@@ -18634,6 +18663,12 @@ static TEST_FUNC testFunc[] = {
 #ifdef HAVE_AESECB
     PKCS11TEST_FUNC_SESS_DECL(test_aes_ecb_gen_key),
     PKCS11TEST_FUNC_SESS_DECL(test_secret_key_check_value),
+#endif
+#ifndef NO_SHA
+    PKCS11TEST_FUNC_SESS_DECL(test_generic_secret_check_value),
+#endif
+#ifdef WOLFPKCS11_HKDF
+    PKCS11TEST_FUNC_SESS_DECL(test_hkdf_key_check_value),
 #endif
 #ifdef HAVE_AESCMAC
     PKCS11TEST_FUNC_SESS_DECL(test_aes_cmac),

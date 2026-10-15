@@ -13097,14 +13097,15 @@ static int GetSha1CheckValue(const byte* dataIn, int inLen, byte* dataOut,
 #endif
 
 #ifdef HAVE_AESECB
+/* AES check value: first three bytes of the ECB encryption of one block of
+ * zero bytes (PKCS#11 3.2 section 6.10.2). */
 static int GetEcbCheckValue(WP11_Object* secret, byte* dataOut,
     CK_ULONG* outLen)
 {
     int ret;
-    byte* hash;
-    byte* input;
-    word32 inLen;
-    WP11_Data* key = secret->data.symmKey;
+    byte zero[AES_BLOCK_SIZE];
+    byte enc[AES_BLOCK_SIZE];
+    word32 encLen = (word32)sizeof(enc);
 
     if (dataOut == NULL) {
         if (outLen != NULL) {
@@ -13119,34 +13120,47 @@ static int GetEcbCheckValue(WP11_Object* secret, byte* dataOut,
         return BUFFER_E;
     }
 
-    hash = XMALLOC(key->len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-    if (!hash)
-        return MEMORY_E;
-    input = XMALLOC(key->len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-    if (input == NULL) {
-        XFREE(hash, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-        return MEMORY_E;
-    }
-    inLen = key->len;
-    XMEMSET(input, 0, inLen);
-
-    ret = WP11_AesEcb_Encrypt(input, inLen, hash, &inLen, secret,
+    XMEMSET(zero, 0, sizeof(zero));
+    ret = WP11_AesEcb_Encrypt(zero, (word32)sizeof(zero), enc, &encLen, secret,
         secret->session);
-
-    if (ret == 0) {
-        XMEMCPY(dataOut, hash, PKCS11_CHECK_VALUE_SIZE);
-        *outLen = PKCS11_CHECK_VALUE_SIZE;
-    }
-
-    XFREE(hash, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-    XFREE(input, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-
     if (ret != 0)
         return CKR_FUNCTION_FAILED;
+
+    XMEMCPY(dataOut, enc, PKCS11_CHECK_VALUE_SIZE);
+    *outLen = PKCS11_CHECK_VALUE_SIZE;
 
     return CKR_OK;
 }
 #endif
+
+/* Get the check value of a secret key. The algorithm is defined per key type;
+ * key types without one report the attribute as unavailable. */
+static int GetSecretKeyCheckValue(WP11_Object* secret, byte* data,
+    CK_ULONG* len)
+{
+    int ret;
+
+    switch (secret->type) {
+#ifdef HAVE_AESECB
+        case CKK_AES:
+            ret = GetEcbCheckValue(secret, data, len);
+            break;
+#endif
+#ifndef NO_SHA
+        case CKK_GENERIC_SECRET:
+            /* First three bytes of the SHA-1 hash of CKA_VALUE (PKCS#11 3.2
+             * section 6.8.2). */
+            ret = GetSha1CheckValue(secret->data.symmKey->data,
+                (int)secret->data.symmKey->len, data, len);
+            break;
+#endif
+        default:
+            ret = NOT_AVAILABLE_E;
+            break;
+    }
+
+    return ret;
+}
 
 /**
  * Get the data for an attribute from the object.
@@ -13333,13 +13347,8 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                 ret = NOT_AVAILABLE_E;
 #endif
             }
-            else if (object->objClass == CKO_SECRET_KEY) {
-#ifdef HAVE_AESECB
-                ret = GetEcbCheckValue(object, data, len);
-#else
-                ret = NOT_AVAILABLE_E;
-#endif
-            }
+            else if (object->objClass == CKO_SECRET_KEY)
+                ret = GetSecretKeyCheckValue(object, data, len);
             else
                 ret = NOT_AVAILABLE_E;
             break;
