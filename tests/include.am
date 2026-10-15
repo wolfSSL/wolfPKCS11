@@ -260,6 +260,11 @@ noinst_PROGRAMS += tests/unique_id_test
 tests_unique_id_test_SOURCES = tests/unique_id_test.c
 tests_unique_id_test_LDADD =
 
+check_PROGRAMS += tests/token_reset_fail_test
+noinst_PROGRAMS += tests/token_reset_fail_test
+tests_token_reset_fail_test_SOURCES = tests/token_reset_fail_test.c
+tests_token_reset_fail_test_LDADD =
+
 check_PROGRAMS += tests/nss_email_store_test
 noinst_PROGRAMS += tests/nss_email_store_test
 tests_nss_email_store_test_SOURCES = tests/nss_email_store_test.c
@@ -304,6 +309,16 @@ check_PROGRAMS += tests/nss_configdir_prefix_test
 noinst_PROGRAMS += tests/nss_configdir_prefix_test
 tests_nss_configdir_prefix_test_SOURCES = tests/nss_configdir_prefix_test.c
 tests_nss_configdir_prefix_test_LDADD =
+
+check_PROGRAMS += tests/logout_retire_test
+noinst_PROGRAMS += tests/logout_retire_test
+tests_logout_retire_test_SOURCES = tests/logout_retire_test.c
+tests_logout_retire_test_LDADD =
+
+check_PROGRAMS += tests/login_pin_state_test
+noinst_PROGRAMS += tests/login_pin_state_test
+tests_login_pin_state_test_SOURCES = tests/login_pin_state_test.c
+tests_login_pin_state_test_LDADD =
 
 if BUILD_STATIC
 tests_pkcs11test_LDADD += src/libwolfpkcs11.la
@@ -358,6 +373,7 @@ tests_concurrent_destroy_object_test_LDADD += src/libwolfpkcs11.la
 tests_hbs_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_hkdf_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_unique_id_test_LDADD += src/libwolfpkcs11.la
+tests_token_reset_fail_test_LDADD += src/libwolfpkcs11.la
 tests_nss_email_store_test_LDADD += src/libwolfpkcs11.la
 tests_generate_key_class_test_LDADD += src/libwolfpkcs11.la
 tests_generate_keypair_class_test_LDADD += src/libwolfpkcs11.la
@@ -367,6 +383,8 @@ tests_data_object_partial_update_test_LDADD += src/libwolfpkcs11.la
 tests_wrapkey_length_query_test_LDADD += src/libwolfpkcs11.la
 tests_set_pin_rekey_test_LDADD += src/libwolfpkcs11.la
 tests_nss_configdir_prefix_test_LDADD += src/libwolfpkcs11.la
+tests_logout_retire_test_LDADD += src/libwolfpkcs11.la
+tests_login_pin_state_test_LDADD += src/libwolfpkcs11.la
 else
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
 tests_empty_pin_store_test_LDADD += src/libwolfpkcs11.la
@@ -412,6 +430,7 @@ tests_concurrent_destroy_object_test_LDADD += src/libwolfpkcs11.la
 tests_hbs_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_hkdf_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_unique_id_test_LDADD += src/libwolfpkcs11.la
+tests_token_reset_fail_test_LDADD += src/libwolfpkcs11.la
 tests_nss_email_store_test_LDADD += src/libwolfpkcs11.la
 tests_generate_key_class_test_LDADD += src/libwolfpkcs11.la
 tests_generate_keypair_class_test_LDADD += src/libwolfpkcs11.la
@@ -421,6 +440,8 @@ tests_data_object_partial_update_test_LDADD += src/libwolfpkcs11.la
 tests_wrapkey_length_query_test_LDADD += src/libwolfpkcs11.la
 tests_set_pin_rekey_test_LDADD += src/libwolfpkcs11.la
 tests_nss_configdir_prefix_test_LDADD += src/libwolfpkcs11.la
+tests_logout_retire_test_LDADD += src/libwolfpkcs11.la
+tests_login_pin_state_test_LDADD += src/libwolfpkcs11.la
 endif
 
 EXTRA_DIST += tests/unit.h \
