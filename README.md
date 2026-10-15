@@ -304,20 +304,41 @@ with `-DWOLFSSL_AESCCM=yes`).
 
 ### WOLFPKCS11_TOKEN_PATH
 
-Path into which files are stored that contain token data. If unset, wolfPKCS11
-tries, in order, the directory specified by `WOLFPKCS11_TOKEN_PATH`, any store
-directory configured by NSS, the user's home directory (`$HOME/.wolfPKCS11` on
-POSIX or `%APPDATA%\wolfPKCS11` on Windows), and finally the optional
-`WOLFPKCS11_DEFAULT_TOKEN_PATH` build-time setting. There is no fallback to
-`/tmp`; deployments must provide a secure storage location explicitly.
+Path into which files are stored that contain token data. wolfPKCS11 uses the
+first of the following that is set:
 
-Note: releases 2.0 and 2.1 looked up a non-existent `APPDIR` variable on
+1. The `WOLFPKCS11_TOKEN_PATH` environment variable.
+2. Any store directory configured by NSS.
+3. The `WOLFPKCS11_DEFAULT_TOKEN_PATH` build-time setting.
+4. The user's home directory (`$HOME/.wolfPKCS11` on POSIX or
+   `%APPDATA%\wolfPKCS11` on Windows).
+
+There is no fallback to `/tmp`; deployments must provide a secure storage
+location explicitly.
+
+`WOLFPKCS11_DEFAULT_TOKEN_PATH` is set with `--with-default-token-path=PATH`
+(autotools) or `-DWOLFPKCS11_DEFAULT_TOKEN_PATH=PATH` (CMake). When defining it
+directly, for example in `user_settings.h`, it must be a C string literal such
+as `#define WOLFPKCS11_DEFAULT_TOKEN_PATH "/var/lib/wolfpkcs11"`. Backslashes
+are escape characters in a C string, so use forward slashes in Windows paths.
+
+Note: releases 2.0 and 2.1 checked the home directory before
+`WOLFPKCS11_DEFAULT_TOKEN_PATH`, so the build-time default was only used when
+`HOME` was unset. Those releases also compiled the path set by
+`--with-default-token-path` or the CMake option in with literal quote
+characters around it, so the configured directory was never used. POSIX
+deployments built with a default path that have existing tokens in
+`$HOME/.wolfPKCS11` should set `WOLFPKCS11_TOKEN_PATH` to that directory, or
+move the token files into the build-time default directory. Builds that passed
+an unquoted value directly, for example
+`CFLAGS="-DWOLFPKCS11_DEFAULT_TOKEN_PATH=/some/path"`, no longer compile; use
+`--with-default-token-path` instead.
+
+Releases 2.0 and 2.1 also looked up a non-existent `APPDIR` variable on
 Windows, so no per-user default was used there and token data went to
 `WOLFPKCS11_DEFAULT_TOKEN_PATH` (or token storage failed if it was unset).
-Windows builds now use `%APPDATA%\wolfPKCS11` ahead of
-`WOLFPKCS11_DEFAULT_TOKEN_PATH`. Deployments with existing tokens in the
-build-time default directory should set `WOLFPKCS11_TOKEN_PATH` to that
-directory, or move the token files into `%APPDATA%\wolfPKCS11`.
+Windows builds now fall back to `%APPDATA%\wolfPKCS11` when no build-time
+default is set.
 
 ### WOLFPKCS11_NO_STORE
 
