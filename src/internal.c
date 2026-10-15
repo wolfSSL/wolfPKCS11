@@ -10501,6 +10501,9 @@ int WP11_Slot_SetSOPin(WP11_Slot* slot, char* pin, int pinLen)
         token->soPinLen = sizeof(token->soPin);
         token->tokenFlags |= WP11_TOKEN_FLAG_SO_PIN_SET;
     #ifndef WOLFPKCS11_NO_STORE
+        /* Lock order is slot, token, then store: no object changes under
+         * the pass, as in C_CreateObject. */
+        WP11_Lock_LockRW(&token->lock);
         ret = wp11_Token_Store(token, (int)slot->id);
     #ifdef WP11_STORE_BATCH
         if (ret != 0 && (oldFlags & WP11_TOKEN_FLAG_SO_PIN_SET)) {
@@ -10511,6 +10514,7 @@ int WP11_Slot_SetSOPin(WP11_Slot* slot, char* pin, int pinLen)
             token->tokenFlags = oldFlags;
         }
     #endif
+        WP11_Lock_UnlockRW(&token->lock);
     #endif
     }
     WP11_Lock_UnlockRW(&slot->lock);
