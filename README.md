@@ -447,6 +447,21 @@ cmake -DCMAKE_PREFIX_PATH=/path/to/wolfssl/install ..
 | `BUILD_SHARED_LIBS` | `ON` | Build shared (`ON`) or static (`OFF`) library |
 | `WOLFPKCS11_STATIC_WOLFSSL` | `no` | Link a static wolfSSL into the shared library and hide its symbols |
 
+Two related preprocessor settings are available when wolfCrypt callbacks are
+used. `WOLFPKCS11_DEFAULT_DEVID` sets the device ID assigned to a slot before
+an object-specific device ID is selected. `WOLFPKCS11_PIN_KDF_SOFTWARE` keeps
+PBKDF2 PIN hashing in software while regular key operations continue to use
+the slot's device ID. This is useful when a device callback is intended for
+key operations but is too expensive for each PBKDF2 iteration. When wolfSSL
+has crypto callbacks enabled, `WOLFPKCS11_PIN_KDF_SOFTWARE` requires wolfSSL
+and wolfPKCS11 to be built with `WC_NO_DEFAULT_DEVID`; otherwise wolfSSL can
+select the registered callback as its default for the hash inside PBKDF2.
+`WC_NO_DEFAULT_DEVID` needs wolfSSL 5.8.0 or later. The setting cannot be
+combined with `WOLF_CRYPTO_CB_FIND`, because a finder can remap an invalid
+device ID back to a registered callback. The device must be registered with
+the same wolfSSL instance that wolfPKCS11 uses, so an application cannot
+register it for the self-contained library with a private static wolfSSL.
+
 Note: wolfSSL must be built with the corresponding features enabled for the
 options above to work (e.g. enabling `WOLFPKCS11_AESCCM` requires wolfSSL built
 with `-DWOLFSSL_AESCCM=yes`).
