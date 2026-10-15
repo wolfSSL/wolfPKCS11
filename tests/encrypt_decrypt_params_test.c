@@ -427,10 +427,87 @@ static void test_block_mode_alignment(CK_SESSION_HANDLE session)
 }
 #endif
 
+#if !defined(NO_AES) && defined(HAVE_AESECB)
+/* CKA_CHECK_VALUE of an AES key is the first three bytes of one zero block
+ * encrypted under the key, for every AES key size. */
+static void test_aes_check_value_key_sizes(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key;
+    CK_MECHANISM mech;
+    byte keyData[32];
+    byte zero[16];
+    byte enc[16];
+    byte kcv[3];
+    CK_ULONG encLen;
+    CK_ATTRIBUTE attr;
+    static const CK_ULONG keyLens[] = { 16, 24, 32 };
+    int i;
+
+    for (i = 0; i < (int)sizeof(keyData); i++)
+        keyData[i] = (byte)(0xA0 + i);
+    XMEMSET(zero, 0, sizeof(zero));
+    mech.mechanism = CKM_AES_ECB;
+    mech.pParameter = NULL;
+    mech.ulParameterLen = 0;
+
+    for (i = 0; i < (int)(sizeof(keyLens) / sizeof(*keyLens)); i++) {
+        printf("check value: AES key length %lu\n", (unsigned long)keyLens[i]);
+        key = CK_INVALID_HANDLE;
+        rv = create_aes_key(session, keyData, keyLens[i], &key);
+        CHECK_RV(rv, "check value: create AES key", CKR_OK);
+        if (rv != CKR_OK)
+            continue;
+
+        rv = funcList->C_EncryptInit(session, &mech, key);
+        CHECK_RV(rv, "check value: C_EncryptInit", CKR_OK);
+        if (rv != CKR_OK)
+            continue;
+        encLen = sizeof(enc);
+        rv = funcList->C_Encrypt(session, zero, sizeof(zero), enc, &encLen);
+        CHECK_RV(rv, "check value: C_Encrypt zero block", CKR_OK);
+        if (rv != CKR_OK)
+            continue;
+
+        XMEMSET(kcv, 0, sizeof(kcv));
+        attr.type = CKA_CHECK_VALUE;
+        attr.pValue = kcv;
+        attr.ulValueLen = sizeof(kcv);
+        rv = funcList->C_GetAttributeValue(session, key, &attr, 1);
+        CHECK_RV(rv, "check value: C_GetAttributeValue", CKR_OK);
+        CHECK_TRUE(rv == CKR_OK && attr.ulValueLen == sizeof(kcv) &&
+                   XMEMCMP(kcv, enc, sizeof(kcv)) == 0,
+                   "check value matches encrypted zero block");
+    }
+}
+#endif
+
+typedef void (*test_fn)(CK_SESSION_HANDLE session);
+
+/* Each check runs in its own session so session objects and operation state
+ * do not carry over between checks. */
+static void run_in_session(CK_SLOT_ID slot, test_fn fn)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+
+    rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                 NULL, NULL, &session);
+    CHECK_RV(rv, "open test session", CKR_OK);
+    if (rv == CKR_OK) {
+        fn(session);
+        funcList->C_CloseSession(session);
+    }
+}
+
 static int run_test(void)
 {
     CK_RV rv;
     CK_SESSION_HANDLE session = 0;
+    CK_SESSION_INFO info;
+    CK_SLOT_ID slot = 0;
+
+    (void)run_in_session;
 
     rv = pkcs11_load();
     CHECK_RV(rv, "load library", CKR_OK);
@@ -440,20 +517,28 @@ static int run_test(void)
     rv = pkcs11_open_session(&session);
     CHECK_RV(rv, "open session", CKR_OK);
     if (rv == CKR_OK) {
+        rv = funcList->C_GetSessionInfo(session, &info);
+        CHECK_RV(rv, "C_GetSessionInfo", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        slot = info.slotID;
 #if !defined(NO_AES) && defined(HAVE_AES_CBC)
-        test_cbc_pad_encrypt_final_len(session);
+        run_in_session(slot, test_cbc_pad_encrypt_final_len);
 #endif
 #if !defined(NO_RSA) && !defined(WC_NO_RSA_OAEP)
-        test_oaep_source_ptr_len(session);
+        run_in_session(slot, test_oaep_source_ptr_len);
 #endif
 #if !defined(NO_AES) && defined(HAVE_AESCCM)
-        test_ccm_nonce_len(session);
+        run_in_session(slot, test_ccm_nonce_len);
 #endif
 #if !defined(NO_AES) && defined(HAVE_AESCTR)
-        test_ctr_decrypt_size_query(session);
+        run_in_session(slot, test_ctr_decrypt_size_query);
 #endif
 #if !defined(NO_AES) && (defined(HAVE_AES_CBC) || defined(HAVE_AESECB))
-        test_block_mode_alignment(session);
+        run_in_session(slot, test_block_mode_alignment);
+#endif
+#if !defined(NO_AES) && defined(HAVE_AESECB)
+        run_in_session(slot, test_aes_check_value_key_sizes);
 #endif
     }
 
