@@ -74,6 +74,11 @@ static CK_ULONG userPinLen = 15;
 static int test_passed = 0;
 static int test_failed = 0;
 
+/* C_Initialize loads and C_Finalize stores every slot, so both run with the
+ * token path set to this scratch store rather than the home directory or
+ * build-time default. */
+#define INIT_FINAL_TEST_DIR "./store/token_path_test"
+
 #define CHECK_CKR(rv, op, expected) do {                    \
     if (rv != expected) {                                   \
         fprintf(stderr, "FAIL: %s: expected %ld, got %ld\n", op, (long)expected, (long)rv); \
@@ -96,6 +101,24 @@ static void cleanup_test_files(const char* dir) {
 
     snprintf(filepath, sizeof(filepath), "%s" PATH_SEP "%s", dir, file);
     remove(filepath);
+}
+
+/* Returns 1 if dir already holds a token. The home directory and build-time
+ * default may be real token stores, so tests must not overwrite them. */
+static int token_store_in_use(const char* dir) {
+    char filepath[512];
+
+    snprintf(filepath, sizeof(filepath), "%s" PATH_SEP "wp11_token_0000000000000001", dir);
+    return file_exists(filepath);
+}
+
+/* The library treats an empty build-time default as unset. */
+static int have_default_token_path(void) {
+#if defined(WOLFPKCS11_DEFAULT_TOKEN_PATH)
+    return WOLFPKCS11_DEFAULT_TOKEN_PATH[0] != '\0';
+#else
+    return 0;
+#endif
 }
 
 static CK_RV pkcs11_init(const char* library)
@@ -215,10 +238,10 @@ static int test_default_home_path(void)
     char expected_dir[256];
     char test_file[512];
 
-#if defined(WOLFPKCS11_DEFAULT_TOKEN_PATH)
-    printf("SKIP: WOLFPKCS11_DEFAULT_TOKEN_PATH is defined; it takes priority over the home directory\n");
-    return 0;
-#endif
+    if (have_default_token_path()) {
+        printf("SKIP: WOLFPKCS11_DEFAULT_TOKEN_PATH is defined; it takes priority over the home directory\n");
+        return 0;
+    }
 
     /* Clear environment variable to test default behavior */
 #ifndef WOLFPKCS11_NO_ENV
@@ -241,14 +264,17 @@ static int test_default_home_path(void)
     snprintf(expected_dir, sizeof(expected_dir), "%s/.wolfPKCS11", home);
 #endif
 
+    if (token_store_in_use(expected_dir)) {
+        printf("SKIP: %s already holds a token; not overwriting it\n", expected_dir);
+        return 0;
+    }
+
     /* Ensure directory exists */
     MKDIR(expected_dir);
 
-    /* Clean up any existing test files */
-    cleanup_test_files(expected_dir);
-
     ret = create_test_token("Testing default home directory path", 1);
     if (ret != CKR_OK) {
+        cleanup_test_files(expected_dir);
         return -1;
     }
 
@@ -319,6 +345,15 @@ static int test_build_default_path(void)
     const char* default_dir = WOLFPKCS11_DEFAULT_TOKEN_PATH;
     char test_file[512];
 
+    if (!have_default_token_path()) {
+        printf("SKIP: WOLFPKCS11_DEFAULT_TOKEN_PATH is empty\n");
+        return 0;
+    }
+    if (token_store_in_use(default_dir)) {
+        printf("SKIP: %s already holds a token; not overwriting it\n", default_dir);
+        return 0;
+    }
+
     /* HOME (or APPDATA) is left set so the build-time default has to take
      * priority over the per-user directory. */
 #ifndef WOLFPKCS11_NO_ENV
@@ -328,11 +363,9 @@ static int test_build_default_path(void)
     /* Ensure directory exists */
     MKDIR(default_dir);
 
-    /* Clean up any existing test files */
-    cleanup_test_files(default_dir);
-
     ret = create_test_token("Testing WOLFPKCS11_DEFAULT_TOKEN_PATH build-time default", 1);
     if (ret != CKR_OK) {
+        cleanup_test_files(default_dir);
         return -1;
     }
 
@@ -360,10 +393,11 @@ static int test_build_default_path(void)
 static int test_missing_storage_path(void)
 {
     CK_RV ret;
-#if defined(WOLFPKCS11_DEFAULT_TOKEN_PATH)
-    printf("SKIP: WOLFPKCS11_DEFAULT_TOKEN_PATH is defined; missing path scenario not applicable\n");
-    return 0;
-#endif
+
+    if (have_default_token_path()) {
+        printf("SKIP: WOLFPKCS11_DEFAULT_TOKEN_PATH is defined; missing path scenario not applicable\n");
+        return 0;
+    }
 
 #ifdef WOLFPKCS11_NO_ENV
     printf("SKIP: Environment variables disabled; cannot clear token path\n");
@@ -465,6 +499,12 @@ int main(int argc, char* argv[])
     printf("Library: %s\n", libName);
     printf("Slot: %ld\n", slot);
 
+#ifndef WOLFPKCS11_NO_ENV
+    MKDIR("./store");
+    MKDIR(INIT_FINAL_TEST_DIR);
+    setenv("WOLFPKCS11_TOKEN_PATH", INIT_FINAL_TEST_DIR, 1);
+#endif
+
     /* Initialize PKCS#11 */
     ret = pkcs11_init(libName);
     if (ret != CKR_OK) {
@@ -492,6 +532,9 @@ int main(int argc, char* argv[])
     }
 
     /* Clean up */
+#ifndef WOLFPKCS11_NO_ENV
+    setenv("WOLFPKCS11_TOKEN_PATH", INIT_FINAL_TEST_DIR, 1);
+#endif
     pkcs11_final();
 
     print_results();
