@@ -112,6 +112,20 @@ static int token_store_in_use(const char* dir) {
     return file_exists(filepath);
 }
 
+#if defined(WOLFPKCS11_DEFAULT_TOKEN_PATH)
+/* An absolute path such as /var/lib/wolfpkcs11 is normally a real system
+ * directory that make check should neither create nor write to. */
+static int is_relative_path(const char* path) {
+    if (path[0] == '/' || path[0] == '\\') {
+        return 0;
+    }
+    if (path[0] != '\0' && path[1] == ':') {
+        return 0;
+    }
+    return 1;
+}
+#endif
+
 /* The library treats an empty build-time default as unset. */
 static int have_default_token_path(void) {
 #if defined(WOLFPKCS11_DEFAULT_TOKEN_PATH)
@@ -347,6 +361,10 @@ static int test_build_default_path(void)
 
     if (!have_default_token_path()) {
         printf("SKIP: WOLFPKCS11_DEFAULT_TOKEN_PATH is empty\n");
+        return 0;
+    }
+    if (!is_relative_path(default_dir)) {
+        printf("SKIP: %s is absolute; only relative build-time defaults are tested\n", default_dir);
         return 0;
     }
     if (token_store_in_use(default_dir)) {
