@@ -10495,6 +10495,8 @@ int WP11_Slot_SetSOPin(WP11_Slot* slot, char* pin, int pinLen)
 {
     int ret = 0;
     WP11_Token* token;
+    byte pinSeed[PIN_SEED_SZ];
+    byte pinHash[PIN_HASH_SZ];
 #ifdef WP11_STORE_BATCH
     byte oldPin[PIN_HASH_SZ];
     byte oldPinSeed[PIN_SEED_SZ];
@@ -10512,23 +10514,25 @@ int WP11_Slot_SetSOPin(WP11_Slot* slot, char* pin, int pinLen)
 #endif
     /* New seed each time. */
     WP11_Lock_LockRW(&slot->token.rngLock);
-    ret = wc_RNG_GenerateBlock(&slot->token.rng, token->soPinSeed,
-                                                      sizeof(token->soPinSeed));
+    ret = wc_RNG_GenerateBlock(&slot->token.rng, pinSeed, sizeof(pinSeed));
     WP11_Lock_UnlockRW(&slot->token.rngLock);
     if (ret == 0) {
         WP11_Lock_UnlockRW(&slot->lock);
         /* Costly Operation done out of lock. */
-        ret = HashPIN(pin, pinLen, token->soPinSeed,
-                                         sizeof(token->soPinSeed), token->soPin,
-                                         sizeof(token->soPin), slot);
+        ret = HashPIN(pin, pinLen, pinSeed, sizeof(pinSeed), pinHash,
+                      sizeof(pinHash), slot);
         WP11_Lock_LockRW(&slot->lock);
     }
     if (ret == 0) {
+    #ifndef WOLFPKCS11_NO_STORE
+        /* Order is slot, token, storeLock: no store runs from here on. */
+        WP11_Lock_LockRW(&token->lock);
+    #endif
+        XMEMCPY(token->soPinSeed, pinSeed, sizeof(token->soPinSeed));
+        XMEMCPY(token->soPin, pinHash, sizeof(token->soPin));
         token->soPinLen = sizeof(token->soPin);
         token->tokenFlags |= WP11_TOKEN_FLAG_SO_PIN_SET;
     #ifndef WOLFPKCS11_NO_STORE
-        /* Order is slot, token, storeLock: no object changes under the pass. */
-        WP11_Lock_LockRW(&token->lock);
         ret = wp11_Token_Store(token, (int)slot->id);
     #ifdef WP11_STORE_BATCH
         if (ret != 0 && (oldFlags & WP11_TOKEN_FLAG_SO_PIN_SET)) {
@@ -10543,6 +10547,7 @@ int WP11_Slot_SetSOPin(WP11_Slot* slot, char* pin, int pinLen)
     #endif
     }
     WP11_Lock_UnlockRW(&slot->lock);
+    wc_ForceZero(pinHash, sizeof(pinHash));
 #ifdef WP11_STORE_BATCH
     wc_ForceZero(oldPin, sizeof(oldPin));
     wc_ForceZero(oldPinSeed, sizeof(oldPinSeed));
