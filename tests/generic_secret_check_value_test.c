@@ -1,4 +1,4 @@
-/* ecb_check_value_error_test.c
+/* generic_secret_check_value_test.c
  *
  * Copyright (C) 2026 wolfSSL Inc.
  *
@@ -51,7 +51,7 @@
 
 #ifndef NO_SHA
 
-#define ECB_CV_TEST_DIR "./store/ecb_check_value_error_test"
+#define GENERIC_CV_TEST_DIR "./store/generic_secret_check_value_test"
 #define WOLFPKCS11_TOKEN_FILENAME "wp11_token_0000000000000001"
 
 static int test_passed = 0;
@@ -327,7 +327,7 @@ cleanup:
     return result;
 }
 
-static int ecb_check_value_error_test(void)
+static int generic_secret_check_value_test(void)
 {
     CK_RV ret;
     CK_SESSION_HANDLE session = 0;
@@ -335,7 +335,7 @@ static int ecb_check_value_error_test(void)
 
     printf("\n=== Testing generic secret CKA_CHECK_VALUE ===\n");
 
-    cleanup_test_files(ECB_CV_TEST_DIR);
+    cleanup_test_files(GENERIC_CV_TEST_DIR);
 
     ret = pkcs11_init();
     if (ret != CKR_OK) {
@@ -428,7 +428,7 @@ static void print_results(void)
 int main(int argc, char* argv[])
 {
 #ifndef WOLFPKCS11_NO_ENV
-    XSETENV("WOLFPKCS11_TOKEN_PATH", ECB_CV_TEST_DIR, 1);
+    XSETENV("WOLFPKCS11_TOKEN_PATH", GENERIC_CV_TEST_DIR, 1);
 #endif
 
     (void)argc;
@@ -436,7 +436,7 @@ int main(int argc, char* argv[])
 
     printf("=== wolfPKCS11 Generic Secret Check Value Test ===\n");
 
-    (void)ecb_check_value_error_test();
+    (void)generic_secret_check_value_test();
 
     print_results();
 
