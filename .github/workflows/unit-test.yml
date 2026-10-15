@@ -16,11 +16,21 @@ jobs:
     with:
       config: --enable-singlethreaded
 
+  aesecb:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --enable-aesecb
+
   tpm:
     uses: ./.github/workflows/build-workflow.yml
     with:
       config: --enable-singlethreaded --enable-wolftpm --disable-dh C_EXTRA_FLAGS="-DWOLFPKCS11_TPM_STORE"
       check: ./tests/pkcs11str && ./tests/pkcs11test && ./tests/rsa_session_persistence_test
+  tpm_debug:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --enable-singlethreaded --enable-wolftpm --disable-dh --enable-debug C_EXTRA_FLAGS="-DWOLFPKCS11_TPM_STORE"
+      check: ./tests/token_store_test
 
   tpm_no_store:
     uses: ./.github/workflows/build-workflow.yml
@@ -56,6 +66,11 @@ jobs:
     uses: ./.github/workflows/build-workflow.yml
     with:
       config: CFLAGS="-DWOLFPKCS11_NO_STORE"
+  no_env:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: C_EXTRA_FLAGS="-DWOLFPKCS11_NO_ENV" --with-default-token-path=./store/default
+      check: mkdir -p store && ./tests/pkcs11test
   no_aesgcm:
     uses: ./.github/workflows/build-workflow.yml
     with:

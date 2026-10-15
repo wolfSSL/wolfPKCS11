@@ -348,6 +348,24 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #define WP11_MAX_PIN_LEN               32
 #endif
 
+/* Maximum size of storage for generated/derived symmetric key. */
+#ifdef WOLFPKCS11_NSS
+#define WP11_MAX_SYM_KEY_SZ            (2048)
+#elif !defined(NO_DH)
+#define WP11_MAX_SYM_KEY_SZ            (4096/8)
+#elif defined(HAVE_ECC)
+#define WP11_MAX_SYM_KEY_SZ            ((521+7)/8)
+#else
+#define WP11_MAX_SYM_KEY_SZ            64
+#endif
+
+/* Maximum size of storage for generated/derived DH key. */
+#ifdef WOLFPKCS11_NSS
+#define WP11_MAX_DH_KEY_SZ             (8192/8)
+#else
+#define WP11_MAX_DH_KEY_SZ             (4096/8)
+#endif
+
 /* Login failure constants. */
 #ifndef WP11_MAX_LOGIN_FAILS_SO
 #define WP11_MAX_LOGIN_FAILS_SO        3
@@ -388,7 +406,7 @@ typedef struct WP11_ObjectCalls WP11_ObjectCalls;
 
 
 WP11_LOCAL int WP11_Library_Init(void);
-WP11_LOCAL void WP11_Library_Final(void);
+WP11_LOCAL int WP11_Library_Final(void);
 WP11_LOCAL int WP11_Library_IsInitialized(void);
 
 WP11_LOCAL int WP11_SlotIdValid(CK_SLOT_ID slotId);
@@ -424,6 +442,20 @@ WP11_API void WP11_Object_SetFindHook(void (*hook)(void));
 WP11_API void WP11_Session_SetAddObjectHook(void (*hook)(void));
 WP11_API void WP11_Slot_SetPinCheckHook(void (*hook)(void));
 WP11_API void WP11_Test_FailTokenInit(int fail);
+#if !defined(WOLFPKCS11_NO_STORE) && !defined(WOLFPKCS11_CUSTOM_STORE) && \
+    !defined(WOLFPKCS11_TPM_STORE) && !defined(_WIN32) && !defined(_MSC_VER)
+/* Exit status of a process ended by the store rename test hook. */
+#define WP11_TEST_STORE_EXIT_CODE 75
+WP11_API void WP11_Test_StoreExitAfterRenames(int renames);
+WP11_API void WP11_Test_StoreCloseFailAfter(int closes);
+#endif
+#ifndef WOLFPKCS11_NO_STORE
+WP11_API int WP11_Test_StoreWriteFailAfter(int writes);
+WP11_API int WP11_Test_StoreWriteFailOnce(int writes);
+#endif
+#if defined(WOLFPKCS11_TPM_STORE) && !defined(WOLFPKCS11_NO_STORE)
+WP11_API void WP11_Test_TpmStoreShortBy(int bytes);
+#endif
 #if defined(WOLFPKCS11_TPM) && (!defined(NO_RSA) || defined(HAVE_ECC))
 WP11_API int WP11_Test_DecodeTpmKey(CK_SLOT_ID slotId, unsigned char* keyData,
     int keyDataLen);
@@ -436,6 +468,7 @@ WP11_LOCAL int WP11_Slot_ChangeUserPin(WP11_Slot* slot, char* oldPin,
 WP11_LOCAL int WP11_Slot_TokenReset(WP11_Slot* slot, char* pin, int pinLen,
                          char* label);
 WP11_LOCAL void WP11_Slot_GetTokenLabel(WP11_Slot* slot, char* label);
+WP11_LOCAL void WP11_BlankPad(CK_UTF8CHAR* field, int len);
 WP11_LOCAL int WP11_Slot_IsTokenInitialized(WP11_Slot* slot);
 WP11_LOCAL int WP11_Slot_TokenFailedLogin(WP11_Slot* slot, int login);
 WP11_LOCAL time_t WP11_Slot_TokenFailedExpire(WP11_Slot* slot, int login);
@@ -445,6 +478,8 @@ WP11_LOCAL int WP11_Session_Get(CK_SESSION_HANDLE sessionHandle, WP11_Session** 
 WP11_LOCAL int WP11_Session_GetState(WP11_Session* session);
 WP11_LOCAL int WP11_Session_IsRW(WP11_Session* session);
 WP11_LOCAL int WP11_Session_IsOpInitialized(WP11_Session* session, int init);
+WP11_LOCAL int WP11_Session_IsOpCategoryInit(WP11_Session* session,
+    int opCategory);
 WP11_LOCAL int WP11_Session_IsOpCategoryActive(WP11_Session* session,
     int opCategory);
 WP11_LOCAL int WP11_Session_UpdateData(WP11_Session *session, byte *data, word32 dataLen);
@@ -453,13 +488,14 @@ WP11_LOCAL void WP11_Session_FreeData(WP11_Session *session);
 WP11_LOCAL int WP11_Session_IsHashOpInitialized(WP11_Session* session, int mechanism);
 WP11_LOCAL enum wc_HashType WP11_Session_ToHashType(WP11_Session* session);
 WP11_LOCAL void WP11_Session_SetOpInitialized(WP11_Session* session, int init);
+WP11_LOCAL void WP11_Session_AbortOp(WP11_Session* session);
 WP11_LOCAL WP11_Slot* WP11_Session_GetSlot(WP11_Session* session);
 WP11_LOCAL CK_SLOT_ID WP11_Session_GetSlotId(WP11_Session* session);
 WP11_LOCAL CK_MECHANISM_TYPE WP11_Session_GetMechanism(WP11_Session* session);
 WP11_LOCAL void WP11_Session_SetMechanism(WP11_Session* session,
                                CK_MECHANISM_TYPE mechanism);
 WP11_LOCAL int WP11_Session_SetPssParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
-                              CK_MECHANISM_TYPE mgf, int sLen);
+                              CK_MECHANISM_TYPE mgf, CK_ULONG sLen);
 WP11_LOCAL int WP11_Session_SetOaepParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
                                CK_MECHANISM_TYPE mgf, byte* label, int labelSz);
 WP11_LOCAL int WP11_Session_SetCbcParams(WP11_Session* session, unsigned char* iv, int enc,

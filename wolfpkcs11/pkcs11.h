@@ -484,6 +484,7 @@ extern "C" {
 #define CKR_MUTEX_BAD                         0x000001A0UL
 #define CKR_MUTEX_NOT_LOCKED                  0x000001A1UL
 #define CKR_FUNCTION_REJECTED                 0x00000200UL
+#define CKR_OPERATION_CANCEL_FAILED           0x00000202UL
 #define CKR_VENDOR_DEFINED                    0x80000000UL
 
 
