@@ -13086,13 +13086,15 @@ static int GetSha1CheckValue(const byte* dataIn, int inLen, byte* dataOut,
     }
 
     ret = wc_Hash(WC_HASH_TYPE_SHA, dataIn, inLen, hash, WC_SHA_DIGEST_SIZE);
-    if (ret != 0) {
-        return CKR_FUNCTION_FAILED;
+    if (ret == 0) {
+        XMEMCPY(dataOut, hash, PKCS11_CHECK_VALUE_SIZE);
+        *outLen = PKCS11_CHECK_VALUE_SIZE;
     }
-    XMEMCPY(dataOut, hash, PKCS11_CHECK_VALUE_SIZE);
-    *outLen = PKCS11_CHECK_VALUE_SIZE;
+    /* Only the first three bytes are public. The full hash of a generic
+     * secret can be its effective HMAC key. */
+    wc_ForceZero(hash, sizeof(hash));
 
-    return CKR_OK;
+    return (ret == 0) ? CKR_OK : CKR_FUNCTION_FAILED;
 }
 #endif
 
@@ -13123,13 +13125,15 @@ static int GetEcbCheckValue(WP11_Object* secret, byte* dataOut,
     XMEMSET(zero, 0, sizeof(zero));
     ret = WP11_AesEcb_Encrypt(zero, (word32)sizeof(zero), enc, &encLen, secret,
         secret->session);
-    if (ret != 0)
-        return CKR_FUNCTION_FAILED;
+    if (ret == 0) {
+        XMEMCPY(dataOut, enc, PKCS11_CHECK_VALUE_SIZE);
+        *outLen = PKCS11_CHECK_VALUE_SIZE;
+    }
+    /* Only the first three bytes are public. The full block is the AES-GCM
+     * hash subkey for this key. */
+    wc_ForceZero(enc, sizeof(enc));
 
-    XMEMCPY(dataOut, enc, PKCS11_CHECK_VALUE_SIZE);
-    *outLen = PKCS11_CHECK_VALUE_SIZE;
-
-    return CKR_OK;
+    return (ret == 0) ? CKR_OK : CKR_FUNCTION_FAILED;
 }
 #endif
 

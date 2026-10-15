@@ -207,7 +207,8 @@ static void cleanup_test_files(const char* dir)
 
 /*
  * Test 1 (positive control): Create a 16-byte CKK_GENERIC_SECRET key and
- * query CKA_CHECK_VALUE. Expect CKR_OK and a 3-byte result.
+ * query CKA_CHECK_VALUE. 16 bytes is also an AES key length, so check the
+ * exact value to make sure the SHA-1 form is used rather than AES-ECB.
  */
 static int test_valid_key_check_value(CK_SESSION_HANDLE session)
 {
@@ -218,6 +219,8 @@ static int test_valid_key_check_value(CK_SESSION_HANDLE session)
     unsigned char checkValue[3];
     CK_ULONG checkLen = sizeof(checkValue);
     int result = 0;
+    /* SHA-1 of sixteen 0xAA bytes is cc57b4bf... */
+    static const unsigned char expected[3] = { 0xCC, 0x57, 0xB4 };
 
     CK_ATTRIBUTE createTmpl[] = {
         { CKA_CLASS,    &secretKeyClass, sizeof(secretKeyClass) },
@@ -251,15 +254,15 @@ static int test_valid_key_check_value(CK_SESSION_HANDLE session)
     printf("PASS: Test1: check value length is 3\n");
     test_passed++;
 
-    /* Verify not all zeros (SHA-1 of the key should produce non-zero) */
-    if (checkValue[0] == 0 && checkValue[1] == 0 && checkValue[2] == 0) {
-        fprintf(stderr,
-                "FAIL: Test1: check value is all zeros (likely not computed)\n");
+    if (XMEMCMP(checkValue, expected, sizeof(expected)) != 0) {
+        fprintf(stderr, "FAIL: Test1: check value %02x%02x%02x, expected "
+                "%02x%02x%02x\n", checkValue[0], checkValue[1], checkValue[2],
+                expected[0], expected[1], expected[2]);
         test_failed++;
         result = -1;
         goto cleanup;
     }
-    printf("PASS: Test1: check value is non-zero: %02x%02x%02x\n",
+    printf("PASS: Test1: check value is SHA-1 based: %02x%02x%02x\n",
            checkValue[0], checkValue[1], checkValue[2]);
     test_passed++;
 
