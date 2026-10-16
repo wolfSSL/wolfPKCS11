@@ -9080,17 +9080,30 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
     return ret;
 }
 
+/* Records written by a token store pass. */
+#define WP11_STORE_PASS_ALL     0   /* Token record and every object. */
+#define WP11_STORE_PASS_TOKEN   1   /* Token record and the one object. */
+#define WP11_STORE_PASS_OBJECT  2   /* Only the one object. */
+
 /**
- * Store a token to storage.
+ * Store a token, or some of its records, to storage.
  *
- * @param [in]  object   Token object.
+ * An object's record is keyed by its position in the token's object list,
+ * so only objects that are new, modified or moved need to be written.
+ *
+ * @param [in]  token    Token object.
  * @param [in]  tokenId  Id of token this key belongs to.
+ * @param [in]  what     WP11_STORE_PASS_* value.
+ * @param [in]  only     Object to store when not storing all of them. May be
+ *                       NULL with WP11_STORE_PASS_TOKEN to store only the
+ *                       token record.
  * @return  0 on success.
  * @return  MEMORY_E when dynamic memory allocation fails.
  * @return  BUFFER_E when storing fails.
  * @return  NOT_AVAILABLE_E when unable to write data.
  */
-static int wp11_Token_StorePass(WP11_Token* token, int tokenId)
+static int wp11_Token_StorePass(WP11_Token* token, int tokenId, int what,
+    WP11_Object* only)
 {
     int ret = 0;
     int i;
@@ -9099,34 +9112,44 @@ static int wp11_Token_StorePass(WP11_Token* token, int tokenId)
     int variableSz;
 
 #ifdef WOLFPKCS11_DEBUG_STORE
-    printf("wp11_Token_Store: tokenId %d, objCnt %d\n", tokenId, token->objCnt);
+    printf("wp11_Token_Store: tokenId %d, objCnt %d, what %d\n", tokenId,
+        token->objCnt, what);
 #endif
 
 #ifdef WOLFPKCS11_TPM_STORE
-    /* Reserve NV space for token object before the objects use it. */
-    variableSz = token->userPinLen + token->soPinLen +
-        (token->objCnt * FIELD_SIZE(WP11_Object, type));
-    ret = wp11_storage_open(WOLFPKCS11_STORE_TOKEN, tokenId, 0, variableSz,
-        &storage);
-    if (ret == 0) {
-        ret = wp11_storage_close_write(storage, ret);
-        storage = NULL;
+    if (what != WP11_STORE_PASS_OBJECT) {
+        /* Reserve NV space for token object before the objects use it. */
+        variableSz = token->userPinLen + token->soPinLen +
+            (token->objCnt * FIELD_SIZE(WP11_Object, type));
+        ret = wp11_storage_open(WOLFPKCS11_STORE_TOKEN, tokenId, 0,
+            variableSz, &storage);
+        if (ret == 0) {
+            ret = wp11_storage_close_write(storage, ret);
+            storage = NULL;
+        }
     }
 #endif
 
     /* Store the objects */
     object = token->object;
     for (i = token->objCnt - 1; i >= 0; i--) {
-        /* Write the objects. */
-        ret = wp11_Object_Store(object, tokenId, i);
-        if (ret != 0) {
-        #ifdef DEBUG_WOLFPKCS11
-            printf("Failed to store object %d, token %d, ret: %d\n",
-                i, tokenId, ret);
-        #endif
-            break;
+        if (what == WP11_STORE_PASS_ALL || object == only) {
+            /* Write the objects. */
+            ret = wp11_Object_Store(object, tokenId, i);
+            if (ret != 0) {
+            #ifdef DEBUG_WOLFPKCS11
+                printf("Failed to store object %d, token %d, ret: %d\n",
+                    i, tokenId, ret);
+            #endif
+                break;
+            }
         }
         object = object->next;
+    }
+
+    if (what == WP11_STORE_PASS_OBJECT) {
+        /* Not writing the token record. */
+        return (ret == NOT_AVAILABLE_E) ? 0 : ret;
     }
 
     if (ret == 0) {
@@ -9221,7 +9244,38 @@ static int wp11_Token_StorePass(WP11_Token* token, int tokenId)
 }
 
 /**
- * Store the token and its objects as one pass that commits as a unit.
+ * Store records of the token as one pass that commits as a unit.
+ *
+ * @param [in]  token    Token object.
+ * @param [in]  tokenId  Id of token.
+ * @param [in]  what     WP11_STORE_PASS_* value.
+ * @param [in]  only     Object to store when not storing all of them.
+ * @return  0 on success.
+ * @return  Other value when the pass did not commit.
+ */
+static int wp11_Token_StoreSome(WP11_Token* token, int tokenId, int what,
+    WP11_Object* only)
+{
+    int ret;
+#ifdef WP11_STORE_BATCH
+    int endRet;
+
+    ret = wolfPKCS11_StoreBatchBegin(tokenId);
+    if (ret == 0) {
+        ret = wp11_Token_StorePass(token, tokenId, what, only);
+        endRet = wolfPKCS11_StoreBatchEnd(ret == 0);
+        if (ret == 0)
+            ret = endRet;
+    }
+#else
+    ret = wp11_Token_StorePass(token, tokenId, what, only);
+#endif
+
+    return ret;
+}
+
+/**
+ * Store the token and all its objects as one pass that commits as a unit.
  *
  * @param [in]  token    Token object.
  * @param [in]  tokenId  Id of token.
@@ -9230,22 +9284,7 @@ static int wp11_Token_StorePass(WP11_Token* token, int tokenId)
  */
 static int wp11_Token_Store(WP11_Token* token, int tokenId)
 {
-    int ret;
-#ifdef WP11_STORE_BATCH
-    int endRet;
-
-    ret = wolfPKCS11_StoreBatchBegin(tokenId);
-    if (ret == 0) {
-        ret = wp11_Token_StorePass(token, tokenId);
-        endRet = wolfPKCS11_StoreBatchEnd(ret == 0);
-        if (ret == 0)
-            ret = endRet;
-    }
-#else
-    ret = wp11_Token_StorePass(token, tokenId);
-#endif
-
-    return ret;
+    return wp11_Token_StoreSome(token, tokenId, WP11_STORE_PASS_ALL, NULL);
 }
 #endif /* !WOLFPKCS11_NO_STORE */
 
@@ -9467,7 +9506,8 @@ static int wp11_Slot_Load(WP11_Slot* slot, int id)
  * @return  BUFFER_E when storing fails.
  * @return  NOT_AVAILABLE_E when unable to write data.
  */
-static int wp11_Slot_Store(WP11_Slot* slot, int id)
+static int wp11_Slot_StoreSome(WP11_Slot* slot, int id, int what,
+    WP11_Object* only)
 {
     /* Only persist tokens that have been explicitly provisioned. Otherwise
      * a C_Initialize / C_Finalize cycle on a never-init'd slot would write
@@ -9475,7 +9515,12 @@ static int wp11_Slot_Store(WP11_Slot* slot, int id)
      * load and treat as INITIALIZED (Fenrir 3407 regression). */
     if (slot->token.state != WP11_TOKEN_STATE_INITIALIZED)
         return 0;
-    return wp11_Token_Store(&slot->token, id);
+    return wp11_Token_StoreSome(&slot->token, id, what, only);
+}
+
+static int wp11_Slot_Store(WP11_Slot* slot, int id)
+{
+    return wp11_Slot_StoreSome(slot, id, WP11_STORE_PASS_ALL, NULL);
 }
 #endif
 
@@ -12661,7 +12706,10 @@ int WP11_Session_AddObject(WP11_Session* session, int onToken,
         }
     #ifndef WOLFPKCS11_NO_STORE
         if (ret == 0) {
-            ret = wp11_Slot_Store(session->slot, (int)session->slotId);
+            /* The new object goes at the head of the list and takes the next
+             * store id, so the records of the other objects are unchanged. */
+            ret = wp11_Slot_StoreSome(session->slot, (int)session->slotId,
+                WP11_STORE_PASS_TOKEN, object);
             if (ret != 0) {
                 token->object = oldHead;
                 token->objCnt = oldObjCnt;
@@ -12834,34 +12882,29 @@ int WP11_Session_RemoveObjectByHandle(WP11_Session* session,
     }
 
     if (onToken) {
-        token->objCnt--;
-        /* Id of first object on token. */
-        id = token->objCnt;
-        curr = &token->object;
-        /* walk list to get id for object to remove */
-        while (*curr != NULL) {
-            if (*curr == object) {
-                *curr = object->next;
-                break;
-            }
+        WP11_Object* head = token->object;
+        WP11_Object* moved = NULL;
 
-        #ifndef WOLFPKCS11_NO_STORE
-            /* remove any id's with higher value */
-            storeRet = wp11_Object_Unstore(*curr, (int)session->slotId, id);
-        #ifdef DEBUG_WOLFPKCS11
-            if (storeRet != 0) {
-                printf("Failed to unstore slot %d, id: %d, ret: %d, continuing...\n",
-                    (int)session->slotId, id, storeRet);
-            }
-        #endif
-            /* NOT_AVAILABLE_E: storage is disabled, nothing to remove. */
-            if (ret == 0 && storeRet != NOT_AVAILABLE_E)
-                ret = storeRet;
-        #endif
-
-            curr = &(*curr)->next;
-            /* Id of next object as it isn't the one being removed. */
+        /* Store id of an object is its position counted from the end of the
+         * list, so the head has the highest id. Walk to the object to remove
+         * to get its id. */
+        id = token->objCnt - 1;
+        for (curr = &token->object; *curr != object; curr = &(*curr)->next)
             id--;
+        *curr = object->next;
+        token->objCnt--;
+
+        /* Removing the object would shift the ids of every newer object down
+         * by one, and each of them would have to be rewritten. Instead move
+         * the head into the place of the removed object, so it takes the
+         * removed object's id and is the only object rewritten. */
+        if (object != head) {
+            moved = head;
+            if (curr != &head->next) {
+                token->object = head->next;
+                head->next = *curr;
+                *curr = head;
+            }
         }
 
     #ifndef WOLFPKCS11_NO_STORE
@@ -12872,10 +12915,12 @@ int WP11_Session_RemoveObjectByHandle(WP11_Session* session,
                 (int)session->slotId, id, storeRet);
         }
     #endif
+        /* NOT_AVAILABLE_E: storage is disabled, nothing to remove. */
         if (ret == 0 && storeRet != NOT_AVAILABLE_E)
             ret = storeRet;
-        /* re-store the token */
-        storeRet = wp11_Slot_Store(session->slot, (int)session->slotId);
+        /* Write the moved object under its new id and the token record. */
+        storeRet = wp11_Slot_StoreSome(session->slot, (int)session->slotId,
+            WP11_STORE_PASS_TOKEN, moved);
     #ifdef DEBUG_WOLFPKCS11
         if (storeRet != 0) {
             printf("Failed to store slot %d, ret: %d\n",
@@ -12885,6 +12930,22 @@ int WP11_Session_RemoveObjectByHandle(WP11_Session* session,
         /* A token record left unwritten outranks a record left behind. */
         if (storeRet != 0)
             ret = storeRet;
+        if (moved != NULL && storeRet == 0) {
+            /* Remove the moved object's records under its old id, the
+             * highest one, which is no longer used. */
+            storeRet = wp11_Object_Unstore(moved, (int)session->slotId,
+                token->objCnt);
+        #ifdef DEBUG_WOLFPKCS11
+            if (storeRet != 0) {
+                printf("Failed to unstore slot %d, id: %d, ret: %d\n",
+                    (int)session->slotId, token->objCnt, storeRet);
+            }
+        #endif
+            if (ret == 0 && storeRet != NOT_AVAILABLE_E)
+                ret = storeRet;
+        }
+    #else
+        (void)moved;
     #endif
     }
     else {
@@ -13468,6 +13529,44 @@ CK_OBJECT_HANDLE WP11_Object_GetHandle(WP11_Object* object)
 int WP11_Object_OnToken(WP11_Object* object)
 {
     return object->onToken;
+}
+
+/**
+ * Write a token object to storage after its attributes have changed.
+ * Only the object's own records are written. Session objects are not stored.
+ *
+ * @param  object  [in]  Object object.
+ * @return  0 on success or when nothing needs storing.
+ *          Other value when storing failed.
+ */
+int WP11_Object_Persist(WP11_Object* object)
+{
+    int ret = 0;
+#ifndef WOLFPKCS11_NO_STORE
+    WP11_Slot* slot = object->slot;
+    WP11_Token* token;
+    WP11_Object* curr;
+
+    if (!object->onToken || slot == NULL)
+        return 0;
+
+    token = &slot->token;
+    WP11_Lock_LockRW(&token->lock);
+    /* The object may have been destroyed by another session. */
+    for (curr = token->object; curr != NULL; curr = curr->next) {
+        if (curr == object)
+            break;
+    }
+    if (curr != NULL) {
+        ret = wp11_Slot_StoreSome(slot, (int)slot->id, WP11_STORE_PASS_OBJECT,
+            object);
+    }
+    WP11_Lock_UnlockRW(&token->lock);
+#else
+    (void)object;
+#endif
+
+    return ret;
 }
 
 /**

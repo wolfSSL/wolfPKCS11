@@ -400,6 +400,11 @@ noinst_PROGRAMS += tests/unwrap_keygen_test
 tests_unwrap_keygen_test_SOURCES = tests/unwrap_keygen_test.c
 tests_unwrap_keygen_test_LDADD =
 
+check_PROGRAMS += tests/token_partial_store_test
+noinst_PROGRAMS += tests/token_partial_store_test
+tests_token_partial_store_test_SOURCES = tests/token_partial_store_test.c
+tests_token_partial_store_test_LDADD =
+
 if BUILD_STATIC
 tests_pkcs11test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11mtt_LDADD  += src/libwolfpkcs11.la
@@ -481,6 +486,7 @@ tests_sign_verify_mac_test_LDADD += src/libwolfpkcs11.la
 tests_digest_length_test_LDADD += src/libwolfpkcs11.la
 tests_secret_scrub_test_LDADD += src/libwolfpkcs11.la
 tests_unwrap_keygen_test_LDADD += src/libwolfpkcs11.la
+tests_token_partial_store_test_LDADD += src/libwolfpkcs11.la
 else
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
 tests_empty_pin_store_test_LDADD += src/libwolfpkcs11.la
@@ -554,6 +560,7 @@ tests_sign_verify_mac_test_LDADD += src/libwolfpkcs11.la
 tests_digest_length_test_LDADD += src/libwolfpkcs11.la
 tests_secret_scrub_test_LDADD += src/libwolfpkcs11.la
 tests_unwrap_keygen_test_LDADD += src/libwolfpkcs11.la
+tests_token_partial_store_test_LDADD += src/libwolfpkcs11.la
 endif
 
 EXTRA_DIST += tests/unit.h \
