@@ -166,6 +166,14 @@ jobs:
     with:
       config: CC=g++ C_EXTRA_FLAGS="-Werror=narrowing"
 
+  # The same C++ build with --enable-debug, which adds the debug-only test
+  # hooks and the tests that declare them. Those declarations need
+  # extern "C" to match the library's C linkage, or the tests fail to link.
+  cpp_debug_build:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: CC=g++ C_EXTRA_FLAGS="-Werror=narrowing" --enable-debug
+
   wolfssl_v5_6_6:
     uses: ./.github/workflows/wolfssl-v5.6.6-build-workflow.yml
 
