@@ -205,6 +205,10 @@ typedef struct WP11_Lock {
     int cnt;                           /* Count of readers                    */
     int writer;                        /* Whether a writer holds the lock     */
 } WP11_Lock;
+#elif defined(USE_WINDOWS_API)
+/* The fallback below leaves a critical section from a thread that did not
+ * enter it, which is undefined behaviour on Windows. */
+#error "wolfPKCS11 locking needs Windows Vista or later (_WIN32_WINNT >= 0x0600, not Windows CE); set _WIN32_WINNT or build single threaded"
 #else
 /* Fallback for threading APIs without a condition variable. The first reader
  * locks the write mutex and the last reader unlocks it, which may be a
