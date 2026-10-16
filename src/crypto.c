@@ -2195,8 +2195,7 @@ static CK_RV wp11_C_DestroyObject(CK_SESSION_HANDLE hSession,
     }
     /* Derive onToken from the handle, not the object: it stays valid even if a
      * concurrent destroy of the same handle frees the object out from under
-     * us, and it lets WP11_Session_RemoveObjectByHandle unlink token objects
-     * using pointer identity alone. */
+     * us. */
     onToken = WP11_Object_HandleOnToken(hObject);
 
     /* Only require R/W session for token objects */
@@ -2209,8 +2208,9 @@ static CK_RV wp11_C_DestroyObject(CK_SESSION_HANDLE hSession,
     /* Remove and reject-if-not-destroyable in one locked step. The
      * CKA_DESTROYABLE check is performed inside WP11_Session_RemoveObjectByHandle,
      * once the object is confirmed still linked (and therefore alive), so it
-     * cannot race a concurrent free of the same handle. */
-    ret = WP11_Session_RemoveObjectByHandle(session, obj, onToken,
+     * cannot race a concurrent free of the same handle. Passing hObject lets it
+     * refuse a different object that reused obj's address after such a free. */
+    ret = WP11_Session_RemoveObjectByHandle(session, obj, hObject,
                                             1 /* checkDestroyable */);
     if (ret == WP11_OBJECT_ALREADY_REMOVED) {
         /* Another thread destroyed this object first (a concurrent
