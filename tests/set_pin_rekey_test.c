@@ -32,7 +32,8 @@
     #include <sys/wait.h>
     #include <unistd.h>
 #endif
-#if defined(_POSIX_THREADS) && !defined(SINGLE_THREADED) && !defined(_WIN32)
+#if defined(_POSIX_THREADS) && !defined(SINGLE_THREADED) && \
+    !defined(WOLFPKCS11_SINGLE_THREADED) && !defined(_WIN32)
     #include <pthread.h>
     #define SET_PIN_REKEY_THREADS
 #endif

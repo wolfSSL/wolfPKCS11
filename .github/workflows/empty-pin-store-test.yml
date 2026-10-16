@@ -95,6 +95,11 @@ jobs:
         echo ""
         echo "=== Test completed ==="
 
+    - name: Run logout retire test with an empty PIN
+      run: |
+        mkdir -p store/logout_retire_test
+        ./tests/logout_retire_test
+
     - name: Show store directory contents on failure
       if: failure()
       run: |

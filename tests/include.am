@@ -56,10 +56,10 @@ noinst_PROGRAMS += tests/aes_cbc_pad_padding_test
 tests_aes_cbc_pad_padding_test_SOURCES = tests/aes_cbc_pad_padding_test.c
 tests_aes_cbc_pad_padding_test_LDADD =
 
-check_PROGRAMS += tests/ecb_check_value_error_test
-noinst_PROGRAMS += tests/ecb_check_value_error_test
-tests_ecb_check_value_error_test_SOURCES = tests/ecb_check_value_error_test.c
-tests_ecb_check_value_error_test_LDADD =
+check_PROGRAMS += tests/generic_secret_check_value_test
+noinst_PROGRAMS += tests/generic_secret_check_value_test
+tests_generic_secret_check_value_test_SOURCES = tests/generic_secret_check_value_test.c
+tests_generic_secret_check_value_test_LDADD =
 
 check_PROGRAMS += tests/operation_active_test
 noinst_PROGRAMS += tests/operation_active_test
@@ -211,6 +211,16 @@ noinst_PROGRAMS += tests/derive_inherit_protection_test
 tests_derive_inherit_protection_test_SOURCES = tests/derive_inherit_protection_test.c
 tests_derive_inherit_protection_test_LDADD =
 
+check_PROGRAMS += tests/ec_derive_test
+noinst_PROGRAMS += tests/ec_derive_test
+tests_ec_derive_test_SOURCES = tests/ec_derive_test.c
+tests_ec_derive_test_LDADD =
+
+check_PROGRAMS += tests/kdf_tls_derive_test
+noinst_PROGRAMS += tests/kdf_tls_derive_test
+tests_kdf_tls_derive_test_SOURCES = tests/kdf_tls_derive_test.c
+tests_kdf_tls_derive_test_LDADD =
+
 check_PROGRAMS += tests/secret_extractable_default_test
 noinst_PROGRAMS += tests/secret_extractable_default_test
 tests_secret_extractable_default_test_SOURCES = tests/secret_extractable_default_test.c
@@ -250,6 +260,11 @@ noinst_PROGRAMS += tests/concurrent_destroy_object_test
 tests_concurrent_destroy_object_test_SOURCES = tests/concurrent_destroy_object_test.c
 tests_concurrent_destroy_object_test_LDADD =
 
+check_PROGRAMS += tests/destroy_stale_handle_test
+noinst_PROGRAMS += tests/destroy_stale_handle_test
+tests_destroy_stale_handle_test_SOURCES = tests/destroy_stale_handle_test.c
+tests_destroy_stale_handle_test_LDADD =
+
 check_PROGRAMS += tests/hbs_persistence_test
 noinst_PROGRAMS += tests/hbs_persistence_test
 tests_hbs_persistence_test_SOURCES = tests/hbs_persistence_test.c
@@ -264,6 +279,15 @@ check_PROGRAMS += tests/unique_id_test
 noinst_PROGRAMS += tests/unique_id_test
 tests_unique_id_test_SOURCES = tests/unique_id_test.c
 tests_unique_id_test_LDADD =
+
+check_PROGRAMS += tests/token_reset_fail_test
+noinst_PROGRAMS += tests/token_reset_fail_test
+tests_token_reset_fail_test_SOURCES = tests/token_reset_fail_test.c
+tests_token_reset_fail_test_LDADD =
+check_PROGRAMS += tests/token_store_test
+noinst_PROGRAMS += tests/token_store_test
+tests_token_store_test_SOURCES = tests/token_store_test.c
+tests_token_store_test_LDADD =
 
 check_PROGRAMS += tests/nss_email_store_test
 noinst_PROGRAMS += tests/nss_email_store_test
@@ -310,6 +334,77 @@ noinst_PROGRAMS += tests/nss_configdir_prefix_test
 tests_nss_configdir_prefix_test_SOURCES = tests/nss_configdir_prefix_test.c
 tests_nss_configdir_prefix_test_LDADD =
 
+check_PROGRAMS += tests/logout_retire_test
+noinst_PROGRAMS += tests/logout_retire_test
+tests_logout_retire_test_SOURCES = tests/logout_retire_test.c
+tests_logout_retire_test_LDADD =
+
+check_PROGRAMS += tests/login_pin_state_test
+noinst_PROGRAMS += tests/login_pin_state_test
+tests_login_pin_state_test_SOURCES = tests/login_pin_state_test.c
+tests_login_pin_state_test_LDADD =
+
+check_PROGRAMS += tests/object_store_decode_test
+noinst_PROGRAMS += tests/object_store_decode_test
+tests_object_store_decode_test_SOURCES = tests/object_store_decode_test.c
+tests_object_store_decode_test_LDADD =
+
+check_PROGRAMS += tests/object_policy_integrity_test
+noinst_PROGRAMS += tests/object_policy_integrity_test
+tests_object_policy_integrity_test_SOURCES = \
+    tests/object_policy_integrity_test.c
+tests_object_policy_integrity_test_LDADD =
+
+check_PROGRAMS += tests/session_op_lifecycle_test
+noinst_PROGRAMS += tests/session_op_lifecycle_test
+tests_session_op_lifecycle_test_SOURCES = tests/session_op_lifecycle_test.c
+tests_session_op_lifecycle_test_LDADD =
+
+check_PROGRAMS += tests/info_mech_table_test
+noinst_PROGRAMS += tests/info_mech_table_test
+tests_info_mech_table_test_SOURCES = tests/info_mech_table_test.c
+tests_info_mech_table_test_LDADD =
+
+check_PROGRAMS += tests/attribute_validation_test
+noinst_PROGRAMS += tests/attribute_validation_test
+tests_attribute_validation_test_SOURCES = tests/attribute_validation_test.c
+tests_attribute_validation_test_LDADD =
+
+check_PROGRAMS += tests/key_material_update_test
+noinst_PROGRAMS += tests/key_material_update_test
+tests_key_material_update_test_SOURCES = tests/key_material_update_test.c
+tests_key_material_update_test_LDADD =
+
+check_PROGRAMS += tests/object_create_getattr_test
+noinst_PROGRAMS += tests/object_create_getattr_test
+tests_object_create_getattr_test_SOURCES = tests/object_create_getattr_test.c
+tests_object_create_getattr_test_LDADD =
+
+check_PROGRAMS += tests/encrypt_decrypt_params_test
+noinst_PROGRAMS += tests/encrypt_decrypt_params_test
+tests_encrypt_decrypt_params_test_SOURCES = tests/encrypt_decrypt_params_test.c
+tests_encrypt_decrypt_params_test_LDADD =
+
+check_PROGRAMS += tests/sign_verify_mac_test
+noinst_PROGRAMS += tests/sign_verify_mac_test
+tests_sign_verify_mac_test_SOURCES = tests/sign_verify_mac_test.c
+tests_sign_verify_mac_test_LDADD =
+
+check_PROGRAMS += tests/digest_length_test
+noinst_PROGRAMS += tests/digest_length_test
+tests_digest_length_test_SOURCES = tests/digest_length_test.c
+tests_digest_length_test_LDADD =
+
+check_PROGRAMS += tests/secret_scrub_test
+noinst_PROGRAMS += tests/secret_scrub_test
+tests_secret_scrub_test_SOURCES = tests/secret_scrub_test.c
+tests_secret_scrub_test_LDADD =
+
+check_PROGRAMS += tests/unwrap_keygen_test
+noinst_PROGRAMS += tests/unwrap_keygen_test
+tests_unwrap_keygen_test_SOURCES = tests/unwrap_keygen_test.c
+tests_unwrap_keygen_test_LDADD =
+
 if BUILD_STATIC
 tests_pkcs11test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11mtt_LDADD  += src/libwolfpkcs11.la
@@ -322,7 +417,7 @@ tests_empty_pin_store_test_LDADD += src/libwolfpkcs11.la
 tests_so_login_uninit_test_LDADD += src/libwolfpkcs11.la
 tests_find_objects_null_template_test_LDADD += src/libwolfpkcs11.la
 tests_aes_cbc_pad_padding_test_LDADD += src/libwolfpkcs11.la
-tests_ecb_check_value_error_test_LDADD += src/libwolfpkcs11.la
+tests_generic_secret_check_value_test_LDADD += src/libwolfpkcs11.la
 tests_operation_active_test_LDADD += src/libwolfpkcs11.la
 tests_aes_keygen_attrs_test_LDADD += src/libwolfpkcs11.la
 tests_pbkdf2_keygen_attrs_test_LDADD += src/libwolfpkcs11.la
@@ -352,6 +447,8 @@ tests_empty_pin_cache_test_LDADD += src/libwolfpkcs11.la
 tests_key_sensitive_default_test_LDADD += src/libwolfpkcs11.la
 tests_derive_disabled_key_test_LDADD += src/libwolfpkcs11.la
 tests_derive_inherit_protection_test_LDADD += src/libwolfpkcs11.la
+tests_ec_derive_test_LDADD += src/libwolfpkcs11.la
+tests_kdf_tls_derive_test_LDADD += src/libwolfpkcs11.la
 tests_secret_extractable_default_test_LDADD += src/libwolfpkcs11.la
 tests_rsa_private_usage_default_test_LDADD += src/libwolfpkcs11.la
 tests_copyobject_token_test_LDADD += src/libwolfpkcs11.la
@@ -361,9 +458,12 @@ tests_mlkem_secret_scrub_test_LDADD += src/libwolfpkcs11.la
 tests_logout_token_key_zero_test_LDADD += src/libwolfpkcs11.la
 tests_tpm_decode_bounds_test_LDADD += src/libwolfpkcs11.la
 tests_concurrent_destroy_object_test_LDADD += src/libwolfpkcs11.la
+tests_destroy_stale_handle_test_LDADD += src/libwolfpkcs11.la
 tests_hbs_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_hkdf_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_unique_id_test_LDADD += src/libwolfpkcs11.la
+tests_token_reset_fail_test_LDADD += src/libwolfpkcs11.la
+tests_token_store_test_LDADD += src/libwolfpkcs11.la
 tests_nss_email_store_test_LDADD += src/libwolfpkcs11.la
 tests_generate_key_class_test_LDADD += src/libwolfpkcs11.la
 tests_generate_keypair_class_test_LDADD += src/libwolfpkcs11.la
@@ -373,13 +473,27 @@ tests_data_object_partial_update_test_LDADD += src/libwolfpkcs11.la
 tests_wrapkey_length_query_test_LDADD += src/libwolfpkcs11.la
 tests_set_pin_rekey_test_LDADD += src/libwolfpkcs11.la
 tests_nss_configdir_prefix_test_LDADD += src/libwolfpkcs11.la
+tests_logout_retire_test_LDADD += src/libwolfpkcs11.la
+tests_login_pin_state_test_LDADD += src/libwolfpkcs11.la
+tests_object_store_decode_test_LDADD += src/libwolfpkcs11.la
+tests_object_policy_integrity_test_LDADD += src/libwolfpkcs11.la
+tests_session_op_lifecycle_test_LDADD += src/libwolfpkcs11.la
+tests_info_mech_table_test_LDADD += src/libwolfpkcs11.la
+tests_attribute_validation_test_LDADD += src/libwolfpkcs11.la
+tests_key_material_update_test_LDADD += src/libwolfpkcs11.la
+tests_object_create_getattr_test_LDADD += src/libwolfpkcs11.la
+tests_encrypt_decrypt_params_test_LDADD += src/libwolfpkcs11.la
+tests_sign_verify_mac_test_LDADD += src/libwolfpkcs11.la
+tests_digest_length_test_LDADD += src/libwolfpkcs11.la
+tests_secret_scrub_test_LDADD += src/libwolfpkcs11.la
+tests_unwrap_keygen_test_LDADD += src/libwolfpkcs11.la
 else
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
 tests_empty_pin_store_test_LDADD += src/libwolfpkcs11.la
 tests_so_login_uninit_test_LDADD += src/libwolfpkcs11.la
 tests_find_objects_null_template_test_LDADD += src/libwolfpkcs11.la
 tests_aes_cbc_pad_padding_test_LDADD += src/libwolfpkcs11.la
-tests_ecb_check_value_error_test_LDADD += src/libwolfpkcs11.la
+tests_generic_secret_check_value_test_LDADD += src/libwolfpkcs11.la
 tests_operation_active_test_LDADD += src/libwolfpkcs11.la
 tests_aes_keygen_attrs_test_LDADD += src/libwolfpkcs11.la
 tests_pbkdf2_keygen_attrs_test_LDADD += src/libwolfpkcs11.la
@@ -407,6 +521,8 @@ tests_empty_pin_cache_test_LDADD += src/libwolfpkcs11.la
 tests_key_sensitive_default_test_LDADD += src/libwolfpkcs11.la
 tests_derive_disabled_key_test_LDADD += src/libwolfpkcs11.la
 tests_derive_inherit_protection_test_LDADD += src/libwolfpkcs11.la
+tests_ec_derive_test_LDADD += src/libwolfpkcs11.la
+tests_kdf_tls_derive_test_LDADD += src/libwolfpkcs11.la
 tests_secret_extractable_default_test_LDADD += src/libwolfpkcs11.la
 tests_rsa_private_usage_default_test_LDADD += src/libwolfpkcs11.la
 tests_copyobject_token_test_LDADD += src/libwolfpkcs11.la
@@ -416,9 +532,12 @@ tests_mlkem_secret_scrub_test_LDADD += src/libwolfpkcs11.la
 tests_logout_token_key_zero_test_LDADD += src/libwolfpkcs11.la
 tests_tpm_decode_bounds_test_LDADD += src/libwolfpkcs11.la
 tests_concurrent_destroy_object_test_LDADD += src/libwolfpkcs11.la
+tests_destroy_stale_handle_test_LDADD += src/libwolfpkcs11.la
 tests_hbs_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_hkdf_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_unique_id_test_LDADD += src/libwolfpkcs11.la
+tests_token_reset_fail_test_LDADD += src/libwolfpkcs11.la
+tests_token_store_test_LDADD += src/libwolfpkcs11.la
 tests_nss_email_store_test_LDADD += src/libwolfpkcs11.la
 tests_generate_key_class_test_LDADD += src/libwolfpkcs11.la
 tests_generate_keypair_class_test_LDADD += src/libwolfpkcs11.la
@@ -428,6 +547,20 @@ tests_data_object_partial_update_test_LDADD += src/libwolfpkcs11.la
 tests_wrapkey_length_query_test_LDADD += src/libwolfpkcs11.la
 tests_set_pin_rekey_test_LDADD += src/libwolfpkcs11.la
 tests_nss_configdir_prefix_test_LDADD += src/libwolfpkcs11.la
+tests_logout_retire_test_LDADD += src/libwolfpkcs11.la
+tests_login_pin_state_test_LDADD += src/libwolfpkcs11.la
+tests_object_store_decode_test_LDADD += src/libwolfpkcs11.la
+tests_object_policy_integrity_test_LDADD += src/libwolfpkcs11.la
+tests_session_op_lifecycle_test_LDADD += src/libwolfpkcs11.la
+tests_info_mech_table_test_LDADD += src/libwolfpkcs11.la
+tests_attribute_validation_test_LDADD += src/libwolfpkcs11.la
+tests_key_material_update_test_LDADD += src/libwolfpkcs11.la
+tests_object_create_getattr_test_LDADD += src/libwolfpkcs11.la
+tests_encrypt_decrypt_params_test_LDADD += src/libwolfpkcs11.la
+tests_sign_verify_mac_test_LDADD += src/libwolfpkcs11.la
+tests_digest_length_test_LDADD += src/libwolfpkcs11.la
+tests_secret_scrub_test_LDADD += src/libwolfpkcs11.la
+tests_unwrap_keygen_test_LDADD += src/libwolfpkcs11.la
 endif
 
 EXTRA_DIST += tests/unit.h \
