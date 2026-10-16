@@ -20,18 +20,22 @@
  *
  * Regression test for running out of object ids.
  *
- * An object handle is the object id with the onToken flag in bit 28. Ids come
- * from one counter per token and are never reused. Once the counter passed
- * 28 bits, the id spilled into the flag: a session object got the handle of a
- * token object, so reading or destroying it acted on the token object, and
- * closing the session freed an object that was still on the session list.
- * Object creation must fail once the ids are used up instead, a token that has
- * used every id must still load, and a stored counter past the limit must be
- * rejected.
+ * An object handle is the object id with the onToken flag in bit 28. Ids are
+ * never reused. Once an id passed 28 bits it spilled into the flag: a session
+ * object got the handle of a token object, so reading or destroying it acted
+ * on the token object, and closing the session freed an object that was still
+ * on the session list. Object creation must fail once the ids are used up
+ * instead, a token that has used every id must still load, and a stored
+ * counter past the limit must be rejected.
+ *
+ * Token objects and session objects have separate counters. The token counter
+ * is stored with the token, while the session counter starts again on each
+ * C_Initialize. Running out of one must not stop objects of the other kind
+ * from being created.
  *
  * Reaching the limit through the public API takes hundreds of millions of
  * objects, so this test uses the DEBUG_WOLFPKCS11-only hook
- * WP11_Test_SetNextObjId() to start the counter just below it.
+ * WP11_Test_SetNextObjId() to start the counters just below it.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -65,7 +69,8 @@
 #ifdef DEBUG_WOLFPKCS11
 
 /* DEBUG_WOLFPKCS11-only test hook exported by libwolfpkcs11. */
-extern int WP11_Test_SetNextObjId(CK_SLOT_ID slotId, int nextObjId);
+extern int WP11_Test_SetNextObjId(CK_SLOT_ID slotId, int onToken,
+    int nextObjId);
 
 /* Mirror OBJ_ID_MAX and the onToken handle flag in src/internal.c. */
 #define OBJ_ID_MAX          0x0fffffffUL
@@ -210,13 +215,14 @@ static CK_RV gen_keypair(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE* pub,
 #endif
 
 #ifndef WOLFPKCS11_NO_STORE
-/* A token that has used every id must still load. */
+/* A token that has used every id must still load, with the session ids
+ * available again. */
 static void reload_test(CK_OBJECT_HANDLE tokFirst, CK_OBJECT_HANDLE tokLast)
 {
     CK_RV rv;
     CK_C_INITIALIZE_ARGS args;
     CK_SESSION_HANDLE session = 0;
-    CK_OBJECT_HANDLE over;
+    CK_OBJECT_HANDLE obj;
 #ifdef TEST_CORRUPT_COUNTER
     char path[512];
 #else
@@ -226,7 +232,7 @@ static void reload_test(CK_OBJECT_HANDLE tokFirst, CK_OBJECT_HANDLE tokLast)
     XMEMSET(&args, 0, sizeof(args));
     args.flags = CKF_OS_LOCKING_OK;
     rv = funcList->C_Initialize(&args);
-    CHECK_RV(rv, "reload token with every id used", CKR_OK);
+    CHECK_RV(rv, "reload token with every token id used", CKR_OK);
     if (rv != CKR_OK)
         return;
     rv = open_user_session(&session);
@@ -236,16 +242,19 @@ static void reload_test(CK_OBJECT_HANDLE tokFirst, CK_OBJECT_HANDLE tokLast)
                    "token objects after reload");
         check_label(session, tokLast, "token-last",
                     "last token object label after reload");
-        rv = create_data(session, CK_FALSE, "session-over", &over);
-        CHECK_RV(rv, "session object after reload fails",
-                 CKR_FUNCTION_FAILED);
+        rv = create_data(session, CK_TRUE, "token-over", &obj);
+        CHECK_RV(rv, "token object after reload fails", CKR_FUNCTION_FAILED);
+        rv = create_data(session, CK_FALSE, "session-reload", &obj);
+        CHECK_RV(rv, "session object after reload", CKR_OK);
+        CHECK_TRUE((obj & HANDLE_ON_TOKEN) == 0,
+                   "session object after reload has no token flag");
     }
 
 #ifdef TEST_CORRUPT_COUNTER
     /* Destroying a token object stores the token, here with the counter past
      * the limit. Loading that token must fail. */
-    CHECK_TRUE(WP11_Test_SetNextObjId(slot, (int)OBJ_ID_MAX + 2) == 0,
-               "set next object id past the limit");
+    CHECK_TRUE(WP11_Test_SetNextObjId(slot, 1, (int)OBJ_ID_MAX + 2) == 0,
+               "set next token object id past the limit");
     rv = funcList->C_DestroyObject(session, tokFirst);
     CHECK_RV(rv, "store token with counter past the limit", CKR_OK);
     funcList->C_CloseSession(session);
@@ -280,6 +289,7 @@ static void run_test(void)
     CK_SESSION_HANDLE session = 0;
     CK_OBJECT_HANDLE tokFirst = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE tokLast = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE sessFirst = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE sessLast = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE over = CK_INVALID_HANDLE;
 #ifdef HAVE_ECC
@@ -316,45 +326,56 @@ static void run_test(void)
     funcList->C_DestroyObject(session, priv);
 #endif
 
-    /* Use up the ids. */
-    CHECK_TRUE(WP11_Test_SetNextObjId(slot, (int)OBJ_ID_MAX - 1) == 0,
-               "set next object id below the limit");
-    rv = create_data(session, CK_FALSE, "session-last", &sessLast);
-    CHECK_RV(rv, "create session object", CKR_OK);
-    CHECK_TRUE(sessLast == OBJ_ID_MAX - 1,
-               "session object handle has no token flag");
+    /* Use up the token object ids. */
+    CHECK_TRUE(WP11_Test_SetNextObjId(slot, 1, (int)OBJ_ID_MAX) == 0,
+               "set next token object id to the last id");
     rv = create_data(session, CK_TRUE, "token-last", &tokLast);
     CHECK_RV(rv, "create token object with the last id", CKR_OK);
     CHECK_TRUE(tokLast == (HANDLE_ON_TOKEN | OBJ_ID_MAX),
                "token object handle has the last id");
-
-    rv = create_data(session, CK_FALSE, "session-over", &over);
-    CHECK_RV(rv, "session object past the limit fails", CKR_FUNCTION_FAILED);
     rv = create_data(session, CK_TRUE, "token-over", &over);
     CHECK_RV(rv, "token object past the limit fails", CKR_FUNCTION_FAILED);
 
+    rv = create_data(session, CK_FALSE, "session-first", &sessFirst);
+    CHECK_RV(rv, "session object with token ids used up", CKR_OK);
+    CHECK_TRUE((sessFirst & HANDLE_ON_TOKEN) == 0,
+               "session object handle has no token flag");
+
+    /* Use up the session object ids. */
+    CHECK_TRUE(WP11_Test_SetNextObjId(slot, 0, (int)OBJ_ID_MAX - 1) == 0,
+               "set next session object id below the limit");
+    rv = create_data(session, CK_FALSE, "session-last", &sessLast);
+    CHECK_RV(rv, "create session object", CKR_OK);
+    CHECK_TRUE(sessLast == OBJ_ID_MAX - 1,
+               "session object handle has the id and no token flag");
+#ifdef HAVE_ECC
+    /* The public key takes the last id and the private key fails, so the
+     * public key has to be taken back off the session list. */
+    rv = gen_keypair(session, &pub, &priv);
+    CHECK_RV(rv, "key pair needing two ids fails", CKR_FUNCTION_FAILED);
+    CHECK_TRUE(count_objects(session, CK_FALSE) == 2,
+               "public key rolled back");
+#else
+    /* Skip the last id, which the key pair would take. */
+    CHECK_TRUE(WP11_Test_SetNextObjId(slot, 0, (int)OBJ_ID_MAX + 1) == 0,
+               "use the last session object id");
+#endif
+    rv = create_data(session, CK_FALSE, "session-over", &over);
+    CHECK_RV(rv, "session object past the limit fails", CKR_FUNCTION_FAILED);
+
     check_label(session, tokFirst, "token-first", "first token object label");
-    check_label(session, sessLast, "session-last", "session object label");
     check_label(session, tokLast, "token-last", "last token object label");
+    check_label(session, sessFirst, "session-first",
+                "first session object label");
+    check_label(session, sessLast, "session-last",
+                "last session object label");
     CHECK_TRUE(count_objects(session, CK_TRUE) == 2, "two token objects");
-    CHECK_TRUE(count_objects(session, CK_FALSE) == 1, "one session object");
+    CHECK_TRUE(count_objects(session, CK_FALSE) == 2, "two session objects");
 
     rv = funcList->C_DestroyObject(session, sessLast);
     CHECK_RV(rv, "destroy session object", CKR_OK);
     CHECK_TRUE(count_objects(session, CK_TRUE) == 2,
                "token objects kept after session object destroyed");
-
-#ifdef HAVE_ECC
-    /* The public key takes the last id and the private key fails, so the
-     * public key has to be taken back off the session list. No session object
-     * has used this id, as session handles have no token flag. */
-    CHECK_TRUE(WP11_Test_SetNextObjId(slot, (int)OBJ_ID_MAX) == 0,
-               "set next object id to the last id");
-    rv = gen_keypair(session, &pub, &priv);
-    CHECK_RV(rv, "key pair needing two ids fails", CKR_FUNCTION_FAILED);
-    CHECK_TRUE(count_objects(session, CK_FALSE) == 0,
-               "public key rolled back");
-#endif
 
     /* Closing the session frees its objects. */
     funcList->C_CloseSession(session);
