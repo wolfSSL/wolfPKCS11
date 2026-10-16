@@ -2557,6 +2557,9 @@ static CK_RV wp11_C_SetAttributeValue(CK_SESSION_HANDLE hSession,
     rv = CheckCopyOnlyAttributes(obj, pTemplate, ulCount);
     if (rv == CKR_OK)
         rv = SetAttributeValue(session, obj, pTemplate, ulCount, CK_FALSE);
+    /* Token objects are only rewritten when they change, so write it now. */
+    if (rv == CKR_OK)
+        WP11_Object_Persist(obj);
     WOLFPKCS11_LEAVE("C_SetAttributeValue", rv);
     return rv;
 }
