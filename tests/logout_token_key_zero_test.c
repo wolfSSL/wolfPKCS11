@@ -54,7 +54,13 @@
 #if defined(DEBUG_WOLFPKCS11) && !defined(WOLFPKCS11_NO_STORE)
 
 /* DEBUG_WOLFPKCS11-only introspection hook exported by libwolfpkcs11. */
+#ifdef __cplusplus
+extern "C" {
+#endif
 extern int WP11_Slot_TokenKeyIsZero(CK_SLOT_ID slotId);
+#ifdef __cplusplus
+}
+#endif
 
 #define LOGOUT_KEY_TEST_DIR "./store/logout_token_key_zero_test"
 #define WOLFPKCS11_TOKEN_FILENAME "wp11_token_0000000000000001"

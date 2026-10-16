@@ -55,8 +55,14 @@
     (!defined(NO_RSA) || defined(HAVE_ECC))
 
 /* DEBUG_WOLFPKCS11-only hook exported by libwolfpkcs11. */
+#ifdef __cplusplus
+extern "C" {
+#endif
 extern int WP11_Test_DecodeTpmKey(CK_SLOT_ID slotId, unsigned char* keyData,
     int keyDataLen);
+#ifdef __cplusplus
+}
+#endif
 
 static int test_passed = 0;
 static int test_failed = 0;

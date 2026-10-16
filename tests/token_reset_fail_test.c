@@ -53,7 +53,13 @@
 
 #ifdef DEBUG_WOLFPKCS11
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 extern void WP11_Test_FailTokenInit(int fail);
+#ifdef __cplusplus
+}
+#endif
 
 static const char* soPin = "password123456";
 static const char* userPin = "wolfpkcs11-test";

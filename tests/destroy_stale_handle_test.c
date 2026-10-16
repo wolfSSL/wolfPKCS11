@@ -61,8 +61,14 @@
 #if defined(DEBUG_WOLFPKCS11) && !defined(NO_AES)
 
 /* DEBUG_WOLFPKCS11-only test hook exported by libwolfpkcs11. */
+#ifdef __cplusplus
+extern "C" {
+#endif
 extern int WP11_Test_RemoveObjectStale(CK_SESSION_HANDLE hSession,
     CK_OBJECT_HANDLE liveHandle, CK_OBJECT_HANDLE staleHandle);
+#ifdef __cplusplus
+}
+#endif
 
 /* Mirrors WP11_OBJECT_ALREADY_REMOVED in wolfpkcs11/internal.h. */
 #define OBJECT_ALREADY_REMOVED 1
