@@ -474,7 +474,13 @@ static void test_derive_reports_commit_failure(void)
 
 #ifdef DEBUG_WOLFPKCS11
 /* Debug-only hook exported by libwolfpkcs11. */
+#ifdef __cplusplus
+extern "C" {
+#endif
 extern void WP11_Test_StoreCloseFailAfter(int closes);
+#ifdef __cplusplus
+}
+#endif
 
 /* A token object whose record cannot be closed is not reported created. */
 static void test_create_reports_close_failure(void)
@@ -1005,9 +1011,15 @@ static void test_load_record_without_trailing_fields(void)
 
 #ifdef TOKEN_STORE_TPM_TEST
 /* Debug-only hooks exported by libwolfpkcs11. */
+#ifdef __cplusplus
+extern "C" {
+#endif
 extern int WP11_Test_StoreWriteFailAfter(int writes);
 extern int WP11_Test_StoreWriteFailOnce(int writes);
 extern void WP11_Test_TpmStoreShortBy(int bytes);
+#ifdef __cplusplus
+}
+#endif
 
 #define MAX_STORE_WRITES 500
 
