@@ -157,12 +157,15 @@
 /* Determine session id from session handle. */
 #define SESS_HANDLE_SESS_ID(s)         ((s) & 0xffff)
 
+/* Largest object id. The id is the low 28 bits of an object handle and the
+ * onToken flag is bit 28, so a larger id would change the flag. */
+#define OBJ_ID_MAX                     0x0fffffff
 /* Create an object handle from a onToken and object id. */
 #define OBJ_HANDLE(on, i)              (((on) << 28) | (i))
 /* Determine whether object is onToken from object handle. */
 #define OBJ_HANDLE_ON_TOKEN(h)         ((int)((h) >> 28))
 /* Determine object id from object handle. */
-#define OBJ_HANDLE_OBJ_ID(h)           ((h) & 0xfffffff)
+#define OBJ_HANDLE_OBJ_ID(h)           ((h) & OBJ_ID_MAX)
 
 /* SINGLE_THREADED alters wolfSSL struct layouts; only wolfSSL sets it. */
 #if defined(SINGLE_THREADED) || defined(WOLFPKCS11_SINGLE_THREADED)
@@ -9034,6 +9037,12 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
                     token->nextObjId = 1;
                     ret = 0;
                 }
+                /* OBJ_ID_MAX + 1 is a token that has used every id. Beyond
+                 * that, ids no longer fit in a handle. */
+                else if (ret == 0 && (token->nextObjId < 0 ||
+                        token->nextObjId > OBJ_ID_MAX + 1)) {
+                    ret = BUFFER_E;
+                }
             }
         }
 
@@ -12599,7 +12608,9 @@ WP11_API void WP11_Session_SetAddObjectHook(void (*hook)(void))
  * @param  session  [in]  Session object.
  * @param  onToken  [in]  Whether to put object on token.
  * @param  object   [in]  Key Object object.
- * @return  0 on success.
+ * @return  OBJ_COUNT_E when the object list is full or the token has used
+ *          every object id.
+ *          0 on success.
  */
 int WP11_Session_AddObject(WP11_Session* session, int onToken,
                            WP11_Object* object)
@@ -12645,6 +12656,9 @@ int WP11_Session_AddObject(WP11_Session* session, int onToken,
 
         if (token->objCnt >= WP11_TOKEN_OBJECT_CNT_MAX)
             ret = OBJ_COUNT_E;
+        /* Ids are not reused, so a token can run out of them. */
+        if (token->nextObjId > OBJ_ID_MAX)
+            ret = OBJ_COUNT_E;
     #ifndef WOLFPKCS11_NO_STORE
         if (ret == 0)
             ret = wp11_Object_Encode(object, 0);
@@ -12688,6 +12702,8 @@ int WP11_Session_AddObject(WP11_Session* session, int onToken,
             ret = OBJ_COUNT_E;
         }
     #endif
+        if (token->nextObjId > OBJ_ID_MAX)
+            ret = OBJ_COUNT_E;
         if (ret == 0) {
             session->objCnt++;
             /* Get next item in list after this object has been added. */
@@ -12958,6 +12974,33 @@ WP11_API int WP11_Test_RemoveObjectStale(CK_SESSION_HANDLE hSession,
     }
 
     return ret;
+}
+
+/**
+ * Test hook: set the id the next object on a slot's token will get.
+ *
+ * Running out of object ids takes hundreds of millions of objects through the
+ * public API, so a white-box test sets the counter close to the limit instead.
+ * The value is not checked, so a test can also store an out of range value and
+ * check that loading the token rejects it.
+ *
+ * @param  slotId     [in]  Slot id.
+ * @param  nextObjId  [in]  Next object id.
+ * @return  BAD_FUNC_ARG when the slot is not found.
+ *          0 on success.
+ */
+WP11_API int WP11_Test_SetNextObjId(CK_SLOT_ID slotId, int nextObjId)
+{
+    WP11_Slot* slot;
+
+    if (WP11_Slot_Get(slotId, &slot) != 0)
+        return BAD_FUNC_ARG;
+
+    WP11_Lock_LockRW(&slot->token.lock);
+    slot->token.nextObjId = nextObjId;
+    WP11_Lock_UnlockRW(&slot->token.lock);
+
+    return 0;
 }
 #endif /* DEBUG_WOLFPKCS11 */
 

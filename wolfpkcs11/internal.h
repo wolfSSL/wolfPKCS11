@@ -535,6 +535,7 @@ WP11_LOCAL void WP11_Session_RemoveObject(WP11_Session* session,
 #ifdef DEBUG_WOLFPKCS11
 WP11_API int WP11_Test_RemoveObjectStale(CK_SESSION_HANDLE hSession,
     CK_OBJECT_HANDLE liveHandle, CK_OBJECT_HANDLE staleHandle);
+WP11_API int WP11_Test_SetNextObjId(CK_SLOT_ID slotId, int nextObjId);
 #endif
 WP11_LOCAL int WP11_Object_HandleOnToken(CK_OBJECT_HANDLE handle);
 WP11_LOCAL void WP11_Slot_ClearActiveObject(WP11_Slot* slot,
