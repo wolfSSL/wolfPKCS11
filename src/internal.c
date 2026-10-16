@@ -180,7 +180,40 @@ typedef int WP11_Lock;
 #define WP11_Lock_LockRO(l)            ({ 0; })
 #define WP11_Lock_UnlockRO(l)          ({ 0; })
 
+#elif defined(WOLFSSL_PTHREADS) || (defined(USE_WINDOWS_API) && \
+      !defined(_WIN32_WCE) && defined(_WIN32_WINNT) && _WIN32_WINNT >= 0x0600)
+/* Reader/writer lock built from a mutex and a condition variable. The mutex
+ * only guards the counters and is never held while the lock itself is held,
+ * so the last reader out can release the lock without unlocking a mutex it
+ * does not own. As with the two-mutex lock below, a waiting writer does not
+ * stop new readers, so a thread may take the read lock again while holding
+ * it. Uses the same threading API as wolfSSL_Mutex: pthreads, or a critical
+ * section and condition variable on Windows (Vista and later). */
+#define WP11_LOCK_COND
+
+#ifdef WOLFSSL_PTHREADS
+typedef pthread_mutex_t WP11_LockMutex;
+typedef pthread_cond_t WP11_LockCond;
 #else
+typedef CRITICAL_SECTION WP11_LockMutex;
+typedef CONDITION_VARIABLE WP11_LockCond;
+#endif
+
+typedef struct WP11_Lock {
+    WP11_LockMutex mutex;              /* Mutex for accessing counters        */
+    WP11_LockCond cond;                /* Signalled when lock may be free     */
+    int cnt;                           /* Count of readers                    */
+    int writer;                        /* Whether a writer holds the lock     */
+} WP11_Lock;
+#elif defined(USE_WINDOWS_API)
+/* The fallback below leaves a critical section from a thread that did not
+ * enter it, which is undefined behaviour on Windows. */
+#error "wolfPKCS11 locking needs Windows Vista or later (_WIN32_WINNT >= 0x0600, not Windows CE); set _WIN32_WINNT or build single threaded"
+#else
+/* Fallback for threading APIs without a condition variable. The first reader
+ * locks the write mutex and the last reader unlocks it, which may be a
+ * different thread: only correct where wolfSSL_Mutex may be released by a
+ * thread that did not lock it (e.g. a binary semaphore). */
 typedef struct WP11_Lock {
     wolfSSL_Mutex read;                /* Mutex for accessing count           */
     wolfSSL_Mutex write;               /* Mutex for writing                   */
@@ -690,7 +723,202 @@ static wolfSSL_Mutex storeDirLock
 #endif
 
 
-#ifndef WP11_NO_LOCKING
+#ifdef WP11_LOCK_COND
+/* Mutex and condition variable operations. The INIT, LOCK and WAIT operations
+ * evaluate to non-zero on success. */
+#ifdef WOLFSSL_PTHREADS
+/**
+ * Wait on the lock's condition variable with thread cancellation disabled.
+ *
+ * pthread_cond_wait() is a cancellation point, but acquiring the lock was not
+ * one when it was built from mutexes alone. A thread cancelled while waiting
+ * would exit holding the mutex, hanging every later user of the lock
+ * (including the current holder's unlock), so keep acquisition
+ * non-cancellable.
+ *
+ * @param  cond   [in]  Condition variable to wait on.
+ * @param  mutex  [in]  Mutex held by the caller.
+ * @return  1 on success.
+ *          0 on failure.
+ */
+static int wp11_Lock_CondWait(pthread_cond_t* cond, pthread_mutex_t* mutex)
+{
+    int ret;
+#ifdef PTHREAD_CANCEL_DISABLE
+    int state;
+    int prevState;
+
+    pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &prevState);
+#endif
+    ret = pthread_cond_wait(cond, mutex);
+#ifdef PTHREAD_CANCEL_DISABLE
+    pthread_setcancelstate(prevState, &state);
+#endif
+
+    return ret == 0;
+}
+
+#define WP11_LOCK_MUTEX_INIT(m)        (pthread_mutex_init((m), NULL) == 0)
+#define WP11_LOCK_MUTEX_FREE(m)        pthread_mutex_destroy(m)
+#define WP11_LOCK_MUTEX_LOCK(m)        (pthread_mutex_lock(m) == 0)
+#define WP11_LOCK_MUTEX_UNLOCK(m)      pthread_mutex_unlock(m)
+#define WP11_LOCK_COND_INIT(c)         (pthread_cond_init((c), NULL) == 0)
+#define WP11_LOCK_COND_FREE(c)         pthread_cond_destroy(c)
+#define WP11_LOCK_COND_WAIT(c, m)      wp11_Lock_CondWait((c), (m))
+#define WP11_LOCK_COND_WAKE_ALL(c)     pthread_cond_broadcast(c)
+#else
+#define WP11_LOCK_MUTEX_INIT(m)        (InitializeCriticalSection(m), 1)
+#define WP11_LOCK_MUTEX_FREE(m)        DeleteCriticalSection(m)
+#define WP11_LOCK_MUTEX_LOCK(m)        (EnterCriticalSection(m), 1)
+#define WP11_LOCK_MUTEX_UNLOCK(m)      LeaveCriticalSection(m)
+#define WP11_LOCK_COND_INIT(c)         (InitializeConditionVariable(c), 1)
+/* A CONDITION_VARIABLE has nothing to free. */
+#define WP11_LOCK_COND_FREE(c)         (void)(c)
+#define WP11_LOCK_COND_WAIT(c, m)      \
+    (SleepConditionVariableCS((c), (m), INFINITE) != 0)
+#define WP11_LOCK_COND_WAKE_ALL(c)     WakeAllConditionVariable(c)
+#endif
+
+/**
+ * Initialize a lock.
+ *
+ * @param  lock  [in]  Lock object.
+ * @return  BAD_MUTEX_E on failure.
+ *          0 on success.
+ */
+static int WP11_Lock_Init(WP11_Lock* lock)
+{
+    int ret = 0;
+
+    if (!WP11_LOCK_MUTEX_INIT(&lock->mutex))
+        ret = BAD_MUTEX_E;
+    if (ret == 0 && !WP11_LOCK_COND_INIT(&lock->cond)) {
+        WP11_LOCK_MUTEX_FREE(&lock->mutex);
+        ret = BAD_MUTEX_E;
+    }
+    if (ret == 0) {
+        lock->cnt = 0;
+        lock->writer = 0;
+    }
+
+    return ret;
+}
+
+/**
+ * Free a lock.
+ *
+ * @param  lock  [in]  Lock object.
+ */
+static void WP11_Lock_Free(WP11_Lock* lock)
+{
+    WP11_LOCK_COND_FREE(&lock->cond);
+    WP11_LOCK_MUTEX_FREE(&lock->mutex);
+}
+
+/**
+ * Lock for read/write.
+ *
+ * Waits until there is no writer and no reader.
+ *
+ * @param  lock  [in]  Lock object.
+ * @return  BAD_MUTEX_E on failure.
+ *          0 on success.
+ */
+static int WP11_Lock_LockRW(WP11_Lock* lock)
+{
+    int ret = 0;
+
+    if (!WP11_LOCK_MUTEX_LOCK(&lock->mutex))
+        return BAD_MUTEX_E;
+    while (ret == 0 && (lock->writer || lock->cnt > 0)) {
+        if (!WP11_LOCK_COND_WAIT(&lock->cond, &lock->mutex))
+            ret = BAD_MUTEX_E;
+    }
+    if (ret == 0)
+        lock->writer = 1;
+#ifdef DEBUG_LOCK
+    fprintf(stderr, "LRW: %p - %d\n", (void*)lock, lock->cnt);
+#endif
+    WP11_LOCK_MUTEX_UNLOCK(&lock->mutex);
+
+    return ret;
+}
+
+/**
+ * Unlock after read/write.
+ *
+ * @param  lock  [in]  Lock object.
+ * @return  BAD_MUTEX_E on failure.
+ *          0 on success.
+ */
+static int WP11_Lock_UnlockRW(WP11_Lock* lock)
+{
+    if (!WP11_LOCK_MUTEX_LOCK(&lock->mutex))
+        return BAD_MUTEX_E;
+#ifdef DEBUG_LOCK
+    fprintf(stderr, "URW: %p - %d\n", (void*)lock, lock->cnt);
+#endif
+    lock->writer = 0;
+    WP11_LOCK_COND_WAKE_ALL(&lock->cond);
+    WP11_LOCK_MUTEX_UNLOCK(&lock->mutex);
+
+    return 0;
+}
+
+/**
+ * Lock for read-only.
+ *
+ * Waits only while a writer holds the lock: a waiting writer does not stop
+ * new readers, so a thread already holding the read lock can take it again.
+ *
+ * @param  lock  [in]  Lock object.
+ * @return  BAD_MUTEX_E on failure.
+ *          0 on success.
+ */
+static int WP11_Lock_LockRO(WP11_Lock* lock)
+{
+    int ret = 0;
+
+    if (!WP11_LOCK_MUTEX_LOCK(&lock->mutex))
+        return BAD_MUTEX_E;
+    while (ret == 0 && lock->writer) {
+        if (!WP11_LOCK_COND_WAIT(&lock->cond, &lock->mutex))
+            ret = BAD_MUTEX_E;
+    }
+    if (ret == 0)
+        lock->cnt++;
+#ifdef DEBUG_LOCK
+    fprintf(stderr, "LRO: %p - %d\n", (void*)lock, lock->cnt);
+#endif
+    WP11_LOCK_MUTEX_UNLOCK(&lock->mutex);
+
+    return ret;
+}
+
+/**
+ * Unlock after reading.
+ *
+ * @param  lock  [in]  Lock object.
+ * @return  BAD_MUTEX_E on failure.
+ *          0 on success.
+ */
+static int WP11_Lock_UnlockRO(WP11_Lock* lock)
+{
+    if (!WP11_LOCK_MUTEX_LOCK(&lock->mutex))
+        return BAD_MUTEX_E;
+    /* Wake waiting writers once the last reader has left. */
+    if (--lock->cnt == 0)
+        WP11_LOCK_COND_WAKE_ALL(&lock->cond);
+#ifdef DEBUG_LOCK
+    fprintf(stderr, "URO: %p - %d\n", (void*)lock, lock->cnt);
+#endif
+    WP11_LOCK_MUTEX_UNLOCK(&lock->mutex);
+
+    return 0;
+}
+#elif !defined(WP11_NO_LOCKING)
+/* Fallback two-mutex lock: see the WP11_Lock type for when it is used. */
+
 /**
  * Initialize a lock.
  *
@@ -876,6 +1104,24 @@ static int wp11_Session_New(WP11_Slot* slot, CK_OBJECT_HANDLE handle,
     return ret;
 }
 
+#ifdef DEBUG_WOLFPKCS11
+/* Set by WP11_Test_SetEmptyPinCheckHook(). */
+static void (*wp11_EmptyPinCheckHook)(void) = NULL;
+
+/**
+ * Test hook: set a function for WP11_Slot_Has_Empty_Pin() to call after its
+ * uncached empty-PIN check and before it caches the result, with no locks
+ * held. Exposed only in debug builds so a white-box test can change the PIN
+ * at exactly that point.
+ *
+ * @param  hook  [in]  Function to call, or NULL to remove the hook.
+ */
+WP11_API void WP11_Test_SetEmptyPinCheckHook(void (*hook)(void))
+{
+    wp11_EmptyPinCheckHook = hook;
+}
+#endif
+
 /**
  * Check if the slot has an empty user PIN.
  *
@@ -903,6 +1149,10 @@ int WP11_Slot_Has_Empty_Pin(WP11_Slot* slot)
         if (cached == 0) {
             /* Cache result as WP11_Slot_CheckUserPin is very expensive */
             ret = (WP11_Slot_CheckUserPin(slot, (char*)"", 0) == 0);
+#ifdef DEBUG_WOLFPKCS11
+            if (wp11_EmptyPinCheckHook != NULL)
+                wp11_EmptyPinCheckHook();
+#endif
             WP11_Lock_LockRW(&slot->lock);
             /* Only cache a verdict for the PIN that was checked. */
             if (slot->token.userPinEmpty == 0 &&
@@ -12966,7 +13216,8 @@ WP11_API int WP11_Test_RemoveObjectStale(CK_SESSION_HANDLE hSession,
  *
  * The active object pointer (session->curr) is a raw pointer cached when an
  * operation is initialized. A token object can be the active object of more
- * than one session.
+ * than one session. Since this reaches into other sessions, session->curr is
+ * only accessed under the slot lock (see WP11_Session_GetObject()).
  *
  * Symmetric operations (AES, HMAC/generic-secret, HKDF) copy the key into the
  * operation context during their *Init and run to completion without referring
@@ -13025,28 +13276,41 @@ void WP11_Slot_ClearActiveObject(WP11_Slot* slot, WP11_Object* object)
 /**
  * Get the current object of the session - key for operation.
  *
+ * WP11_Slot_ClearActiveObject() may clear session->curr from another session's
+ * thread, holding the slot lock for write, so access it under the slot lock.
+ *
  * @param  session  [in]   Session object.
  * @param  object   [out]  Key Object object.
  */
 void WP11_Session_GetObject(WP11_Session* session, WP11_Object** object)
 {
+    WP11_Object* curr;
+    int abortOp;
+
+    WP11_Lock_LockRO(&session->slot->lock);
+    curr = session->curr;
     /* The key was destroyed: release the state its operation still holds. */
-    if (session->curr == NULL && wp11_mech_reads_key(session->mechanism) &&
-            (session->init & ~WP11_INIT_DIGEST_MASK) != 0) {
+    abortOp = (curr == NULL && wp11_mech_reads_key(session->mechanism) &&
+               (session->init & ~WP11_INIT_DIGEST_MASK) != 0);
+    WP11_Lock_UnlockRO(&session->slot->lock);
+    if (abortOp)
         WP11_Session_AbortOp(session);
-    }
-    *object = session->curr;
+    *object = curr;
 }
 
 /**
  * Set the current object on the session - key for operation.
+ *
+ * Writes session->curr under the slot lock; see WP11_Session_GetObject().
  *
  * @param  session  [in]  Session object.
  * @param  object   [in]  Key Object object.
  */
 void WP11_Session_SetObject(WP11_Session* session, WP11_Object* object)
 {
+    WP11_Lock_LockRO(&session->slot->lock);
     session->curr = object;
+    WP11_Lock_UnlockRO(&session->slot->lock);
 }
 
 /**

@@ -159,9 +159,8 @@ typedef struct TEST_FUNC
 static int verbose = 0;
 
 #ifdef TEST_MULTITHREADED
-static wolfSSL_Mutex readMutex;
+/* Held by run_tests while it starts the test threads, and guards stop. */
 static wolfSSL_Mutex writeMutex;
-static int lockCnt;
 static int stop = 0;
 static int secs = 10;
 
@@ -169,14 +168,7 @@ static int LockInit(void)
 {
     int ret;
 
-    ret = wc_InitMutex(&readMutex);
-    if (ret == 0) {
-        ret = wc_InitMutex(&writeMutex);
-        if (ret != 0)
-            wc_FreeMutex(&readMutex);
-    }
-    if (ret == 0)
-        lockCnt = 0;
+    ret = wc_InitMutex(&writeMutex);
     if (ret != 0)
         ret = -1;
 
@@ -186,7 +178,6 @@ static int LockInit(void)
 static void LockFree(void)
 {
     wc_FreeMutex(&writeMutex);
-    wc_FreeMutex(&readMutex);
 }
 
 static int LockRW(void)
@@ -199,38 +190,36 @@ static int UnlockRW(void)
     return wc_UnLockMutex(&writeMutex);
 }
 
-static int LockRO(void)
+/* Wait until run_tests has started every test thread. */
+static int WaitForStart(void)
 {
     int ret;
 
-    ret = wc_LockMutex(&readMutex);
-    if (ret == 0) {
-        if (++lockCnt == 1)
-            ret = wc_LockMutex(&writeMutex);
-    }
+    ret = LockRW();
     if (ret == 0)
-        ret = wc_UnLockMutex(&readMutex);
+        ret = UnlockRW();
     if (ret != 0)
         ret = -1;
 
     return ret;
 }
 
-static int UnlockRO(void)
+static int IsStopped(void)
 {
     int ret;
 
-    ret = wc_LockMutex(&readMutex);
-    if (ret == 0) {
-        if (--lockCnt == 0)
-            ret = wc_UnLockMutex(&writeMutex);
-    }
-    if (ret == 0)
-        ret = wc_UnLockMutex(&readMutex);
-    if (ret != 0)
-        ret = -1;
+    LockRW();
+    ret = stop;
+    UnlockRW();
 
     return ret;
+}
+
+static void SetStop(int value)
+{
+    LockRW();
+    stop = value;
+    UnlockRW();
 }
 
 static void* run_test(void* args)
@@ -242,7 +231,7 @@ static void* run_test(void* args)
 
     testArgs = XMALLOC(tf->argsSz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     if (testArgs != NULL) {
-        ret = LockRO();
+        ret = WaitForStart();
         if (ret != 0)
             fprintf(stderr, "Locking failed\n");
         else {
@@ -251,13 +240,12 @@ static void* run_test(void* args)
             if (rv != CKR_OK)
                 fprintf(stderr, "Setup failed\n");
             if (rv == CKR_OK) {
-                while (rv == CKR_OK && !stop) {
+                while (rv == CKR_OK && !IsStopped()) {
                     rv = tf->ret = tf->func(testArgs);
                     tf->cnt++;
                 }
                 tf->teardown(tf->flags, testArgs);
             }
-            UnlockRO();
         }
 
         XFREE(testArgs, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -310,7 +298,7 @@ static CK_RV run_tests(TEST_FUNC* testFunc, int testFuncCnt, int onlySet,
         fprintf(stderr, ".");
     }
     fprintf(stderr, "\n");
-    stop = 1;
+    SetStop(1);
     for (i = 0; i < testFuncCnt; i++) {
         if (!testFunc[i].attempted)
             continue;

@@ -92,10 +92,13 @@ static CK_KEY_TYPE aesKeyType = CKK_AES;
  * A busy-wait ("spin") barrier is used deliberately: cond-var wakeups have
  * enough latency that one destroyer routinely finishes before the other
  * starts, which hides the race. Spinning releases both threads within a few
- * cycles of each other so their C_DestroyObject calls truly overlap. */
-static volatile int g_go = 0;           /* bumped by main to release a round   */
-static volatile int g_done = 0;         /* threads that finished current round */
-static volatile int g_stop = 0;         /* set to make the threads exit        */
+ * cycles of each other so their C_DestroyObject calls truly overlap.
+ * g_go, g_done and g_stop are only accessed atomically: the release store of
+ * g_go publishes g_target, and each release increment of g_done publishes that
+ * thread's g_rv entry. */
+static int g_go = 0;                    /* bumped by main to release a round   */
+static int g_done = 0;                  /* threads that finished current round */
+static int g_stop = 0;                  /* set to make the threads exit        */
 static CK_OBJECT_HANDLE g_target = CK_INVALID_HANDLE;
 static CK_RV g_rv[2];                   /* per-thread result for the round     */
 
@@ -263,16 +266,17 @@ static void* destroyer(void* arg)
         CK_OBJECT_HANDLE h;
 
         /* Tight spin until main releases the next round (or asks us to stop). */
-        while (g_go == last && !g_stop) { }
-        if (g_stop)
+        while (__atomic_load_n(&g_go, __ATOMIC_ACQUIRE) == last &&
+               !__atomic_load_n(&g_stop, __ATOMIC_ACQUIRE)) { }
+        if (__atomic_load_n(&g_stop, __ATOMIC_ACQUIRE))
             break;
-        last = g_go;
-        __sync_synchronize();       /* observe g_target published before g_go */
+        /* Acquiring g_go makes the g_target published before it visible. */
+        last = __atomic_load_n(&g_go, __ATOMIC_ACQUIRE);
         h = g_target;
 
         g_rv[ctx->id] = funcList->C_DestroyObject(ctx->session, h);
 
-        __sync_fetch_and_add(&g_done, 1);
+        __atomic_fetch_add(&g_done, 1, __ATOMIC_RELEASE);
     }
 
     return NULL;
@@ -356,11 +360,9 @@ static int concurrent_destroy_test(int rounds)
          * then spin until both have returned from C_DestroyObject. */
         g_target = h;
         g_rv[0] = g_rv[1] = CKR_GENERAL_ERROR;
-        g_done = 0;
-        __sync_synchronize();
-        g_go = r + 1;
-        while (g_done < 2) { }
-        __sync_synchronize();
+        __atomic_store_n(&g_done, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&g_go, r + 1, __ATOMIC_RELEASE);
+        while (__atomic_load_n(&g_done, __ATOMIC_ACQUIRE) < 2) { }
 
         /* Exactly one destroy must win; the other must report an invalid
          * handle. Any other combination (two successes, or a status other
@@ -410,8 +412,7 @@ static int concurrent_destroy_test(int rounds)
 
 cleanup:
     /* Tell the destroyer threads to exit and join them. */
-    g_stop = 1;
-    __sync_synchronize();
+    __atomic_store_n(&g_stop, 1, __ATOMIC_RELEASE);
     for (r = 0; r < started; r++)
         pthread_join(threads[r], NULL);
     for (r = 0; r < started; r++) {
