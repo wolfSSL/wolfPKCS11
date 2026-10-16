@@ -25,8 +25,10 @@
  * object got the handle of a token object, so reading or destroying it acted
  * on the token object, and closing the session freed an object that was still
  * on the session list. Object creation must fail once the ids are used up
- * instead, a token that has used every id must still load, and a stored
- * counter past the limit must be rejected.
+ * instead, and a token that has used every id must still load. A stored
+ * counter that is out of range, as a token written by an older version can
+ * read back with TPM storage, must be replaced by one above the ids of the
+ * token's objects.
  *
  * Token objects and session objects have separate counters. The token counter
  * is stored with the token, while the session counter starts again on each
@@ -64,7 +66,6 @@
 #include "pkcs11_test_util.h"
 
 #define TEST_DIR "./store/object_handle_limit_test"
-#define WOLFPKCS11_TOKEN_FILENAME "wp11_token_0000000000000001"
 
 #ifdef DEBUG_WOLFPKCS11
 
@@ -75,12 +76,6 @@ extern int WP11_Test_SetNextObjId(CK_SLOT_ID slotId, int onToken,
 /* Mirror OBJ_ID_MAX and the onToken handle flag in src/internal.c. */
 #define OBJ_ID_MAX          0x0fffffffUL
 #define HANDLE_ON_TOKEN     0x10000000UL
-
-/* A stored counter can only be corrupted and reloaded with file storage. */
-#if !defined(WOLFPKCS11_NO_STORE) && !defined(WOLFPKCS11_TPM_STORE) && \
-    !defined(WOLFPKCS11_CUSTOM_STORE)
-    #define TEST_CORRUPT_COUNTER
-#endif
 
 static CK_SLOT_ID slot = 0;
 static const char* soPin = "password123456";
@@ -215,23 +210,26 @@ static CK_RV gen_keypair(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE* pub,
 #endif
 
 #ifndef WOLFPKCS11_NO_STORE
-/* A token that has used every id must still load, with the session ids
- * available again. */
-static void reload_test(CK_OBJECT_HANDLE tokFirst, CK_OBJECT_HANDLE tokLast)
+static CK_RV reinitialize(void)
 {
-    CK_RV rv;
     CK_C_INITIALIZE_ARGS args;
-    CK_SESSION_HANDLE session = 0;
-    CK_OBJECT_HANDLE obj;
-#ifdef TEST_CORRUPT_COUNTER
-    char path[512];
-#else
-    unsigned char label[32];
-#endif
 
     XMEMSET(&args, 0, sizeof(args));
     args.flags = CKF_OS_LOCKING_OK;
-    rv = funcList->C_Initialize(&args);
+    return funcList->C_Initialize(&args);
+}
+
+/* A token that has used every id must still load, with the session ids
+ * available again. A stored counter that is out of range must be replaced by
+ * one above the ids of the token's objects. */
+static void reload_test(CK_OBJECT_HANDLE tokFirst, CK_OBJECT_HANDLE tokLast)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = 0;
+    CK_OBJECT_HANDLE obj;
+    unsigned char label[32];
+
+    rv = reinitialize();
     CHECK_RV(rv, "reload token with every token id used", CKR_OK);
     if (rv != CKR_OK)
         return;
@@ -248,38 +246,42 @@ static void reload_test(CK_OBJECT_HANDLE tokFirst, CK_OBJECT_HANDLE tokLast)
         CHECK_RV(rv, "session object after reload", CKR_OK);
         CHECK_TRUE((obj & HANDLE_ON_TOKEN) == 0,
                    "session object after reload has no token flag");
-    }
 
-#ifdef TEST_CORRUPT_COUNTER
-    /* Destroying a token object stores the token, here with the counter past
-     * the limit. Loading that token must fail. */
-    CHECK_TRUE(WP11_Test_SetNextObjId(slot, 1, (int)OBJ_ID_MAX + 2) == 0,
-               "set next token object id past the limit");
-    rv = funcList->C_DestroyObject(session, tokFirst);
-    CHECK_RV(rv, "store token with counter past the limit", CKR_OK);
+        /* Destroying a token object stores the token, here with a counter
+         * that is out of range. Only the first token object is left. */
+        CHECK_TRUE(WP11_Test_SetNextObjId(slot, 1, -1) == 0,
+                   "set next token object id out of range");
+        rv = funcList->C_DestroyObject(session, tokLast);
+        CHECK_RV(rv, "store token with counter out of range", CKR_OK);
+    }
     funcList->C_CloseSession(session);
+    session = 0;
     funcList->C_Finalize(NULL);
 
-    rv = funcList->C_Initialize(&args);
-    CHECK_RV(rv, "load token with counter past the limit fails",
-             CKR_FUNCTION_FAILED);
-    if (rv == CKR_OK)
-        funcList->C_Finalize(NULL);
+    rv = reinitialize();
+    CHECK_RV(rv, "load token with counter out of range", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    rv = open_user_session(&session);
+    CHECK_RV(rv, "open user session after second reload", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = create_data(session, CK_TRUE, "token-next", &obj);
+        CHECK_RV(rv, "token object after counter recovered", CKR_OK);
+        CHECK_TRUE(obj == tokFirst + 1,
+                   "token object id follows the stored object's id");
+        check_label(session, tokFirst, "token-first",
+                    "first token object label after second reload");
+        check_label(session, obj, "token-next", "new token object label");
+        funcList->C_CloseSession(session);
+    }
 
-    snprintf(path, sizeof(path), "%s" PATH_SEP "%s", TEST_DIR,
-             WOLFPKCS11_TOKEN_FILENAME);
-    (void)remove(path);
-#else
-    (void)tokFirst;
-    /* The token is not a file to delete, so reset it for later tests. */
-    funcList->C_CloseSession(session);
+    /* Reset the token so a run that shares its storage starts clean. */
     XMEMSET(label, ' ', sizeof(label));
     XMEMCPY(label, tokenLabel, XSTRLEN(tokenLabel));
     rv = funcList->C_InitToken(slot, (CK_UTF8CHAR_PTR)soPin,
                                (CK_ULONG)XSTRLEN(soPin), label);
     CHECK_RV(rv, "reset token", CKR_OK);
     funcList->C_Finalize(NULL);
-#endif
 }
 #endif
 

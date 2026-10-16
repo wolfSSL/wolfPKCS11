@@ -9035,15 +9035,15 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
             }
             else if (ret == 0) {
                 ret = wp11_storage_read_int(storage, &token->nextObjId);
-                if (ret == BUFFER_E || (ret == 0 && token->nextObjId == 0)) {
+                /* OBJ_ID_MAX + 1 is a token that has used every id. Any other
+                 * value outside 1..OBJ_ID_MAX is not a real counter. With TPM
+                 * storage, a token written before the counter was stored
+                 * reads back whatever follows its data. The loaded objects
+                 * set a lower bound below either way. */
+                if (ret == BUFFER_E || (ret == 0 && (token->nextObjId < 1 ||
+                        token->nextObjId > OBJ_ID_MAX + 1))) {
                     token->nextObjId = 1;
                     ret = 0;
-                }
-                /* OBJ_ID_MAX + 1 is a token that has used every id. Beyond
-                 * that, ids no longer fit in a handle. */
-                else if (ret == 0 && (token->nextObjId < 0 ||
-                        token->nextObjId > OBJ_ID_MAX + 1)) {
-                    ret = BUFFER_E;
                 }
             }
         }
@@ -9054,6 +9054,12 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
         for (i = token->objCnt - 1; (ret == 0) && (i >= 0); i--) {
             /* Load the objects. */
             ret = wp11_Object_Load(object, tokenId, i);
+            /* Keep new token object ids above the stored ones, in case the
+             * counter was not stored or was not usable. */
+            if (ret == 0 && (int)OBJ_HANDLE_OBJ_ID(object->handle) >=
+                    token->nextObjId) {
+                token->nextObjId = (int)OBJ_HANDLE_OBJ_ID(object->handle) + 1;
+            }
             object = object->next;
         }
 
