@@ -69,9 +69,16 @@
 
 #ifdef DEBUG_WOLFPKCS11
 
-/* DEBUG_WOLFPKCS11-only test hook exported by libwolfpkcs11. */
+/* DEBUG_WOLFPKCS11-only test hook exported by libwolfpkcs11, with C linkage
+ * as in wolfpkcs11/internal.h. */
+#ifdef __cplusplus
+extern "C" {
+#endif
 extern int WP11_Test_SetNextObjId(CK_SLOT_ID slotId, int onToken,
     int nextObjId);
+#ifdef __cplusplus
+}
+#endif
 
 /* Mirror OBJ_ID_MAX and the onToken handle flag in src/internal.c. */
 #define OBJ_ID_MAX          0x0fffffffUL
