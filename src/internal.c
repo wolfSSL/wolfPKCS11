@@ -567,6 +567,12 @@ typedef struct WP11_Token {
                                         * 0 = not set
                                         * 1 = empty
                                         * 2 = not empty                       */
+#ifndef WOLFPKCS11_NO_STORE
+    byte storeDirty;                   /* A store pass was skipped or failed,
+                                        * so the next one writes everything.
+                                        * Not a bit-field: guarded by the
+                                        * token lock, unlike userPinEmpty.   */
+#endif
 } WP11_Token;
 
 struct WP11_ObjectCalls {
@@ -9100,7 +9106,8 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
  * @return  0 on success.
  * @return  MEMORY_E when dynamic memory allocation fails.
  * @return  BUFFER_E when storing fails.
- * @return  NOT_AVAILABLE_E when unable to write data.
+ * @return  NOT_AVAILABLE_E when storage is turned off and nothing was
+ *          written.
  */
 static int wp11_Token_StorePass(WP11_Token* token, int tokenId, int what,
     WP11_Object* only)
@@ -9149,7 +9156,7 @@ static int wp11_Token_StorePass(WP11_Token* token, int tokenId, int what,
 
     if (what == WP11_STORE_PASS_OBJECT) {
         /* Not writing the token record. */
-        return (ret == NOT_AVAILABLE_E) ? 0 : ret;
+        return ret;
     }
 
     if (ret == 0) {
@@ -9235,10 +9242,6 @@ static int wp11_Token_StorePass(WP11_Token* token, int tokenId, int what,
 
         ret = wp11_storage_close_write(storage, ret);
     }
-    else if (ret == NOT_AVAILABLE_E) {
-        /* Not writing. */
-        ret = 0;
-    }
 
     return ret;
 }
@@ -9246,11 +9249,14 @@ static int wp11_Token_StorePass(WP11_Token* token, int tokenId, int what,
 /**
  * Store records of the token as one pass that commits as a unit.
  *
+ * When an earlier pass was skipped, because storage was turned off, or failed,
+ * storage may be behind the token in memory, so this pass writes everything.
+ *
  * @param [in]  token    Token object.
  * @param [in]  tokenId  Id of token.
  * @param [in]  what     WP11_STORE_PASS_* value.
  * @param [in]  only     Object to store when not storing all of them.
- * @return  0 on success.
+ * @return  0 on success, or when storage is turned off.
  * @return  Other value when the pass did not commit.
  */
 static int wp11_Token_StoreSome(WP11_Token* token, int tokenId, int what,
@@ -9259,17 +9265,33 @@ static int wp11_Token_StoreSome(WP11_Token* token, int tokenId, int what,
     int ret;
 #ifdef WP11_STORE_BATCH
     int endRet;
+#endif
 
+    if (token->storeDirty)
+        what = WP11_STORE_PASS_ALL;
+
+#ifdef WP11_STORE_BATCH
     ret = wolfPKCS11_StoreBatchBegin(tokenId);
     if (ret == 0) {
         ret = wp11_Token_StorePass(token, tokenId, what, only);
-        endRet = wolfPKCS11_StoreBatchEnd(ret == 0);
+        endRet = wolfPKCS11_StoreBatchEnd(ret == 0 || ret == NOT_AVAILABLE_E);
         if (ret == 0)
             ret = endRet;
     }
 #else
     ret = wp11_Token_StorePass(token, tokenId, what, only);
 #endif
+
+    if (ret == 0) {
+        if (what == WP11_STORE_PASS_ALL)
+            token->storeDirty = 0;
+    }
+    else {
+        token->storeDirty = 1;
+        /* Storage is turned off: nothing to write is not an error. */
+        if (ret == NOT_AVAILABLE_E)
+            ret = 0;
+    }
 
     return ret;
 }
@@ -12930,9 +12952,10 @@ int WP11_Session_RemoveObjectByHandle(WP11_Session* session,
         /* A token record left unwritten outranks a record left behind. */
         if (storeRet != 0)
             ret = storeRet;
-        if (moved != NULL && storeRet == 0) {
+        if (moved != NULL && storeRet == 0 && !token->storeDirty) {
             /* Remove the moved object's records under its old id, the
-             * highest one, which is no longer used. */
+             * highest one, which is no longer used. Kept when the moved
+             * object was not written under its new id. */
             storeRet = wp11_Object_Unstore(moved, (int)session->slotId,
                 token->objCnt);
         #ifdef DEBUG_WOLFPKCS11
@@ -13534,21 +13557,20 @@ int WP11_Object_OnToken(WP11_Object* object)
 /**
  * Write a token object to storage after its attributes have changed.
  * Only the object's own records are written. Session objects are not stored.
+ * The change is already live, so when the write fails the token is left
+ * marked for a full store by its next store pass or C_Finalize.
  *
  * @param  object  [in]  Object object.
- * @return  0 on success or when nothing needs storing.
- *          Other value when storing failed.
  */
-int WP11_Object_Persist(WP11_Object* object)
+void WP11_Object_Persist(WP11_Object* object)
 {
-    int ret = 0;
 #ifndef WOLFPKCS11_NO_STORE
     WP11_Slot* slot = object->slot;
     WP11_Token* token;
     WP11_Object* curr;
 
     if (!object->onToken || slot == NULL)
-        return 0;
+        return;
 
     token = &slot->token;
     WP11_Lock_LockRW(&token->lock);
@@ -13558,15 +13580,13 @@ int WP11_Object_Persist(WP11_Object* object)
             break;
     }
     if (curr != NULL) {
-        ret = wp11_Slot_StoreSome(slot, (int)slot->id, WP11_STORE_PASS_OBJECT,
+        (void)wp11_Slot_StoreSome(slot, (int)slot->id, WP11_STORE_PASS_OBJECT,
             object);
     }
     WP11_Lock_UnlockRW(&token->lock);
 #else
     (void)object;
 #endif
-
-    return ret;
 }
 
 /**

@@ -24,7 +24,9 @@
  *  - after creates, destroys and an attribute change, the records written so
  *    far load back as the right objects without relying on the full store
  *    done by C_Finalize,
- *  - no records are left behind for destroyed objects.
+ *  - no records are left behind for destroyed objects,
+ *  - changes made while storage is turned off (WOLFPKCS11_NO_STORE) are all
+ *    written once it is turned back on.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -69,6 +71,7 @@
 
 #define MAX_FILES   64
 #define NAME_LEN    128
+#define PATH_LEN    256
 
 #define CHECK(cond, msg)                                                   \
     do {                                                                   \
@@ -136,24 +139,35 @@ static long record_id(const char* name)
     return strtol(strrchr(name, '_') + 1, NULL, 16);
 }
 
+/* Join a directory and file name. Returns -1 when it does not fit. */
+static int join_path(char* path, size_t len, const char* dir, const char* name)
+{
+    int n = snprintf(path, len, "%s/%s", dir, name);
+
+    return (n < 0 || (size_t)n >= len) ? -1 : 0;
+}
+
 static int list_records(const char* dir, struct file_ent* ents, int* cnt)
 {
     DIR* d;
     struct dirent* e;
     struct stat st;
-    char path[NAME_LEN * 2];
+    char path[PATH_LEN];
 
     *cnt = 0;
     d = opendir(dir);
     if (d == NULL)
         return -1;
     while ((e = readdir(d)) != NULL) {
-        if (!is_object_record(e->d_name) || *cnt >= MAX_FILES)
+        if (!is_object_record(e->d_name) || *cnt >= MAX_FILES ||
+                strlen(e->d_name) >= NAME_LEN) {
             continue;
-        snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
-        if (stat(path, &st) != 0)
+        }
+        if (join_path(path, sizeof(path), dir, e->d_name) != 0 ||
+                stat(path, &st) != 0) {
             continue;
-        snprintf(ents[*cnt].name, NAME_LEN, "%s", e->d_name);
+        }
+        memcpy(ents[*cnt].name, e->d_name, strlen(e->d_name) + 1);
         ents[*cnt].ino = st.st_ino;
         (*cnt)++;
     }
@@ -165,7 +179,7 @@ static int clear_dir(const char* dir)
 {
     DIR* d;
     struct dirent* e;
-    char path[NAME_LEN * 2];
+    char path[PATH_LEN];
 
     if (mkdir(dir, 0700) != 0 && errno != EEXIST)
         return -1;
@@ -175,8 +189,8 @@ static int clear_dir(const char* dir)
     while ((e = readdir(d)) != NULL) {
         if (e->d_name[0] == '.')
             continue;
-        snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
-        (void)unlink(path);
+        if (join_path(path, sizeof(path), dir, e->d_name) == 0)
+            (void)unlink(path);
     }
     closedir(d);
     return 0;
@@ -186,8 +200,8 @@ static int copy_dir(const char* from, const char* to)
 {
     DIR* d;
     struct dirent* e;
-    char src[NAME_LEN * 2];
-    char dst[NAME_LEN * 2];
+    char src[PATH_LEN];
+    char dst[PATH_LEN];
     char buf[4096];
     size_t n;
     FILE* in;
@@ -201,8 +215,11 @@ static int copy_dir(const char* from, const char* to)
     while ((e = readdir(d)) != NULL) {
         if (e->d_name[0] == '.')
             continue;
-        snprintf(src, sizeof(src), "%s/%s", from, e->d_name);
-        snprintf(dst, sizeof(dst), "%s/%s", to, e->d_name);
+        if (join_path(src, sizeof(src), from, e->d_name) != 0 ||
+                join_path(dst, sizeof(dst), to, e->d_name) != 0) {
+            closedir(d);
+            return -1;
+        }
         in = fopen(src, "rb");
         out = fopen(dst, "wb");
         if (in == NULL || out == NULL) {
@@ -420,15 +437,50 @@ static int create_checked(CK_SESSION_HANDLE session, int idx,
     return 0;
 }
 
+/* Reload from what is in storage now, as if power was lost here, and check
+ * only records for ids below cnt exist. */
+static int reload_from_storage(CK_SESSION_HANDLE session, int cnt)
+{
+    struct file_ent recs[MAX_FILES];
+    int recCnt;
+    int i;
+
+    CHECK(copy_dir(STORE_DIR, SNAP_DIR) == 0, "Snapshot store");
+    (void)funcList->C_Logout(session);
+    (void)funcList->C_CloseSession(session);
+    pkcs11_final();
+    CHECK(copy_dir(SNAP_DIR, STORE_DIR) == 0, "Restore store");
+
+    CHECK(list_records(STORE_DIR, recs, &recCnt) == 0, "List records");
+    for (i = 0; i < recCnt; i++) {
+        if (record_id(recs[i].name) >= cnt) {
+            fprintf(stderr, "Record left behind: %s\n", recs[i].name);
+            CHECK(0, "No records for removed ids");
+        }
+    }
+    CHECK_RV(pkcs11_init(), "Initialize after restore");
+    return 0;
+}
+
+static int check_data_obj(CK_SESSION_HANDLE session, const char* label,
+    int idx)
+{
+    CK_OBJECT_HANDLE h;
+    char value[32];
+
+    CHECK(find_label(session, label, &h) == 1, "Object loaded");
+    snprintf(value, sizeof(value), "value of object %d", idx);
+    CHECK(check_value(session, h, value, strlen(value)) == 0,
+          "Object value loaded");
+    return 0;
+}
+
 static int partial_store_test(void)
 {
     CK_SESSION_HANDLE session;
     CK_OBJECT_HANDLE obj[OBJ_CNT];
     CK_OBJECT_HANDLE h;
-    struct file_ent recs[MAX_FILES];
-    int recCnt;
     char label[16];
-    char value[32];
     static const char renamed[] = "obj2-renamed";
     CK_ATTRIBUTE labelAttr = { CKA_LABEL, (void*)renamed,
                                sizeof(renamed) - 1 };
@@ -456,23 +508,8 @@ static int partial_store_test(void)
     CHECK_RV(funcList->C_SetAttributeValue(session, obj[2], &labelAttr, 1),
              "Rename object");
 
-    /* Keep what is in storage now, as if power was lost here. */
-    CHECK(copy_dir(STORE_DIR, SNAP_DIR) == 0, "Snapshot store");
-    (void)funcList->C_Logout(session);
-    (void)funcList->C_CloseSession(session);
-    pkcs11_final();
-    CHECK(copy_dir(SNAP_DIR, STORE_DIR) == 0, "Restore store");
-
     /* Only records of the four objects left may exist. */
-    CHECK(list_records(STORE_DIR, recs, &recCnt) == 0, "List records");
-    for (i = 0; i < recCnt; i++) {
-        if (record_id(recs[i].name) >= 4) {
-            fprintf(stderr, "Record left behind: %s\n", recs[i].name);
-            CHECK(0, "No records for removed ids");
-        }
-    }
-
-    CHECK_RV(pkcs11_init(), "Initialize after restore");
+    CHECK(reload_from_storage(session, 4) == 0, "Reload");
     CHECK_RV(open_user_session(&session), "Open user session");
     CHECK(count_token_objects(session) == 4, "Four objects loaded");
 
@@ -484,16 +521,11 @@ static int partial_store_test(void)
                   "Key value loaded");
         }
         else {
-            snprintf(value, sizeof(value), "value of object %d",
-                     survivors[i]);
-            CHECK(check_value(session, h, value, strlen(value)) == 0,
+            CHECK(check_data_obj(session, label, survivors[i]) == 0,
                   "Object value loaded");
         }
     }
-    CHECK(find_label(session, renamed, &h) == 1, "Renamed object loaded");
-    snprintf(value, sizeof(value), "value of object %d", 2);
-    CHECK(check_value(session, h, value, strlen(value)) == 0,
-          "Renamed object value loaded");
+    CHECK(check_data_obj(session, renamed, 2) == 0, "Renamed object loaded");
     CHECK(find_label(session, "obj2", &h) == 0, "Old label gone");
     for (i = 0; i < OBJ_CNT; i++) {
         if (i == 0 || i == 3 || i == 6) {
@@ -502,6 +534,51 @@ static int partial_store_test(void)
                   "Destroyed object not loaded");
         }
     }
+
+    (void)funcList->C_Logout(session);
+    (void)funcList->C_CloseSession(session);
+    pkcs11_final();
+    return 0;
+}
+
+static int pause_resume_test(void)
+{
+    CK_SESSION_HANDLE session;
+    CK_OBJECT_HANDLE obj[5];
+    CK_OBJECT_HANDLE h;
+    static const char renamed[] = "obj1-renamed";
+    CK_ATTRIBUTE labelAttr = { CKA_LABEL, (void*)renamed,
+                               sizeof(renamed) - 1 };
+    int i;
+
+    CHECK(clear_dir(STORE_DIR) == 0, "Clear store directory");
+    CHECK_RV(pkcs11_init(), "Initialize");
+    CHECK_RV(provision(), "Provision token");
+    CHECK_RV(open_user_session(&session), "Open user session");
+    for (i = 0; i <= 2; i++)
+        CHECK_RV(create_obj(session, i, &obj[i]), "Create object");
+
+    /* Storage off: these changes are only in memory. */
+    CHECK(setenv("WOLFPKCS11_NO_STORE", "1", 1) == 0, "Turn storage off");
+    CHECK_RV(funcList->C_DestroyObject(session, obj[0]), "Destroy oldest");
+    CHECK_RV(funcList->C_SetAttributeValue(session, obj[1], &labelAttr, 1),
+             "Rename object");
+    CHECK(find_label(session, renamed, &h) == 1, "Rename is live");
+    CHECK_RV(create_obj(session, 3, &obj[3]), "Create object");
+    CHECK(unsetenv("WOLFPKCS11_NO_STORE") == 0, "Turn storage on");
+
+    /* The next write catches up with every change made while off. */
+    CHECK_RV(create_obj(session, 4, &obj[4]), "Create object");
+
+    CHECK(reload_from_storage(session, 4) == 0, "Reload");
+    CHECK_RV(open_user_session(&session), "Open user session");
+    CHECK(count_token_objects(session) == 4, "Four objects loaded");
+    CHECK(check_data_obj(session, renamed, 1) == 0, "Renamed object");
+    CHECK(check_data_obj(session, "obj2", 2) == 0, "Moved object");
+    CHECK(check_data_obj(session, "obj3", 3) == 0, "Object made while off");
+    CHECK(check_data_obj(session, "obj4", 4) == 0, "Object made after");
+    CHECK(find_label(session, "obj0", &h) == 0, "Destroyed object gone");
+    CHECK(find_label(session, "obj1", &h) == 0, "Old label gone");
 
     (void)funcList->C_Logout(session);
     (void)funcList->C_CloseSession(session);
@@ -523,6 +600,10 @@ int main(int argc, char* argv[])
 
     printf("Token partial store test\n");
     ret = partial_store_test();
+    if (ret == 0) {
+        printf("Token pause and resume test\n");
+        ret = pause_resume_test();
+    }
     if (ret == 0)
         printf("All tests passed!\n");
     return (ret == 0) ? 0 : 1;
