@@ -76,6 +76,39 @@ As ML-KEM is a feature of PKCS#11 version 3.2, support for that is required,
 too. Hence, to enable all in wolfPKCS11, add `--enable-pkcs11v32 --enable-mlkem`
 during the configure step.
 
+### Optional: Self-contained library with static wolfSSL
+
+By default libwolfpkcs11 loads libwolfssl at run time. To ship a single
+library instead, build wolfSSL as a static library with position independent
+code and link it into libwolfpkcs11:
+
+```sh
+cd wolfssl
+./configure --enable-static --disable-shared --with-pic --enable-cryptonly \
+    --enable-aescfb --enable-rsapss --enable-keygen --enable-pwdbased \
+    --enable-scrypt \
+    C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT -DHAVE_AES_ECB -DHAVE_AES_KEYWRAP"
+make
+sudo make install
+
+cd ../wolfPKCS11
+./configure --with-static-wolfssl=/usr/local/lib/libwolfssl.a
+make
+```
+
+The wolfSSL symbols stay hidden inside libwolfpkcs11, so an application using
+its own wolfSSL, even with a different configuration, can load the module with
+`dlopen()` or `wc_Pkcs11_Initialize()`. Settings the application makes on its
+own wolfSSL, such as `wolfSSL_SetAllocators()`, do not reach the module. A
+wolfSSL update requires rebuilding libwolfpkcs11. This option needs an ELF
+linker (GNU ld, gold or lld) and cannot be combined with wolfTPM support. If
+the static wolfSSL needs other libraries, such as zlib, pass them in `LIBS`:
+the ones `pkg-config --static --libs wolfssl` lists after `-lwolfssl`.
+
+With CMake, build wolfSSL with `-DBUILD_SHARED_LIBS=OFF` and
+`-DCMAKE_POSITION_INDEPENDENT_CODE=ON`, then configure wolfPKCS11 with
+`-DWOLFPKCS11_STATIC_WOLFSSL=yes`.
+
 ### Build options and defines
 
 #### Define WOLFPKCS11_TPM_STORE
@@ -295,6 +328,7 @@ cmake -DCMAKE_PREFIX_PATH=/path/to/wolfssl/install ..
 | `WOLFPKCS11_DEFAULT_TOKEN_PATH` | `""` | Default token storage path compiled into library |
 | `WOLFPKCS11_BUILD_OUT_OF_TREE` | `yes` | Generate build artifacts outside source tree |
 | `BUILD_SHARED_LIBS` | `ON` | Build shared (`ON`) or static (`OFF`) library |
+| `WOLFPKCS11_STATIC_WOLFSSL` | `no` | Link a static wolfSSL into the shared library and hide its symbols |
 
 Note: wolfSSL must be built with the corresponding features enabled for the
 options above to work (e.g. enabling `WOLFPKCS11_AESCCM` requires wolfSSL built

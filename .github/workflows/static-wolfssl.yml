@@ -1,0 +1,119 @@
+name: wolfPKCS11 static wolfSSL tests
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+
+permissions:
+  contents: read
+
+jobs:
+  autotools:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+#pull wolfPKCS11
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+        persist-credentials: false
+
+#setup wolfssl
+    - uses: actions/checkout@v4
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+        persist-credentials: false
+    - name: Build static wolfSSL
+      working-directory: ./wolfssl
+      run: |
+        ./autogen.sh
+        ./configure --prefix=$GITHUB_WORKSPACE/wolfssl-install \
+            --enable-static --disable-shared --with-pic --enable-cryptonly \
+            --enable-aescfb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt --enable-md5 \
+            C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT -DHAVE_AES_ECB -DHAVE_AES_KEYWRAP"
+        make
+        make install
+
+#setup wolfPKCS11
+    - name: Build wolfPKCS11
+      run: |
+        ./autogen.sh
+        ./configure CPPFLAGS=-I$GITHUB_WORKSPACE/wolfssl-install/include \
+            --with-static-wolfssl=$GITHUB_WORKSPACE/wolfssl-install/lib/libwolfssl.a
+        make
+    - name: Check the library is self-contained
+      run: |
+        lib=$(readlink -f src/.libs/libwolfpkcs11.so)
+        dyn=$(readelf -d "$lib")
+        syms=$(nm -D --defined-only "$lib")
+        if grep -E 'NEEDED.*libwolfssl|TEXTREL' <<<"$dyn"; then exit 1; fi
+        if grep -v ' C_' <<<"$syms"; then exit 1; fi
+        for f in C_GetFunctionList C_GetInterface C_LoginUser; do
+            grep -qw "$f" <<<"$syms"
+        done
+    - name: wolfpkcs11 make check
+      run: make check
+    - name: Run the wolfSSL interoperability test against the library
+      run: make -C tests/wolfssl-interoperability WOLFPKCS11_MODULE=$PWD/src/.libs/libwolfpkcs11.so
+
+# capture logs on failure
+    - name: Upload failure logs
+      if: failure() || cancelled()
+      uses: actions/upload-artifact@v4
+      with:
+        name: wolfpkcs11-static-wolfssl-logs
+        path: |
+          test-suite.log
+          tests/*.log
+        retention-days: 5
+
+  cmake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+#pull wolfPKCS11
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+        persist-credentials: false
+
+#setup wolfssl
+    - uses: actions/checkout@v4
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+        persist-credentials: false
+    - name: Build static wolfSSL
+      working-directory: ./wolfssl
+      run: |
+        cmake -B build -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/wolfssl-install \
+            -DBUILD_SHARED_LIBS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_BUILD_TYPE=Release \
+            -DWOLFSSL_CRYPT_ONLY=yes -DWOLFSSL_AESCFB=yes -DWOLFSSL_AESECB=yes -DWOLFSSL_AESCTR=yes \
+            -DWOLFSSL_AESKEYWRAP=yes -DWOLFSSL_RSA_PSS=yes -DWOLFSSL_KEYGEN=yes -DWOLFSSL_PWDBASED=yes \
+            -DWOLFSSL_MD5=yes -DWOLFSSL_SHA224=yes -DWOLFSSL_HKDF=yes -DWOLFSSL_PUBLIC_MP=yes \
+            -DWOLFSSL_WC_RSA_DIRECT=yes -DWOLFSSL_EXAMPLES=no -DWOLFSSL_CRYPT_TESTS=no
+        cmake --build build
+        cmake --install build
+
+#setup wolfPKCS11
+    - name: Build and test wolfPKCS11
+      run: |
+        cmake -B build -DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/wolfssl-install \
+            -DWOLFPKCS11_STATIC_WOLFSSL=yes -DWOLFPKCS11_PBKDF2=yes
+        cmake --build build
+        ctest --test-dir build --output-on-failure
+    - name: Check the library is self-contained
+      run: |
+        lib=$(readlink -f build/libwolfpkcs11.so)
+        dyn=$(readelf -d "$lib")
+        syms=$(nm -D --defined-only "$lib")
+        if grep -E 'NEEDED.*libwolfssl|TEXTREL' <<<"$dyn"; then exit 1; fi
+        if grep -v ' C_' <<<"$syms"; then exit 1; fi
+        for f in C_GetFunctionList C_GetInterface C_LoginUser; do
+            grep -qw "$f" <<<"$syms"
+        done
+    - name: Run the wolfSSL interoperability test against the library
+      run: make -C tests/wolfssl-interoperability WOLFPKCS11_MODULE=$PWD/build/libwolfpkcs11.so

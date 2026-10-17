@@ -599,6 +599,11 @@ set(LIB_SOURCES
     src/slot.c
     src/crypto.c
 )
+
+add_option("WOLFPKCS11_STATIC_WOLFSSL"
+    "Link a static wolfSSL into the shared library and hide its symbols (default: disabled)"
+    "no" "yes;no")
+
 if(BUILD_SHARED_LIBS)
     message(STATUS "BUILD_SHARED_LIBS enabled: ${LIB_SOURCES}")
     add_library(wolfpkcs11 SHARED ${LIB_SOURCES})
@@ -732,7 +737,33 @@ else()
     # Try to find wolfSSL as an installed package
     find_package(wolfssl REQUIRED)
 endif()
-list(APPEND WOLFPKCS11_LINK_LIBS wolfssl::wolfssl)
+
+if(WOLFPKCS11_STATIC_WOLFSSL)
+    get_target_property(WOLFSSL_LIB_TYPE wolfssl::wolfssl TYPE)
+    if(WOLFSSL_LIB_TYPE STREQUAL "UNKNOWN_LIBRARY")
+        get_target_property(WOLFSSL_LIB_PATH wolfssl::wolfssl IMPORTED_LOCATION)
+        if(WOLFSSL_LIB_PATH MATCHES "\\${CMAKE_STATIC_LIBRARY_SUFFIX}$")
+            set(WOLFSSL_LIB_TYPE "STATIC_LIBRARY")
+        endif()
+    endif()
+
+    if(NOT BUILD_SHARED_LIBS)
+        message(FATAL_ERROR "WOLFPKCS11_STATIC_WOLFSSL needs BUILD_SHARED_LIBS")
+    elseif(APPLE OR WIN32)
+        message(FATAL_ERROR "WOLFPKCS11_STATIC_WOLFSSL needs an ELF linker")
+    elseif(WOLFPKCS11_TPM)
+        message(FATAL_ERROR "WOLFPKCS11_STATIC_WOLFSSL cannot be combined with WOLFPKCS11_TPM")
+    elseif(NOT WOLFSSL_LIB_TYPE STREQUAL "STATIC_LIBRARY")
+        message(FATAL_ERROR "WOLFPKCS11_STATIC_WOLFSSL needs a static wolfSSL library")
+    endif()
+
+    target_link_libraries(wolfpkcs11 PRIVATE wolfssl::wolfssl)
+    target_link_options(wolfpkcs11 PRIVATE
+        "LINKER:--exclude-libs,ALL" "LINKER:-Bsymbolic" "LINKER:-z,text"
+        "LINKER:-z,defs")
+else()
+    list(APPEND WOLFPKCS11_LINK_LIBS wolfssl::wolfssl)
+endif()
 
 # Other libraries
 target_link_libraries(wolfpkcs11 PUBLIC ${WOLFPKCS11_LINK_LIBS})

@@ -13,6 +13,9 @@ src_libwolfpkcs11_la_SOURCES = \
 src_libwolfpkcs11_la_CFLAGS       = -DBUILDING_WOLFPKCS11 $(AM_CFLAGS)
 src_libwolfpkcs11_la_CPPFLAGS     = -DBUILDING_WOLFPKCS11 $(AM_CPPFLAGS)
 src_libwolfpkcs11_la_LDFLAGS      = ${AM_LDFLAGS} -no-undefined -version-number ${WOLFPKCS11_LIBRARY_VERSION}
+if BUILD_STATIC_WOLFSSL
+src_libwolfpkcs11_la_LDFLAGS     += -Wl,--exclude-libs,ALL -Wl,-Bsymbolic -Wl,-z,text -Wl,-z,defs
+endif
 
-#src_libwolfpkcs11_la_DEPENDENCIES =
+src_libwolfpkcs11_la_DEPENDENCIES = $(STATIC_WOLFSSL_DEP)
 #EXTRA_DIST +=
