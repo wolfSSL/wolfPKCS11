@@ -678,8 +678,14 @@ AC_SUBST([AM_LDFLAGS])
 PACKAGE_INIT='get_filename_component(PACKAGE_PREFIX_DIR "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)'
 AC_SUBST([PACKAGE_INIT])
 
+wolfpkcs11_save_prefix=$prefix
+wolfpkcs11_save_exec_prefix=$exec_prefix
+test "x$prefix" = "xNONE" && prefix=$ac_default_prefix
+test "x$exec_prefix" = "xNONE" && exec_prefix=$prefix
 WOLFPKCS11_LIBDIR_ABS=`eval echo "$libdir"`
 WOLFPKCS11_INCLUDEDIR_ABS=`eval echo "$includedir"`
+prefix=$wolfpkcs11_save_prefix
+exec_prefix=$wolfpkcs11_save_exec_prefix
 AC_SUBST([WOLFPKCS11_LIBDIR_ABS])
 AC_SUBST([WOLFPKCS11_INCLUDEDIR_ABS])
 
