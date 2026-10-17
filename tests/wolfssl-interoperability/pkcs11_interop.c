@@ -1141,6 +1141,8 @@ int main(int argc, char** argv)
     int dev_id = 23;
     int ret;
     int failures = 0;
+    void* probe;
+    void (*debug_on)(void);
 
     if (module_path == NULL) {
         module_path = (argc > 1) ? argv[1] : "./build/libwolfpkcs11-interop.so";
@@ -1155,22 +1157,28 @@ int main(int argc, char** argv)
     memset(&dev, 0, sizeof(dev));
     memset(&token, 0, sizeof(token));
 
-    {
-        void* probe = dlopen(module_path, RTLD_NOW | RTLD_LOCAL);
-        if (probe == NULL) {
-            fprintf(stderr, "dlopen failed for %s: %s\n", module_path, dlerror());
-            return EXIT_FAILURE;
-        }
-        void (*debug_on)(void) = (void (*)(void))dlsym(probe,
-                                                       "wolfPKCS11_Debugging_On");
-        if (debug_on != NULL)
-            debug_on();
+    probe = dlopen(module_path, RTLD_NOW | RTLD_LOCAL);
+    if (probe == NULL) {
+        fprintf(stderr, "dlopen failed for %s: %s\n", module_path, dlerror());
+        return EXIT_FAILURE;
+    }
+    debug_on = (void (*)(void))dlsym(probe, "wolfPKCS11_Debugging_On");
+    if (debug_on != NULL)
+        debug_on();
+
+    ret = wolfCrypt_Init();
+    if (ret != 0) {
+        fprintf(stderr, "wolfCrypt_Init failed: %d\n", ret);
         dlclose(probe);
+        return EXIT_FAILURE;
     }
 
     ret = init_token(module_path, &dev, &token, &slot_id);
-    if (ret != 0)
+    if (ret != 0) {
+        wolfCrypt_Cleanup();
+        dlclose(probe);
         return EXIT_FAILURE;
+    }
 
     ret = wc_CryptoCb_RegisterDevice(dev_id, wc_Pkcs11_CryptoDevCb, &token);
     if (ret != 0) {
@@ -1366,6 +1374,8 @@ cleanup:
     wc_Pkcs11Token_Close(&token);
     wc_Pkcs11Token_Final(&token);
     wc_Pkcs11_Finalize(&dev);
+    wolfCrypt_Cleanup();
+    dlclose(probe);
 
     if (failures == 0) {
         printf("All wolfPKCS11 interoperability tests passed.\n");
