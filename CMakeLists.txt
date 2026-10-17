@@ -631,6 +631,10 @@ set_target_properties(wolfpkcs11
 )
 
 target_compile_definitions(wolfpkcs11 PRIVATE "BUILDING_WOLFPKCS11")
+if(NOT WIN32 AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    set_target_properties(wolfpkcs11 PROPERTIES C_VISIBILITY_PRESET hidden)
+    target_compile_definitions(wolfpkcs11 PRIVATE "HAVE_VISIBILITY=1")
+endif()
 target_compile_definitions(wolfpkcs11 PRIVATE ${WOLFPKCS11_DEFINITIONS})
 
 # Determine library filename for WOLFPKCS11_DLL_FILENAME
@@ -775,6 +779,7 @@ if(WOLFPKCS11_TESTS)
         add_wpkcs11_test(${test_target}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/${test_target}.c)
     endforeach()
+    set_tests_properties(debug_test PROPERTIES SKIP_RETURN_CODE 77)
 
     # HBS (LMS/HSS, XMSS/XMSS^MT) public-key persistence test. Only built when
     # the feature is enabled; the test exits 77 (skip) when no token store is
