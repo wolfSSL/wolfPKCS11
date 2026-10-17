@@ -58,6 +58,17 @@ jobs:
       run: make check
     - name: Run the wolfSSL interoperability test against the library
       run: make -C tests/wolfssl-interoperability WOLFPKCS11_MODULE=$PWD/src/.libs/libwolfpkcs11.so
+    - name: Install wolfPKCS11
+      run: |
+        sudo make install
+        sudo ldconfig
+    - name: Build a find_package consumer without wolfSSL
+      run: |
+        libs=$(wolfpkcs11-config --libs)
+        if grep wolfssl <<<"$libs"; then exit 1; fi
+        cmake -S cmake/consumer -B consumer-build
+        cmake --build consumer-build
+        ./consumer-build/wolfpkcs11_consumer
 
 # capture logs on failure
     - name: Upload failure logs
@@ -117,3 +128,9 @@ jobs:
         done
     - name: Run the wolfSSL interoperability test against the library
       run: make -C tests/wolfssl-interoperability WOLFPKCS11_MODULE=$PWD/build/libwolfpkcs11.so
+    - name: Build a find_package consumer without wolfSSL
+      run: |
+        cmake --install build --prefix $RUNNER_TEMP/wolfpkcs11
+        cmake -S cmake/consumer -B consumer-build -DCMAKE_PREFIX_PATH=$RUNNER_TEMP/wolfpkcs11
+        cmake --build consumer-build
+        LD_LIBRARY_PATH=$RUNNER_TEMP/wolfpkcs11/lib ./consumer-build/wolfpkcs11_consumer
