@@ -63,7 +63,13 @@
     !defined(WOLFPKCS11_LEGACY_PRIVATE_FALSE_DEFAULT)
 
 /* DEBUG_WOLFPKCS11-only test hook exported by libwolfpkcs11. */
+#ifdef __cplusplus
+extern "C" {
+#endif
 extern void WP11_Test_SetEmptyPinCheckHook(void (*hook)(void));
+#ifdef __cplusplus
+}
+#endif
 
 #define EMPTY_PIN_CACHE_TEST_DIR "./store/empty_pin_cache_test"
 #define WOLFPKCS11_TOKEN_FILENAME "wp11_token_0000000000000001"
