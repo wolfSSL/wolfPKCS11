@@ -26,7 +26,9 @@
  *    done by C_Finalize,
  *  - no records are left behind for destroyed objects,
  *  - changes made while storage is turned off (WOLFPKCS11_NO_STORE) are all
- *    written once it is turned back on.
+ *    written once it is turned back on,
+ *  - with a debug build, a destroy or attribute change whose store fails
+ *    leaves the previous records loadable, and the next write catches up.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -45,6 +47,7 @@
 #include <wolfpkcs11/pkcs11.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #if !defined(WOLFPKCS11_NO_STORE) && !defined(WOLFPKCS11_CUSTOM_STORE) && \
@@ -206,6 +209,7 @@ static int copy_dir(const char* from, const char* to)
     size_t n;
     FILE* in;
     FILE* out;
+    int ret = 0;
 
     if (clear_dir(to) != 0)
         return -1;
@@ -230,13 +234,20 @@ static int copy_dir(const char* from, const char* to)
             closedir(d);
             return -1;
         }
-        while ((n = fread(buf, 1, sizeof(buf), in)) > 0)
-            (void)fwrite(buf, 1, n, out);
+        while (ret == 0 && (n = fread(buf, 1, sizeof(buf), in)) > 0) {
+            if (fwrite(buf, 1, n, out) != n)
+                ret = -1;
+        }
+        if (ferror(in))
+            ret = -1;
         fclose(in);
-        fclose(out);
+        if (fclose(out) != 0)
+            ret = -1;
+        if (ret != 0)
+            break;
     }
     closedir(d);
-    return 0;
+    return ret;
 }
 
 /* ---- PKCS#11 helpers ---- */
@@ -586,6 +597,169 @@ static int pause_resume_test(void)
     return 0;
 }
 
+#ifdef DEBUG_WOLFPKCS11
+#ifdef __cplusplus
+extern "C" {
+#endif
+/* Debug-only hook exported by libwolfpkcs11. */
+extern void WP11_Test_StoreCloseFailAfter(int closes);
+#ifdef __cplusplus
+}
+#endif
+
+static int check_key(CK_SESSION_HANDLE session, CK_BBOOL encrypt)
+{
+    CK_OBJECT_HANDLE h;
+    CK_BBOOL val = CK_FALSE;
+    CK_ATTRIBUTE attr = { CKA_ENCRYPT, &val, sizeof(val) };
+
+    CHECK(find_label(session, "obj5", &h) == 1, "Key loaded");
+    CHECK_RV(funcList->C_GetAttributeValue(session, h, &attr, 1),
+             "Get CKA_ENCRYPT");
+    CHECK(val == encrypt, "CKA_ENCRYPT loaded");
+    CHECK(check_value(session, h, aesKey, sizeof(aesKey)) == 0,
+          "Key value loaded");
+    return 0;
+}
+
+/* Change the key's CKA_ENCRYPT, which binds its stored value to the new
+ * policy, with the store failing when fail is set. */
+static int set_key_encrypt(CK_SESSION_HANDLE session, CK_BBOOL encrypt,
+    int fail)
+{
+    CK_OBJECT_HANDLE h;
+    CK_ATTRIBUTE attr = { CKA_ENCRYPT, &encrypt, sizeof(encrypt) };
+    CK_RV rv;
+
+    CHECK(find_label(session, "obj5", &h) == 1, "Key found");
+    if (fail)
+        WP11_Test_StoreCloseFailAfter(0);
+    rv = funcList->C_SetAttributeValue(session, h, &attr, 1);
+    WP11_Test_StoreCloseFailAfter(-1);
+    CHECK_RV(rv, "Set CKA_ENCRYPT");
+    return 0;
+}
+
+/* Destroy an object with the store failing. The destroy is reported as
+ * failed and the object is gone from memory. */
+static int destroy_failing(CK_SESSION_HANDLE session, const char* label)
+{
+    CK_OBJECT_HANDLE h;
+    CK_RV rv;
+
+    CHECK(find_label(session, label, &h) == 1, "Object found");
+    WP11_Test_StoreCloseFailAfter(0);
+    rv = funcList->C_DestroyObject(session, h);
+    WP11_Test_StoreCloseFailAfter(-1);
+    CHECK(rv == CKR_FUNCTION_FAILED, "Destroy reports the failed store");
+    CHECK(find_label(session, label, &h) == 0, "Object gone from memory");
+    return 0;
+}
+
+/* Rename an object with the store failing. The rename is live. */
+static int rename_failing(CK_SESSION_HANDLE session, const char* label,
+    const char* newLabel)
+{
+    CK_OBJECT_HANDLE h;
+    CK_ATTRIBUTE attr = { CKA_LABEL, (void*)newLabel, strlen(newLabel) };
+    CK_RV rv;
+
+    CHECK(find_label(session, label, &h) == 1, "Object found");
+    WP11_Test_StoreCloseFailAfter(0);
+    rv = funcList->C_SetAttributeValue(session, h, &attr, 1);
+    WP11_Test_StoreCloseFailAfter(-1);
+    CHECK_RV(rv, "Rename object");
+    CHECK(find_label(session, newLabel, &h) == 1, "Rename is live");
+    return 0;
+}
+
+/* A destroy or attribute change whose store fails leaves the records written
+ * before it loadable, and the next write that succeeds catches up. */
+static int store_fail_test(void)
+{
+    CK_SESSION_HANDLE session;
+    CK_OBJECT_HANDLE h;
+    static const char renamed[] = "obj1-renamed";
+    int i;
+
+    CHECK(clear_dir(STORE_DIR) == 0, "Clear store directory");
+    CHECK_RV(pkcs11_init(), "Initialize");
+    CHECK_RV(provision(), "Provision token");
+    CHECK_RV(open_user_session(&session), "Open user session");
+    /* Data objects 0 to 2, then the AES key (5), the newest. */
+    for (i = 0; i <= 2; i++)
+        CHECK_RV(create_obj(session, i, &h), "Create object");
+    CHECK_RV(create_obj(session, OBJ_AES, &h), "Create key");
+
+    /* The key would move into the place of object 0, but nothing is
+     * written, so the token loads as it was before the destroy. */
+    CHECK(destroy_failing(session, "obj0") == 0, "Failed destroy");
+    CHECK(reload_from_storage(session, 4) == 0, "Reload");
+    CHECK_RV(open_user_session(&session), "Open user session");
+    CHECK(count_token_objects(session) == 4, "Four objects loaded");
+    for (i = 0; i <= 2; i++) {
+        char label[16];
+
+        obj_label(i, label, sizeof(label));
+        CHECK(check_data_obj(session, label, i) == 0, "Object loaded");
+    }
+    CHECK(check_key(session, CK_TRUE) == 0, "Key loaded");
+
+    /* Again, then a create catches up with the destroy. */
+    CHECK(destroy_failing(session, "obj0") == 0, "Failed destroy");
+    CHECK_RV(create_obj(session, 6, &h), "Create object");
+    CHECK(reload_from_storage(session, 4) == 0, "Reload");
+    CHECK_RV(open_user_session(&session), "Open user session");
+    CHECK(count_token_objects(session) == 4, "Four objects loaded");
+    CHECK(find_label(session, "obj0", &h) == 0, "Destroyed object gone");
+    CHECK(check_data_obj(session, "obj1", 1) == 0, "Object loaded");
+    CHECK(check_data_obj(session, "obj2", 2) == 0, "Object loaded");
+    CHECK(check_data_obj(session, "obj6", 6) == 0, "Object loaded");
+    CHECK(check_key(session, CK_TRUE) == 0, "Moved key loaded");
+
+    /* A rename whose store fails is not stored. */
+    CHECK(rename_failing(session, "obj1", renamed) == 0, "Failed rename");
+    CHECK(reload_from_storage(session, 4) == 0, "Reload");
+    CHECK_RV(open_user_session(&session), "Open user session");
+    CHECK(check_data_obj(session, "obj1", 1) == 0, "Old label stored");
+    CHECK(find_label(session, renamed, &h) == 0, "New label not stored");
+
+    /* Again, then a create catches up with the rename. */
+    CHECK(rename_failing(session, "obj1", renamed) == 0, "Failed rename");
+    CHECK_RV(create_obj(session, 7, &h), "Create object");
+    CHECK(reload_from_storage(session, 5) == 0, "Reload");
+    CHECK_RV(open_user_session(&session), "Open user session");
+    CHECK(check_data_obj(session, renamed, 1) == 0, "Rename stored");
+    CHECK(find_label(session, "obj1", &h) == 0, "Old label gone");
+
+    /* A policy change on the key is stored and its value still loads. */
+    CHECK(set_key_encrypt(session, CK_FALSE, 0) == 0, "Clear CKA_ENCRYPT");
+    CHECK(reload_from_storage(session, 5) == 0, "Reload");
+    CHECK_RV(open_user_session(&session), "Open user session");
+    CHECK(check_key(session, CK_FALSE) == 0, "Changed key loaded");
+
+    /* One whose store fails leaves the stored key as it was. */
+    CHECK(set_key_encrypt(session, CK_TRUE, 1) == 0, "Set CKA_ENCRYPT");
+    CHECK(reload_from_storage(session, 5) == 0, "Reload");
+    CHECK_RV(open_user_session(&session), "Open user session");
+    CHECK(check_key(session, CK_FALSE) == 0, "Unchanged key loaded");
+
+    /* Again, then a create catches up with the policy change. */
+    CHECK(set_key_encrypt(session, CK_TRUE, 1) == 0, "Set CKA_ENCRYPT");
+    CHECK_RV(create_obj(session, 3, &h), "Create object");
+    CHECK(reload_from_storage(session, 6) == 0, "Reload");
+    CHECK_RV(open_user_session(&session), "Open user session");
+    CHECK(check_key(session, CK_TRUE) == 0, "Changed key loaded");
+    CHECK(check_data_obj(session, renamed, 1) == 0, "Renamed object");
+    CHECK(check_data_obj(session, "obj3", 3) == 0, "Object loaded");
+
+    (void)funcList->C_Logout(session);
+    (void)funcList->C_CloseSession(session);
+    pkcs11_final();
+    return 0;
+}
+#endif /* DEBUG_WOLFPKCS11 */
+
 #endif /* RUN_TEST */
 
 int main(int argc, char* argv[])
@@ -604,6 +778,12 @@ int main(int argc, char* argv[])
         printf("Token pause and resume test\n");
         ret = pause_resume_test();
     }
+#ifdef DEBUG_WOLFPKCS11
+    if (ret == 0) {
+        printf("Token store failure test\n");
+        ret = store_fail_test();
+    }
+#endif
     if (ret == 0)
         printf("All tests passed!\n");
     return (ret == 0) ? 0 : 1;
