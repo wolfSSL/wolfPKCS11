@@ -265,6 +265,11 @@ noinst_PROGRAMS += tests/destroy_stale_handle_test
 tests_destroy_stale_handle_test_SOURCES = tests/destroy_stale_handle_test.c
 tests_destroy_stale_handle_test_LDADD =
 
+check_PROGRAMS += tests/object_handle_limit_test
+noinst_PROGRAMS += tests/object_handle_limit_test
+tests_object_handle_limit_test_SOURCES = tests/object_handle_limit_test.c
+tests_object_handle_limit_test_LDADD =
+
 check_PROGRAMS += tests/hbs_persistence_test
 noinst_PROGRAMS += tests/hbs_persistence_test
 tests_hbs_persistence_test_SOURCES = tests/hbs_persistence_test.c
@@ -459,6 +464,7 @@ tests_logout_token_key_zero_test_LDADD += src/libwolfpkcs11.la
 tests_tpm_decode_bounds_test_LDADD += src/libwolfpkcs11.la
 tests_concurrent_destroy_object_test_LDADD += src/libwolfpkcs11.la
 tests_destroy_stale_handle_test_LDADD += src/libwolfpkcs11.la
+tests_object_handle_limit_test_LDADD += src/libwolfpkcs11.la
 tests_hbs_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_hkdf_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_unique_id_test_LDADD += src/libwolfpkcs11.la
@@ -533,6 +539,7 @@ tests_logout_token_key_zero_test_LDADD += src/libwolfpkcs11.la
 tests_tpm_decode_bounds_test_LDADD += src/libwolfpkcs11.la
 tests_concurrent_destroy_object_test_LDADD += src/libwolfpkcs11.la
 tests_destroy_stale_handle_test_LDADD += src/libwolfpkcs11.la
+tests_object_handle_limit_test_LDADD += src/libwolfpkcs11.la
 tests_hbs_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_hkdf_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_unique_id_test_LDADD += src/libwolfpkcs11.la
