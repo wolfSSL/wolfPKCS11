@@ -9,6 +9,8 @@ WOLFSSL_DIR ?= ../../wolfssl
 WOLFPKCS11_DIR ?= ../..
 
 BUILD_DIR := build
+INTEROP_MODULE := $(BUILD_DIR)/libwolfpkcs11-interop.so
+WOLFPKCS11_MODULE ?= $(INTEROP_MODULE)
 
 COMMON_CPPFLAGS := -DWOLFSSL_USER_SETTINGS -DWOLFPKCS11_USER_SETTINGS -I. -I.. \
     -I$(WOLFSSL_DIR) -I$(WOLFSSL_DIR)/wolfssl -I$(WOLFSSL_DIR)/wolfssl/wolfcrypt \
@@ -64,7 +66,7 @@ TEST_OBJS := $(patsubst %.c,$(BUILD_DIR)/interop-test/%.o,$(TEST_SRCS))
 
 all: test
 
-interop: $(BUILD_DIR)/pkcs11_interop
+interop: $(BUILD_DIR)/pkcs11_interop check-module
 
 $(BUILD_DIR)/wolfssl/%.o: $(WOLFSSL_DIR)/%.c
 	@mkdir -p $(dir $@)
@@ -86,14 +88,24 @@ $(BUILD_DIR)/libwolfpkcs11-interop.so: $(ENGINE_OBJS) $(BUILD_DIR)/libwolfcrypt-
 	@mkdir -p $(dir $@)
 	$(CC) -shared -o $@ $(ENGINE_OBJS) -L$(BUILD_DIR) -lwolfcrypt-interop $(LDFLAGS) $(LDLIBS)
 
-$(BUILD_DIR)/pkcs11_interop: $(TEST_OBJS) $(BUILD_DIR)/libwolfpkcs11-interop.so $(BUILD_DIR)/libwolfcrypt-interop.so
-	$(CC) -o $@ $(TEST_OBJS) -L$(BUILD_DIR) -lwolfpkcs11-interop -lwolfcrypt-interop $(LDFLAGS) $(LDLIBS)
+$(BUILD_DIR)/pkcs11_interop: $(TEST_OBJS) $(BUILD_DIR)/libwolfcrypt-interop.so
+	$(CC) -o $@ $(TEST_OBJS) -L$(BUILD_DIR) -lwolfcrypt-interop $(LDFLAGS) $(LDLIBS)
+
+.PHONY: check-module
+check-module: $(WOLFPKCS11_MODULE)
+ifneq ($(WOLFPKCS11_MODULE),$(INTEROP_MODULE))
+	@dyn=$$(readelf -d $(WOLFPKCS11_MODULE)) || exit 1; \
+	if echo "$$dyn" | grep -q 'NEEDED.*libwolfssl'; then \
+		echo "$(WOLFPKCS11_MODULE) depends on libwolfssl; use the interop module or a --with-static-wolfssl build"; \
+		exit 1; \
+	fi
+endif
 
 .PHONY: test
-test: $(BUILD_DIR)/pkcs11_interop
-	WOLFPKCS11_MODULE=$(BUILD_DIR)/libwolfpkcs11-interop.so LD_LIBRARY_PATH=$(BUILD_DIR) $(BUILD_DIR)/pkcs11_interop
-debug: $(BUILD_DIR)/pkcs11_interop
-	WOLFPKCS11_MODULE=$(BUILD_DIR)/libwolfpkcs11-interop.so LD_LIBRARY_PATH=$(BUILD_DIR) gdb $(BUILD_DIR)/pkcs11_interop
+test: $(BUILD_DIR)/pkcs11_interop check-module
+	WOLFPKCS11_MODULE=$(WOLFPKCS11_MODULE) LD_LIBRARY_PATH=$(BUILD_DIR) $(BUILD_DIR)/pkcs11_interop
+debug: $(BUILD_DIR)/pkcs11_interop check-module
+	WOLFPKCS11_MODULE=$(WOLFPKCS11_MODULE) LD_LIBRARY_PATH=$(BUILD_DIR) gdb $(BUILD_DIR)/pkcs11_interop
 
 .PHONY: clean
 clean:

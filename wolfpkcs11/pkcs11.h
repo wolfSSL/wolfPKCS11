@@ -1149,92 +1149,92 @@ WP11_API CK_RV C_GetInterface(CK_UTF8CHAR_PTR pInterfaceName,
                               CK_VERSION_PTR pVersion,
                               CK_INTERFACE_PTR_PTR ppInterface,
                               CK_FLAGS flags);
-CK_RV C_LoginUser(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
+WP11_API CK_RV C_LoginUser(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
                   CK_UTF8CHAR_PTR pPin, CK_ULONG ulPinLen,
                   CK_UTF8CHAR_PTR pUsername, CK_ULONG ulUsernameLen);
-CK_RV C_SessionCancel(CK_SESSION_HANDLE hSession, CK_FLAGS flags);
-CK_RV C_MessageEncryptInit(CK_SESSION_HANDLE hSession,
+WP11_API CK_RV C_SessionCancel(CK_SESSION_HANDLE hSession, CK_FLAGS flags);
+WP11_API CK_RV C_MessageEncryptInit(CK_SESSION_HANDLE hSession,
                            CK_MECHANISM_PTR pMechanism,
                            CK_OBJECT_HANDLE hKey);
-CK_RV C_EncryptMessage(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter,
+WP11_API CK_RV C_EncryptMessage(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter,
                        CK_ULONG ulParameterLen, CK_BYTE_PTR pAssociatedData,
                        CK_ULONG ulAssociatedDataLen, CK_BYTE_PTR pPlaintext,
                        CK_ULONG ulPlaintextLen, CK_BYTE_PTR pCiphertext,
                        CK_ULONG_PTR pulCiphertextLen);
-CK_RV C_EncryptMessageBegin(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter,
+WP11_API CK_RV C_EncryptMessageBegin(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter,
                             CK_ULONG ulParameterLen, CK_BYTE_PTR pAssociatedData,
                             CK_ULONG ulAssociatedDataLen);
-CK_RV C_EncryptMessageNext(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter,
+WP11_API CK_RV C_EncryptMessageNext(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter,
                            CK_ULONG ulParameterLen, CK_BYTE_PTR pPlaintextPart,
                            CK_ULONG ulPlaintextPartLen, CK_BYTE_PTR pCiphertextPart,
                            CK_ULONG_PTR pulCiphertextPartLen, CK_FLAGS flags);
-CK_RV C_MessageEncryptFinal(CK_SESSION_HANDLE hSession);
-CK_RV C_MessageDecryptInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
+WP11_API CK_RV C_MessageEncryptFinal(CK_SESSION_HANDLE hSession);
+WP11_API CK_RV C_MessageDecryptInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
                            CK_OBJECT_HANDLE hKey);
-CK_RV C_DecryptMessage(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter,
+WP11_API CK_RV C_DecryptMessage(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter,
                        CK_ULONG ulParameterLen, CK_BYTE_PTR pAssociatedData,
                        CK_ULONG ulAssociatedDataLen, CK_BYTE_PTR pCiphertext,
                        CK_ULONG ulCiphertextLen, CK_BYTE_PTR pPlaintext,
                        CK_ULONG_PTR pulPlaintextLen);
-CK_RV C_DecryptMessageBegin(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter,
+WP11_API CK_RV C_DecryptMessageBegin(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter,
                             CK_ULONG ulParameterLen, CK_BYTE_PTR pAssociatedData,
                             CK_ULONG ulAssociatedDataLen);
-CK_RV C_DecryptMessageNext(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter,
+WP11_API CK_RV C_DecryptMessageNext(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter,
                            CK_ULONG ulParameterLen, CK_BYTE_PTR pCiphertextPart,
                            CK_ULONG ulCiphertextPartLen, CK_BYTE_PTR pPlaintextPart,
                            CK_ULONG_PTR pulPlaintextPartLen, CK_FLAGS flags);
-CK_RV C_MessageDecryptFinal(CK_SESSION_HANDLE hSession);
-CK_RV C_MessageSignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
+WP11_API CK_RV C_MessageDecryptFinal(CK_SESSION_HANDLE hSession);
+WP11_API CK_RV C_MessageSignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
                         CK_OBJECT_HANDLE hKey);
-CK_RV C_SignMessage(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter,
+WP11_API CK_RV C_SignMessage(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter,
                     CK_ULONG ulParameterLen, CK_BYTE_PTR pData,
                     CK_ULONG ulDataLen, CK_BYTE_PTR pSignature,
                     CK_ULONG_PTR pulSignatureLen);
-CK_RV C_SignMessageBegin(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter,
+WP11_API CK_RV C_SignMessageBegin(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter,
                          CK_ULONG ulParameterLen);
-CK_RV C_SignMessageNext(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter,
+WP11_API CK_RV C_SignMessageNext(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter,
                         CK_ULONG ulParameterLen, CK_BYTE_PTR pData,
                         CK_ULONG ulDataLen, CK_BYTE_PTR pSignature,
                         CK_ULONG_PTR pulSignatureLen);
-CK_RV C_MessageSignFinal(CK_SESSION_HANDLE hSession);
-CK_RV C_MessageVerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
+WP11_API CK_RV C_MessageSignFinal(CK_SESSION_HANDLE hSession);
+WP11_API CK_RV C_MessageVerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
                           CK_OBJECT_HANDLE hKey);
-CK_RV C_VerifyMessage(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter,
+WP11_API CK_RV C_VerifyMessage(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter,
                       CK_ULONG ulParameterLen, CK_BYTE_PTR pData,
                       CK_ULONG ulDataLen, CK_BYTE_PTR pSignature,
                       CK_ULONG ulSignatureLen);
-CK_RV C_VerifyMessageBegin(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter,
+WP11_API CK_RV C_VerifyMessageBegin(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter,
                            CK_ULONG ulParameterLen);
-CK_RV C_VerifyMessageNext(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter,
+WP11_API CK_RV C_VerifyMessageNext(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter,
                           CK_ULONG ulParameterLen, CK_BYTE_PTR pData,
                           CK_ULONG ulDataLen, CK_BYTE_PTR pSignature,
                           CK_ULONG ulSignatureLen);
-CK_RV C_MessageVerifyFinal(CK_SESSION_HANDLE hSession);
+WP11_API CK_RV C_MessageVerifyFinal(CK_SESSION_HANDLE hSession);
 
 /* PKCS#11 V 3.2 functions */
-CK_RV C_EncapsulateKey(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
+WP11_API CK_RV C_EncapsulateKey(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
                        CK_OBJECT_HANDLE hPublicKey, CK_ATTRIBUTE_PTR pTemplate,
                        CK_ULONG ulAttributeCount, CK_BYTE_PTR pCiphertext,
                        CK_ULONG_PTR pulCiphertextLen, CK_OBJECT_HANDLE_PTR phKey);
-CK_RV C_DecapsulateKey(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
+WP11_API CK_RV C_DecapsulateKey(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
                        CK_OBJECT_HANDLE hPrivateKey, CK_ATTRIBUTE_PTR pTemplate,
                        CK_ULONG ulAttributeCount, CK_BYTE_PTR pCiphertext,
                        CK_ULONG ulCiphertextLen, CK_OBJECT_HANDLE_PTR phKey);
-CK_RV C_VerifySignatureInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
+WP11_API CK_RV C_VerifySignatureInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
                             CK_OBJECT_HANDLE hKey, CK_BYTE_PTR pSignature,
                             CK_ULONG ulSignatureLen);
-CK_RV C_VerifySignature(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
+WP11_API CK_RV C_VerifySignature(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                         CK_ULONG ulDataLen);
-CK_RV C_VerifySignatureUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
+WP11_API CK_RV C_VerifySignatureUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
                         CK_ULONG ulPartLen);
-CK_RV C_VerifySignatureFinal(CK_SESSION_HANDLE hSession);
-CK_RV C_GetSessionValidationFlags(CK_SESSION_HANDLE hSession, CK_ULONG type,
+WP11_API CK_RV C_VerifySignatureFinal(CK_SESSION_HANDLE hSession);
+WP11_API CK_RV C_GetSessionValidationFlags(CK_SESSION_HANDLE hSession, CK_ULONG type,
                                   CK_FLAGS * pFlags);
-CK_RV C_AsyncComplete(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pFunctionName,
+WP11_API CK_RV C_AsyncComplete(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pFunctionName,
                       CK_ASYNC_DATA_PTR pResult);
-CK_RV C_AsyncGetID(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pFunctionName,
+WP11_API CK_RV C_AsyncGetID(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pFunctionName,
                    CK_ULONG_PTR pulID);
-CK_RV C_AsyncJoin(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pFunctionName,
+WP11_API CK_RV C_AsyncJoin(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pFunctionName,
                   CK_ULONG ulID, CK_BYTE_PTR pData, CK_ULONG ulData);
 
 

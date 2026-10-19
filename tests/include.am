@@ -240,7 +240,6 @@ noinst_PROGRAMS += tests/aes_keywrap_pad_test
 tests_aes_keywrap_pad_test_SOURCES = tests/aes_keywrap_pad_test.c
 tests_aes_keywrap_pad_test_LDADD =
 
-check_PROGRAMS += tests/mlkem_secret_scrub_test
 noinst_PROGRAMS += tests/mlkem_secret_scrub_test
 tests_mlkem_secret_scrub_test_SOURCES = tests/mlkem_secret_scrub_test.c
 tests_mlkem_secret_scrub_test_LDADD =
@@ -285,11 +284,9 @@ noinst_PROGRAMS += tests/unique_id_test
 tests_unique_id_test_SOURCES = tests/unique_id_test.c
 tests_unique_id_test_LDADD =
 
-check_PROGRAMS += tests/token_reset_fail_test
 noinst_PROGRAMS += tests/token_reset_fail_test
 tests_token_reset_fail_test_SOURCES = tests/token_reset_fail_test.c
 tests_token_reset_fail_test_LDADD =
-check_PROGRAMS += tests/token_store_test
 noinst_PROGRAMS += tests/token_store_test
 tests_token_store_test_SOURCES = tests/token_store_test.c
 tests_token_store_test_LDADD =
@@ -339,7 +336,6 @@ noinst_PROGRAMS += tests/nss_configdir_prefix_test
 tests_nss_configdir_prefix_test_SOURCES = tests/nss_configdir_prefix_test.c
 tests_nss_configdir_prefix_test_LDADD =
 
-check_PROGRAMS += tests/logout_retire_test
 noinst_PROGRAMS += tests/logout_retire_test
 tests_logout_retire_test_SOURCES = tests/logout_retire_test.c
 tests_logout_retire_test_LDADD =
@@ -349,7 +345,6 @@ noinst_PROGRAMS += tests/login_pin_state_test
 tests_login_pin_state_test_SOURCES = tests/login_pin_state_test.c
 tests_login_pin_state_test_LDADD =
 
-check_PROGRAMS += tests/object_store_decode_test
 noinst_PROGRAMS += tests/object_store_decode_test
 tests_object_store_decode_test_SOURCES = tests/object_store_decode_test.c
 tests_object_store_decode_test_LDADD =
@@ -360,22 +355,18 @@ tests_object_policy_integrity_test_SOURCES = \
     tests/object_policy_integrity_test.c
 tests_object_policy_integrity_test_LDADD =
 
-check_PROGRAMS += tests/session_op_lifecycle_test
 noinst_PROGRAMS += tests/session_op_lifecycle_test
 tests_session_op_lifecycle_test_SOURCES = tests/session_op_lifecycle_test.c
 tests_session_op_lifecycle_test_LDADD =
 
-check_PROGRAMS += tests/info_mech_table_test
 noinst_PROGRAMS += tests/info_mech_table_test
 tests_info_mech_table_test_SOURCES = tests/info_mech_table_test.c
 tests_info_mech_table_test_LDADD =
 
-check_PROGRAMS += tests/attribute_validation_test
 noinst_PROGRAMS += tests/attribute_validation_test
 tests_attribute_validation_test_SOURCES = tests/attribute_validation_test.c
 tests_attribute_validation_test_LDADD =
 
-check_PROGRAMS += tests/key_material_update_test
 noinst_PROGRAMS += tests/key_material_update_test
 tests_key_material_update_test_SOURCES = tests/key_material_update_test.c
 tests_key_material_update_test_LDADD =
@@ -400,12 +391,10 @@ noinst_PROGRAMS += tests/digest_length_test
 tests_digest_length_test_SOURCES = tests/digest_length_test.c
 tests_digest_length_test_LDADD =
 
-check_PROGRAMS += tests/secret_scrub_test
 noinst_PROGRAMS += tests/secret_scrub_test
 tests_secret_scrub_test_SOURCES = tests/secret_scrub_test.c
 tests_secret_scrub_test_LDADD =
 
-check_PROGRAMS += tests/unwrap_keygen_test
 noinst_PROGRAMS += tests/unwrap_keygen_test
 tests_unwrap_keygen_test_SOURCES = tests/unwrap_keygen_test.c
 tests_unwrap_keygen_test_LDADD =
@@ -414,6 +403,20 @@ check_PROGRAMS += tests/token_partial_store_test
 noinst_PROGRAMS += tests/token_partial_store_test
 tests_token_partial_store_test_SOURCES = tests/token_partial_store_test.c
 tests_token_partial_store_test_LDADD =
+
+if !BUILD_STATIC_WOLFSSL
+check_PROGRAMS += tests/token_store_test
+check_PROGRAMS += tests/logout_retire_test
+check_PROGRAMS += tests/session_op_lifecycle_test
+check_PROGRAMS += tests/info_mech_table_test
+check_PROGRAMS += tests/attribute_validation_test
+check_PROGRAMS += tests/key_material_update_test
+check_PROGRAMS += tests/secret_scrub_test
+check_PROGRAMS += tests/object_store_decode_test
+check_PROGRAMS += tests/mlkem_secret_scrub_test
+check_PROGRAMS += tests/token_reset_fail_test
+check_PROGRAMS += tests/unwrap_keygen_test
+endif
 
 if BUILD_STATIC
 tests_pkcs11test_LDADD += src/libwolfpkcs11.la

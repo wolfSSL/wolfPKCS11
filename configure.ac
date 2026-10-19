@@ -629,13 +629,46 @@ fi
 AM_CONDITIONAL([BUILD_STATIC],[test "x$enable_shared" = "xno"])
 
 
+# STATIC WOLFSSL
+AC_ARG_WITH([static-wolfssl],
+    [AS_HELP_STRING([--with-static-wolfssl=FILE],[Link the wolfSSL static library FILE into the shared library and hide its symbols (default: disabled)])],
+    [ STATIC_WOLFSSL=$withval ],
+    [ STATIC_WOLFSSL=no ])
+
+WOLFPKCS11_STATIC_WOLFSSL=no
+STATIC_WOLFSSL_DEP=
+AS_IF([test "x$STATIC_WOLFSSL" != "xno"],[
+    AS_CASE([$STATIC_WOLFSSL],
+          [*.a],[AS_IF([test ! -f "$STATIC_WOLFSSL"],
+                       [AC_MSG_ERROR([--with-static-wolfssl: $STATIC_WOLFSSL not found])])],
+          [AC_MSG_ERROR([--with-static-wolfssl needs the path to libwolfssl.a])])
+    AS_IF([test "x$enable_shared" = "xno"],
+          [AC_MSG_ERROR([--with-static-wolfssl needs a shared library build])])
+    AS_IF([test "x$enable_static" = "xyes"],
+          [AC_MSG_ERROR([--with-static-wolfssl cannot be combined with --enable-static])])
+    AS_IF([test "x$ENABLED_TPM" = "xyes"],
+          [AC_MSG_ERROR([--with-static-wolfssl cannot be combined with --enable-wolftpm])])
+    AX_CHECK_LINK_FLAG([-Wl,--exclude-libs,ALL -Wl,-Bsymbolic -Wl,-z,text -Wl,-z,defs],[],
+          [AC_MSG_ERROR([--with-static-wolfssl needs a linker supporting --exclude-libs, -Bsymbolic, -z text and -z defs])])
+    WOLFPKCS11_STATIC_WOLFSSL=yes
+    STATIC_WOLFSSL_DEP="$STATIC_WOLFSSL"
+    ])
+AM_CONDITIONAL([BUILD_STATIC_WOLFSSL],[test "x$WOLFPKCS11_STATIC_WOLFSSL" = "xyes"])
+AC_SUBST([WOLFPKCS11_STATIC_WOLFSSL])
+AC_SUBST([STATIC_WOLFSSL_DEP])
+
+
 
 # HARDEN FLAGS
 AX_HARDEN_CC_COMPILER_FLAGS
 
 OPTION_FLAGS="$CFLAGS $CPPFLAGS $AM_CFLAGS"
 
-LIBS="$LIBS -lwolfssl -lm"
+AS_IF([test "x$WOLFPKCS11_STATIC_WOLFSSL" = "xyes"],
+      [WOLFPKCS11_CONFIG_LIBS="$LIBS -lm"
+       LIBS="$STATIC_WOLFSSL $LIBS -lm"],
+      [LIBS="$LIBS -lwolfssl -lm"
+       WOLFPKCS11_CONFIG_LIBS="$LIBS"])
 
 CREATE_HEX_VERSION
 AC_SUBST([AM_CPPFLAGS])
@@ -645,8 +678,14 @@ AC_SUBST([AM_LDFLAGS])
 PACKAGE_INIT='get_filename_component(PACKAGE_PREFIX_DIR "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)'
 AC_SUBST([PACKAGE_INIT])
 
+wolfpkcs11_save_prefix=$prefix
+wolfpkcs11_save_exec_prefix=$exec_prefix
+test "x$prefix" = "xNONE" && prefix=$ac_default_prefix
+test "x$exec_prefix" = "xNONE" && exec_prefix=$prefix
 WOLFPKCS11_LIBDIR_ABS=`eval echo "$libdir"`
 WOLFPKCS11_INCLUDEDIR_ABS=`eval echo "$includedir"`
+prefix=$wolfpkcs11_save_prefix
+exec_prefix=$wolfpkcs11_save_exec_prefix
 AC_SUBST([WOLFPKCS11_LIBDIR_ABS])
 AC_SUBST([WOLFPKCS11_INCLUDEDIR_ABS])
 
@@ -660,7 +699,7 @@ AS_IF([test "x$ENABLED_CMAKE_INSTALL" = "xyes"],[
   AC_CONFIG_FILES([cmake/wolfpkcs11ConfigVersion.cmake:cmake/wolfpkcs11ConfigVersion.cmake.in])
 ])
 
-AX_CREATE_GENERIC_CONFIG
+AX_CREATE_GENERIC_CONFIG([$PACKAGE $WOLFPKCS11_CONFIG_LIBS])
 AX_AM_JOBSERVER([yes])
 
 AC_OUTPUT

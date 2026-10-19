@@ -599,6 +599,11 @@ set(LIB_SOURCES
     src/slot.c
     src/crypto.c
 )
+
+add_option("WOLFPKCS11_STATIC_WOLFSSL"
+    "Link a static wolfSSL into the shared library and hide its symbols (default: disabled)"
+    "no" "yes;no")
+
 if(BUILD_SHARED_LIBS)
     message(STATUS "BUILD_SHARED_LIBS enabled: ${LIB_SOURCES}")
     add_library(wolfpkcs11 SHARED ${LIB_SOURCES})
@@ -631,6 +636,10 @@ set_target_properties(wolfpkcs11
 )
 
 target_compile_definitions(wolfpkcs11 PRIVATE "BUILDING_WOLFPKCS11")
+if(NOT WIN32 AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    set_target_properties(wolfpkcs11 PROPERTIES C_VISIBILITY_PRESET hidden)
+    target_compile_definitions(wolfpkcs11 PRIVATE "HAVE_VISIBILITY=1")
+endif()
 target_compile_definitions(wolfpkcs11 PRIVATE ${WOLFPKCS11_DEFINITIONS})
 
 # Determine library filename for WOLFPKCS11_DLL_FILENAME
@@ -728,7 +737,33 @@ else()
     # Try to find wolfSSL as an installed package
     find_package(wolfssl REQUIRED)
 endif()
-list(APPEND WOLFPKCS11_LINK_LIBS wolfssl::wolfssl)
+
+if(WOLFPKCS11_STATIC_WOLFSSL)
+    get_target_property(WOLFSSL_LIB_TYPE wolfssl::wolfssl TYPE)
+    if(WOLFSSL_LIB_TYPE STREQUAL "UNKNOWN_LIBRARY")
+        get_target_property(WOLFSSL_LIB_PATH wolfssl::wolfssl IMPORTED_LOCATION)
+        if(WOLFSSL_LIB_PATH MATCHES "\\${CMAKE_STATIC_LIBRARY_SUFFIX}$")
+            set(WOLFSSL_LIB_TYPE "STATIC_LIBRARY")
+        endif()
+    endif()
+
+    if(NOT BUILD_SHARED_LIBS)
+        message(FATAL_ERROR "WOLFPKCS11_STATIC_WOLFSSL needs BUILD_SHARED_LIBS")
+    elseif(APPLE OR WIN32)
+        message(FATAL_ERROR "WOLFPKCS11_STATIC_WOLFSSL needs an ELF linker")
+    elseif(WOLFPKCS11_TPM)
+        message(FATAL_ERROR "WOLFPKCS11_STATIC_WOLFSSL cannot be combined with WOLFPKCS11_TPM")
+    elseif(NOT WOLFSSL_LIB_TYPE STREQUAL "STATIC_LIBRARY")
+        message(FATAL_ERROR "WOLFPKCS11_STATIC_WOLFSSL needs a static wolfSSL library")
+    endif()
+
+    target_link_libraries(wolfpkcs11 PRIVATE wolfssl::wolfssl)
+    target_link_options(wolfpkcs11 PRIVATE
+        "LINKER:--exclude-libs,ALL" "LINKER:-Bsymbolic" "LINKER:-z,text"
+        "LINKER:-z,defs")
+else()
+    list(APPEND WOLFPKCS11_LINK_LIBS wolfssl::wolfssl)
+endif()
 
 # Other libraries
 target_link_libraries(wolfpkcs11 PUBLIC ${WOLFPKCS11_LINK_LIBS})
@@ -775,6 +810,7 @@ if(WOLFPKCS11_TESTS)
         add_wpkcs11_test(${test_target}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/${test_target}.c)
     endforeach()
+    set_tests_properties(debug_test PROPERTIES SKIP_RETURN_CODE 77)
 
     # HBS (LMS/HSS, XMSS/XMSS^MT) public-key persistence test. Only built when
     # the feature is enabled; the test exits 77 (skip) when no token store is

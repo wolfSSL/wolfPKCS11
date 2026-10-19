@@ -19,9 +19,11 @@ if (NOT TARGET wolfpkcs11::wolfpkcs11)
     INTERFACE_INCLUDE_DIRECTORIES "${_wolfpkcs11_includedir}"
   )
 
-  set_property(TARGET wolfpkcs11::wolfpkcs11 APPEND PROPERTY
-    INTERFACE_LINK_LIBRARIES wolfssl::wolfssl
-  )
+  if (NOT "@WOLFPKCS11_STATIC_WOLFSSL@" STREQUAL "yes")
+    set_property(TARGET wolfpkcs11::wolfpkcs11 APPEND PROPERTY
+      INTERFACE_LINK_LIBRARIES wolfssl::wolfssl
+    )
+  endif()
 
   if (@HAVE_PTHREAD@)
     set_property(TARGET wolfpkcs11::wolfpkcs11 APPEND PROPERTY
