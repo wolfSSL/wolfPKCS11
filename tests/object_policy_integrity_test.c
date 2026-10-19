@@ -1653,7 +1653,13 @@ static void test_recovery_ignores_dir_spelling(void)
 #define STORE_EXIT_CODE      75
 #define CRASH_MAX_RENAMES    40
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 extern void WP11_Test_StoreExitAfterRenames(int renames);
+#ifdef __cplusplus
+}
+#endif
 
 static int crashAt = 0;
 

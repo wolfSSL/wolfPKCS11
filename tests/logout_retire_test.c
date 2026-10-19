@@ -292,8 +292,14 @@ static void retired_objects_bounded_test(CK_SLOT_ID slot)
 }
 
 #ifdef DEBUG_WOLFPKCS11
+#ifdef __cplusplus
+extern "C" {
+#endif
 extern void WP11_Object_SetFindHook(void (*hook)(void));
 extern void WP11_Session_SetAddObjectHook(void (*hook)(void));
+#ifdef __cplusplus
+}
+#endif
 
 static CK_SESSION_HANDLE hookLogoutSession = CK_INVALID_HANDLE;
 static CK_RV hookLogoutRv = CKR_GENERAL_ERROR;

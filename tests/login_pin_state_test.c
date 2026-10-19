@@ -167,8 +167,14 @@ static byte aesValue[16] = {
 
 #ifdef LOGIN_TEST_FILE_STORE
 /* DEBUG_WOLFPKCS11-only introspection hooks exported by libwolfpkcs11. */
+#ifdef __cplusplus
+extern "C" {
+#endif
 extern int WP11_Slot_TokenKeyIsZero(CK_SLOT_ID slotId);
 extern int WP11_Slot_TokenDecodedObjectCount(CK_SLOT_ID slotId);
+#ifdef __cplusplus
+}
+#endif
 
 #define SYMMKEY_FILENAME "wp11_symmkey_0000000000000001_0000000000000000"
 
@@ -1157,7 +1163,13 @@ static void find_with_racing_logout_test(void)
 
 #if defined(DEBUG_WOLFPKCS11) && defined(LOGIN_TEST_THREADS) && \
     !defined(WOLFPKCS11_NO_TIME)
+#ifdef __cplusplus
+extern "C" {
+#endif
 extern void WP11_Slot_SetPinCheckHook(void (*hook)(void));
+#ifdef __cplusplus
+}
+#endif
 
 static pthread_mutex_t pinMutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t pinCond = PTHREAD_COND_INITIALIZER;
