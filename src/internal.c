@@ -12619,8 +12619,8 @@ WP11_API void WP11_Session_SetAddObjectHook(void (*hook)(void))
  * @param  session  [in]  Session object.
  * @param  onToken  [in]  Whether to put object on token.
  * @param  object   [in]  Key Object object.
- * @return  OBJ_COUNT_E when the object list is full or the token has used
- *          every object id.
+ * @return  OBJ_COUNT_E when the object list is full, or the token or session
+ *          object ids are used up.
  *          0 on success.
  */
 int WP11_Session_AddObject(WP11_Session* session, int onToken,
@@ -12997,7 +12997,7 @@ WP11_API int WP11_Test_RemoveObjectStale(CK_SESSION_HANDLE hSession,
  * Running out of object ids takes hundreds of millions of objects through the
  * public API, so a white-box test sets the counter close to the limit instead.
  * The value is not checked, so a test can also store an out of range token
- * counter and check that loading the token rejects it.
+ * counter and check that loading the token replaces it.
  *
  * @param  slotId     [in]  Slot id.
  * @param  onToken    [in]  Non-zero for the token object counter, zero for
