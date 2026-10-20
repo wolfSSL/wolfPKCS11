@@ -1915,9 +1915,10 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
 {
     int ret = 0;
     const char* str = NULL;
-    /* Reserve enough space in the final filename for suffixes such as
-     * "/wp11_rsakey_priv_%016lx_%016lx" (47 chars worst-case).
-     */
+    const char* kind = NULL;
+    size_t need;
+    /* The directory must leave room for the temporary and batch file names
+     * that are built from it. */
     enum { WP11_STORE_SUFFIX_RESERVE = 48 };
 #ifndef WOLFPKCS11_NO_ENV
     char homePath[256];
@@ -1995,7 +1996,6 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
     }
 #endif
 
-    /* 47 is maximum number of character to a filename and path separator. */
     if (str == NULL) {
         return -1;
     }
@@ -2009,86 +2009,85 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
     /* Set different filename for each type of data and different ids. */
     switch (type) {
         case WOLFPKCS11_STORE_TOKEN:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_token_%016lx", str, id1);
+            kind = "token";
             break;
         case WOLFPKCS11_STORE_OBJECT:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_obj_%016lx_%016lx", str, id1,
-                    id2);
+            kind = "obj";
             break;
         case WOLFPKCS11_STORE_SYMMKEY:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_symmkey_%016lx_%016lx", str,
-                    id1, id2);
+            kind = "symmkey";
             break;
         case WOLFPKCS11_STORE_RSAKEY_PRIV:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_rsakey_priv_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "rsakey_priv";
             break;
         case WOLFPKCS11_STORE_RSAKEY_PUB:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_rsakey_pub_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "rsakey_pub";
             break;
         case WOLFPKCS11_STORE_ECCKEY_PRIV:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_ecckey_priv_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "ecckey_priv";
             break;
         case WOLFPKCS11_STORE_ECCKEY_PUB:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_ecckey_pub_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "ecckey_pub";
             break;
         case WOLFPKCS11_STORE_DHKEY_PRIV:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_dhkey_priv_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "dhkey_priv";
             break;
         case WOLFPKCS11_STORE_DHKEY_PUB:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_dhkey_pub_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "dhkey_pub";
             break;
         case WOLFPKCS11_STORE_CERT:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_cert_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "cert";
             break;
         case WOLFPKCS11_STORE_TRUST:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_trust_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "trust";
             break;
         case WOLFPKCS11_STORE_DATA:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_data_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "data";
             break;
         case WOLFPKCS11_STORE_MLDSAKEY_PRIV:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_mldsakey_priv_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "mldsakey_priv";
             break;
         case WOLFPKCS11_STORE_MLDSAKEY_PUB:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_mldsakey_pub_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "mldsakey_pub";
             break;
 #ifdef WOLFPKCS11_MLKEM
         case WOLFPKCS11_STORE_MLKEMKEY_PRIV:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_mlkemkey_priv_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "mlkemkey_priv";
             break;
         case WOLFPKCS11_STORE_MLKEMKEY_PUB:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_mlkemkey_pub_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "mlkemkey_pub";
             break;
 #endif
 #ifdef WOLFPKCS11_LMS
         case WOLFPKCS11_STORE_HSSKEY_PUB:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_hsskey_pub_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "hsskey_pub";
             break;
 #endif
 #ifdef WOLFPKCS11_XMSS
         case WOLFPKCS11_STORE_XMSSKEY_PUB:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_xmsskey_pub_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "xmsskey_pub";
             break;
 #endif
 
         default:
-            ret = -1;
-            break;
+            return -1;
+    }
+
+    /* XSNPRINTF is unbounded in some builds, so check the name fits first:
+     * "/wp11_", the kind, "_" and 16 hex digits per id, then the NUL. */
+    need = XSTRLEN(str) + 6 + XSTRLEN(kind) + 17 + 1;
+    if (type != WOLFPKCS11_STORE_TOKEN)
+        need += 17;
+    if (need > (size_t)nameLen) {
+        return -1;
+    }
+
+    if (type == WOLFPKCS11_STORE_TOKEN) {
+        ret = XSNPRINTF(name, nameLen, "%s/wp11_%s_%016lx", str, kind, id1);
+    }
+    else {
+        ret = XSNPRINTF(name, nameLen, "%s/wp11_%s_%016lx_%016lx", str, kind,
+            id1, id2);
     }
 
     return ret;

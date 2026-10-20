@@ -440,6 +440,76 @@ static int test_missing_storage_path(void)
     return 0;
 }
 
+#ifdef HAVE_ECC
+/* A token path that fits the token file name but not every object file name
+ * must store or refuse each object cleanly and leave the token usable. */
+static int test_long_token_path(void)
+{
+    CK_RV ret;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS privClass = CKO_PRIVATE_KEY;
+    CK_KEY_TYPE ecType = CKK_EC;
+    CK_BBOOL ckTrue = CK_TRUE;
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_CLASS,     &privClass,      sizeof(privClass)       },
+        { CKA_KEY_TYPE,  &ecType,         sizeof(ecType)          },
+        { CKA_TOKEN,     &ckTrue,         sizeof(ckTrue)          },
+        { CKA_EC_PARAMS, ecc_p256_params, sizeof(ecc_p256_params) },
+        { CKA_VALUE,     ecc_p256_priv,   sizeof(ecc_p256_priv)   },
+    };
+    char test_dir[72];
+    size_t len;
+
+#ifdef WOLFPKCS11_NO_ENV
+    printf("SKIP: Environment variables disabled\n");
+    return 0;
+#endif
+
+    len = (size_t)snprintf(test_dir, sizeof(test_dir), "./store/long_path_");
+    memset(test_dir + len, 'x', sizeof(test_dir) - 1 - len);
+    test_dir[sizeof(test_dir) - 1] = '\0';
+    MKDIR(test_dir);
+    cleanup_test_files(test_dir);
+#ifndef WOLFPKCS11_NO_ENV
+    setenv("WOLFPKCS11_TOKEN_PATH", test_dir, 1);
+#endif
+
+    ret = create_test_token("Testing a token path near the name limit", 1);
+    if (ret != CKR_OK)
+        return -1;
+
+    ret = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                  NULL, NULL, &session);
+    CHECK_CKR(ret, "C_OpenSession", CKR_OK);
+    ret = funcList->C_Login(session, CKU_USER, userPin, userPinLen);
+    CHECK_CKR(ret, "C_Login User", CKR_OK);
+
+    ret = funcList->C_CreateObject(session, privTmpl,
+                                   sizeof(privTmpl) / sizeof(*privTmpl), &key);
+    if (ret == CKR_OK)
+        funcList->C_DestroyObject(session, key);
+    funcList->C_Logout(session);
+    funcList->C_CloseSession(session);
+    session = CK_INVALID_HANDLE;
+
+    ret = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                  NULL, NULL, &session);
+    CHECK_CKR(ret, "C_OpenSession after a long object name", CKR_OK);
+    ret = funcList->C_Login(session, CKU_USER, userPin, userPinLen);
+    CHECK_CKR(ret, "C_Login User after a long object name", CKR_OK);
+    funcList->C_Logout(session);
+    funcList->C_CloseSession(session);
+
+    cleanup_test_files(test_dir);
+#ifndef WOLFPKCS11_NO_ENV
+    unsetenv("WOLFPKCS11_TOKEN_PATH");
+#endif
+
+    return 0;
+}
+#endif
+
 static void print_results(void)
 {
     printf("\n=== Test Results ===\n");
@@ -548,6 +618,12 @@ int main(int argc, char* argv[])
     if (test_missing_storage_path() != 0) {
         result = 1;
     }
+
+#ifdef HAVE_ECC
+    if (test_long_token_path() != 0) {
+        result = 1;
+    }
+#endif
 
     /* Clean up */
 #ifndef WOLFPKCS11_NO_ENV
