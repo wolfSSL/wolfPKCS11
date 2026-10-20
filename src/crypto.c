@@ -1577,15 +1577,19 @@ err_out:
 /**
  * Create an object in the session or on the token associated with the session.
  *
- * @param  hSession   [in]   Handle of session.
- * @param  pTemplate  [in]   Template of attributes for object.
- * @param  ulCount    [in]   Number of attribute triplets in template.
- * @param  object     [out]  New Object object.
+ * @param  hSession      [in]   Handle of session.
+ * @param  pTemplate     [in]   Template of attributes for object.
+ * @param  ulCount       [in]   Number of attribute triplets in template.
+ * @param  impliedClass  [in]   Class the API creates, or
+ *                              WP11_NO_IMPLICIT_CLASS.
+ * @param  object        [out]  New Object object.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pTemplate or phObject is NULL.
  *          CKR_SESSION_READ_ONLY when the session cannot create objects.
  *          CKR_TEMPLATE_INCOMPLETE when CKA_KEY_TYPE is missing.
+ *          CKR_TEMPLATE_INCONSISTENT when CKA_CLASS differs from the implied
+ *          class.
  *          CKR_ATTRIBUTE_VALUE_INVALID when an attribute has invalid value or
  *          length.
  *          CKR_DEVICE_MEMORY when dynamic memory allocation fails.
@@ -1593,11 +1597,12 @@ err_out:
  *          CKR_OK on success.
  */
 static CK_RV CreateObject(WP11_Session* session, CK_ATTRIBUTE_PTR pTemplate,
-                          CK_ULONG ulCount, WP11_Object** object)
+                          CK_ULONG ulCount, CK_OBJECT_CLASS impliedClass,
+                          WP11_Object** object)
 {
     CK_RV rv;
     CK_ULONG objType = -1;
-    CK_OBJECT_CLASS objectClass = -1;
+    CK_OBJECT_CLASS objectClass = impliedClass;
     CK_ATTRIBUTE* attr;
 
     FindAttributeType(pTemplate, ulCount, CKA_CLASS, &attr);
@@ -1607,6 +1612,10 @@ static CK_RV CreateObject(WP11_Session* session, CK_ATTRIBUTE_PTR pTemplate,
         if (attr->ulValueLen != sizeof(CK_OBJECT_CLASS))
             return CKR_ATTRIBUTE_VALUE_INVALID;
         objectClass = *(CK_OBJECT_CLASS*)attr->pValue;
+        if (impliedClass != WP11_NO_IMPLICIT_CLASS &&
+                objectClass != impliedClass) {
+            return CKR_TEMPLATE_INCONSISTENT;
+        }
     }
 
     if (objectClass == CKO_CERTIFICATE) {
@@ -1928,7 +1937,8 @@ static CK_RV wp11_C_CreateObject(CK_SESSION_HANDLE hSession,
         return rv;
     }
 
-    rv = CreateObject(session, pTemplate, ulCount, &object);
+    rv = CreateObject(session, pTemplate, ulCount, WP11_NO_IMPLICIT_CLASS,
+                      &object);
     if (rv != CKR_OK) {
         WOLFPKCS11_LEAVE("C_CreateObject", rv);
         return rv;
@@ -10027,7 +10037,8 @@ static CK_RV wp11_C_UnwrapKey(CK_SESSION_HANDLE hSession,
             CK_ULONG keyDataLens[2] = { sizeof(CK_ULONG), ulUnwrappedLen };
 
             *phKey = CK_INVALID_HANDLE;
-            rv = CreateObject(session, pTemplate, ulAttributeCount, &keyObj);
+            rv = CreateObject(session, pTemplate, ulAttributeCount,
+                              WP11_NO_IMPLICIT_CLASS, &keyObj);
             if (rv == CKR_OK) {
                 if (WP11_Object_SetSecretKey(keyObj, keyData, keyDataLens) != 0)
                     rv = CKR_FUNCTION_FAILED;
@@ -10149,7 +10160,8 @@ static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
     unsigned char* secretKeyData[2] = { NULL, NULL };
     CK_ULONG secretKeyLen[2] = { 0, 0 };
 
-    ret = (int)CreateObject(session, pTemplate, ulAttributeCount, &secret);
+    ret = (int)CreateObject(session, pTemplate, ulAttributeCount,
+                            CKO_SECRET_KEY, &secret);
     if (ret != 0)
         return CKR_OBJECT_HANDLE_INVALID;
 
@@ -10772,8 +10784,12 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
 #endif
         if (reqValueLen > keyLen)
             rv = CKR_ATTRIBUTE_VALUE_INVALID;
-        if (rv == CKR_OK)
-            rv = CreateObject(session, pTemplate, ulAttributeCount, &obj);
+        if (rv == CKR_OK) {
+            /* CKM_HKDF_DATA implies a CKO_DATA result, which is not built. */
+            rv = CreateObject(session, pTemplate, ulAttributeCount,
+                              (pMechanism->mechanism == CKM_HKDF_DATA) ?
+                              WP11_NO_IMPLICIT_CLASS : CKO_SECRET_KEY, &obj);
+        }
         if (rv == CKR_OK) {
             /* obj now refers to the newly created derived key. */
 #ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
@@ -11443,7 +11459,8 @@ static CK_RV wp11_C_EncapsulateKey(CK_SESSION_HANDLE hSession,
         return CKR_OK;
 
     if (rv == CKR_OK) {
-        rv = CreateObject(session, pTemplate, ulAttributeCount, &secretObj);
+        rv = CreateObject(session, pTemplate, ulAttributeCount,
+                          CKO_SECRET_KEY, &secretObj);
         if (rv == CKR_OK) {
             secretKeyData[1] = derivedKey;
             secretKeyLen[1] = keyLen;
@@ -11582,7 +11599,8 @@ static CK_RV wp11_C_DecapsulateKey(CK_SESSION_HANDLE hSession,
     }
 
     if (rv == CKR_OK) {
-        rv = CreateObject(session, pTemplate, ulAttributeCount, &secretObj);
+        rv = CreateObject(session, pTemplate, ulAttributeCount,
+                          CKO_SECRET_KEY, &secretObj);
         if (rv == CKR_OK) {
             secretKeyData[1] = derivedKey;
             secretKeyLen[1] = keyLen;

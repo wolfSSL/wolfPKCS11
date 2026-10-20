@@ -15840,6 +15840,86 @@ static CK_RV test_hkdf_derive_expand_null_value_len(void* args)
 
     return ret;
 }
+
+/* A derived key is a secret key with secret key defaults when the template
+ * omits CKA_CLASS, and a template naming another class is rejected. */
+static CK_RV test_hkdf_derive_implied_class(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE hBaseKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hKey = CK_INVALID_HANDLE;
+    CK_BYTE ikm[32];
+    CK_ULONG keyLen = 32;
+    CK_OBJECT_CLASS keyClass = CKO_DATA;
+    CK_BBOOL encrypt = CK_FALSE;
+    CK_ATTRIBUTE baseTmpl[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_VALUE, ikm, sizeof(ikm)},
+        {CKA_DERIVE, &ckTrue, sizeof(ckTrue)}
+    };
+    CK_HKDF_PARAMS params = {
+        CK_TRUE, CK_FALSE, CKM_SHA256_HMAC,
+        CKF_HKDF_SALT_NULL, NULL_PTR, 0,
+        CK_INVALID_HANDLE, NULL_PTR, 0
+    };
+    CK_MECHANISM mech = { CKM_HKDF_DERIVE, &params, sizeof(params) };
+    CK_ATTRIBUTE noClassTmpl[] = {
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_VALUE_LEN, &keyLen, sizeof(keyLen)}
+    };
+    CK_ATTRIBUTE dataClassTmpl[] = {
+        {CKA_CLASS, &dataClass, sizeof(dataClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_VALUE_LEN, &keyLen, sizeof(keyLen)}
+    };
+    CK_ATTRIBUTE getTmpl[] = {
+        {CKA_CLASS, &keyClass, sizeof(keyClass)},
+        {CKA_ENCRYPT, &encrypt, sizeof(encrypt)}
+    };
+
+    XMEMSET(ikm, 0x0b, sizeof(ikm));
+
+    ret = funcList->C_CreateObject(session, baseTmpl,
+        sizeof(baseTmpl) / sizeof(*baseTmpl), &hBaseKey);
+    CHECK_CKR(ret, "Create HKDF base key");
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mech, hBaseKey, noClassTmpl,
+            sizeof(noClassTmpl) / sizeof(*noClassTmpl), &hKey);
+        CHECK_CKR(ret, "HKDF derive without CKA_CLASS");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, hKey, getTmpl,
+            sizeof(getTmpl) / sizeof(*getTmpl));
+        CHECK_CKR(ret, "Get derived key class");
+    }
+    if (ret == CKR_OK && keyClass != CKO_SECRET_KEY) {
+        ret = -1;
+        CHECK_CKR(ret, "Derived key class is CKO_SECRET_KEY");
+    }
+    if (ret == CKR_OK && encrypt != CK_TRUE) {
+        ret = -1;
+        CHECK_CKR(ret, "Derived key has secret key defaults");
+    }
+    if (hKey != CK_INVALID_HANDLE) {
+        funcList->C_DestroyObject(session, hKey);
+        hKey = CK_INVALID_HANDLE;
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mech, hBaseKey, dataClassTmpl,
+            sizeof(dataClassTmpl) / sizeof(*dataClassTmpl), &hKey);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+            "HKDF derive with a non-secret class");
+    }
+
+    if (hKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hKey);
+    if (hBaseKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hBaseKey);
+
+    return ret;
+}
 #endif
 
 #ifndef NO_SHA
@@ -18810,6 +18890,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_extract_with_expand_salt_key),
     PKCS11TEST_FUNC_SESS_DECL(test_hkdf_gen_key),
     PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_expand_null_value_len),
+    PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_implied_class),
 #endif
 #ifdef WOLFSSL_HAVE_PRF
 #ifndef NO_MD5
