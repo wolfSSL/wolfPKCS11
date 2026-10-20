@@ -5590,6 +5590,10 @@ static int wp11_Object_Decode_RsaKey(WP11_Object* object)
     word32 idx = 0;
     RsaKey* key = object->data.rsaKey;
 
+    /* A key decoded before, e.g. at an earlier login, holds allocations that
+     * re-initialising it would leak. */
+    if (!object->encoded)
+        wc_FreeRsaKey(key);
     ret = wc_InitRsaKey_ex(key, NULL, object->devId);
     if (ret != 0) {
         return ret;
@@ -5941,6 +5945,10 @@ static int wp11_Object_Decode_EccKey(WP11_Object* object)
     word32 idx = 0;
     ecc_key* key = object->data.ecKey;
 
+    /* A key decoded before, e.g. at an earlier login, holds allocations that
+     * re-initialising it would leak. */
+    if (!object->encoded)
+        wc_ecc_free(key);
     ret = wc_ecc_init_ex(key, NULL, object->devId);
     if (ret != 0) {
         return ret;
@@ -6194,6 +6202,11 @@ static int MldsaKeyTryDecode(wc_MlDsaKey* key, byte level, byte* data,
 static int wp11_Object_Decode_MldsaKey(WP11_Object* object)
 {
     int ret = 0;
+
+    /* A key decoded before, e.g. at an earlier login, holds allocations that
+     * re-initialising it would leak. */
+    if (!object->encoded)
+        wc_MlDsaKey_Free(object->data.mldsaKey);
 
     if (object->objClass == CKO_PRIVATE_KEY) {
         unsigned char* der = NULL;
@@ -6775,6 +6788,11 @@ static int MlKemKeyTryDecode(MlKemKey* key, int level, byte* data, word32 len,
 static int wp11_Object_Decode_MlKemKey(WP11_Object* object)
 {
     int ret = 0;
+
+    /* A key decoded before, e.g. at an earlier login, holds allocations that
+     * re-initialising it would leak. */
+    if (!object->encoded)
+        wc_MlKemKey_Free(object->data.mlKemKey);
 
     if (object->objClass == CKO_PRIVATE_KEY) {
         unsigned char* der;
