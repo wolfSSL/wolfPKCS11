@@ -31,12 +31,15 @@ jobs:
           # With HAVE_WOLF_BIGINT (--enable-pkcs11) and ML-DSA/ML-KEM dynamic
           # key buffers, decoded wolfCrypt keys own heap memory, so a key that
           # is re-initialised without being freed shows up as a leak.
+          # wolfSSL's wc_pkcs11.c narrows CK_ULONG to word32 in its ML-DSA
+          # code, which -Werror (on in a git checkout) turns into a build
+          # failure, so keep that one diagnostic a warning.
           - sanitizer: asan
             config:
               name: "wolfSSL Bigint PQC Build"
               configure_flags: "--enable-pkcs11v32 --enable-mldsa --enable-mlkem"
               wolfssl_flags: "--enable-pkcs11"
-              wolfssl_cflags: "-DWOLFSSL_MLKEM_DYNAMIC_KEYS -DWOLFSSL_MLDSA_DYNAMIC_KEYS"
+              wolfssl_cflags: "-DWOLFSSL_MLKEM_DYNAMIC_KEYS -DWOLFSSL_MLDSA_DYNAMIC_KEYS -Wno-error=shorten-64-to-32"
 
     steps:
 #pull wolfPKCS11
