@@ -14642,8 +14642,9 @@ int WP11_Object_SetMlKemKey(WP11_Object* object, unsigned char** data,
  * @param  object  [in]  Object object.
  * @param  data    [in]  Array of byte arrays.
  * @param  len     [in]  Array of lengths of byte arrays.
- * @return  BAD_FUNC_ARG when key length data is not size of CK_ULONG or
- *          key length is not a valid size for the key type.
+ * @return  BAD_FUNC_ARG when the object is not a key with secret key storage,
+ *          key length data is not size of CK_ULONG or key length is not a
+ *          valid size for the key type.
  *          BUFFER_E when key data length is less than key length data value.
  *          Other -ve on failure.
  *          0 on success.
@@ -14655,6 +14656,15 @@ int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
     WP11_Data* key;
     CK_ULONG keyLen = 0;
     word32 newLen = 0;
+
+    /* Other classes and key types use the storage union differently. */
+    if ((object->objClass != CKO_SECRET_KEY &&
+            object->objClass != CKO_PRIVATE_KEY &&
+            object->objClass != CKO_PUBLIC_KEY) ||
+            (object->type != CKK_AES && object->type != CKK_GENERIC_SECRET &&
+            object->type != CKK_HKDF) || object->data.symmKey == NULL) {
+        return BAD_FUNC_ARG;
+    }
 
     if (object->onToken)
         WP11_Lock_LockRW(object->lock);

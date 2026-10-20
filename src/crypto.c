@@ -1701,6 +1701,12 @@ static CK_RV CreateObject(WP11_Session* session, CK_ATTRIBUTE_PTR pTemplate,
             default:
                 return CKR_ATTRIBUTE_VALUE_INVALID;
         }
+
+        /* A secret key's value is kept in storage only these types have. */
+        if (objectClass == CKO_SECRET_KEY && objType != CKK_GENERIC_SECRET &&
+                objType != CKK_AES && objType != CKK_HKDF) {
+            return CKR_TEMPLATE_INCONSISTENT;
+        }
     }
 
     rv = NewObject(session, objType, objectClass, pTemplate, ulCount, object);
