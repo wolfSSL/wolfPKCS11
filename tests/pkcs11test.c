@@ -17706,6 +17706,82 @@ static CK_RV test_get_attr_value_key_type_on_non_key(void* args)
     return ret;
 }
 
+/* A certificate is not a key, whatever usage attributes it carries. */
+static CK_RV test_crypto_init_certificate(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE x509Cert = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE wtlsCert = CK_INVALID_HANDLE;
+    CK_CERTIFICATE_TYPE x509 = CKC_X_509;
+    CK_CERTIFICATE_TYPE wtls = CKC_WTLS;
+    CK_BYTE certData[] = { 0x30, 0x82, 0x01, 0x00 };
+    CK_ATTRIBUTE x509Tmpl[] = {
+        { CKA_CLASS,            &certificateClass, sizeof(certificateClass) },
+        { CKA_CERTIFICATE_TYPE, &x509,             sizeof(x509)             },
+        { CKA_VALUE,            certData,          sizeof(certData)         },
+        { CKA_ENCRYPT,          &ckTrue,           sizeof(ckTrue)           },
+        { CKA_VERIFY,           &ckTrue,           sizeof(ckTrue)           },
+    };
+    CK_ATTRIBUTE wtlsTmpl[] = {
+        { CKA_CLASS,            &certificateClass, sizeof(certificateClass) },
+        { CKA_CERTIFICATE_TYPE, &wtls,             sizeof(wtls)             },
+        { CKA_VALUE,            certData,          sizeof(certData)         },
+        { CKA_DERIVE,           &ckTrue,           sizeof(ckTrue)           },
+    };
+    CK_MECHANISM mech = { CKM_RSA_PKCS, NULL, 0 };
+#ifndef NO_DH
+    CK_OBJECT_HANDLE secret = CK_INVALID_HANDLE;
+    CK_ULONG secLen = 32;
+    CK_ATTRIBUTE secTmpl[] = {
+        { CKA_CLASS,     &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,  &genericKeyType, sizeof(genericKeyType) },
+        { CKA_VALUE_LEN, &secLen,         sizeof(secLen)         },
+    };
+#endif
+
+    ret = funcList->C_CreateObject(session, x509Tmpl,
+        sizeof(x509Tmpl) / sizeof(*x509Tmpl), &x509Cert);
+    CHECK_CKR(ret, "Create X.509 certificate with usage attributes");
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, wtlsTmpl,
+            sizeof(wtlsTmpl) / sizeof(*wtlsTmpl), &wtlsCert);
+        CHECK_CKR(ret, "Create WTLS certificate with usage attributes");
+    }
+#ifndef NO_RSA
+    if (ret == CKR_OK) {
+        ret = funcList->C_EncryptInit(session, &mech, x509Cert);
+        CHECK_CKR_FAIL(ret, CKR_KEY_HANDLE_INVALID,
+                       "Encrypt init with a certificate");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, x509Cert);
+        CHECK_CKR_FAIL(ret, CKR_KEY_HANDLE_INVALID,
+                       "Verify init with a certificate");
+    }
+#endif
+#ifndef NO_DH
+    if (ret == CKR_OK) {
+        mech.mechanism = CKM_DH_PKCS_DERIVE;
+        mech.pParameter = dh_2048_peer;
+        mech.ulParameterLen = sizeof(dh_2048_peer);
+        ret = funcList->C_DeriveKey(session, &mech, wtlsCert, secTmpl,
+            sizeof(secTmpl) / sizeof(*secTmpl), &secret);
+        CHECK_CKR_FAIL(ret, CKR_KEY_HANDLE_INVALID,
+                       "Derive with a certificate");
+        if (secret != CK_INVALID_HANDLE)
+            funcList->C_DestroyObject(session, secret);
+    }
+#endif
+
+    if (wtlsCert != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, wtlsCert);
+    if (x509Cert != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, x509Cert);
+
+    return ret;
+}
+
 #ifndef WOLFPKCS11_NSS
 /* Creating, copying, destroying, and setting attributes on session objects
  * should be allowed in read-only sessions per the PKCS#11 spec. Only token
@@ -18657,6 +18733,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_get_attr_value_all_processed),
     PKCS11TEST_FUNC_SESS_DECL(test_get_attr_value_cert_type_on_key),
     PKCS11TEST_FUNC_SESS_DECL(test_get_attr_value_key_type_on_non_key),
+    PKCS11TEST_FUNC_SESS_DECL(test_crypto_init_certificate),
     PKCS11TEST_FUNC_SESS_DECL(test_find_objects),
     PKCS11TEST_FUNC_SESS_DECL(test_find_objects_many),
     PKCS11TEST_FUNC_SESS_DECL(test_private_object_access),

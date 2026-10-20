@@ -580,12 +580,29 @@ static CK_RV CheckAttributes(CK_ATTRIBUTE* pTemplate, CK_ULONG ulCount, int set)
     return CKR_OK;
 }
 
+/* A certificate's type shares the key type field, so only key objects may be
+ * used as keys. A data object may seed a derivation. */
+static int CheckKeyObject(WP11_Object* obj, CK_ATTRIBUTE_TYPE op)
+{
+    CK_OBJECT_CLASS objClass = WP11_Object_GetClass(obj);
+
+    if (objClass != CKO_PUBLIC_KEY && objClass != CKO_PRIVATE_KEY &&
+            objClass != CKO_SECRET_KEY &&
+            (objClass != CKO_DATA || op != CKA_DERIVE)) {
+        return (int)CKR_KEY_HANDLE_INVALID;
+    }
+    return CKR_OK;
+}
+
 static int CheckOpSupportedRv(WP11_Object* obj, CK_ATTRIBUTE_TYPE op,
                               CK_RV errRv)
 {
     CK_BBOOL haveOp = 0;
     CK_ULONG dataLen = sizeof(haveOp);
-    int ret = WP11_Object_GetAttr(obj, op, &haveOp, &dataLen);
+    int ret = CheckKeyObject(obj, op);
+    if (ret != CKR_OK)
+        return ret;
+    ret = WP11_Object_GetAttr(obj, op, &haveOp, &dataLen);
     if (ret != 0)
         return ret;
     if (!haveOp) {
@@ -9572,6 +9589,8 @@ static CK_RV wp11_C_WrapKey(CK_SESSION_HANDLE hSession,
         return CKR_WRAPPING_KEY_HANDLE_INVALID;
 
     ret = CheckOpSupported(wrappingKey, CKA_WRAP);
+    if (ret == CKR_KEY_HANDLE_INVALID)
+        return CKR_WRAPPING_KEY_HANDLE_INVALID;
     if (ret != CKR_OK)
         return ret;
 
@@ -9898,6 +9917,8 @@ static CK_RV wp11_C_UnwrapKey(CK_SESSION_HANDLE hSession,
         return CKR_UNWRAPPING_KEY_HANDLE_INVALID;
 
     ret = CheckOpSupported(unwrappingKey, CKA_UNWRAP);
+    if (ret == CKR_KEY_HANDLE_INVALID)
+        return CKR_UNWRAPPING_KEY_HANDLE_INVALID;
     if (ret != CKR_OK)
         return ret;
 
@@ -10417,9 +10438,11 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
      * behavior (WP11_NSS_PERMISSIVE_KEY_DEFAULTS is auto-enabled for NSS). */
 #ifndef WP11_NSS_PERMISSIVE_KEY_DEFAULTS
     ret = CheckOpSupported(obj, CKA_DERIVE);
+#else
+    ret = CheckKeyObject(obj, CKA_DERIVE);
+#endif
     if (ret != CKR_OK)
         return ret;
-#endif
 
     rv = CheckPrivateLogin(session, pTemplate, ulAttributeCount,
                            CKO_SECRET_KEY);
