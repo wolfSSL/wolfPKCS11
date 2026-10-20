@@ -27,6 +27,19 @@ jobs:
             configure_flags: "--enable-nss --enable-tpm"
           - name: "PKCS#11 V3.2 PQC Build"
             configure_flags: "--enable-pkcs11v32 --enable-mldsa --enable-mlkem"
+        include:
+          # With HAVE_WOLF_BIGINT (--enable-pkcs11) and ML-DSA/ML-KEM dynamic
+          # key buffers, decoded wolfCrypt keys own heap memory, so a key that
+          # is re-initialised without being freed shows up as a leak.
+          # wolfSSL's wc_pkcs11.c narrows CK_ULONG to word32 in its ML-DSA
+          # code, which -Werror (on in a git checkout) turns into a build
+          # failure, so keep that one diagnostic a warning.
+          - sanitizer: asan
+            config:
+              name: "wolfSSL Bigint PQC Build"
+              configure_flags: "--enable-pkcs11v32 --enable-mldsa --enable-mlkem"
+              wolfssl_flags: "--enable-pkcs11"
+              wolfssl_cflags: "-DWOLFSSL_MLKEM_DYNAMIC_KEYS -DWOLFSSL_MLDSA_DYNAMIC_KEYS -Wno-error=shorten-64-to-32"
 
     steps:
 #pull wolfPKCS11
@@ -81,7 +94,8 @@ jobs:
             ;;
         esac
         ./configure --enable-cryptocb --enable-aescfb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt --enable-md5 --enable-debug \
-            --enable-mldsa C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT -DHAVE_AES_ECB -DHAVE_AES_KEYWRAP"
+            --enable-mldsa ${{ matrix.config.wolfssl_flags }} \
+            C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT -DHAVE_AES_ECB -DHAVE_AES_KEYWRAP ${{ matrix.config.wolfssl_cflags }}"
     - name: wolfssl make
       working-directory: ./wolfssl
       run: |
