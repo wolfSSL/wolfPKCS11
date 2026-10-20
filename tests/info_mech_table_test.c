@@ -317,6 +317,40 @@ static void test_listed_keygen_supported(CK_SLOT_ID slot,
     }
 }
 
+#ifdef HAVE_ECC
+/* EC mechanisms report the prime field curves, named curve parameters and
+ * uncompressed points that the token supports, and nothing else. */
+static void test_ec_mech_flags(CK_SLOT_ID slot)
+{
+    static const CK_MECHANISM_TYPE mechs[] = {
+        CKM_EC_KEY_PAIR_GEN, CKM_ECDSA, CKM_ECDSA_SHA1, CKM_ECDSA_SHA224,
+        CKM_ECDSA_SHA256, CKM_ECDSA_SHA384, CKM_ECDSA_SHA512, CKM_ECDH1_DERIVE
+    };
+    const CK_FLAGS want = CKF_EC_F_P | CKF_EC_NAMEDCURVE | CKF_EC_UNCOMPRESS;
+    const CK_FLAGS unsupported = CKF_EC_F_2M | CKF_EC_ECPARAMETERS |
+                                 CKF_EC_COMPRESS;
+    CK_MECHANISM_INFO info;
+    CK_RV rv;
+    size_t i;
+    char msg[96];
+
+    for (i = 0; i < sizeof(mechs) / sizeof(mechs[0]); i++) {
+        rv = funcList->C_GetMechanismInfo(slot, mechs[i], &info);
+        if (rv == CKR_MECHANISM_INVALID)
+            continue;
+        snprintf(msg, sizeof(msg), "C_GetMechanismInfo(0x%lx)",
+                 (unsigned long)mechs[i]);
+        CHECK_RV(rv, msg, CKR_OK);
+        if (rv != CKR_OK)
+            continue;
+        snprintf(msg, sizeof(msg), "EC capability flags of 0x%lx",
+                 (unsigned long)mechs[i]);
+        CHECK_TRUE((info.flags & want) == want &&
+                   (info.flags & unsupported) == 0, msg);
+    }
+}
+#endif
+
 #ifdef ALLOC_HOOKS
 /* A session is reported open only when a usable handle was returned. */
 static void test_open_session_alloc_failure(CK_SLOT_ID slot)
@@ -964,6 +998,9 @@ static int run_test(void)
     if (rv == CKR_OK) {
         test_generic_secret_size(slotList[0], session);
         test_listed_keygen_supported(slotList[0], session);
+#ifdef HAVE_ECC
+        test_ec_mech_flags(slotList[0]);
+#endif
 #ifdef ALLOC_HOOKS
         test_open_session_alloc_failure(slotList[0]);
 #endif
