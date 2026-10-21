@@ -15880,6 +15880,18 @@ static CK_RV test_hkdf_derive_implied_class(void* args)
         {CKA_CLASS, &keyClass, sizeof(keyClass)},
         {CKA_ENCRYPT, &encrypt, sizeof(encrypt)}
     };
+    CK_ATTRIBUTE nullClassTmpl[] = {
+        {CKA_CLASS, NULL_PTR, sizeof(CK_OBJECT_CLASS)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_VALUE_LEN, &keyLen, sizeof(keyLen)}
+    };
+    CK_ATTRIBUTE noTypeTmpl[] = {
+        {CKA_VALUE_LEN, &keyLen, sizeof(keyLen)}
+    };
+    CK_ATTRIBUTE shortTypeTmpl[] = {
+        {CKA_KEY_TYPE, &genericKeyType, 1},
+        {CKA_VALUE_LEN, &keyLen, sizeof(keyLen)}
+    };
     CK_OBJECT_HANDLE hDataBase = CK_INVALID_HANDLE;
     CK_ATTRIBUTE dataBaseTmpl[] = {
         {CKA_CLASS, &dataClass, sizeof(dataClass)},
@@ -15941,8 +15953,28 @@ static CK_RV test_hkdf_derive_implied_class(void* args)
         hKey = CK_INVALID_HANDLE;
     }
 
-    /* A data object may seed a derivation. */
+    /* A malformed class or key type is refused before deriving. */
     mech.mechanism = CKM_HKDF_DERIVE;
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mech, hBaseKey, nullClassTmpl,
+            sizeof(nullClassTmpl) / sizeof(*nullClassTmpl), &hKey);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+            "HKDF derive with an empty CKA_CLASS");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mech, hBaseKey, noTypeTmpl,
+            sizeof(noTypeTmpl) / sizeof(*noTypeTmpl), &hKey);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCOMPLETE,
+            "HKDF derive without CKA_KEY_TYPE");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mech, hBaseKey, shortTypeTmpl,
+            sizeof(shortTypeTmpl) / sizeof(*shortTypeTmpl), &hKey);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+            "HKDF derive with a short CKA_KEY_TYPE");
+    }
+
+    /* A data object may seed a derivation. */
     if (ret == CKR_OK) {
         ret = funcList->C_CreateObject(session, dataBaseTmpl,
             sizeof(dataBaseTmpl) / sizeof(*dataBaseTmpl), &hDataBase);
@@ -16532,6 +16564,11 @@ static CK_RV test_derive_tls12_key_and_mac_class(void* args)
         {CKA_CLASS, &dataClass, sizeof(dataClass)},
         {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
     };
+    CK_BBOOL badBool = 2;
+    CK_ATTRIBUTE badBoolTmpl[] = {
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_SENSITIVE, &badBool, sizeof(badBool)},
+    };
     CK_ATTRIBUTE macGetTmpl[] = {
         {CKA_CLASS, &macClass, sizeof(macClass)},
     };
@@ -16588,6 +16625,12 @@ static CK_RV test_derive_tls12_key_and_mac_class(void* args)
         CHECK_COND(keyMat.hClientMacSecret == CK_INVALID_HANDLE &&
                    keyMat.hClientKey == CK_INVALID_HANDLE, ret,
                    "No TLS key material for a refused template");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mech, premaster, badBoolTmpl,
+            sizeof(badBoolTmpl) / sizeof(*badBoolTmpl), &hDerivedKey);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+                       "TLS key and MAC derive with a bad attribute value");
     }
 
     if (premaster != CK_INVALID_HANDLE)

@@ -1916,9 +1916,8 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
     int ret = 0;
     const char* str = NULL;
     const char* kind = NULL;
-    size_t need;
-    /* The longest name, "/wp11_mldsakey_priv_" and two 16 digit ids, so a
-     * directory too long for any store file is refused before the first. */
+    /* XSNPRINTF is unbounded in some builds, so this must cover the longest
+     * name below: "/wp11_mldsakey_priv_" and two 16 digit ids. */
     enum { WP11_STORE_SUFFIX_RESERVE = 53 };
 #ifndef WOLFPKCS11_NO_ENV
     char homePath[256];
@@ -2073,15 +2072,6 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
             return -1;
     }
 
-    /* XSNPRINTF is unbounded in some builds, so check the name fits first:
-     * "/wp11_", the kind, "_" and 16 hex digits per id, then the NUL. */
-    need = XSTRLEN(str) + 6 + XSTRLEN(kind) + 17 + 1;
-    if (type != WOLFPKCS11_STORE_TOKEN)
-        need += 17;
-    if (need > (size_t)nameLen) {
-        return -1;
-    }
-
     if (type == WOLFPKCS11_STORE_TOKEN) {
         ret = XSNPRINTF(name, nameLen, "%s/wp11_%s_%016lx", str, kind, id1);
     }
@@ -2092,6 +2082,23 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
 
     return ret;
 }
+
+#ifdef DEBUG_WOLFPKCS11
+/**
+ * Test hook: build the store file name for a store type under the current
+ * token path.
+ *
+ * @param  type  [in]  Store type.
+ * @return  Length of the name on success.
+ *          -1 when no name can be built for the type.
+ */
+WP11_API int WP11_Test_StoreName(int type)
+{
+    char name[WP11_STORE_MAX_PATH];
+
+    return wolfPKCS11_Store_Name(type, 1, 1, name, (int)sizeof(name));
+}
+#endif
 
 /* One token store pass commits as a unit: staged records, then a marker. */
 #define WP11_STORE_BATCH
@@ -13412,6 +13419,41 @@ WP11_API int WP11_Test_SetNextObjId(CK_SLOT_ID slotId, int onToken,
 
     return 0;
 }
+
+#ifndef WOLFPKCS11_NO_STORE
+/**
+ * Test hook: give an object a class and bind its key data to that class, as
+ * older releases stored derived secret keys that had no class.
+ *
+ * @param  hSession  [in]  Session handle.
+ * @param  hObject   [in]  Object handle.
+ * @param  objClass  [in]  Class for the object.
+ * @return  BAD_FUNC_ARG when the session or object is not found.
+ *          Other -ve when the key data cannot be bound.
+ *          0 on success.
+ */
+WP11_API int WP11_Test_SetObjectClass(CK_SESSION_HANDLE hSession,
+    CK_OBJECT_HANDLE hObject, CK_OBJECT_CLASS objClass)
+{
+    int ret;
+    WP11_Session* session;
+    WP11_Object* object;
+
+    if (WP11_Session_Get(hSession, &session) != 0 ||
+            WP11_Object_Find(session, hObject, &object) != 0) {
+        return BAD_FUNC_ARG;
+    }
+
+    if (object->onToken)
+        WP11_Lock_LockRW(object->lock);
+    object->objClass = objClass;
+    ret = wp11_Object_Encode(object, 0);
+    if (object->onToken)
+        WP11_Lock_UnlockRW(object->lock);
+
+    return ret;
+}
+#endif
 #endif /* DEBUG_WOLFPKCS11 */
 
 /**

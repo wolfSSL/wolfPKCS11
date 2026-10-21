@@ -395,6 +395,10 @@ noinst_PROGRAMS += tests/secret_scrub_test
 tests_secret_scrub_test_SOURCES = tests/secret_scrub_test.c
 tests_secret_scrub_test_LDADD =
 
+noinst_PROGRAMS += tests/legacy_class_load_test
+tests_legacy_class_load_test_SOURCES = tests/legacy_class_load_test.c
+tests_legacy_class_load_test_LDADD =
+
 noinst_PROGRAMS += tests/unwrap_keygen_test
 tests_unwrap_keygen_test_SOURCES = tests/unwrap_keygen_test.c
 tests_unwrap_keygen_test_LDADD =
@@ -416,6 +420,7 @@ check_PROGRAMS += tests/object_store_decode_test
 check_PROGRAMS += tests/mlkem_secret_scrub_test
 check_PROGRAMS += tests/token_reset_fail_test
 check_PROGRAMS += tests/unwrap_keygen_test
+check_PROGRAMS += tests/legacy_class_load_test
 endif
 
 if BUILD_STATIC
@@ -500,6 +505,7 @@ tests_encrypt_decrypt_params_test_LDADD += src/libwolfpkcs11.la
 tests_sign_verify_mac_test_LDADD += src/libwolfpkcs11.la
 tests_digest_length_test_LDADD += src/libwolfpkcs11.la
 tests_secret_scrub_test_LDADD += src/libwolfpkcs11.la
+tests_legacy_class_load_test_LDADD += src/libwolfpkcs11.la
 tests_unwrap_keygen_test_LDADD += src/libwolfpkcs11.la
 tests_token_partial_store_test_LDADD += src/libwolfpkcs11.la
 else
@@ -576,6 +582,7 @@ tests_encrypt_decrypt_params_test_LDADD += src/libwolfpkcs11.la
 tests_sign_verify_mac_test_LDADD += src/libwolfpkcs11.la
 tests_digest_length_test_LDADD += src/libwolfpkcs11.la
 tests_secret_scrub_test_LDADD += src/libwolfpkcs11.la
+tests_legacy_class_load_test_LDADD += src/libwolfpkcs11.la
 tests_unwrap_keygen_test_LDADD += src/libwolfpkcs11.la
 tests_token_partial_store_test_LDADD += src/libwolfpkcs11.la
 endif

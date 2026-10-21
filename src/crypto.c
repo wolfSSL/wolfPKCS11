@@ -1597,16 +1597,16 @@ err_out:
  * @param  hSession      [in]   Handle of session.
  * @param  pTemplate     [in]   Template of attributes for object.
  * @param  ulCount       [in]   Number of attribute triplets in template.
- * @param  impliedClass  [in]   Class the API creates, or
- *                              WP11_NO_IMPLICIT_CLASS.
+ * @param  impliedClass  [in]   Class the API creates when the template has no
+ *                              CKA_CLASS, or WP11_NO_IMPLICIT_CLASS. A caller
+ *                              passing a class checks the template first with
+ *                              CheckSecretKeyTemplate.
  * @param  object        [out]  New Object object.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pTemplate or phObject is NULL.
  *          CKR_SESSION_READ_ONLY when the session cannot create objects.
  *          CKR_TEMPLATE_INCOMPLETE when CKA_KEY_TYPE is missing.
- *          CKR_TEMPLATE_INCONSISTENT when CKA_CLASS differs from the implied
- *          class.
  *          CKR_ATTRIBUTE_VALUE_INVALID when an attribute has invalid value or
  *          length.
  *          CKR_DEVICE_MEMORY when dynamic memory allocation fails.
@@ -1629,10 +1629,6 @@ static CK_RV CreateObject(WP11_Session* session, CK_ATTRIBUTE_PTR pTemplate,
         if (attr->ulValueLen != sizeof(CK_OBJECT_CLASS))
             return CKR_ATTRIBUTE_VALUE_INVALID;
         objectClass = *(CK_OBJECT_CLASS*)attr->pValue;
-        if (impliedClass != WP11_NO_IMPLICIT_CLASS &&
-                objectClass != impliedClass) {
-            return CKR_TEMPLATE_INCONSISTENT;
-        }
     }
 
     if (objectClass == CKO_CERTIFICATE) {

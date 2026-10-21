@@ -538,6 +538,13 @@ WP11_API int WP11_Test_RemoveObjectStale(CK_SESSION_HANDLE hSession,
     CK_OBJECT_HANDLE liveHandle, CK_OBJECT_HANDLE staleHandle);
 WP11_API int WP11_Test_SetNextObjId(CK_SLOT_ID slotId, int onToken,
     int nextObjId);
+#ifndef WOLFPKCS11_NO_STORE
+WP11_API int WP11_Test_SetObjectClass(CK_SESSION_HANDLE hSession,
+    CK_OBJECT_HANDLE hObject, CK_OBJECT_CLASS objClass);
+#if !defined(WOLFPKCS11_CUSTOM_STORE) && !defined(WOLFPKCS11_TPM_STORE)
+WP11_API int WP11_Test_StoreName(int type);
+#endif
+#endif
 #endif
 WP11_LOCAL int WP11_Object_HandleOnToken(CK_OBJECT_HANDLE handle);
 WP11_LOCAL void WP11_Slot_ClearActiveObject(WP11_Slot* slot,
