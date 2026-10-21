@@ -1279,7 +1279,6 @@ static void test_2370_private_default(void)
     CK_BYTE userPin[] = "wolfpkcs11-test";
     CK_UTF8CHAR label[32];
     CK_OBJECT_CLASS secretKeyClass = CKO_SECRET_KEY;
-    CK_OBJECT_CLASS pubKeyClass = CKO_PUBLIC_KEY;
     CK_KEY_TYPE aesKeyType = CKK_AES;
     CK_ULONG aesKeyLen = 16;
     CK_MECHANISM aesMech;
@@ -1292,15 +1291,17 @@ static void test_2370_private_default(void)
     CK_ATTRIBUTE getPrivTmpl[] = {
         { CKA_PRIVATE, &gotPrivate, sizeof(gotPrivate) },
     };
+#ifndef NO_RSA
     /* CKO_PUBLIC_KEY default is CKA_PRIVATE=CK_FALSE per spec. */
-    CK_KEY_TYPE genericKeyType = CKK_GENERIC_SECRET;
-    CK_BBOOL ckTrue = CK_TRUE;
+    CK_OBJECT_CLASS pubKeyClass = CKO_PUBLIC_KEY;
+    CK_KEY_TYPE rsaKeyType = CKK_RSA;
     CK_ATTRIBUTE pubTmpl[] = {
-        { CKA_CLASS,       &pubKeyClass,    sizeof(pubKeyClass)    },
-        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
-        { CKA_EXTRACTABLE, &ckTrue,         sizeof(ckTrue)         },
-        { CKA_VALUE,       aes_128_key,     sizeof(aes_128_key)    },
+        { CKA_CLASS,           &pubKeyClass,     sizeof(pubKeyClass)      },
+        { CKA_KEY_TYPE,        &rsaKeyType,      sizeof(rsaKeyType)       },
+        { CKA_MODULUS,         rsa_2048_modulus, sizeof(rsa_2048_modulus) },
+        { CKA_PUBLIC_EXPONENT, rsa_2048_pub_exp, sizeof(rsa_2048_pub_exp) },
     };
+#endif
 
     (void)pubKey;
     (void)privKey;
@@ -1374,6 +1375,7 @@ static void test_2370_private_default(void)
         }
     }
 
+#ifndef NO_RSA
     /* Public-key default must remain CK_FALSE so the public arm of a key
      * pair stays accessible from public sessions. Use C_CreateObject so we
      * don't need a key-pair-generation mechanism enabled. */
@@ -1391,6 +1393,7 @@ static void test_2370_private_default(void)
                            "public-key default CKA_PRIVATE is CK_FALSE");
         }
     }
+#endif
 
 out:
     if (slotList != NULL)

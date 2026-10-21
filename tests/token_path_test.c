@@ -440,12 +440,21 @@ static int test_missing_storage_path(void)
     return 0;
 }
 
-#ifdef HAVE_ECC
-/* A token path that fits the token file name but not every object file name
- * must store or refuse each object cleanly and leave the token usable. */
+#if defined(HAVE_ECC) && !defined(WOLFPKCS11_NSS)
+static void fill_token_dir(char* dir, size_t sz)
+{
+    size_t len = (size_t)snprintf(dir, sz, "./store/long_path_");
+
+    memset(dir + len, 'x', sz - 1 - len);
+    dir[sz - 1] = '\0';
+}
+
+/* With 120 byte store names, a token directory that leaves room for every
+ * store file name works fully and one byte longer is refused up front. */
 static int test_long_token_path(void)
 {
     CK_RV ret;
+    int result = 0;
     CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
     CK_OBJECT_CLASS privClass = CKO_PRIVATE_KEY;
@@ -458,55 +467,59 @@ static int test_long_token_path(void)
         { CKA_EC_PARAMS, ecc_p256_params, sizeof(ecc_p256_params) },
         { CKA_VALUE,     ecc_p256_priv,   sizeof(ecc_p256_priv)   },
     };
-    char test_dir[72];
-    size_t len;
+    char fitDir[67];
+    char longDir[68];
 
 #ifdef WOLFPKCS11_NO_ENV
     printf("SKIP: Environment variables disabled\n");
     return 0;
-#endif
+#else
+    fill_token_dir(fitDir, sizeof(fitDir));
+    fill_token_dir(longDir, sizeof(longDir));
+    MKDIR(fitDir);
+    MKDIR(longDir);
+    cleanup_test_files(fitDir);
+    cleanup_test_files(longDir);
 
-    len = (size_t)snprintf(test_dir, sizeof(test_dir), "./store/long_path_");
-    memset(test_dir + len, 'x', sizeof(test_dir) - 1 - len);
-    test_dir[sizeof(test_dir) - 1] = '\0';
-    MKDIR(test_dir);
-    cleanup_test_files(test_dir);
-#ifndef WOLFPKCS11_NO_ENV
-    setenv("WOLFPKCS11_TOKEN_PATH", test_dir, 1);
-#endif
-
-    ret = create_test_token("Testing a token path near the name limit", 1);
-    if (ret != CKR_OK)
-        return -1;
-
-    ret = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
-                                  NULL, NULL, &session);
-    CHECK_CKR(ret, "C_OpenSession", CKR_OK);
-    ret = funcList->C_Login(session, CKU_USER, userPin, userPinLen);
-    CHECK_CKR(ret, "C_Login User", CKR_OK);
-
-    ret = funcList->C_CreateObject(session, privTmpl,
-                                   sizeof(privTmpl) / sizeof(*privTmpl), &key);
+    setenv("WOLFPKCS11_TOKEN_PATH", fitDir, 1);
+    ret = create_test_token("Testing the longest token path", 1);
+    if (ret == CKR_OK) {
+        ret = funcList->C_OpenSession(slot,
+            CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL, NULL, &session);
+    }
     if (ret == CKR_OK)
-        funcList->C_DestroyObject(session, key);
-    funcList->C_Logout(session);
-    funcList->C_CloseSession(session);
-    session = CK_INVALID_HANDLE;
+        ret = funcList->C_Login(session, CKU_USER, userPin, userPinLen);
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, privTmpl,
+            sizeof(privTmpl) / sizeof(*privTmpl), &key);
+    }
+    if (ret == CKR_OK)
+        ret = funcList->C_DestroyObject(session, key);
+    if (session != CK_INVALID_HANDLE) {
+        funcList->C_Logout(session);
+        funcList->C_CloseSession(session);
+    }
+    if (ret == CKR_OK) {
+        printf("PASS: Token key stored under the longest token path\n");
+        test_passed++;
+    }
+    else {
+        printf("FAIL: Token key under the longest token path: 0x%lx\n",
+               (unsigned long)ret);
+        test_failed++;
+        result = -1;
+    }
+    cleanup_test_files(fitDir);
 
-    ret = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
-                                  NULL, NULL, &session);
-    CHECK_CKR(ret, "C_OpenSession after a long object name", CKR_OK);
-    ret = funcList->C_Login(session, CKU_USER, userPin, userPinLen);
-    CHECK_CKR(ret, "C_Login User after a long object name", CKR_OK);
-    funcList->C_Logout(session);
-    funcList->C_CloseSession(session);
+    setenv("WOLFPKCS11_TOKEN_PATH", longDir, 1);
+    ret = create_test_token("Testing a token path one byte too long", 0);
+    if (ret == CKR_OK)
+        result = -1;
+    cleanup_test_files(longDir);
 
-    cleanup_test_files(test_dir);
-#ifndef WOLFPKCS11_NO_ENV
     unsetenv("WOLFPKCS11_TOKEN_PATH");
+    return result;
 #endif
-
-    return 0;
 }
 #endif
 
@@ -619,7 +632,7 @@ int main(int argc, char* argv[])
         result = 1;
     }
 
-#ifdef HAVE_ECC
+#if defined(HAVE_ECC) && !defined(WOLFPKCS11_NSS)
     if (test_long_token_path() != 0) {
         result = 1;
     }

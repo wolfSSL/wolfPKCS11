@@ -1719,14 +1719,48 @@ static CK_RV CreateObject(WP11_Session* session, CK_ATTRIBUTE_PTR pTemplate,
                 return CKR_ATTRIBUTE_VALUE_INVALID;
         }
 
-        /* A secret key's value is kept in storage only these types have. */
-        if (objectClass == CKO_SECRET_KEY && objType != CKK_GENERIC_SECRET &&
-                objType != CKK_AES && objType != CKK_HKDF) {
+        /* Secret key types and the secret key class only go together. */
+        if ((objectClass == CKO_SECRET_KEY) !=
+                (WP11_KeyType_IsSecret(objType) != 0)) {
             return CKR_TEMPLATE_INCONSISTENT;
         }
     }
 
     rv = NewObject(session, objType, objectClass, pTemplate, ulCount, object);
+
+    return rv;
+}
+
+/* Validate the template for a secret key an operation creates, before any
+ * key material is computed for it. */
+static CK_RV CheckSecretKeyTemplate(CK_ATTRIBUTE_PTR pTemplate,
+                                    CK_ULONG ulCount)
+{
+    CK_RV rv = CKR_OK;
+    CK_ATTRIBUTE* attr;
+
+    FindAttributeType(pTemplate, ulCount, CKA_CLASS, &attr);
+    if (attr != NULL) {
+        if (attr->pValue == NULL ||
+                attr->ulValueLen != sizeof(CK_OBJECT_CLASS)) {
+            rv = CKR_ATTRIBUTE_VALUE_INVALID;
+        }
+        else if (*(CK_OBJECT_CLASS*)attr->pValue != CKO_SECRET_KEY) {
+            rv = CKR_TEMPLATE_INCONSISTENT;
+        }
+    }
+    if (rv == CKR_OK) {
+        FindAttributeType(pTemplate, ulCount, CKA_KEY_TYPE, &attr);
+        if (attr == NULL)
+            rv = CKR_TEMPLATE_INCOMPLETE;
+        else if (attr->pValue == NULL ||
+                attr->ulValueLen != sizeof(CK_KEY_TYPE)) {
+            rv = CKR_ATTRIBUTE_VALUE_INVALID;
+        }
+        else if (!WP11_KeyType_IsSecret(*(CK_KEY_TYPE*)attr->pValue)) {
+            rv = CKR_TEMPLATE_INCONSISTENT;
+        }
+    }
 
     return rv;
 }
@@ -10190,7 +10224,7 @@ static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
     ret = (int)CreateObject(session, pTemplate, ulAttributeCount,
                             CKO_SECRET_KEY, &secret);
     if (ret != 0)
-        return CKR_OBJECT_HANDLE_INVALID;
+        return ret;
 
     ret = SymmKeyLen(secret, (word32)length, &symmKeyLen);
     if (ret == 0) {
@@ -10446,6 +10480,8 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
 
     rv = CheckPrivateLogin(session, pTemplate, ulAttributeCount,
                            CKO_SECRET_KEY);
+    if (rv == CKR_OK)
+        rv = CheckSecretKeyTemplate(pTemplate, ulAttributeCount);
     if (rv != CKR_OK)
         return rv;
 
@@ -10690,7 +10726,10 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
             XFREE(derivedKey, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             derivedKey = NULL;
 
-            if (ret != 0)
+            /* Key extraction reports a CK_RV, the derive a wolfCrypt error. */
+            if (ret > 0)
+                rv = (CK_RV)ret;
+            else if (ret != 0)
                 rv = CKR_FUNCTION_FAILED;
             break;
         }
@@ -10814,10 +10853,8 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
         if (reqValueLen > keyLen)
             rv = CKR_ATTRIBUTE_VALUE_INVALID;
         if (rv == CKR_OK) {
-            /* CKM_HKDF_DATA implies a CKO_DATA result, which is not built. */
             rv = CreateObject(session, pTemplate, ulAttributeCount,
-                              (pMechanism->mechanism == CKM_HKDF_DATA) ?
-                              WP11_NO_IMPLICIT_CLASS : CKO_SECRET_KEY, &obj);
+                              CKO_SECRET_KEY, &obj);
         }
         if (rv == CKR_OK) {
             /* obj now refers to the newly created derived key. */
@@ -11461,6 +11498,8 @@ static CK_RV wp11_C_EncapsulateKey(CK_SESSION_HANDLE hSession,
     /* Refuse before the size query or any ciphertext is written. */
     rv = CheckPrivateLogin(session, pTemplate, ulAttributeCount,
                            CKO_SECRET_KEY);
+    if (rv == CKR_OK)
+        rv = CheckSecretKeyTemplate(pTemplate, ulAttributeCount);
     if (rv != CKR_OK)
         return rv;
 
@@ -11605,6 +11644,8 @@ static CK_RV wp11_C_DecapsulateKey(CK_SESSION_HANDLE hSession,
     /* Refuse before the private key is used. */
     rv = CheckPrivateLogin(session, pTemplate, ulAttributeCount,
                            CKO_SECRET_KEY);
+    if (rv == CKR_OK)
+        rv = CheckSecretKeyTemplate(pTemplate, ulAttributeCount);
     if (rv != CKR_OK)
         return rv;
 

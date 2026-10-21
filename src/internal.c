@@ -1917,9 +1917,9 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
     const char* str = NULL;
     const char* kind = NULL;
     size_t need;
-    /* The directory must leave room for the temporary and batch file names
-     * that are built from it. */
-    enum { WP11_STORE_SUFFIX_RESERVE = 48 };
+    /* The longest name, "/wp11_mldsakey_priv_" and two 16 digit ids, so a
+     * directory too long for any store file is refused before the first. */
+    enum { WP11_STORE_SUFFIX_RESERVE = 53 };
 #ifndef WOLFPKCS11_NO_ENV
     char homePath[256];
 #endif
@@ -2299,6 +2299,7 @@ static int wolfPKCS11_StoreBatchApply(const char* listName, int mode)
     XFILE list;
     XFILE staged;
     size_t len;
+    size_t stagedLen;
     size_t i;
     const char* base;
     char line[WP11_STORE_MAX_PATH + 2];
@@ -2330,11 +2331,12 @@ static int wolfPKCS11_StoreBatchApply(const char* listName, int mode)
         }
         len = (size_t)XSNPRINTF(finalName, sizeof(finalName), "%s/%s",
             storeBatch.dir, base);
+        stagedLen = sizeof(stagedName);
         if (len < sizeof(finalName)) {
-            len = (size_t)XSNPRINTF(stagedName, sizeof(stagedName), "%s.new",
-                finalName);
+            stagedLen = (size_t)XSNPRINTF(stagedName, sizeof(stagedName),
+                "%s.new", finalName);
         }
-        if (len >= sizeof(finalName) || len >= sizeof(stagedName)) {
+        if (len >= sizeof(finalName) || stagedLen >= sizeof(stagedName)) {
             if (mode != WP11_BATCH_DISCARD)
                 ret = READ_ONLY_E;
             continue;
@@ -8372,8 +8374,17 @@ static int wp11_Object_Decode(WP11_Object* object)
         }
     }
 
-    if (ret == 0)
+    if (ret == 0) {
         object->undecoded = 0;
+        /* Older releases stored derived secret keys with no class. Adopt the
+         * secret key class and rebind the key data to it straight away. */
+        if (object->objClass == (CK_OBJECT_CLASS)-1 &&
+                WP11_KeyType_IsSecret(object->type)) {
+            object->objClass = CKO_SECRET_KEY;
+            if (wp11_Object_Encode(object, 0) != 0)
+                object->objClass = (CK_OBJECT_CLASS)-1;
+        }
+    }
     /* Authentication failure means this object isn't for this user. */
     if (ret == AES_GCM_AUTH_E)
         ret = 0;
@@ -13436,8 +13447,7 @@ void WP11_Slot_ClearActiveObject(WP11_Slot* slot, WP11_Object* object)
         return;
 
     keyType = WP11_Object_GetType(object);
-    symmetric = (keyType == CKK_AES || keyType == CKK_GENERIC_SECRET ||
-                 keyType == CKK_HKDF);
+    symmetric = WP11_KeyType_IsSecret(keyType);
 
     WP11_Lock_LockRW(&slot->lock);
     for (curr = slot->session; curr != NULL; curr = curr->next) {
@@ -13879,8 +13889,8 @@ void WP11_Object_Free(WP11_Object* object)
             object->data.xmssKey = NULL;
         }
     #endif
-        if ((object->type == CKK_AES || object->type == CKK_GENERIC_SECRET ||
-             object->type == CKK_HKDF) && object->data.symmKey != NULL) {
+        if (WP11_KeyType_IsSecret(object->type) &&
+                object->data.symmKey != NULL) {
             word32 zeroLen = object->data.symmKey->len;
             /* Clamp to the fixed buffer as a backstop against a length
              * recorded larger than the buffer. */
@@ -13968,6 +13978,19 @@ void WP11_Object_Persist(WP11_Object* object)
 #else
     (void)object;
 #endif
+}
+
+/**
+ * Check whether a key type is a secret key type, holding its value in
+ * symmKey.
+ *
+ * @param  type  [in]  Key type.
+ * @return  1 when the key type is a secret key type.
+ *          0 otherwise.
+ */
+int WP11_KeyType_IsSecret(CK_KEY_TYPE type)
+{
+    return type == CKK_AES || type == CKK_GENERIC_SECRET || type == CKK_HKDF;
 }
 
 /**
@@ -14641,9 +14664,9 @@ int WP11_Object_SetMlKemKey(WP11_Object* object, unsigned char** data,
  * @param  object  [in]  Object object.
  * @param  data    [in]  Array of byte arrays.
  * @param  len     [in]  Array of lengths of byte arrays.
- * @return  BAD_FUNC_ARG when the object is not a key with secret key storage,
- *          key length data is not size of CK_ULONG or key length is not a
- *          valid size for the key type.
+ * @return  BAD_FUNC_ARG when the object is not a secret key with secret key
+ *          storage, key length data is not size of CK_ULONG or key length is
+ *          not a valid size for the key type.
  *          BUFFER_E when key data length is less than key length data value.
  *          Other -ve on failure.
  *          0 on success.
@@ -14657,11 +14680,9 @@ int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
     word32 newLen = 0;
 
     /* Other classes and key types use the storage union differently. */
-    if ((object->objClass != CKO_SECRET_KEY &&
-            object->objClass != CKO_PRIVATE_KEY &&
-            object->objClass != CKO_PUBLIC_KEY) ||
-            (object->type != CKK_AES && object->type != CKK_GENERIC_SECRET &&
-            object->type != CKK_HKDF) || object->data.symmKey == NULL) {
+    if (object->objClass != CKO_SECRET_KEY ||
+            !WP11_KeyType_IsSecret(object->type) ||
+            object->data.symmKey == NULL) {
         return BAD_FUNC_ARG;
     }
 
@@ -15902,8 +15923,7 @@ int WP11_Generic_SerializeKey(WP11_Object* object, byte* output, word32* poutsz)
     if (object == NULL || poutsz == NULL)
         return PARAM_E;
 
-    if (object->type != CKK_AES && object->type != CKK_GENERIC_SECRET
-            && object->type != CKK_HKDF)
+    if (!WP11_KeyType_IsSecret(object->type))
         return OBJ_TYPE_E;
 
     if (object->objClass != CKO_SECRET_KEY)
@@ -18918,11 +18938,7 @@ int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
                     return CKR_OBJECT_HANDLE_INVALID;
                 /* Only these secret key types hold their value in symmKey. */
                 if (saltKey->objClass != CKO_SECRET_KEY ||
-                    (saltKey->type != CKK_GENERIC_SECRET &&
-#ifndef NO_AES
-                     saltKey->type != CKK_AES &&
-#endif
-                     saltKey->type != CKK_HKDF) ||
+                    !WP11_KeyType_IsSecret(saltKey->type) ||
                     saltKey->data.symmKey == NULL)
                     return CKR_MECHANISM_PARAM_INVALID;
                 salt = saltKey->data.symmKey->data;
@@ -21418,9 +21434,8 @@ int WP11_Digest_Key(WP11_Object* key, WP11_Session* session)
 #ifndef WOLFPKCS11_NO_STORE
     WP11_Digest* digest = &session->params.digest;
 
-    if (key->objClass != CKO_SECRET_KEY || (key->type != CKK_AES &&
-            key->type != CKK_GENERIC_SECRET && key->type != CKK_HKDF) ||
-            key->data.symmKey == NULL) {
+    if (key->objClass != CKO_SECRET_KEY ||
+            !WP11_KeyType_IsSecret(key->type) || key->data.symmKey == NULL) {
         return (int)CKR_KEY_INDIGESTIBLE;
     }
     if (key->encoded)

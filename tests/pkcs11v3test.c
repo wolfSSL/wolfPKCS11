@@ -1998,6 +1998,12 @@ static CK_RV test_mlkem_secret_template_type(void* args)
     ret = gen_mlkem_keys(session, CKP_ML_KEM_512, &pub, &priv, NULL, 0,
                          NULL, 0, 0);
     if (ret == CKR_OK) {
+        ret = funcListExt->C_EncapsulateKey(session, &mech, pub, dataTmpl,
+                                            1, NULL, &ctLen, &secret);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+                       "ML-KEM Encapsulate size query to a data object");
+    }
+    if (ret == CKR_OK) {
         ret = funcListExt->C_EncapsulateKey(session, &mech, pub, goodTmpl,
                                             2, NULL, &ctLen, &secret);
         CHECK_CKR(ret, "ML-KEM Encapsulate size query");
@@ -2008,10 +2014,15 @@ static CK_RV test_mlkem_secret_template_type(void* args)
             ret = CKR_HOST_MEMORY;
     }
     if (ret == CKR_OK) {
+        XMEMSET(ciphertext, 0xa5, ctLen);
         ret = funcListExt->C_EncapsulateKey(session, &mech, pub, wrongTypeTmpl,
                                             2, ciphertext, &ctLen, &secret);
         CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
                        "ML-KEM Encapsulate to a non-secret key type");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(ciphertext[0] == 0xa5 && ciphertext[ctLen - 1] == 0xa5,
+                   ret, "No ciphertext for a refused template");
     }
     if (ret == CKR_OK) {
         ret = funcListExt->C_EncapsulateKey(session, &mech, pub, noClassTmpl,
