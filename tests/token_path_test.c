@@ -440,7 +440,8 @@ static int test_missing_storage_path(void)
     return 0;
 }
 
-#if defined(HAVE_ECC) && !defined(WOLFPKCS11_NSS)
+#if defined(HAVE_ECC) && !defined(WOLFPKCS11_NSS) && \
+    !defined(WOLFPKCS11_NO_ENV)
 static void fill_token_dir(char* dir, size_t sz)
 {
     size_t len = (size_t)snprintf(dir, sz, "./store/long_path_");
@@ -470,10 +471,6 @@ static int test_long_token_path(void)
     char fitDir[67];
     char longDir[68];
 
-#ifdef WOLFPKCS11_NO_ENV
-    printf("SKIP: Environment variables disabled\n");
-    return 0;
-#else
     fill_token_dir(fitDir, sizeof(fitDir));
     fill_token_dir(longDir, sizeof(longDir));
     MKDIR(fitDir);
@@ -519,7 +516,6 @@ static int test_long_token_path(void)
 
     unsetenv("WOLFPKCS11_TOKEN_PATH");
     return result;
-#endif
 }
 #endif
 
@@ -632,7 +628,8 @@ int main(int argc, char* argv[])
         result = 1;
     }
 
-#if defined(HAVE_ECC) && !defined(WOLFPKCS11_NSS)
+#if defined(HAVE_ECC) && !defined(WOLFPKCS11_NSS) && \
+    !defined(WOLFPKCS11_NO_ENV)
     if (test_long_token_path() != 0) {
         result = 1;
     }
