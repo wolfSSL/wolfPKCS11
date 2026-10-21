@@ -381,6 +381,174 @@ Set to any value to stop storage of token data.
 
 ## Release Notes
 
+### wolfPKCS11 Release 2.2 (Oct 21, 2026)
+
+**Summary**
+
+This release adds verify-only LMS/HSS and XMSS/XMSS^MT support, an option to
+link a static wolfSSL into libwolfpkcs11, and partial token writes that make
+creating and destroying token objects much faster on custom stores. It also
+fixes a large number of PKCS#11 specification compliance, memory-safety and
+concurrency issues found through static analysis and external reports, fixes
+TPM ECDH, the Windows ABI and the default token path, and enables
+ThreadSanitizer in CI.
+
+**Compatibility with 2.1 behavior**
+
+Some of these fixes change behavior that applications or stored tokens may
+depend on:
+
+* Key material in stored token objects is now encrypted with the object's
+  policy (class, key type, key generation mechanism, local flag and operation
+  flags) as authenticated data. Tokens written by 2.1 and earlier still load,
+  and each object is rewritten in the new format the next time it is stored.
+  Earlier releases cannot read objects in the new format, so a token used with
+  2.2 cannot be moved back to an earlier release. (PR #243)
+* The token path lookup order is now `WOLFPKCS11_TOKEN_PATH`, the NSS store
+  directory, `WOLFPKCS11_DEFAULT_TOKEN_PATH`, then the home directory, and a
+  path set with `--with-default-token-path` is now used. POSIX builds that set
+  a default path and have tokens in `$HOME/.wolfPKCS11` need to set
+  `WOLFPKCS11_TOKEN_PATH` or move the token files. See the
+  `WOLFPKCS11_TOKEN_PATH` section above. (PR #225, PR #247)
+* On Windows the PKCS#11 structures now use 1-byte packing, the layout other
+  PKCS#11 modules and applications use there. Applications must be rebuilt
+  with the new headers. Define `WOLFPKCS11_NO_PACKED_STRUCTS` to keep the
+  previous layout. (PR #209)
+* `CKM_AES_CMAC` now produces and checks a full 16-byte MAC. Earlier releases
+  used 8 bytes. (PR #243)
+* `CKA_CHECK_VALUE` of a generic secret key is now the first three bytes of
+  the SHA-1 hash of its value, as PKCS#11 3.2 defines. AES-192 keys and
+  generic secrets that are not an AES key length now return a check value
+  instead of failing with `CKR_FUNCTION_FAILED`. (PR #248)
+* `C_GetAttributeValue` returns `CKR_ATTRIBUTE_TYPE_INVALID` for attributes an
+  object does not have and keeps processing the template, and `CKA_KEY_TYPE`
+  is only an attribute of key objects. (PR #222)
+* Templates are checked more strictly. `C_SetAttributeValue` rejects changes to
+  `CKA_TOKEN`, `CKA_PRIVATE`, `CKA_MODIFIABLE`, key components and certificate
+  values. `C_CreateObject` requires the key or certificate value.
+  `C_GenerateKey` and `C_GenerateKeyPair` reject a class or key type that does
+  not match the mechanism. Setting `CKA_ALWAYS_AUTHENTICATE` to `CK_TRUE`
+  returns `CKR_ATTRIBUTE_VALUE_INVALID`. (PR #216, PR #243)
+* In non-NSS builds, finding, using or creating private objects needs a normal
+  user login, so an SO session can no longer use them. `C_DeriveKey`,
+  `C_EncapsulateKey` and `C_DecapsulateKey` need a user login when the new key
+  is private. Closing all sessions now logs the application out, and setting
+  `CKA_TRUSTED` needs an SO session. (PR #207, PR #212, PR #227, PR #243)
+* EC keys generated on a TPM slot are now created with TPM capabilities that
+  match `CKA_SIGN` and `CKA_DERIVE`, and ECDH runs on the TPM. TPM EC keys
+  stored by earlier releases were created for signing only and cannot be used
+  for ECDH. (PR #210)
+* Object creation fails with `CKR_FUNCTION_FAILED` once the object ids run out
+  (about 268 million objects). Session objects now have their own id counter,
+  so session object handles start again at 1 after each `C_Initialize`.
+  (PR #255)
+* After `C_DestroyObject`, `C_FindObjects` can return token objects in a
+  different order. PKCS#11 does not define the order. (PR #257)
+* MAXQ10xx builds must define `MAXQ10XX_PRODUCTION_KEY`, or
+  `WOLFPKCS11_MAXQ10XX_TEST_KEY` to use the built-in test provisioning key.
+  With neither the build fails. (PR #207)
+* The CMake build now uses hidden symbol visibility and exports only the
+  `C_*` functions, like the autotools build. (PR #258)
+* A multi-threaded Windows build now needs Windows Vista or later. Windows CE,
+  or a `_WIN32_WINNT` below `0x0600`, fails with an `#error`. (PR #254)
+
+**Detail**
+
+* Added verify-only LMS/HSS and XMSS/XMSS^MT support (`--enable-lms`,
+  `--enable-xmss`), using the PKCS#11 v3.3 mechanism, key type and attribute
+  values. Public keys can be imported, stored and used with `C_Verify`.
+  (PR #206)
+* Added an option to link a static wolfSSL into libwolfpkcs11 with its symbols
+  hidden (`--with-static-wolfssl` in autotools, `WOLFPKCS11_STATIC_WOLFSSL` in
+  CMake). The autotools build now also exports the PKCS#11 v3.0 and v3.2
+  functions, and the CMake package it installs no longer points at
+  `NONE/include` when configured without `--prefix`. (PR #258)
+* Creating and destroying token objects now writes only the changed objects
+  instead of the whole token, and `C_SetAttributeValue` on a token object
+  stores it straight away. (PR #257)
+* Fixed ECDH with EC keys generated on a TPM slot. (PR #210)
+* Fixed the Windows ABI of the PKCS#11 structures. (PR #209)
+* Fixed Windows GCC builds (MinGW-w64, Cygwin, MSYS2) failing on visibility
+  attribute warnings. (PR #224)
+* Fixed the default Windows token path, which read a variable that does not
+  exist. It is now `%APPDATA%\wolfPKCS11`. (PR #225)
+* Fixed `WOLFPKCS11_DEFAULT_TOKEN_PATH` being ignored when `HOME` is set, and
+  being compiled in with extra quotes when set through configure or CMake.
+  (PR #247)
+* Fixed NSS database paths with a `sql:`, `dbm:` or `extern:` prefix.
+  (PR #219)
+* Fixed `C_WrapKey` leaving the operation active after a length query, which
+  broke `pk12util -o` through NSS. (PR #220)
+* Fixed `C_SetPIN` leaving protected token objects encrypted under the old
+  token key, so they could not be read after the next `C_Initialize`.
+  (PR #226)
+* Fixed `CKA_CHECK_VALUE` for AES-192 keys and generic secret keys.
+  (PR #248)
+* Fixed `C_GetAttributeValue` failing the whole template for attributes an
+  object does not have. (PR #222)
+* Fixed object handles colliding with token object handles once object ids
+  passed `0x0FFFFFFF`, which could read or destroy the wrong object.
+  (PR #255)
+* Fixed a double free when two sessions destroy the same token object at the
+  same time. (PR #205)
+* Fixed `C_DestroyObject` removing another object that had been created at
+  the same address by another thread. (PR #252)
+* Fixed the internal read/write lock being released by a thread that did not
+  take it, which hung `pkcs11mtt` under Wine, and fixed the data races
+  ThreadSanitizer reported. (PR #254)
+* Fixed a memory leak when `C_Login` decodes keys that are already loaded.
+  With a wolfSSL built with `HAVE_WOLF_BIGINT` (for example
+  `--enable-pkcs11`), RSA and ECC keys leaked their big integers, and with
+  dynamic key buffers ML-DSA and ML-KEM keys leaked their key buffers. A new
+  ASAN CI build against such a wolfSSL catches this. (PR #261)
+* Fixed building the AES key wrap with padding code against FIPS v5.2
+  modules. (PR #217)
+* Fixed the wolfTPM build with `WOLFPKCS11_NO_STORE`. (PR #246)
+* Fixed numerous PKCS#11 compliance, memory-safety and concurrency findings
+  from Fenrir static analysis. (PR #207, PR #212, PR #213, PR #214, PR #215,
+  PR #216, PR #227, PR #243) These include:
+  * Access control and login state: private objects are limited to user
+    sessions, login lockout counts stop at the limit and also cover
+    `C_SetPIN`, a failed login clears the derived token key, and logout
+    protects every decoded token object.
+  * Stored objects: object policy is bound to the encrypted key data, stored
+    records are validated before use, store failures are reported and rolled
+    back, fresh IVs are generated before keys are stored, HKDF token keys are
+    stored, and every object gets a unique `CKA_UNIQUE_ID`.
+  * Operation state: operations are released when replaced, cancelled or
+    ending in an error, `CKR_BUFFER_TOO_SMALL` reports the needed length and
+    keeps the operation for a retry, and lengths that do not fit in 32 bits
+    are rejected.
+  * Mechanism parameters: AES-CTR counter, AES-GCM, AES-CCM, OAEP, PSS, CMAC,
+    ECDH, DH, HKDF and TLS derive parameters are checked, and derived keys
+    take their `CKA_ALWAYS_SENSITIVE` and `CKA_NEVER_EXTRACTABLE` values from
+    the base key.
+  * Templates: attributes are validated before an object is changed, key
+    material and certificate values are fixed after creation, data objects
+    are copied and partly updated correctly, and NSS email attributes are
+    sized correctly in the store.
+  * Information functions: fixed-length fields in `C_GetInfo`,
+    `C_GetSlotInfo` and `C_GetTokenInfo` are blank padded, and mechanism
+    flags and key sizes match what is implemented. SSL 3.0 key derivation is
+    no longer advertised.
+  * Key material and transient MAC, AES and RNG buffers are zeroized after
+    use and on error paths.
+* `--enable-singlethreaded` now defines `WOLFPKCS11_SINGLE_THREADED` instead
+  of wolfSSL's `SINGLE_THREADED`, so wolfPKCS11 uses the same wolfSSL
+  structure layout as a multi-threaded libwolfssl. (PR #243)
+* Enabled ThreadSanitizer in CI. (PR #254)
+* Fixed linking the tests in C++ debug builds. (PR #256, PR #259)
+* Renamed `ecb_check_value_error_test` to `generic_secret_check_value_test`.
+  (PR #250)
+* Updated the wolfBoot emulator CI image to m33mu v1.25. (PR #249)
+* Added `CONTRIBUTING.md`. (PR #211)
+* Added the 2.1 release date to the README. (PR #203)
+* The shared library version is now 4.1.0, as the library exports the
+  PKCS#11 v3.0 and v3.2 functions.
+* Thanks to Peter Dennis Bartok for reporting the `C_GetAttributeValue` and
+  `CKA_CHECK_VALUE` issues (issue #221, issue #245) and to Nazar Serhiichuk
+  for reporting the Windows ABI issue (issue #208).
+
 ### wolfPKCS11 Release 2.1 (Jun 25, 2026)
 
 **Summary**

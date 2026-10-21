@@ -1,3 +1,10 @@
+wolfpkcs11 (2.2.0) stable; urgency=medium
+
+  * For a full changelog see
+    https://github.com/wolfSSL/wolfPKCS11/blob/master/README.md
+
+ -- wolfSSL <support@wolfssl.com>  Tue, 20 Oct 2026 12:53:20 +0000
+
 wolfpkcs11 (2.1.0) stable; urgency=medium
 
   * For a full changelog see
