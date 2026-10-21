@@ -381,7 +381,7 @@ Set to any value to stop storage of token data.
 
 ## Release Notes
 
-### wolfPKCS11 Release 2.2 (Oct 20, 2026)
+### wolfPKCS11 Release 2.2 (Oct 21, 2026)
 
 **Summary**
 
@@ -496,6 +496,11 @@ depend on:
 * Fixed the internal read/write lock being released by a thread that did not
   take it, which hung `pkcs11mtt` under Wine, and fixed the data races
   ThreadSanitizer reported. (PR #254)
+* Fixed a memory leak when `C_Login` decodes keys that are already loaded.
+  With a wolfSSL built with `HAVE_WOLF_BIGINT` (for example
+  `--enable-pkcs11`), RSA and ECC keys leaked their big integers, and with
+  dynamic key buffers ML-DSA and ML-KEM keys leaked their key buffers. A new
+  ASAN CI build against such a wolfSSL catches this. (PR #261)
 * Fixed building the AES key wrap with padding code against FIPS v5.2
   modules. (PR #217)
 * Fixed the wolfTPM build with `WOLFPKCS11_NO_STORE`. (PR #246)
