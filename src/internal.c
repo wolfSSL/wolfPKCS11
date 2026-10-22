@@ -1915,10 +1915,10 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
 {
     int ret = 0;
     const char* str = NULL;
-    /* Reserve enough space in the final filename for suffixes such as
-     * "/wp11_rsakey_priv_%016lx_%016lx" (47 chars worst-case).
-     */
-    enum { WP11_STORE_SUFFIX_RESERVE = 48 };
+    const char* kind = NULL;
+    /* XSNPRINTF is unbounded in some builds, so this must cover the longest
+     * name below: "/wp11_mldsakey_priv_" and two 16 digit ids. */
+    enum { WP11_STORE_SUFFIX_RESERVE = 53 };
 #ifndef WOLFPKCS11_NO_ENV
     char homePath[256];
 #endif
@@ -1995,7 +1995,6 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
     }
 #endif
 
-    /* 47 is maximum number of character to a filename and path separator. */
     if (str == NULL) {
         return -1;
     }
@@ -2009,90 +2008,97 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
     /* Set different filename for each type of data and different ids. */
     switch (type) {
         case WOLFPKCS11_STORE_TOKEN:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_token_%016lx", str, id1);
+            kind = "token";
             break;
         case WOLFPKCS11_STORE_OBJECT:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_obj_%016lx_%016lx", str, id1,
-                    id2);
+            kind = "obj";
             break;
         case WOLFPKCS11_STORE_SYMMKEY:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_symmkey_%016lx_%016lx", str,
-                    id1, id2);
+            kind = "symmkey";
             break;
         case WOLFPKCS11_STORE_RSAKEY_PRIV:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_rsakey_priv_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "rsakey_priv";
             break;
         case WOLFPKCS11_STORE_RSAKEY_PUB:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_rsakey_pub_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "rsakey_pub";
             break;
         case WOLFPKCS11_STORE_ECCKEY_PRIV:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_ecckey_priv_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "ecckey_priv";
             break;
         case WOLFPKCS11_STORE_ECCKEY_PUB:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_ecckey_pub_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "ecckey_pub";
             break;
         case WOLFPKCS11_STORE_DHKEY_PRIV:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_dhkey_priv_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "dhkey_priv";
             break;
         case WOLFPKCS11_STORE_DHKEY_PUB:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_dhkey_pub_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "dhkey_pub";
             break;
         case WOLFPKCS11_STORE_CERT:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_cert_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "cert";
             break;
         case WOLFPKCS11_STORE_TRUST:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_trust_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "trust";
             break;
         case WOLFPKCS11_STORE_DATA:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_data_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "data";
             break;
         case WOLFPKCS11_STORE_MLDSAKEY_PRIV:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_mldsakey_priv_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "mldsakey_priv";
             break;
         case WOLFPKCS11_STORE_MLDSAKEY_PUB:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_mldsakey_pub_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "mldsakey_pub";
             break;
 #ifdef WOLFPKCS11_MLKEM
         case WOLFPKCS11_STORE_MLKEMKEY_PRIV:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_mlkemkey_priv_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "mlkemkey_priv";
             break;
         case WOLFPKCS11_STORE_MLKEMKEY_PUB:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_mlkemkey_pub_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "mlkemkey_pub";
             break;
 #endif
 #ifdef WOLFPKCS11_LMS
         case WOLFPKCS11_STORE_HSSKEY_PUB:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_hsskey_pub_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "hsskey_pub";
             break;
 #endif
 #ifdef WOLFPKCS11_XMSS
         case WOLFPKCS11_STORE_XMSSKEY_PUB:
-            ret = XSNPRINTF(name, nameLen, "%s/wp11_xmsskey_pub_%016lx_%016lx",
-                    str, id1, id2);
+            kind = "xmsskey_pub";
             break;
 #endif
 
         default:
-            ret = -1;
-            break;
+            return -1;
+    }
+
+    if (type == WOLFPKCS11_STORE_TOKEN) {
+        ret = XSNPRINTF(name, nameLen, "%s/wp11_%s_%016lx", str, kind, id1);
+    }
+    else {
+        ret = XSNPRINTF(name, nameLen, "%s/wp11_%s_%016lx_%016lx", str, kind,
+            id1, id2);
     }
 
     return ret;
 }
+
+#ifdef DEBUG_WOLFPKCS11
+/**
+ * Test hook: build the store file name for a store type under the current
+ * token path.
+ *
+ * @param  type  [in]  Store type.
+ * @return  Length of the name on success.
+ *          -1 when no name can be built for the type.
+ */
+WP11_API int WP11_Test_StoreName(int type)
+{
+    char name[WP11_STORE_MAX_PATH];
+
+    return wolfPKCS11_Store_Name(type, 1, 1, name, (int)sizeof(name));
+}
+#endif
 
 /* One token store pass commits as a unit: staged records, then a marker. */
 #define WP11_STORE_BATCH
@@ -2300,6 +2306,7 @@ static int wolfPKCS11_StoreBatchApply(const char* listName, int mode)
     XFILE list;
     XFILE staged;
     size_t len;
+    size_t stagedLen;
     size_t i;
     const char* base;
     char line[WP11_STORE_MAX_PATH + 2];
@@ -2331,11 +2338,12 @@ static int wolfPKCS11_StoreBatchApply(const char* listName, int mode)
         }
         len = (size_t)XSNPRINTF(finalName, sizeof(finalName), "%s/%s",
             storeBatch.dir, base);
+        stagedLen = sizeof(stagedName);
         if (len < sizeof(finalName)) {
-            len = (size_t)XSNPRINTF(stagedName, sizeof(stagedName), "%s.new",
-                finalName);
+            stagedLen = (size_t)XSNPRINTF(stagedName, sizeof(stagedName),
+                "%s.new", finalName);
         }
-        if (len >= sizeof(finalName) || len >= sizeof(stagedName)) {
+        if (len >= sizeof(finalName) || stagedLen >= sizeof(stagedName)) {
             if (mode != WP11_BATCH_DISCARD)
                 ret = READ_ONLY_E;
             continue;
@@ -8391,8 +8399,17 @@ static int wp11_Object_Decode(WP11_Object* object)
         }
     }
 
-    if (ret == 0)
+    if (ret == 0) {
         object->undecoded = 0;
+        /* Older releases stored derived secret keys with no class. Adopt the
+         * secret key class and rebind the key data to it straight away. */
+        if (object->objClass == (CK_OBJECT_CLASS)-1 &&
+                WP11_KeyType_IsSecret(object->type)) {
+            object->objClass = CKO_SECRET_KEY;
+            if (wp11_Object_Encode(object, 0) != 0)
+                object->objClass = (CK_OBJECT_CLASS)-1;
+        }
+    }
     /* Authentication failure means this object isn't for this user. */
     if (ret == AES_GCM_AUTH_E)
         ret = 0;
@@ -13420,6 +13437,41 @@ WP11_API int WP11_Test_SetNextObjId(CK_SLOT_ID slotId, int onToken,
 
     return 0;
 }
+
+#ifndef WOLFPKCS11_NO_STORE
+/**
+ * Test hook: give an object a class and bind its key data to that class, as
+ * older releases stored derived secret keys that had no class.
+ *
+ * @param  hSession  [in]  Session handle.
+ * @param  hObject   [in]  Object handle.
+ * @param  objClass  [in]  Class for the object.
+ * @return  BAD_FUNC_ARG when the session or object is not found.
+ *          Other -ve when the key data cannot be bound.
+ *          0 on success.
+ */
+WP11_API int WP11_Test_SetObjectClass(CK_SESSION_HANDLE hSession,
+    CK_OBJECT_HANDLE hObject, CK_OBJECT_CLASS objClass)
+{
+    int ret;
+    WP11_Session* session;
+    WP11_Object* object;
+
+    if (WP11_Session_Get(hSession, &session) != 0 ||
+            WP11_Object_Find(session, hObject, &object) != 0) {
+        return BAD_FUNC_ARG;
+    }
+
+    if (object->onToken)
+        WP11_Lock_LockRW(object->lock);
+    object->objClass = objClass;
+    ret = wp11_Object_Encode(object, 0);
+    if (object->onToken)
+        WP11_Lock_UnlockRW(object->lock);
+
+    return ret;
+}
+#endif
 #endif /* DEBUG_WOLFPKCS11 */
 
 /**
@@ -13455,8 +13507,7 @@ void WP11_Slot_ClearActiveObject(WP11_Slot* slot, WP11_Object* object)
         return;
 
     keyType = WP11_Object_GetType(object);
-    symmetric = (keyType == CKK_AES || keyType == CKK_GENERIC_SECRET ||
-                 keyType == CKK_HKDF);
+    symmetric = WP11_KeyType_IsSecret(keyType);
 
     WP11_Lock_LockRW(&slot->lock);
     for (curr = slot->session; curr != NULL; curr = curr->next) {
@@ -13898,8 +13949,8 @@ void WP11_Object_Free(WP11_Object* object)
             object->data.xmssKey = NULL;
         }
     #endif
-        if ((object->type == CKK_AES || object->type == CKK_GENERIC_SECRET ||
-             object->type == CKK_HKDF) && object->data.symmKey != NULL) {
+        if (WP11_KeyType_IsSecret(object->type) &&
+                object->data.symmKey != NULL) {
             word32 zeroLen = object->data.symmKey->len;
             /* Clamp to the fixed buffer as a backstop against a length
              * recorded larger than the buffer. */
@@ -13987,6 +14038,19 @@ void WP11_Object_Persist(WP11_Object* object)
 #else
     (void)object;
 #endif
+}
+
+/**
+ * Check whether a key type is a secret key type, holding its value in
+ * symmKey.
+ *
+ * @param  type  [in]  Key type.
+ * @return  1 when the key type is a secret key type.
+ *          0 otherwise.
+ */
+int WP11_KeyType_IsSecret(CK_KEY_TYPE type)
+{
+    return type == CKK_AES || type == CKK_GENERIC_SECRET || type == CKK_HKDF;
 }
 
 /**
@@ -14660,8 +14724,9 @@ int WP11_Object_SetMlKemKey(WP11_Object* object, unsigned char** data,
  * @param  object  [in]  Object object.
  * @param  data    [in]  Array of byte arrays.
  * @param  len     [in]  Array of lengths of byte arrays.
- * @return  BAD_FUNC_ARG when key length data is not size of CK_ULONG or
- *          key length is not a valid size for the key type.
+ * @return  BAD_FUNC_ARG when the object is not a secret key with secret key
+ *          storage, key length data is not size of CK_ULONG or key length is
+ *          not a valid size for the key type.
  *          BUFFER_E when key data length is less than key length data value.
  *          Other -ve on failure.
  *          0 on success.
@@ -14673,6 +14738,13 @@ int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
     WP11_Data* key;
     CK_ULONG keyLen = 0;
     word32 newLen = 0;
+
+    /* Other classes and key types use the storage union differently. */
+    if (object->objClass != CKO_SECRET_KEY ||
+            !WP11_KeyType_IsSecret(object->type) ||
+            object->data.symmKey == NULL) {
+        return BAD_FUNC_ARG;
+    }
 
     if (object->onToken)
         WP11_Lock_LockRW(object->lock);
@@ -15911,8 +15983,7 @@ int WP11_Generic_SerializeKey(WP11_Object* object, byte* output, word32* poutsz)
     if (object == NULL || poutsz == NULL)
         return PARAM_E;
 
-    if (object->type != CKK_AES && object->type != CKK_GENERIC_SECRET
-            && object->type != CKK_HKDF)
+    if (!WP11_KeyType_IsSecret(object->type))
         return OBJ_TYPE_E;
 
     if (object->objClass != CKO_SECRET_KEY)
@@ -18927,11 +18998,7 @@ int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
                     return CKR_OBJECT_HANDLE_INVALID;
                 /* Only these secret key types hold their value in symmKey. */
                 if (saltKey->objClass != CKO_SECRET_KEY ||
-                    (saltKey->type != CKK_GENERIC_SECRET &&
-#ifndef NO_AES
-                     saltKey->type != CKK_AES &&
-#endif
-                     saltKey->type != CKK_HKDF) ||
+                    !WP11_KeyType_IsSecret(saltKey->type) ||
                     saltKey->data.symmKey == NULL)
                     return CKR_MECHANISM_PARAM_INVALID;
                 salt = saltKey->data.symmKey->data;
@@ -21427,9 +21494,8 @@ int WP11_Digest_Key(WP11_Object* key, WP11_Session* session)
 #ifndef WOLFPKCS11_NO_STORE
     WP11_Digest* digest = &session->params.digest;
 
-    if (key->objClass != CKO_SECRET_KEY || (key->type != CKK_AES &&
-            key->type != CKK_GENERIC_SECRET && key->type != CKK_HKDF) ||
-            key->data.symmKey == NULL) {
+    if (key->objClass != CKO_SECRET_KEY ||
+            !WP11_KeyType_IsSecret(key->type) || key->data.symmKey == NULL) {
         return (int)CKR_KEY_INDIGESTIBLE;
     }
     if (key->encoded)

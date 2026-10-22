@@ -2049,7 +2049,7 @@ static CK_RV test_object(void* args)
         { CKA_KEY_TYPE,          &badKeyType,       sizeof(badKeyType)        }
     };
     CK_ATTRIBUTE keyDataNull[] = {
-        { CKA_CLASS,             &privKeyClass,     sizeof(privKeyClass)      },
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
         { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
         { CKA_VALUE,             NULL,              sizeof(keyData)           },
     };
@@ -3236,7 +3236,7 @@ static CK_RV test_cross_session_object(void* args)
     CK_ULONG size;
     static byte keyData[] = { 0x00 };
     CK_ATTRIBUTE tmpl[] = {
-        { CKA_CLASS,             &pubKeyClass,      sizeof(pubKeyClass)       },
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
         { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
         { CKA_VALUE,             keyData,           sizeof(keyData)           },
         { CKA_EXTRACTABLE,       &ckTrue,           sizeof(ckTrue)            },
@@ -3282,7 +3282,7 @@ static CK_RV test_attribute(void* args)
     CK_BBOOL badBool = 2;
     CK_DATE date = { { 0, }, { 0, }, { 0, } };
     CK_ATTRIBUTE tmpl[] = {
-        { CKA_CLASS,             &privKeyClass,     sizeof(privKeyClass)      },
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
         { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
         { CKA_SENSITIVE,         &ckFalse,          sizeof(ckFalse)           },
         { CKA_EXTRACTABLE,       &ckTrue,           sizeof(ckTrue)            },
@@ -3454,7 +3454,7 @@ static CK_RV test_attribute_types(void* args)
     CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
     static byte keyData[] = { 0x00 };
     CK_ATTRIBUTE tmpl[] = {
-        { CKA_CLASS,             &privKeyClass,     sizeof(privKeyClass)      },
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
         { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
         { CKA_VALUE,             keyData,           sizeof(keyData)           },
         { CKA_SUBJECT,             NULL,                0                     },
@@ -3650,25 +3650,27 @@ static CK_RV test_attribute_get(void* args)
     int i = 0;
     CK_BBOOL falseBool = 0;
     CK_ATTRIBUTE createTmpl[] = {
-        { CKA_CLASS,             &pubKeyClass,     sizeof(pubKeyClass)      },
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
         { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
         { CKA_EXTRACTABLE,       &ckTrue,           sizeof(ckTrue)            },
+        { CKA_SENSITIVE,         &ckFalse,          sizeof(ckFalse)           },
         { CKA_VALUE,             keyData,           sizeof(keyData)           },
         { CKA_ID,                id,                sizeof(id)                },
         { CKA_PRIVATE,           &falseBool,        sizeof(falseBool)         }
     };
     CK_ULONG tmplCnt = sizeof(createTmpl) / sizeof(*createTmpl);
     CK_ATTRIBUTE createTmpl2[] = {
-        { CKA_CLASS,             &pubKeyClass,     sizeof(pubKeyClass)      },
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
         { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
         { CKA_EXTRACTABLE,       &ckFalse,          sizeof(ckFalse)            },
+        { CKA_SENSITIVE,         &ckFalse,          sizeof(ckFalse)           },
         { CKA_VALUE,             keyData,           sizeof(keyData)           },
         { CKA_ID,                id,                sizeof(id)                },
         { CKA_PRIVATE,           &ckTrue,           sizeof(ckTrue)            }
     };
     CK_ULONG tmplCnt2 = sizeof(createTmpl2) / sizeof(*createTmpl2);
     CK_ATTRIBUTE createTmpl3[] = {
-        { CKA_CLASS,             &pubKeyClass,     sizeof(pubKeyClass)      },
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
         { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
         { CKA_SENSITIVE,         &ckTrue,           sizeof(ckTrue)            },
         { CKA_VALUE,             keyData,           sizeof(keyData)           },
@@ -3716,8 +3718,8 @@ static CK_RV test_attribute_get(void* args)
     }
 
     if (ret == CKR_OK) {
-        if (getTmpl[0].ulValueLen != sizeof(pubKeyClass) ||
-            (*((CK_OBJECT_CLASS *)(getTmpl[0].pValue))) != pubKeyClass) {
+        if (getTmpl[0].ulValueLen != sizeof(secretKeyClass) ||
+            (*((CK_OBJECT_CLASS *)(getTmpl[0].pValue))) != secretKeyClass) {
                 ret = -1;
                 CHECK_CKR(ret, "CKA_CLASS value match creation params");
         }
@@ -3803,7 +3805,7 @@ static CK_RV test_extractable_set_false_to_true(void* args)
     CK_BBOOL val;
     /* Object created with CKA_EXTRACTABLE = FALSE */
     CK_ATTRIBUTE createTmplFalse[] = {
-        { CKA_CLASS,             &pubKeyClass,      sizeof(pubKeyClass)     },
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)  },
         { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)  },
         { CKA_EXTRACTABLE,       &ckFalse,          sizeof(ckFalse)         },
         { CKA_VALUE,             keyData,            sizeof(keyData)         },
@@ -3813,7 +3815,7 @@ static CK_RV test_extractable_set_false_to_true(void* args)
         sizeof(createTmplFalse) / sizeof(*createTmplFalse);
     /* Object created with CKA_EXTRACTABLE = TRUE */
     CK_ATTRIBUTE createTmplTrue[] = {
-        { CKA_CLASS,             &pubKeyClass,      sizeof(pubKeyClass)     },
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)  },
         { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)  },
         { CKA_EXTRACTABLE,       &ckTrue,           sizeof(ckTrue)          },
         { CKA_VALUE,             keyData,            sizeof(keyData)         },
@@ -4635,7 +4637,7 @@ static CK_RV test_find_objects(void* args)
     CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
     static byte keyData[] = { 0x00 };
     CK_ATTRIBUTE tmpl[] = {
-        { CKA_CLASS,             &privKeyClass,     sizeof(privKeyClass)      },
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
         { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
         { CKA_VALUE,             keyData,           sizeof(keyData)           },
     };
@@ -15840,6 +15842,159 @@ static CK_RV test_hkdf_derive_expand_null_value_len(void* args)
 
     return ret;
 }
+
+/* A derived key is a secret key with secret key defaults when the template
+ * omits CKA_CLASS, and a template naming another class is rejected. */
+static CK_RV test_hkdf_derive_implied_class(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE hBaseKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hKey = CK_INVALID_HANDLE;
+    CK_BYTE ikm[32];
+    CK_ULONG keyLen = 32;
+    CK_OBJECT_CLASS keyClass = CKO_DATA;
+    CK_BBOOL encrypt = CK_FALSE;
+    CK_ATTRIBUTE baseTmpl[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_VALUE, ikm, sizeof(ikm)},
+        {CKA_DERIVE, &ckTrue, sizeof(ckTrue)}
+    };
+    CK_HKDF_PARAMS params = {
+        CK_TRUE, CK_FALSE, CKM_SHA256_HMAC,
+        CKF_HKDF_SALT_NULL, NULL_PTR, 0,
+        CK_INVALID_HANDLE, NULL_PTR, 0
+    };
+    CK_MECHANISM mech = { CKM_HKDF_DERIVE, &params, sizeof(params) };
+    CK_ATTRIBUTE noClassTmpl[] = {
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_VALUE_LEN, &keyLen, sizeof(keyLen)}
+    };
+    CK_ATTRIBUTE dataClassTmpl[] = {
+        {CKA_CLASS, &dataClass, sizeof(dataClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_VALUE_LEN, &keyLen, sizeof(keyLen)}
+    };
+    CK_ATTRIBUTE getTmpl[] = {
+        {CKA_CLASS, &keyClass, sizeof(keyClass)},
+        {CKA_ENCRYPT, &encrypt, sizeof(encrypt)}
+    };
+    CK_ATTRIBUTE nullClassTmpl[] = {
+        {CKA_CLASS, NULL_PTR, sizeof(CK_OBJECT_CLASS)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_VALUE_LEN, &keyLen, sizeof(keyLen)}
+    };
+    CK_ATTRIBUTE noTypeTmpl[] = {
+        {CKA_VALUE_LEN, &keyLen, sizeof(keyLen)}
+    };
+    CK_ATTRIBUTE shortTypeTmpl[] = {
+        {CKA_KEY_TYPE, &genericKeyType, 1},
+        {CKA_VALUE_LEN, &keyLen, sizeof(keyLen)}
+    };
+    CK_OBJECT_HANDLE hDataBase = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE dataBaseTmpl[] = {
+        {CKA_CLASS, &dataClass, sizeof(dataClass)},
+        {CKA_VALUE, ikm, sizeof(ikm)},
+        {CKA_DERIVE, &ckTrue, sizeof(ckTrue)}
+    };
+
+    XMEMSET(ikm, 0x0b, sizeof(ikm));
+
+    ret = funcList->C_CreateObject(session, baseTmpl,
+        sizeof(baseTmpl) / sizeof(*baseTmpl), &hBaseKey);
+    CHECK_CKR(ret, "Create HKDF base key");
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mech, hBaseKey, noClassTmpl,
+            sizeof(noClassTmpl) / sizeof(*noClassTmpl), &hKey);
+        CHECK_CKR(ret, "HKDF derive without CKA_CLASS");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, hKey, getTmpl,
+            sizeof(getTmpl) / sizeof(*getTmpl));
+        CHECK_CKR(ret, "Get derived key class");
+    }
+    if (ret == CKR_OK && keyClass != CKO_SECRET_KEY) {
+        ret = -1;
+        CHECK_CKR(ret, "Derived key class is CKO_SECRET_KEY");
+    }
+    if (ret == CKR_OK && encrypt != CK_TRUE) {
+        ret = -1;
+        CHECK_CKR(ret, "Derived key has secret key defaults");
+    }
+    if (hKey != CK_INVALID_HANDLE) {
+        funcList->C_DestroyObject(session, hKey);
+        hKey = CK_INVALID_HANDLE;
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mech, hBaseKey, dataClassTmpl,
+            sizeof(dataClassTmpl) / sizeof(*dataClassTmpl), &hKey);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+            "HKDF derive with a non-secret class");
+    }
+
+    mech.mechanism = CKM_HKDF_DATA;
+    if (ret == CKR_OK) {
+        keyClass = CKO_DATA;
+        ret = funcList->C_DeriveKey(session, &mech, hBaseKey, noClassTmpl,
+            sizeof(noClassTmpl) / sizeof(*noClassTmpl), &hKey);
+        CHECK_CKR(ret, "HKDF data derive without CKA_CLASS");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, hKey, getTmpl, 1);
+        CHECK_CKR(ret, "Get HKDF data derived key class");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(keyClass == CKO_SECRET_KEY, ret,
+                   "HKDF data derived key class is CKO_SECRET_KEY");
+    }
+    if (hKey != CK_INVALID_HANDLE) {
+        funcList->C_DestroyObject(session, hKey);
+        hKey = CK_INVALID_HANDLE;
+    }
+
+    /* A malformed class or key type is refused before deriving. */
+    mech.mechanism = CKM_HKDF_DERIVE;
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mech, hBaseKey, nullClassTmpl,
+            sizeof(nullClassTmpl) / sizeof(*nullClassTmpl), &hKey);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+            "HKDF derive with an empty CKA_CLASS");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mech, hBaseKey, noTypeTmpl,
+            sizeof(noTypeTmpl) / sizeof(*noTypeTmpl), &hKey);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCOMPLETE,
+            "HKDF derive without CKA_KEY_TYPE");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mech, hBaseKey, shortTypeTmpl,
+            sizeof(shortTypeTmpl) / sizeof(*shortTypeTmpl), &hKey);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+            "HKDF derive with a short CKA_KEY_TYPE");
+    }
+
+    /* A data object may seed a derivation. */
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, dataBaseTmpl,
+            sizeof(dataBaseTmpl) / sizeof(*dataBaseTmpl), &hDataBase);
+        CHECK_CKR(ret, "Create HKDF data object base");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mech, hDataBase, noClassTmpl,
+            sizeof(noClassTmpl) / sizeof(*noClassTmpl), &hKey);
+        CHECK_CKR(ret, "HKDF derive from a data object");
+    }
+
+    if (hKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hKey);
+    if (hDataBase != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hDataBase);
+    if (hBaseKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hBaseKey);
+
+    return ret;
+}
 #endif
 
 #ifndef NO_SHA
@@ -16362,6 +16517,124 @@ static CK_RV test_derive_tls12_key_and_mac(void *args) {
         CHECK_COND(XMEMCMP(derivedKeyValue, expected_server_key, 16) == 0,
                    ret, "Server key compare");
     }
+
+    return ret;
+}
+
+/* TLS key material is always secret keys, whether or not the template names
+ * the class, and a template naming another class is refused. */
+static CK_RV test_derive_tls12_key_and_mac_class(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE premaster = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hDerivedKey = CK_INVALID_HANDLE;
+    CK_BYTE secret[48];
+    CK_BYTE clientRandom[32];
+    CK_BYTE serverRandom[32];
+    CK_BYTE clientIV[16];
+    CK_BYTE serverIV[16];
+    CK_OBJECT_CLASS macClass = CKO_DATA;
+    CK_OBJECT_CLASS keyClass = CKO_DATA;
+    CK_ATTRIBUTE premasterTmpl[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_VALUE, secret, sizeof(secret)},
+        {CKA_DERIVE, &ckTrue, sizeof(ckTrue)}
+    };
+    CK_SSL3_KEY_MAT_OUT keyMat = {
+        CK_INVALID_HANDLE, CK_INVALID_HANDLE,
+        CK_INVALID_HANDLE, CK_INVALID_HANDLE,
+        clientIV, serverIV
+    };
+    CK_TLS12_KEY_MAT_PARAMS params = {
+        32 * 8, 16 * 8, 16 * 8, CK_FALSE,
+        { clientRandom, sizeof(clientRandom),
+          serverRandom, sizeof(serverRandom) },
+        &keyMat, CKM_SHA256
+    };
+    CK_MECHANISM mech = {
+        CKM_TLS12_KEY_AND_MAC_DERIVE, &params, sizeof(params)
+    };
+    CK_ATTRIBUTE noClassTmpl[] = {
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
+    };
+    CK_ATTRIBUTE dataClassTmpl[] = {
+        {CKA_CLASS, &dataClass, sizeof(dataClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+    };
+    CK_BBOOL badBool = 2;
+    CK_ATTRIBUTE badBoolTmpl[] = {
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_SENSITIVE, &badBool, sizeof(badBool)},
+    };
+    CK_ATTRIBUTE macGetTmpl[] = {
+        {CKA_CLASS, &macClass, sizeof(macClass)},
+    };
+    CK_ATTRIBUTE keyGetTmpl[] = {
+        {CKA_CLASS, &keyClass, sizeof(keyClass)},
+    };
+
+    XMEMSET(secret, 0x11, sizeof(secret));
+    XMEMSET(clientRandom, 0x22, sizeof(clientRandom));
+    XMEMSET(serverRandom, 0x33, sizeof(serverRandom));
+
+    ret = funcList->C_CreateObject(session, premasterTmpl,
+        sizeof(premasterTmpl) / sizeof(*premasterTmpl), &premaster);
+    CHECK_CKR(ret, "Create TLS premaster");
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mech, premaster, noClassTmpl,
+            sizeof(noClassTmpl) / sizeof(*noClassTmpl), &hDerivedKey);
+        CHECK_CKR(ret, "TLS key and MAC derive without CKA_CLASS");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, keyMat.hClientMacSecret,
+                                            macGetTmpl, 1);
+        CHECK_CKR(ret, "Get MAC key class");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, keyMat.hClientKey,
+                                            keyGetTmpl, 1);
+        CHECK_CKR(ret, "Get cipher key class");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(macClass == CKO_SECRET_KEY && keyClass == CKO_SECRET_KEY,
+                   ret, "TLS key material is secret keys");
+    }
+    if (keyMat.hClientMacSecret != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, keyMat.hClientMacSecret);
+    if (keyMat.hServerMacSecret != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, keyMat.hServerMacSecret);
+    if (keyMat.hClientKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, keyMat.hClientKey);
+    if (keyMat.hServerKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, keyMat.hServerKey);
+    keyMat.hClientMacSecret = CK_INVALID_HANDLE;
+    keyMat.hServerMacSecret = CK_INVALID_HANDLE;
+    keyMat.hClientKey = CK_INVALID_HANDLE;
+    keyMat.hServerKey = CK_INVALID_HANDLE;
+
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mech, premaster, dataClassTmpl,
+            sizeof(dataClassTmpl) / sizeof(*dataClassTmpl), &hDerivedKey);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+                       "TLS key and MAC derive to a data object");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(keyMat.hClientMacSecret == CK_INVALID_HANDLE &&
+                   keyMat.hClientKey == CK_INVALID_HANDLE, ret,
+                   "No TLS key material for a refused template");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mech, premaster, badBoolTmpl,
+            sizeof(badBoolTmpl) / sizeof(*badBoolTmpl), &hDerivedKey);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+                       "TLS key and MAC derive with a bad attribute value");
+    }
+
+    if (premaster != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, premaster);
 
     return ret;
 }
@@ -17626,6 +17899,156 @@ static CK_RV test_get_attr_value_key_type_on_non_key(void* args)
     return ret;
 }
 
+/* A certificate is not a key, whatever usage attributes it carries. */
+static CK_RV test_crypto_init_certificate(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE x509Cert = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE wtlsCert = CK_INVALID_HANDLE;
+    CK_CERTIFICATE_TYPE x509 = CKC_X_509;
+    CK_CERTIFICATE_TYPE wtls = CKC_WTLS;
+    CK_BYTE certData[] = { 0x30, 0x82, 0x01, 0x00 };
+    CK_ATTRIBUTE x509Tmpl[] = {
+        { CKA_CLASS,            &certificateClass, sizeof(certificateClass) },
+        { CKA_CERTIFICATE_TYPE, &x509,             sizeof(x509)             },
+        { CKA_VALUE,            certData,          sizeof(certData)         },
+        { CKA_ENCRYPT,          &ckTrue,           sizeof(ckTrue)           },
+        { CKA_VERIFY,           &ckTrue,           sizeof(ckTrue)           },
+        { CKA_WRAP,             &ckTrue,           sizeof(ckTrue)           },
+        { CKA_UNWRAP,           &ckTrue,           sizeof(ckTrue)           },
+    };
+    CK_ATTRIBUTE wtlsTmpl[] = {
+        { CKA_CLASS,            &certificateClass, sizeof(certificateClass) },
+        { CKA_CERTIFICATE_TYPE, &wtls,             sizeof(wtls)             },
+        { CKA_VALUE,            certData,          sizeof(certData)         },
+        { CKA_DERIVE,           &ckTrue,           sizeof(ckTrue)           },
+    };
+    CK_MECHANISM mech = { CKM_RSA_PKCS, NULL, 0 };
+    CK_OBJECT_HANDLE toWrap = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE unwrapped = CK_INVALID_HANDLE;
+    CK_BYTE wrapped[64];
+    CK_ULONG wrappedLen = sizeof(wrapped);
+    CK_ATTRIBUTE toWrapTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_VALUE,       certData,        sizeof(certData)       },
+        { CKA_EXTRACTABLE, &ckTrue,         sizeof(ckTrue)         },
+    };
+    CK_ATTRIBUTE unwrapTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+    };
+#ifndef NO_DH
+    CK_OBJECT_HANDLE secret = CK_INVALID_HANDLE;
+    CK_ULONG secLen = 32;
+    CK_ATTRIBUTE secTmpl[] = {
+        { CKA_CLASS,     &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,  &genericKeyType, sizeof(genericKeyType) },
+        { CKA_VALUE_LEN, &secLen,         sizeof(secLen)         },
+    };
+#endif
+
+    ret = funcList->C_CreateObject(session, x509Tmpl,
+        sizeof(x509Tmpl) / sizeof(*x509Tmpl), &x509Cert);
+    CHECK_CKR(ret, "Create X.509 certificate with usage attributes");
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, wtlsTmpl,
+            sizeof(wtlsTmpl) / sizeof(*wtlsTmpl), &wtlsCert);
+        CHECK_CKR(ret, "Create WTLS certificate with usage attributes");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, toWrapTmpl,
+            sizeof(toWrapTmpl) / sizeof(*toWrapTmpl), &toWrap);
+        CHECK_CKR(ret, "Create key to wrap");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_WrapKey(session, &mech, x509Cert, toWrap, wrapped,
+                                  &wrappedLen);
+        CHECK_CKR_FAIL(ret, CKR_WRAPPING_KEY_HANDLE_INVALID,
+                       "Wrap with a certificate");
+    }
+    if (ret == CKR_OK) {
+        XMEMSET(wrapped, 0, sizeof(wrapped));
+        ret = funcList->C_UnwrapKey(session, &mech, x509Cert, wrapped,
+            sizeof(wrapped), unwrapTmpl,
+            sizeof(unwrapTmpl) / sizeof(*unwrapTmpl), &unwrapped);
+        CHECK_CKR_FAIL(ret, CKR_UNWRAPPING_KEY_HANDLE_INVALID,
+                       "Unwrap with a certificate");
+        if (unwrapped != CK_INVALID_HANDLE)
+            funcList->C_DestroyObject(session, unwrapped);
+    }
+#ifndef NO_RSA
+    if (ret == CKR_OK) {
+        ret = funcList->C_EncryptInit(session, &mech, x509Cert);
+        CHECK_CKR_FAIL(ret, CKR_KEY_HANDLE_INVALID,
+                       "Encrypt init with a certificate");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, x509Cert);
+        CHECK_CKR_FAIL(ret, CKR_KEY_HANDLE_INVALID,
+                       "Verify init with a certificate");
+    }
+#endif
+#ifndef NO_DH
+    if (ret == CKR_OK) {
+        mech.mechanism = CKM_DH_PKCS_DERIVE;
+        mech.pParameter = dh_2048_peer;
+        mech.ulParameterLen = sizeof(dh_2048_peer);
+        ret = funcList->C_DeriveKey(session, &mech, wtlsCert, secTmpl,
+            sizeof(secTmpl) / sizeof(*secTmpl), &secret);
+        CHECK_CKR_FAIL(ret, CKR_KEY_HANDLE_INVALID,
+                       "Derive with a certificate");
+        if (secret != CK_INVALID_HANDLE)
+            funcList->C_DestroyObject(session, secret);
+    }
+#endif
+
+    if (toWrap != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, toWrap);
+    if (wtlsCert != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, wtlsCert);
+    if (x509Cert != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, x509Cert);
+
+    return ret;
+}
+
+/* Secret key types only make secret keys, and secret keys only take secret
+ * key types. */
+static CK_RV test_create_key_class_type_match(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_BYTE value[16];
+    CK_ATTRIBUTE pubSecretTmpl[] = {
+        { CKA_CLASS,    &pubKeyClass,    sizeof(pubKeyClass)    },
+        { CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType) },
+        { CKA_VALUE,    value,           sizeof(value)          },
+    };
+    CK_ATTRIBUTE privSecretTmpl[] = {
+        { CKA_CLASS,    &privKeyClass,   sizeof(privKeyClass)   },
+        { CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType) },
+        { CKA_VALUE,    value,           sizeof(value)          },
+    };
+
+    XMEMSET(value, 0x5a, sizeof(value));
+
+    ret = funcList->C_CreateObject(session, pubSecretTmpl,
+        sizeof(pubSecretTmpl) / sizeof(*pubSecretTmpl), &obj);
+    CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+                   "Create public key of a secret key type");
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, privSecretTmpl,
+            sizeof(privSecretTmpl) / sizeof(*privSecretTmpl), &obj);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+                       "Create private key of a secret key type");
+    }
+
+    return ret;
+}
+
 #ifndef WOLFPKCS11_NSS
 /* Creating, copying, destroying, and setting attributes on session objects
  * should be allowed in read-only sessions per the PKCS#11 spec. Only token
@@ -18577,6 +19000,8 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_get_attr_value_all_processed),
     PKCS11TEST_FUNC_SESS_DECL(test_get_attr_value_cert_type_on_key),
     PKCS11TEST_FUNC_SESS_DECL(test_get_attr_value_key_type_on_non_key),
+    PKCS11TEST_FUNC_SESS_DECL(test_crypto_init_certificate),
+    PKCS11TEST_FUNC_SESS_DECL(test_create_key_class_type_match),
     PKCS11TEST_FUNC_SESS_DECL(test_find_objects),
     PKCS11TEST_FUNC_SESS_DECL(test_find_objects_many),
     PKCS11TEST_FUNC_SESS_DECL(test_private_object_access),
@@ -18810,6 +19235,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_extract_with_expand_salt_key),
     PKCS11TEST_FUNC_SESS_DECL(test_hkdf_gen_key),
     PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_expand_null_value_len),
+    PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_implied_class),
 #endif
 #ifdef WOLFSSL_HAVE_PRF
 #ifndef NO_MD5
@@ -18834,6 +19260,7 @@ static TEST_FUNC testFunc[] = {
 #ifdef WOLFSSL_HAVE_PRF
     PKCS11TEST_FUNC_SESS_DECL(test_derive_tls12_master_key_dh),
     PKCS11TEST_FUNC_SESS_DECL(test_derive_tls12_key_and_mac),
+    PKCS11TEST_FUNC_SESS_DECL(test_derive_tls12_key_and_mac_class),
     PKCS11TEST_FUNC_SESS_DECL(test_derive_tls12_master_key),
 #ifdef WOLFPKCS11_NSS
     PKCS11TEST_FUNC_SESS_DECL(test_nss_trust_object),

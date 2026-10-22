@@ -538,6 +538,13 @@ WP11_API int WP11_Test_RemoveObjectStale(CK_SESSION_HANDLE hSession,
     CK_OBJECT_HANDLE liveHandle, CK_OBJECT_HANDLE staleHandle);
 WP11_API int WP11_Test_SetNextObjId(CK_SLOT_ID slotId, int onToken,
     int nextObjId);
+#ifndef WOLFPKCS11_NO_STORE
+WP11_API int WP11_Test_SetObjectClass(CK_SESSION_HANDLE hSession,
+    CK_OBJECT_HANDLE hObject, CK_OBJECT_CLASS objClass);
+#if !defined(WOLFPKCS11_CUSTOM_STORE) && !defined(WOLFPKCS11_TPM_STORE)
+WP11_API int WP11_Test_StoreName(int type);
+#endif
+#endif
 #endif
 WP11_LOCAL int WP11_Object_HandleOnToken(CK_OBJECT_HANDLE handle);
 WP11_LOCAL void WP11_Slot_ClearActiveObject(WP11_Slot* slot,
@@ -563,6 +570,7 @@ WP11_LOCAL int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest);
 WP11_LOCAL CK_OBJECT_HANDLE WP11_Object_GetHandle(WP11_Object* object);
 WP11_LOCAL int WP11_Object_OnToken(WP11_Object* object);
 WP11_LOCAL void WP11_Object_Persist(WP11_Object* object);
+WP11_LOCAL int WP11_KeyType_IsSecret(CK_KEY_TYPE type);
 WP11_LOCAL CK_KEY_TYPE WP11_Object_GetType(WP11_Object* object);
 WP11_LOCAL CK_ULONG WP11_Object_GetDevId(WP11_Object* object);
 

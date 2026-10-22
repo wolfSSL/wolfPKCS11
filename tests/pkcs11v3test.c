@@ -1965,6 +1965,111 @@ static CK_RV test_mlkem_bad_mech_params(void* args)
     return ret;
 }
 
+/* The shared secret object must be a secret key of a secret key type. */
+static CK_RV test_mlkem_secret_template_type(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_FUNCTION_LIST_3_2* funcListExt = (CK_FUNCTION_LIST_3_2*)funcList;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE secret = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_ML_KEM, NULL, 0 };
+    CK_OBJECT_CLASS secretClass = CKO_SECRET_KEY;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    CK_KEY_TYPE genericKeyType = CKK_GENERIC_SECRET;
+    CK_ATTRIBUTE goodTmpl[] = {
+        { CKA_CLASS,    &secretClass,    sizeof(secretClass)    },
+        { CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType) },
+    };
+    CK_ATTRIBUTE wrongTypeTmpl[] = {
+        { CKA_CLASS,    &secretClass,  sizeof(secretClass)  },
+        { CKA_KEY_TYPE, &mlkemKeyType, sizeof(mlkemKeyType) },
+    };
+    CK_ATTRIBUTE noClassTmpl[] = {
+        { CKA_KEY_TYPE, &mlkemKeyType, sizeof(mlkemKeyType) },
+    };
+    CK_ATTRIBUTE dataTmpl[] = {
+        { CKA_CLASS, &dataClass, sizeof(dataClass) },
+    };
+    CK_BYTE* ciphertext = NULL;
+    CK_ULONG ctLen = 0;
+
+    ret = gen_mlkem_keys(session, CKP_ML_KEM_512, &pub, &priv, NULL, 0,
+                         NULL, 0, 0);
+    if (ret == CKR_OK) {
+        ret = funcListExt->C_EncapsulateKey(session, &mech, pub, dataTmpl,
+                                            1, NULL, &ctLen, &secret);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+                       "ML-KEM Encapsulate size query to a data object");
+    }
+    if (ret == CKR_OK) {
+        ret = funcListExt->C_EncapsulateKey(session, &mech, pub, goodTmpl,
+                                            2, NULL, &ctLen, &secret);
+        CHECK_CKR(ret, "ML-KEM Encapsulate size query");
+    }
+    if (ret == CKR_OK) {
+        ciphertext = (CK_BYTE*)malloc(ctLen);
+        if (ciphertext == NULL)
+            ret = CKR_HOST_MEMORY;
+    }
+    if (ret == CKR_OK) {
+        XMEMSET(ciphertext, 0xa5, ctLen);
+        ret = funcListExt->C_EncapsulateKey(session, &mech, pub, wrongTypeTmpl,
+                                            2, ciphertext, &ctLen, &secret);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+                       "ML-KEM Encapsulate to a non-secret key type");
+    }
+    if (ret == CKR_OK) {
+        CHECK_COND(ciphertext[0] == 0xa5 && ciphertext[ctLen - 1] == 0xa5,
+                   ret, "No ciphertext for a refused template");
+    }
+    if (ret == CKR_OK) {
+        ret = funcListExt->C_EncapsulateKey(session, &mech, pub, noClassTmpl,
+                                            1, ciphertext, &ctLen, &secret);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+                       "ML-KEM Encapsulate to a non-secret type, no class");
+    }
+    if (ret == CKR_OK) {
+        ret = funcListExt->C_EncapsulateKey(session, &mech, pub, dataTmpl,
+                                            1, ciphertext, &ctLen, &secret);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+                       "ML-KEM Encapsulate to a data object");
+    }
+    if (ret == CKR_OK) {
+        ret = funcListExt->C_EncapsulateKey(session, &mech, pub, goodTmpl,
+                                            2, ciphertext, &ctLen, &secret);
+        CHECK_CKR(ret, "ML-KEM Encapsulate to a generic secret");
+    }
+    if (secret != CK_INVALID_HANDLE) {
+        funcList->C_DestroyObject(session, secret);
+        secret = CK_INVALID_HANDLE;
+    }
+    if (ret == CKR_OK) {
+        ret = funcListExt->C_DecapsulateKey(session, &mech, priv, wrongTypeTmpl,
+                                            2, ciphertext, ctLen, &secret);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+                       "ML-KEM Decapsulate to a non-secret key type");
+    }
+    if (ret == CKR_OK) {
+        ret = funcListExt->C_DecapsulateKey(session, &mech, priv, dataTmpl,
+                                            1, ciphertext, ctLen, &secret);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+                       "ML-KEM Decapsulate to a data object");
+    }
+
+    if (ciphertext != NULL)
+        free(ciphertext);
+    if (secret != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, secret);
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+
+    return ret;
+}
+
 static CK_RV test_mlkem_key_validation(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -3930,6 +4035,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_seed_invalid),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_encap_decap_fail),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_bad_mech_params),
+    PKCS11TEST_FUNC_SESS_DECL(test_mlkem_secret_template_type),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_key_validation),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_initial_states),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_encap_decap_not_permitted),

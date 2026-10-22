@@ -623,42 +623,45 @@ static CK_MECHANISM_INFO shaRsaPkcsMechInfo = {
 };
 #endif
 #ifdef HAVE_ECC
+/* Only named prime curves with uncompressed points are supported. */
+#define WP11_EC_MECH_FLAGS \
+    (CKF_EC_F_P | CKF_EC_NAMEDCURVE | CKF_EC_UNCOMPRESS)
 /* Info on EC key generation mechanism. */
 static CK_MECHANISM_INFO ecKgMechInfo = {
-    256, 521, CKF_GENERATE_KEY_PAIR
+    256, 521, CKF_GENERATE_KEY_PAIR | WP11_EC_MECH_FLAGS
 };
 /* Info on ECDSA mechanism. */
 static CK_MECHANISM_INFO ecdsaMechInfo = {
-    256, 521, CKF_SIGN | CKF_VERIFY
+    256, 521, CKF_SIGN | CKF_VERIFY | WP11_EC_MECH_FLAGS
 };
 #ifndef NO_SHA
 static CK_MECHANISM_INFO ecdsaSha1MechInfo = {
-    256, 521, CKF_SIGN | CKF_VERIFY
+    256, 521, CKF_SIGN | CKF_VERIFY | WP11_EC_MECH_FLAGS
 };
 #endif
 #ifdef WOLFSSL_SHA224
 static CK_MECHANISM_INFO ecdsaSha224MechInfo = {
-    256, 521, CKF_SIGN | CKF_VERIFY
+    256, 521, CKF_SIGN | CKF_VERIFY | WP11_EC_MECH_FLAGS
 };
 #endif
 #ifndef NO_SHA256
 static CK_MECHANISM_INFO ecdsaSha256MechInfo = {
-    256, 521, CKF_SIGN | CKF_VERIFY
+    256, 521, CKF_SIGN | CKF_VERIFY | WP11_EC_MECH_FLAGS
 };
 #endif
 #ifdef WOLFSSL_SHA384
 static CK_MECHANISM_INFO ecdsaSha384MechInfo = {
-    256, 521, CKF_SIGN | CKF_VERIFY
+    256, 521, CKF_SIGN | CKF_VERIFY | WP11_EC_MECH_FLAGS
 };
 #endif
 #ifdef WOLFSSL_SHA512
 static CK_MECHANISM_INFO ecdsaSha512MechInfo = {
-    256, 521, CKF_SIGN | CKF_VERIFY
+    256, 521, CKF_SIGN | CKF_VERIFY | WP11_EC_MECH_FLAGS
 };
 #endif
 /* Info on ECDH mechanism. */
 static CK_MECHANISM_INFO ecdhMechInfo = {
-    256, 521, CKF_DERIVE
+    256, 521, CKF_DERIVE | WP11_EC_MECH_FLAGS
 };
 #endif
 #ifdef WOLFPKCS11_MLDSA

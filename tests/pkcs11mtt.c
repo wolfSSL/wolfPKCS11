@@ -262,7 +262,7 @@ static CK_RV test_object(void* args)
         { CKA_KEY_TYPE,          &badKeyType,       sizeof(badKeyType)        }
     };
     CK_ATTRIBUTE keyDataNull[] = {
-        { CKA_CLASS,             &privKeyClass,     sizeof(privKeyClass)      },
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
         { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
         { CKA_VALUE,             NULL,              sizeof(keyData)           },
     };
@@ -514,7 +514,7 @@ static CK_RV test_attribute(void* args)
     CK_BBOOL badBool = 2;
     CK_DATE date = { { 0, }, { 0, }, { 0, } };
     CK_ATTRIBUTE tmpl[] = {
-        { CKA_CLASS,             &privKeyClass,     sizeof(privKeyClass)      },
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
         { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
         { CKA_EXTRACTABLE,       &ckTrue,           sizeof(ckTrue)            },
         { CKA_SENSITIVE,         &ckFalse,          sizeof(ckFalse)           },
@@ -686,7 +686,7 @@ static CK_RV test_attribute_types(void* args)
     CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
     static byte keyData[] = { 0x00 };
     CK_ATTRIBUTE tmpl[] = {
-        { CKA_CLASS,             &privKeyClass,     sizeof(privKeyClass)      },
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
         { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
         { CKA_VALUE,             keyData,           sizeof(keyData)           },
     };
@@ -918,7 +918,7 @@ static CK_RV test_find_objects(void* args)
     static byte keyData[] = { 0x00 };
     static byte id[] = { 0x01, 0x02, 0x03, 0x04, 0x05 };
     CK_ATTRIBUTE tmpl[] = {
-        { CKA_CLASS,             &privKeyClass,     sizeof(privKeyClass)      },
+        { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
         { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
         { CKA_VALUE,             keyData,           sizeof(keyData)           },
         { CKA_ID,                id,                sizeof(id)                },

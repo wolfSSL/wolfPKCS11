@@ -440,6 +440,85 @@ static int test_missing_storage_path(void)
     return 0;
 }
 
+#if defined(HAVE_ECC) && !defined(WOLFPKCS11_NSS) && \
+    !defined(WOLFPKCS11_NO_ENV)
+static void fill_token_dir(char* dir, size_t sz)
+{
+    size_t len = (size_t)snprintf(dir, sz, "./store/long_path_");
+
+    memset(dir + len, 'x', sz - 1 - len);
+    dir[sz - 1] = '\0';
+}
+
+/* With 120 byte store names, a token directory that leaves room for every
+ * store file name works fully and one byte longer is refused up front. */
+static int test_long_token_path(void)
+{
+    CK_RV ret;
+    int result = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS privClass = CKO_PRIVATE_KEY;
+    CK_KEY_TYPE ecType = CKK_EC;
+    CK_BBOOL ckTrue = CK_TRUE;
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_CLASS,     &privClass,      sizeof(privClass)       },
+        { CKA_KEY_TYPE,  &ecType,         sizeof(ecType)          },
+        { CKA_TOKEN,     &ckTrue,         sizeof(ckTrue)          },
+        { CKA_EC_PARAMS, ecc_p256_params, sizeof(ecc_p256_params) },
+        { CKA_VALUE,     ecc_p256_priv,   sizeof(ecc_p256_priv)   },
+    };
+    char fitDir[67];
+    char longDir[68];
+
+    fill_token_dir(fitDir, sizeof(fitDir));
+    fill_token_dir(longDir, sizeof(longDir));
+    MKDIR(fitDir);
+    MKDIR(longDir);
+    cleanup_test_files(fitDir);
+    cleanup_test_files(longDir);
+
+    setenv("WOLFPKCS11_TOKEN_PATH", fitDir, 1);
+    ret = create_test_token("Testing the longest token path", 1);
+    if (ret == CKR_OK) {
+        ret = funcList->C_OpenSession(slot,
+            CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL, NULL, &session);
+    }
+    if (ret == CKR_OK)
+        ret = funcList->C_Login(session, CKU_USER, userPin, userPinLen);
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, privTmpl,
+            sizeof(privTmpl) / sizeof(*privTmpl), &key);
+    }
+    if (ret == CKR_OK)
+        ret = funcList->C_DestroyObject(session, key);
+    if (session != CK_INVALID_HANDLE) {
+        funcList->C_Logout(session);
+        funcList->C_CloseSession(session);
+    }
+    if (ret == CKR_OK) {
+        printf("PASS: Token key stored under the longest token path\n");
+        test_passed++;
+    }
+    else {
+        printf("FAIL: Token key under the longest token path: 0x%lx\n",
+               (unsigned long)ret);
+        test_failed++;
+        result = -1;
+    }
+    cleanup_test_files(fitDir);
+
+    setenv("WOLFPKCS11_TOKEN_PATH", longDir, 1);
+    ret = create_test_token("Testing a token path one byte too long", 0);
+    if (ret == CKR_OK)
+        result = -1;
+    cleanup_test_files(longDir);
+
+    unsetenv("WOLFPKCS11_TOKEN_PATH");
+    return result;
+}
+#endif
+
 static void print_results(void)
 {
     printf("\n=== Test Results ===\n");
@@ -548,6 +627,13 @@ int main(int argc, char* argv[])
     if (test_missing_storage_path() != 0) {
         result = 1;
     }
+
+#if defined(HAVE_ECC) && !defined(WOLFPKCS11_NSS) && \
+    !defined(WOLFPKCS11_NO_ENV)
+    if (test_long_token_path() != 0) {
+        result = 1;
+    }
+#endif
 
     /* Clean up */
 #ifndef WOLFPKCS11_NO_ENV

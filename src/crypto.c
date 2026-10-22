@@ -580,12 +580,29 @@ static CK_RV CheckAttributes(CK_ATTRIBUTE* pTemplate, CK_ULONG ulCount, int set)
     return CKR_OK;
 }
 
+/* A certificate's type shares the key type field, so only key objects may be
+ * used as keys. A data object may seed a derivation. */
+static int CheckKeyObject(WP11_Object* obj, CK_ATTRIBUTE_TYPE op)
+{
+    CK_OBJECT_CLASS objClass = WP11_Object_GetClass(obj);
+
+    if (objClass != CKO_PUBLIC_KEY && objClass != CKO_PRIVATE_KEY &&
+            objClass != CKO_SECRET_KEY &&
+            (objClass != CKO_DATA || op != CKA_DERIVE)) {
+        return (int)CKR_KEY_HANDLE_INVALID;
+    }
+    return CKR_OK;
+}
+
 static int CheckOpSupportedRv(WP11_Object* obj, CK_ATTRIBUTE_TYPE op,
                               CK_RV errRv)
 {
     CK_BBOOL haveOp = 0;
     CK_ULONG dataLen = sizeof(haveOp);
-    int ret = WP11_Object_GetAttr(obj, op, &haveOp, &dataLen);
+    int ret = CheckKeyObject(obj, op);
+    if (ret != CKR_OK)
+        return ret;
+    ret = WP11_Object_GetAttr(obj, op, &haveOp, &dataLen);
     if (ret != 0)
         return ret;
     if (!haveOp) {
@@ -1577,10 +1594,14 @@ err_out:
 /**
  * Create an object in the session or on the token associated with the session.
  *
- * @param  hSession   [in]   Handle of session.
- * @param  pTemplate  [in]   Template of attributes for object.
- * @param  ulCount    [in]   Number of attribute triplets in template.
- * @param  object     [out]  New Object object.
+ * @param  hSession      [in]   Handle of session.
+ * @param  pTemplate     [in]   Template of attributes for object.
+ * @param  ulCount       [in]   Number of attribute triplets in template.
+ * @param  impliedClass  [in]   Class the API creates when the template has no
+ *                              CKA_CLASS, or WP11_NO_IMPLICIT_CLASS. A caller
+ *                              passing a class checks the template first with
+ *                              CheckSecretKeyTemplate.
+ * @param  object        [out]  New Object object.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pTemplate or phObject is NULL.
@@ -1593,11 +1614,12 @@ err_out:
  *          CKR_OK on success.
  */
 static CK_RV CreateObject(WP11_Session* session, CK_ATTRIBUTE_PTR pTemplate,
-                          CK_ULONG ulCount, WP11_Object** object)
+                          CK_ULONG ulCount, CK_OBJECT_CLASS impliedClass,
+                          WP11_Object** object)
 {
     CK_RV rv;
     CK_ULONG objType = -1;
-    CK_OBJECT_CLASS objectClass = -1;
+    CK_OBJECT_CLASS objectClass = impliedClass;
     CK_ATTRIBUTE* attr;
 
     FindAttributeType(pTemplate, ulCount, CKA_CLASS, &attr);
@@ -1692,9 +1714,49 @@ static CK_RV CreateObject(WP11_Session* session, CK_ATTRIBUTE_PTR pTemplate,
             default:
                 return CKR_ATTRIBUTE_VALUE_INVALID;
         }
+
+        /* Secret key types and the secret key class only go together. */
+        if ((objectClass == CKO_SECRET_KEY) !=
+                (WP11_KeyType_IsSecret(objType) != 0)) {
+            return CKR_TEMPLATE_INCONSISTENT;
+        }
     }
 
     rv = NewObject(session, objType, objectClass, pTemplate, ulCount, object);
+
+    return rv;
+}
+
+/* Validate the template for a secret key an operation creates, before any
+ * key material is computed for it. */
+static CK_RV CheckSecretKeyTemplate(CK_ATTRIBUTE_PTR pTemplate,
+                                    CK_ULONG ulCount)
+{
+    CK_RV rv = CKR_OK;
+    CK_ATTRIBUTE* attr;
+
+    FindAttributeType(pTemplate, ulCount, CKA_CLASS, &attr);
+    if (attr != NULL) {
+        if (attr->pValue == NULL ||
+                attr->ulValueLen != sizeof(CK_OBJECT_CLASS)) {
+            rv = CKR_ATTRIBUTE_VALUE_INVALID;
+        }
+        else if (*(CK_OBJECT_CLASS*)attr->pValue != CKO_SECRET_KEY) {
+            rv = CKR_TEMPLATE_INCONSISTENT;
+        }
+    }
+    if (rv == CKR_OK) {
+        FindAttributeType(pTemplate, ulCount, CKA_KEY_TYPE, &attr);
+        if (attr == NULL)
+            rv = CKR_TEMPLATE_INCOMPLETE;
+        else if (attr->pValue == NULL ||
+                attr->ulValueLen != sizeof(CK_KEY_TYPE)) {
+            rv = CKR_ATTRIBUTE_VALUE_INVALID;
+        }
+        else if (!WP11_KeyType_IsSecret(*(CK_KEY_TYPE*)attr->pValue)) {
+            rv = CKR_TEMPLATE_INCONSISTENT;
+        }
+    }
 
     return rv;
 }
@@ -1928,7 +1990,8 @@ static CK_RV wp11_C_CreateObject(CK_SESSION_HANDLE hSession,
         return rv;
     }
 
-    rv = CreateObject(session, pTemplate, ulCount, &object);
+    rv = CreateObject(session, pTemplate, ulCount, WP11_NO_IMPLICIT_CLASS,
+                      &object);
     if (rv != CKR_OK) {
         WOLFPKCS11_LEAVE("C_CreateObject", rv);
         return rv;
@@ -9556,6 +9619,8 @@ static CK_RV wp11_C_WrapKey(CK_SESSION_HANDLE hSession,
         return CKR_WRAPPING_KEY_HANDLE_INVALID;
 
     ret = CheckOpSupported(wrappingKey, CKA_WRAP);
+    if (ret == CKR_KEY_HANDLE_INVALID)
+        return CKR_WRAPPING_KEY_HANDLE_INVALID;
     if (ret != CKR_OK)
         return ret;
 
@@ -9882,6 +9947,8 @@ static CK_RV wp11_C_UnwrapKey(CK_SESSION_HANDLE hSession,
         return CKR_UNWRAPPING_KEY_HANDLE_INVALID;
 
     ret = CheckOpSupported(unwrappingKey, CKA_UNWRAP);
+    if (ret == CKR_KEY_HANDLE_INVALID)
+        return CKR_UNWRAPPING_KEY_HANDLE_INVALID;
     if (ret != CKR_OK)
         return ret;
 
@@ -10027,7 +10094,8 @@ static CK_RV wp11_C_UnwrapKey(CK_SESSION_HANDLE hSession,
             CK_ULONG keyDataLens[2] = { sizeof(CK_ULONG), ulUnwrappedLen };
 
             *phKey = CK_INVALID_HANDLE;
-            rv = CreateObject(session, pTemplate, ulAttributeCount, &keyObj);
+            rv = CreateObject(session, pTemplate, ulAttributeCount,
+                              WP11_NO_IMPLICIT_CLASS, &keyObj);
             if (rv == CKR_OK) {
                 if (WP11_Object_SetSecretKey(keyObj, keyData, keyDataLens) != 0)
                     rv = CKR_FUNCTION_FAILED;
@@ -10149,9 +10217,10 @@ static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
     unsigned char* secretKeyData[2] = { NULL, NULL };
     CK_ULONG secretKeyLen[2] = { 0, 0 };
 
-    ret = (int)CreateObject(session, pTemplate, ulAttributeCount, &secret);
+    ret = (int)CreateObject(session, pTemplate, ulAttributeCount,
+                            CKO_SECRET_KEY, &secret);
     if (ret != 0)
-        return CKR_OBJECT_HANDLE_INVALID;
+        return ret;
 
     ret = SymmKeyLen(secret, (word32)length, &symmKeyLen);
     if (ret == 0) {
@@ -10399,12 +10468,16 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
      * behavior (WP11_NSS_PERMISSIVE_KEY_DEFAULTS is auto-enabled for NSS). */
 #ifndef WP11_NSS_PERMISSIVE_KEY_DEFAULTS
     ret = CheckOpSupported(obj, CKA_DERIVE);
+#else
+    ret = CheckKeyObject(obj, CKA_DERIVE);
+#endif
     if (ret != CKR_OK)
         return ret;
-#endif
 
     rv = CheckPrivateLogin(session, pTemplate, ulAttributeCount,
                            CKO_SECRET_KEY);
+    if (rv == CKR_OK)
+        rv = CheckSecretKeyTemplate(pTemplate, ulAttributeCount);
     if (rv != CKR_OK)
         return rv;
 
@@ -10649,7 +10722,10 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
             XFREE(derivedKey, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             derivedKey = NULL;
 
-            if (ret != 0)
+            /* Key extraction reports a CK_RV, the derive a wolfCrypt error. */
+            if (ret > 0)
+                rv = (CK_RV)ret;
+            else if (ret != 0)
                 rv = CKR_FUNCTION_FAILED;
             break;
         }
@@ -10772,8 +10848,10 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
 #endif
         if (reqValueLen > keyLen)
             rv = CKR_ATTRIBUTE_VALUE_INVALID;
-        if (rv == CKR_OK)
-            rv = CreateObject(session, pTemplate, ulAttributeCount, &obj);
+        if (rv == CKR_OK) {
+            rv = CreateObject(session, pTemplate, ulAttributeCount,
+                              CKO_SECRET_KEY, &obj);
+        }
         if (rv == CKR_OK) {
             /* obj now refers to the newly created derived key. */
 #ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
@@ -11416,6 +11494,8 @@ static CK_RV wp11_C_EncapsulateKey(CK_SESSION_HANDLE hSession,
     /* Refuse before the size query or any ciphertext is written. */
     rv = CheckPrivateLogin(session, pTemplate, ulAttributeCount,
                            CKO_SECRET_KEY);
+    if (rv == CKR_OK)
+        rv = CheckSecretKeyTemplate(pTemplate, ulAttributeCount);
     if (rv != CKR_OK)
         return rv;
 
@@ -11443,7 +11523,8 @@ static CK_RV wp11_C_EncapsulateKey(CK_SESSION_HANDLE hSession,
         return CKR_OK;
 
     if (rv == CKR_OK) {
-        rv = CreateObject(session, pTemplate, ulAttributeCount, &secretObj);
+        rv = CreateObject(session, pTemplate, ulAttributeCount,
+                          CKO_SECRET_KEY, &secretObj);
         if (rv == CKR_OK) {
             secretKeyData[1] = derivedKey;
             secretKeyLen[1] = keyLen;
@@ -11559,6 +11640,8 @@ static CK_RV wp11_C_DecapsulateKey(CK_SESSION_HANDLE hSession,
     /* Refuse before the private key is used. */
     rv = CheckPrivateLogin(session, pTemplate, ulAttributeCount,
                            CKO_SECRET_KEY);
+    if (rv == CKR_OK)
+        rv = CheckSecretKeyTemplate(pTemplate, ulAttributeCount);
     if (rv != CKR_OK)
         return rv;
 
@@ -11582,7 +11665,8 @@ static CK_RV wp11_C_DecapsulateKey(CK_SESSION_HANDLE hSession,
     }
 
     if (rv == CKR_OK) {
-        rv = CreateObject(session, pTemplate, ulAttributeCount, &secretObj);
+        rv = CreateObject(session, pTemplate, ulAttributeCount,
+                          CKO_SECRET_KEY, &secretObj);
         if (rv == CKR_OK) {
             secretKeyData[1] = derivedKey;
             secretKeyLen[1] = keyLen;
