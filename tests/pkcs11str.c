@@ -962,9 +962,9 @@ static CK_RV find_mlkem_pub_key(CK_SESSION_HANDLE session,
 #endif /* WOLFPKCS11_MLKEM */
 
 #ifndef WOLFPKCS11_NO_STORE
-static unsigned char concatKeyId[] = "123concatkey";
+static unsigned char secretKeyId[] = "123secretkey";
 
-static CK_RV create_concat_key(CK_SESSION_HANDLE session)
+static CK_RV create_public_secret_key(CK_SESSION_HANDLE session)
 {
     CK_RV ret;
     CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
@@ -977,7 +977,8 @@ static CK_RV create_concat_key(CK_SESSION_HANDLE session)
         { CKA_TOKEN,    &ckTrue,         sizeof(ckTrue)         },
         { CKA_PRIVATE,  &ckFalse,        sizeof(ckFalse)        },
         { CKA_DERIVE,   &ckTrue,         sizeof(ckTrue)         },
-        { CKA_ID,       concatKeyId,     sizeof(concatKeyId) - 1 },
+        { CKA_SIGN,     &ckTrue,         sizeof(ckTrue)         },
+        { CKA_ID,       secretKeyId,     sizeof(secretKeyId) - 1 },
         { CKA_VALUE,    value,           sizeof(value)          },
     };
 
@@ -988,7 +989,102 @@ static CK_RV create_concat_key(CK_SESSION_HANDLE session)
     return ret;
 }
 
-static CK_RV concat_before_login(void)
+#if defined(HAVE_ECC) || !defined(NO_DH)
+#ifdef HAVE_ECC
+static unsigned char ecPublicId[] = "123ecpublic";
+#endif
+#ifndef NO_DH
+static unsigned char dhPublicId[] = "123dhpublic";
+#endif
+
+static CK_RV create_public_asym_keys(CK_SESSION_HANDLE session)
+{
+    CK_RV ret = CKR_OK;
+    CK_BBOOL ckFalse = CK_FALSE;
+    CK_OBJECT_HANDLE key;
+#ifdef HAVE_ECC
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,     &privKeyClass,   sizeof(privKeyClass)    },
+        { CKA_KEY_TYPE,  &eccKeyType,     sizeof(eccKeyType)      },
+        { CKA_PRIVATE,   &ckFalse,        sizeof(ckFalse)         },
+        { CKA_EC_PARAMS, ecc_p256_params, sizeof(ecc_p256_params) },
+        { CKA_VALUE,     ecc_p256_priv,   sizeof(ecc_p256_priv)   },
+        { CKA_TOKEN,     &ckTrue,         sizeof(ckTrue)          },
+        { CKA_ID,        ecPublicId,      sizeof(ecPublicId) - 1  },
+    };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_CLASS,     &pubKeyClass,    sizeof(pubKeyClass)     },
+        { CKA_KEY_TYPE,  &eccKeyType,     sizeof(eccKeyType)      },
+        { CKA_EC_PARAMS, ecc_p256_params, sizeof(ecc_p256_params) },
+        { CKA_EC_POINT,  ecc_p256_pub,    sizeof(ecc_p256_pub)    },
+        { CKA_TOKEN,     &ckTrue,         sizeof(ckTrue)          },
+        { CKA_ID,        ecPublicId,      sizeof(ecPublicId) - 1  },
+    };
+#endif
+#ifndef NO_DH
+    CK_ATTRIBUTE dhTmpl[] = {
+        { CKA_CLASS,    &privKeyClass,  sizeof(privKeyClass)   },
+        { CKA_KEY_TYPE, &dhKeyType,     sizeof(dhKeyType)      },
+        { CKA_PRIVATE,  &ckFalse,       sizeof(ckFalse)        },
+        { CKA_PRIME,    dh_ffdhe2048_p, sizeof(dh_ffdhe2048_p) },
+        { CKA_BASE,     dh_ffdhe2048_g, sizeof(dh_ffdhe2048_g) },
+        { CKA_VALUE,    dh_2048_priv,   sizeof(dh_2048_priv)   },
+        { CKA_TOKEN,    &ckTrue,        sizeof(ckTrue)         },
+        { CKA_ID,       dhPublicId,     sizeof(dhPublicId) - 1 },
+    };
+#endif
+
+#ifdef HAVE_ECC
+    ret = funcList->C_CreateObject(session, tmpl,
+                                   sizeof(tmpl) / sizeof(*tmpl), &key);
+    CHECK_CKR(ret, "Create public EC private key");
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, pubTmpl,
+                                       sizeof(pubTmpl) / sizeof(*pubTmpl),
+                                       &key);
+        CHECK_CKR(ret, "Create EC public key");
+    }
+#endif
+#ifndef NO_DH
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, dhTmpl,
+                                       sizeof(dhTmpl) / sizeof(*dhTmpl), &key);
+        CHECK_CKR(ret, "Create public DH private key");
+    }
+#endif
+
+    return ret;
+}
+
+static CK_RV find_public_object(CK_SESSION_HANDLE session,
+                                CK_OBJECT_CLASS objClass, unsigned char* id,
+                                CK_ULONG idLen, CK_OBJECT_HANDLE* obj)
+{
+    CK_RV ret;
+    CK_ULONG count = 0;
+    CK_ATTRIBUTE findTmpl[] = {
+        { CKA_CLASS, &objClass, sizeof(objClass) },
+        { CKA_ID,    id,        idLen            },
+    };
+
+    ret = funcList->C_FindObjectsInit(session, findTmpl,
+                                      sizeof(findTmpl) / sizeof(*findTmpl));
+    CHECK_CKR(ret, "Find public object init");
+    if (ret == CKR_OK) {
+        ret = funcList->C_FindObjects(session, obj, 1, &count);
+        CHECK_CKR(ret, "Find public object");
+        funcList->C_FindObjectsFinal(session);
+    }
+    if (ret == CKR_OK && count != 1) {
+        ret = -1;
+        CHECK_CKR(ret, "Find public object count");
+    }
+
+    return ret;
+}
+#endif
+
+static CK_RV undecoded_key_before_login(void)
 {
     CK_RV ret;
     CK_OBJECT_CLASS keyClass = CKO_SECRET_KEY;
@@ -1001,11 +1097,31 @@ static CK_RV concat_before_login(void)
     CK_KEY_DERIVATION_STRING_DATA params = { data, sizeof(data) };
     CK_MECHANISM mech = { CKM_CONCATENATE_BASE_AND_DATA, &params,
                           sizeof(params) };
+#ifndef NO_HMAC
+    CK_MECHANISM macMech = { CKM_SHA256_HMAC, NULL, 0 };
+#endif
     CK_ATTRIBUTE findTmpl[] = {
         { CKA_CLASS, &keyClass,   sizeof(keyClass)        },
-        { CKA_ID,    concatKeyId, sizeof(concatKeyId) - 1 },
+        { CKA_ID,    secretKeyId, sizeof(secretKeyId) - 1 },
     };
+#ifdef HAVE_ECC
+    CK_OBJECT_HANDLE ecKey = CK_INVALID_HANDLE;
+    unsigned char ecParams[16];
+    CK_ATTRIBUTE paramsTmpl = { CKA_EC_PARAMS, ecParams, sizeof(ecParams) };
+    CK_OBJECT_HANDLE ecPub = CK_INVALID_HANDLE;
+    unsigned char ecPoint[sizeof(ecc_p256_pub)];
+    CK_ATTRIBUTE pointTmpl = { CKA_EC_POINT, ecPoint, sizeof(ecPoint) };
+#endif
+#ifndef NO_DH
+    CK_OBJECT_HANDLE dhKey = CK_INVALID_HANDLE;
+    unsigned char prime[sizeof(dh_ffdhe2048_p)];
+    unsigned char dhValue[sizeof(dh_2048_priv)];
+    CK_ATTRIBUTE primeTmpl = { CKA_PRIME, prime, sizeof(prime) };
+    CK_ATTRIBUTE dhValueTmpl = { CKA_VALUE, dhValue, sizeof(dhValue) };
+#endif
     CK_ULONG valueLen = 16 + sizeof(data);
+    CK_ULONG keyLen = 0;
+    CK_ATTRIBUTE lenTmpl = { CKA_VALUE_LEN, &keyLen, sizeof(keyLen) };
     CK_ATTRIBUTE tmpl[] = {
         { CKA_CLASS,     &keyClass,       sizeof(keyClass)       },
         { CKA_KEY_TYPE,  &genericKeyType, sizeof(genericKeyType) },
@@ -1031,11 +1147,75 @@ static CK_RV concat_before_login(void)
         CHECK_CKR(ret, "Find public secret key count");
     }
     if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, key, &lenTmpl, 1);
+        CHECK_CKR(ret, "Key length of undecoded key before login");
+    }
+    CHECK_COND(ret != CKR_OK || keyLen == 16, ret,
+               "Key length value before login");
+    if (ret == CKR_OK) {
         ret = funcList->C_DeriveKey(session, &mech, key, tmpl,
                                     sizeof(tmpl) / sizeof(*tmpl), &derived);
         CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN,
                        "Concatenate undecoded key before login");
     }
+#ifndef NO_HMAC
+    if (ret == CKR_OK) {
+        ret = funcList->C_SignInit(session, &macMech, key);
+        CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN,
+                       "HMAC sign with undecoded key before login");
+    }
+#endif
+#ifdef HAVE_ECC
+    if (ret == CKR_OK) {
+        ret = find_public_object(session, CKO_PRIVATE_KEY, ecPublicId,
+                                 sizeof(ecPublicId) - 1, &ecKey);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, ecKey, &paramsTmpl, 1);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_SENSITIVE,
+                       "EC parameters of undecoded key before login");
+    }
+    if (ret == CKR_OK) {
+        ret = find_public_object(session, CKO_PUBLIC_KEY, ecPublicId,
+                                 sizeof(ecPublicId) - 1, &ecPub);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, ecPub, &pointTmpl, 1);
+        CHECK_CKR(ret, "EC point of public key before login");
+    }
+    CHECK_COND(ret != CKR_OK ||
+               (pointTmpl.ulValueLen == sizeof(ecc_p256_pub) &&
+                XMEMCMP(ecPoint, ecc_p256_pub, sizeof(ecPoint)) == 0), ret,
+               "EC point value before login");
+    if (ret == CKR_OK) {
+        paramsTmpl.ulValueLen = sizeof(ecParams);
+        ret = funcList->C_GetAttributeValue(session, ecPub, &paramsTmpl, 1);
+        CHECK_CKR(ret, "EC parameters of public key before login");
+    }
+    CHECK_COND(ret != CKR_OK ||
+               (paramsTmpl.ulValueLen == sizeof(ecc_p256_params) &&
+                XMEMCMP(ecParams, ecc_p256_params,
+                        sizeof(ecc_p256_params)) == 0), ret,
+               "EC parameters value before login");
+#endif
+#ifndef NO_DH
+    if (ret == CKR_OK) {
+        ret = find_public_object(session, CKO_PRIVATE_KEY, dhPublicId,
+                                 sizeof(dhPublicId) - 1, &dhKey);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, dhKey, &primeTmpl, 1);
+        CHECK_CKR(ret, "DH prime of undecoded key before login");
+    }
+    CHECK_COND(ret != CKR_OK || (primeTmpl.ulValueLen == sizeof(prime) &&
+               XMEMCMP(prime, dh_ffdhe2048_p, sizeof(prime)) == 0), ret,
+               "DH prime value before login");
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, dhKey, &dhValueTmpl, 1);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_SENSITIVE,
+                       "DH value of undecoded key before login");
+    }
+#endif
     if (session != CK_INVALID_HANDLE)
         funcList->C_CloseSession(session);
 
@@ -1217,11 +1397,20 @@ static CK_RV pkcs11_test(int slotId, int setPin, int closeDl)
 #ifndef WOLFPKCS11_NO_STORE
             if (ret == CKR_OK && userPinLen != 0) {
                 printf("Create public secret key ... ");
-                ret = create_concat_key(session);
+                ret = create_public_secret_key(session);
                 if (ret == CKR_OK) {
                     printf("Done\n");
                 }
             }
+#if defined(HAVE_ECC) || !defined(NO_DH)
+            if (ret == CKR_OK && userPinLen != 0) {
+                printf("Create public asymmetric keys ... ");
+                ret = create_public_asym_keys(session);
+                if (ret == CKR_OK) {
+                    printf("Done\n");
+                }
+            }
+#endif
 #endif
             pkcs11_close_session(session);
         }
@@ -1247,8 +1436,8 @@ static CK_RV pkcs11_test(int slotId, int setPin, int closeDl)
         }
     }
     if (ret == CKR_OK && userPinLen != 0) {
-        printf("Concatenate before login ... ");
-        ret = concat_before_login();
+        printf("Use undecoded key before login ... ");
+        ret = undecoded_key_before_login();
         if (ret == CKR_OK) {
             printf("Done\n");
         }

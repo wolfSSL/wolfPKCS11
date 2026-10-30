@@ -574,6 +574,21 @@ static CK_RV CheckAttributes(CK_ATTRIBUTE* pTemplate, CK_ULONG ulCount, int set)
     return CKR_OK;
 }
 
+static CK_RV UndecodedKeyRv(WP11_Slot* slot)
+{
+    /* A key still undecoded while logged in failed to verify. */
+    if (WP11_Slot_IsUserLoggedIn(slot))
+        return CKR_FUNCTION_FAILED;
+    return CKR_USER_NOT_LOGGED_IN;
+}
+
+static CK_RV CheckKeyDecoded(WP11_Object* obj)
+{
+    if (WP11_Object_KeyState(obj) != 0)
+        return UndecodedKeyRv(WP11_Object_GetSlot(obj));
+    return CKR_OK;
+}
+
 /* A certificate's type shares the key type field, so only key objects may be
  * used as keys. A data object may seed a derivation. */
 static int CheckKeyObject(WP11_Object* obj, CK_ATTRIBUTE_TYPE op)
@@ -603,7 +618,7 @@ static int CheckOpSupportedRv(WP11_Object* obj, CK_ATTRIBUTE_TYPE op,
         WOLFPKCS11_MSG("Operation not supported by object");
         return (int)errRv;
     }
-    return CKR_OK;
+    return (int)CheckKeyDecoded(obj);
 }
 
 static int CheckOpSupported(WP11_Object* obj, CK_ATTRIBUTE_TYPE op)
@@ -1042,14 +1057,6 @@ static CK_RV CheckAttributeUpdate(WP11_Session* session, WP11_Object* obj,
     return CKR_OK;
 }
 
-static CK_RV UndecodedKeyRv(WP11_Session* session)
-{
-    /* Logged in yet undecoded: the stored key failed to verify. */
-    if (WP11_Slot_IsUserLoggedIn(WP11_Session_GetSlot(session)))
-        return CKR_FUNCTION_FAILED;
-    return CKR_USER_NOT_LOGGED_IN;
-}
-
 /**
  * Set the values of the attributes into the object.
  *
@@ -1346,7 +1353,7 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
         else if (ret == BUFFER_E)
             return CKR_BUFFER_TOO_SMALL;
         else if (ret == BAD_STATE_E)
-            return UndecodedKeyRv(session);
+            return UndecodedKeyRv(WP11_Session_GetSlot(session));
         else if (ret != 0)
             return CKR_FUNCTION_FAILED;
     }
@@ -2112,6 +2119,11 @@ static CK_RV wp11_C_CopyObject(CK_SESSION_HANDLE hSession,
      * changes the C_GetAttributeValue view). */
     if (!WP11_Object_IsCopyable(obj)) {
         rv = CKR_ACTION_PROHIBITED;
+        WOLFPKCS11_LEAVE("C_CopyObject", rv);
+        return rv;
+    }
+    rv = CheckKeyDecoded(obj);
+    if (rv != CKR_OK) {
         WOLFPKCS11_LEAVE("C_CopyObject", rv);
         return rv;
     }
@@ -5525,6 +5537,10 @@ static CK_RV wp11_C_DigestKey(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hKey)
 
     ret = WP11_Digest_Key(obj, session);
 
+    if (ret == BAD_STATE_E) {
+        WP11_Session_AbortOp(session);
+        return UndecodedKeyRv(WP11_Session_GetSlot(session));
+    }
     if (ret < 0) {
         WP11_Session_AbortOp(session);
         return CKR_FUNCTION_FAILED;
@@ -9644,6 +9660,9 @@ static CK_RV wp11_C_WrapKey(CK_SESSION_HANDLE hSession,
     if (rv != CKR_OK) {
         return rv;
     }
+    rv = CheckKeyDecoded(key);
+    if (rv != CKR_OK)
+        return rv;
 
     switch (keyType) {
 #if !defined(NO_RSA) && !defined(WOLFPKCS11_NO_STORE)
@@ -10351,7 +10370,7 @@ static CK_RV ConcatKeyRv(WP11_Session* session, int ret)
     if (ret == 0)
         return CKR_OK;
     if (ret == BAD_STATE_E)
-        return UndecodedKeyRv(session);
+        return UndecodedKeyRv(WP11_Session_GetSlot(session));
     if (ret == NOT_AVAILABLE_E)
         return CKR_KEY_FUNCTION_NOT_PERMITTED;
     return CKR_FUNCTION_FAILED;
@@ -10508,6 +10527,8 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
     ret = CheckOpSupported(obj, CKA_DERIVE);
 #else
     ret = CheckKeyObject(obj, CKA_DERIVE);
+    if (ret == CKR_OK)
+        ret = (int)CheckKeyDecoded(obj);
 #endif
     if (ret != CKR_OK)
         return ret;
@@ -10562,6 +10583,7 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
         case CKM_HKDF_DATA: {
             CK_HKDF_PARAMS_PTR kdfParams;
             CK_ATTRIBUTE *lenAttr = NULL;
+            WP11_Object* saltObj = NULL;
 
             /* Data-derive feeds a CKO_DATA object, which has no key type.
              * Only a key base object is checked for an HKDF-compatible type. */
@@ -10583,6 +10605,15 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
             if (kdfParams->bExpand &&
                 !CK_ULONG_FITS_WORD32(kdfParams->ulInfoLen))
                 return CKR_MECHANISM_PARAM_INVALID;
+            if (kdfParams->bExtract &&
+                    kdfParams->ulSaltType == CKF_HKDF_SALT_KEY &&
+                    WP11_Object_Find(session, kdfParams->hSaltKey,
+                                     &saltObj) == 0 &&
+                    WP11_Object_GetClass(saltObj) == CKO_SECRET_KEY) {
+                rv = CheckKeyDecoded(saltObj);
+                if (rv != CKR_OK)
+                    return rv;
+            }
 
             FindAttributeType(pTemplate, ulAttributeCount, CKA_VALUE_LEN,
                 &lenAttr);

@@ -6705,10 +6705,12 @@ static CK_RV test_wrap_key_wrap_with_trusted(void* args)
     CK_MECHANISM mech = { CKM_AES_KEY_WRAP, NULL, 0 };
     CK_OBJECT_HANDLE untrustedKey = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE trustedKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE trustedTokenKey = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
     byte wrappedKey[40], keyData[16];
     CK_ULONG wrappedKeyLen;
     CK_BBOOL ckTrusted = CK_TRUE;
+    CK_BBOOL onToken = CK_FALSE;
     CK_ATTRIBUTE untrustedWrapTmpl[] = {
         { CKA_CLASS,       &secretKeyClass,   sizeof(secretKeyClass)    },
         { CKA_KEY_TYPE,    &aesKeyType,       sizeof(aesKeyType)        },
@@ -6718,14 +6720,14 @@ static CK_RV test_wrap_key_wrap_with_trusted(void* args)
     CK_ULONG untrustedWrapTmplCnt = sizeof(untrustedWrapTmpl) /
                                     sizeof(*untrustedWrapTmpl);
     /* CKA_TRUSTED may only be set by the SO, so the trusted wrapping key is
-     * provisioned as a public token object under an SO session. */
+     * provisioned as a public session object under an SO session. */
     CK_ATTRIBUTE trustedWrapTmpl[] = {
         { CKA_CLASS,       &secretKeyClass,   sizeof(secretKeyClass)    },
         { CKA_KEY_TYPE,    &aesKeyType,       sizeof(aesKeyType)        },
         { CKA_VALUE,       aes_128_key,       sizeof(aes_128_key)       },
         { CKA_WRAP,        &ckTrue,           sizeof(ckTrue)            },
         { CKA_TRUSTED,     &ckTrusted,        sizeof(CK_BBOOL)          },
-        { CKA_TOKEN,       &ckTrue,           sizeof(ckTrue)            },
+        { CKA_TOKEN,       &onToken,          sizeof(onToken)           },
         { CKA_PRIVATE,     &ckFalse,          sizeof(ckFalse)           },
     };
     CK_ULONG trustedWrapTmplCnt = sizeof(trustedWrapTmpl) /
@@ -6743,7 +6745,7 @@ static CK_RV test_wrap_key_wrap_with_trusted(void* args)
 
     /* Provision the trusted wrapping key as the SO. The token has a single
      * login state, so log the harness user out, log in as SO to create the
-     * public token key, then restore the user session. */
+     * public session key, then restore the user session. */
     ret = funcList->C_Logout(session);
     CHECK_CKR(ret, "Logout user before SO provisioning");
     if (ret == CKR_OK) {
@@ -6754,6 +6756,12 @@ static CK_RV test_wrap_key_wrap_with_trusted(void* args)
         ret = funcList->C_CreateObject(session, trustedWrapTmpl,
                                        trustedWrapTmplCnt, &trustedKey);
         CHECK_CKR(ret, "Create trusted AES wrapping key (SO)");
+    }
+    if (ret == CKR_OK) {
+        onToken = CK_TRUE;
+        ret = funcList->C_CreateObject(session, trustedWrapTmpl,
+                                       trustedWrapTmplCnt, &trustedTokenKey);
+        CHECK_CKR(ret, "Create trusted AES wrapping token key (SO)");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_Logout(session);
@@ -6799,9 +6807,69 @@ static CK_RV test_wrap_key_wrap_with_trusted(void* args)
                                   wrappedKey, &wrappedKeyLen);
         CHECK_CKR(ret, "Wrap CKA_WRAP_WITH_TRUSTED key with trusted wrapping key");
     }
+    /* A token key the SO created does not decode for the user. */
+    if (ret == CKR_OK) {
+        wrappedKeyLen = sizeof(wrappedKey);
+        ret = funcList->C_WrapKey(session, &mech, trustedTokenKey, key,
+                                  wrappedKey, &wrappedKeyLen);
+        CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED,
+                       "Wrap with trusted token key created by SO");
+    }
+#ifndef NO_SHA256
+    if (ret == CKR_OK) {
+        CK_MECHANISM digestMech = { CKM_SHA256, NULL, 0 };
+
+        ret = funcList->C_DigestInit(session, &digestMech);
+        CHECK_CKR(ret, "Digest init for token key created by SO");
+        if (ret == CKR_OK) {
+            ret = funcList->C_DigestKey(session, trustedTokenKey);
+            CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED,
+                           "Digest token key created by SO");
+        }
+    }
+#endif
+#ifdef WOLFPKCS11_HKDF
+    if (ret == CKR_OK) {
+        CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+        CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+        CK_ULONG outLen = 32;
+        CK_HKDF_PARAMS hkdf;
+        CK_MECHANISM hkdfMech = { CKM_HKDF_DERIVE, &hkdf, sizeof(hkdf) };
+        CK_ATTRIBUTE baseTmpl[] = {
+            { CKA_CLASS,    &secretKeyClass, sizeof(secretKeyClass) },
+            { CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType) },
+            { CKA_VALUE,    keyData,         sizeof(keyData)        },
+            { CKA_DERIVE,   &ckTrue,         sizeof(ckTrue)         },
+        };
+        CK_ATTRIBUTE outTmpl[] = {
+            { CKA_CLASS,     &secretKeyClass, sizeof(secretKeyClass) },
+            { CKA_KEY_TYPE,  &genericKeyType, sizeof(genericKeyType) },
+            { CKA_VALUE_LEN, &outLen,         sizeof(outLen)         },
+        };
+
+        XMEMSET(&hkdf, 0, sizeof(hkdf));
+        hkdf.bExtract = CK_TRUE;
+        hkdf.prfHashMechanism = CKM_SHA256_HMAC;
+        hkdf.ulSaltType = CKF_HKDF_SALT_KEY;
+        hkdf.hSaltKey = trustedTokenKey;
+        ret = funcList->C_CreateObject(session, baseTmpl,
+                                       sizeof(baseTmpl) / sizeof(*baseTmpl),
+                                       &base);
+        CHECK_CKR(ret, "Create HKDF base key");
+        if (ret == CKR_OK) {
+            ret = funcList->C_DeriveKey(session, &hkdfMech, base, outTmpl,
+                                        sizeof(outTmpl) / sizeof(*outTmpl),
+                                        &derived);
+            CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED,
+                           "HKDF with salt token key created by SO");
+            funcList->C_DestroyObject(session, base);
+        }
+    }
+#endif
 
     funcList->C_DestroyObject(session, untrustedKey);
     funcList->C_DestroyObject(session, trustedKey);
+    funcList->C_DestroyObject(session, trustedTokenKey);
     funcList->C_DestroyObject(session, key);
 
     return ret;
@@ -16786,6 +16854,974 @@ static CK_RV test_concatenate_logged_out(void* args)
 }
 #endif
 
+#if defined(HAVE_ECC) && !defined(NO_SHA256)
+static CK_RV stale_key_digest(CK_SESSION_HANDLE session, CK_BBOOL token)
+{
+    CK_RV ret;
+    CK_RV loginRet;
+    CK_OBJECT_HANDLE hEcPub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hEcPriv = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_EC_KEY_PAIR_GEN, NULL, 0 };
+    CK_BYTE data[32];
+    CK_BYTE sig[128];
+    CK_ULONG sigLen;
+    CK_BYTE hash[WC_SHA256_DIGEST_SIZE];
+    CK_ULONG hashLen;
+    CK_ATTRIBUTE ecPubTmpl[] = {
+        {CKA_EC_PARAMS, ecc_p256_params, sizeof(ecc_p256_params)},
+        {CKA_VERIFY, &ckTrue, sizeof(ckTrue)},
+    };
+    CK_ATTRIBUTE ecPrivTmpl[] = {
+        {CKA_SIGN, &ckTrue, sizeof(ckTrue)},
+        {CKA_TOKEN, &token, sizeof(token)},
+    };
+
+    memset(data, 9, sizeof(data));
+
+    ret = funcList->C_GenerateKeyPair(session, &mech, ecPubTmpl,
+              sizeof(ecPubTmpl) / sizeof(*ecPubTmpl), ecPrivTmpl,
+              sizeof(ecPrivTmpl) / sizeof(*ecPrivTmpl), &hEcPub, &hEcPriv);
+    CHECK_CKR(ret, "Generate EC key pair");
+    mech.mechanism = CKM_ECDSA;
+    if (ret == CKR_OK) {
+        ret = funcList->C_SignInit(session, &mech, hEcPriv);
+        CHECK_CKR(ret, "ECDSA sign init");
+    }
+    if (ret == CKR_OK) {
+        sigLen = sizeof(sig);
+        ret = funcList->C_Sign(session, data, sizeof(data), sig, &sigLen);
+        CHECK_CKR(ret, "ECDSA sign");
+    }
+    mech.mechanism = CKM_SHA256;
+    if (ret == CKR_OK) {
+        ret = funcList->C_DigestInit(session, &mech);
+        CHECK_CKR(ret, "Digest init");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DigestUpdate(session, data, sizeof(data));
+        CHECK_CKR(ret, "Digest update");
+    }
+    if (ret == CKR_OK && token) {
+        ret = funcList->C_Logout(session);
+        CHECK_CKR(ret, "Logout during digest");
+        if (ret == CKR_OK) {
+            ret = funcList->C_DigestInit(session, &mech);
+            CHECK_CKR_FAIL(ret, CKR_OPERATION_ACTIVE,
+                           "Digest init again after logout");
+            if (ret == CKR_OK) {
+                hashLen = sizeof(hash);
+                ret = funcList->C_DigestFinal(session, hash, &hashLen);
+                CHECK_CKR(ret, "Digest final after logout");
+            }
+            loginRet = funcList->C_Login(session, CKU_USER, userPin,
+                                         userPinLen);
+            CHECK_CKR(loginRet, "Login again");
+            if (ret == CKR_OK)
+                ret = loginRet;
+        }
+    }
+    else if (ret == CKR_OK) {
+        ret = funcList->C_DestroyObject(session, hEcPriv);
+        CHECK_CKR(ret, "Destroy key of completed sign during digest");
+        hEcPriv = CK_INVALID_HANDLE;
+        if (ret == CKR_OK) {
+            ret = funcList->C_DigestInit(session, &mech);
+            CHECK_CKR_FAIL(ret, CKR_OPERATION_ACTIVE,
+                           "Digest init again after destroy");
+        }
+        if (ret == CKR_OK) {
+            hashLen = sizeof(hash);
+            ret = funcList->C_DigestFinal(session, hash, &hashLen);
+            CHECK_CKR(ret, "Digest final after destroy");
+        }
+    }
+
+    if (hEcPriv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hEcPriv);
+    if (hEcPub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hEcPub);
+
+    return ret;
+}
+
+static CK_RV test_completed_op_stale_key(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+
+    ret = stale_key_digest(session, CK_FALSE);
+#ifndef WOLFPKCS11_NO_STORE
+    if (ret == CKR_OK && userPinLen != 0)
+        ret = stale_key_digest(session, CK_TRUE);
+#endif
+
+    return ret;
+}
+#endif
+
+#if !defined(NO_RSA) && !defined(WC_NO_RSA_OAEP) && !defined(NO_SHA256)
+static CK_ATTRIBUTE oaepRsaTmpl[] = {
+    {CKA_CLASS, &privKeyClass, sizeof(privKeyClass)},
+    {CKA_KEY_TYPE, &rsaKeyType, sizeof(rsaKeyType)},
+    {CKA_DECRYPT, &ckTrue, sizeof(ckTrue)},
+    {CKA_MODULUS, rsa_2048_modulus, sizeof(rsa_2048_modulus)},
+    {CKA_PRIVATE_EXPONENT, rsa_2048_priv_exp, sizeof(rsa_2048_priv_exp)},
+    {CKA_PRIME_1, rsa_2048_p, sizeof(rsa_2048_p)},
+    {CKA_PRIME_2, rsa_2048_q, sizeof(rsa_2048_q)},
+    {CKA_EXPONENT_1, rsa_2048_dP, sizeof(rsa_2048_dP)},
+    {CKA_EXPONENT_2, rsa_2048_dQ, sizeof(rsa_2048_dQ)},
+    {CKA_COEFFICIENT, rsa_2048_u, sizeof(rsa_2048_u)},
+    {CKA_PUBLIC_EXPONENT, rsa_2048_pub_exp, sizeof(rsa_2048_pub_exp)},
+    {CKA_TOKEN, &ckTrue, sizeof(ckTrue)},
+};
+#define OAEP_RSA_TMPL_CNT (sizeof(oaepRsaTmpl) / sizeof(*oaepRsaTmpl))
+
+static CK_RV test_oaep_failed_decrypt(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE hRsa = CK_INVALID_HANDLE;
+    CK_BYTE label[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+    CK_BYTE enc[256];
+    CK_BYTE dec[256];
+    CK_ULONG decLen = sizeof(dec);
+    CK_RSA_PKCS_OAEP_PARAMS oaep;
+    CK_MECHANISM mech = { CKM_RSA_PKCS_OAEP, &oaep, sizeof(oaep) };
+    CK_MECHANISM pkcsMech = { CKM_RSA_PKCS, NULL, 0 };
+
+    XMEMSET(enc, 0, sizeof(enc));
+    oaep.hashAlg = CKM_SHA256;
+    oaep.mgf = CKG_MGF1_SHA256;
+    oaep.source = CKZ_DATA_SPECIFIED;
+    oaep.pSourceData = label;
+    oaep.ulSourceDataLen = sizeof(label);
+
+    ret = funcList->C_CreateObject(session, oaepRsaTmpl, OAEP_RSA_TMPL_CNT - 1,
+                                   &hRsa);
+    CHECK_CKR(ret, "Create session RSA private key");
+    if (ret == CKR_OK) {
+        ret = funcList->C_DecryptInit(session, &mech, hRsa);
+        CHECK_CKR(ret, "RSA-OAEP decrypt init");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Decrypt(session, enc, sizeof(enc), dec, &decLen);
+        CHECK_CKR_FAIL(ret, CKR_ENCRYPTED_DATA_INVALID,
+                       "RSA-OAEP decrypt of invalid data");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DecryptInit(session, &pkcsMech, hRsa);
+        CHECK_CKR(ret, "RSA decrypt init after failed RSA-OAEP decrypt");
+    }
+    if (ret == CKR_OK) {
+        decLen = sizeof(dec);
+        ret = funcList->C_Decrypt(session, enc, sizeof(enc), dec, &decLen);
+        CHECK_CKR_FAIL(ret, CKR_ENCRYPTED_DATA_INVALID,
+                       "RSA decrypt of invalid data");
+    }
+
+    if (hRsa != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hRsa);
+
+    return ret;
+}
+
+static CK_RV test_oaep_key_destroyed(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_SESSION_HANDLE other = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hRsa = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hRsaSess = CK_INVALID_HANDLE;
+    CK_BYTE label[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+    CK_BYTE enc[256];
+    CK_BYTE dec[256];
+    CK_ULONG decLen = sizeof(dec);
+    CK_RSA_PKCS_OAEP_PARAMS oaep;
+    CK_MECHANISM mech = { CKM_RSA_PKCS_OAEP, &oaep, sizeof(oaep) };
+
+    XMEMSET(enc, 0, sizeof(enc));
+    oaep.hashAlg = CKM_SHA256;
+    oaep.mgf = CKG_MGF1_SHA256;
+    oaep.source = CKZ_DATA_SPECIFIED;
+    oaep.pSourceData = label;
+    oaep.ulSourceDataLen = sizeof(label);
+
+    ret = funcList->C_CreateObject(session, oaepRsaTmpl, OAEP_RSA_TMPL_CNT,
+                                   &hRsa);
+    CHECK_CKR(ret, "Create token RSA private key");
+    if (ret == CKR_OK) {
+        ret = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                      NULL, NULL, &other);
+        CHECK_CKR(ret, "Open second session");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(other, oaepRsaTmpl,
+                                       OAEP_RSA_TMPL_CNT - 1, &hRsaSess);
+        CHECK_CKR(ret, "Create session RSA private key");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DecryptInit(other, &mech, hRsa);
+        CHECK_CKR(ret, "RSA-OAEP decrypt init");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DestroyObject(session, hRsa);
+        CHECK_CKR(ret, "Destroy key from another session");
+        if (ret == CKR_OK)
+            hRsa = CK_INVALID_HANDLE;
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Decrypt(other, enc, sizeof(enc), dec, &decLen);
+        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
+                       "RSA-OAEP decrypt after key destroyed");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DecryptInit(other, &mech, hRsaSess);
+        CHECK_CKR(ret, "RSA-OAEP decrypt init after key destroyed");
+    }
+
+    if (other != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(other);
+    if (hRsa != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hRsa);
+
+    return ret;
+}
+#endif
+
+#ifndef WOLFPKCS11_NO_STORE
+static CK_RV test_key_use_logged_out(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_RV loginRet;
+    int loggedOut = 0;
+    CK_BYTE macKey[32];
+    CK_OBJECT_HANDLE hTok = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hSess = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hAes = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hAesSess = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hEcPub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hEcPriv = CK_INVALID_HANDLE;
+#if !defined(NO_RSA) && !defined(WC_NO_RSA_OAEP) && !defined(NO_SHA256)
+    CK_OBJECT_HANDLE hRsa = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hRsaSess = CK_INVALID_HANDLE;
+    CK_SESSION_HANDLE oaepSession = CK_INVALID_HANDLE;
+    CK_BYTE label[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+    CK_RSA_PKCS_OAEP_PARAMS oaep;
+    CK_ATTRIBUTE_TYPE rsaAttrs[] = {
+        CKA_MODULUS, CKA_PUBLIC_EXPONENT, CKA_MODULUS_BITS
+    };
+    int i;
+    CK_ATTRIBUTE rsaTmpl[] = {
+        {CKA_CLASS, &privKeyClass, sizeof(privKeyClass)},
+        {CKA_KEY_TYPE, &rsaKeyType, sizeof(rsaKeyType)},
+        {CKA_PRIVATE, &ckFalse, sizeof(ckFalse)},
+        {CKA_DECRYPT, &ckTrue, sizeof(ckTrue)},
+        {CKA_MODULUS, rsa_2048_modulus, sizeof(rsa_2048_modulus)},
+        {CKA_PRIVATE_EXPONENT, rsa_2048_priv_exp, sizeof(rsa_2048_priv_exp)},
+        {CKA_PRIME_1, rsa_2048_p, sizeof(rsa_2048_p)},
+        {CKA_PRIME_2, rsa_2048_q, sizeof(rsa_2048_q)},
+        {CKA_EXPONENT_1, rsa_2048_dP, sizeof(rsa_2048_dP)},
+        {CKA_EXPONENT_2, rsa_2048_dQ, sizeof(rsa_2048_dQ)},
+        {CKA_COEFFICIENT, rsa_2048_u, sizeof(rsa_2048_u)},
+        {CKA_PUBLIC_EXPONENT, rsa_2048_pub_exp, sizeof(rsa_2048_pub_exp)},
+        {CKA_TOKEN, &ckTrue, sizeof(ckTrue)},
+    };
+    CK_ULONG rsaCnt = sizeof(rsaTmpl) / sizeof(*rsaTmpl);
+#endif
+#ifndef NO_DH
+    CK_OBJECT_HANDLE hDh = CK_INVALID_HANDLE;
+    CK_BYTE prime[sizeof(dh_ffdhe2048_p)];
+    CK_ATTRIBUTE primeTmpl = { CKA_PRIME, prime, sizeof(prime) };
+    CK_ATTRIBUTE dhTmpl[] = {
+        {CKA_CLASS, &privKeyClass, sizeof(privKeyClass)},
+        {CKA_KEY_TYPE, &dhKeyType, sizeof(dhKeyType)},
+        {CKA_PRIVATE, &ckFalse, sizeof(ckFalse)},
+        {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
+        {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
+        {CKA_DERIVE, &ckTrue, sizeof(ckTrue)},
+        {CKA_PRIME, dh_ffdhe2048_p, sizeof(dh_ffdhe2048_p)},
+        {CKA_BASE, dh_ffdhe2048_g, sizeof(dh_ffdhe2048_g)},
+        {CKA_VALUE, dh_2048_priv, sizeof(dh_2048_priv)},
+        {CKA_TOKEN, &ckTrue, sizeof(ckTrue)},
+    };
+#endif
+    CK_OBJECT_HANDLE hKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hCopy = CK_INVALID_HANDLE;
+    CK_MECHANISM mech;
+    CK_BYTE value[32];
+    CK_ATTRIBUTE getTmpl = { CKA_VALUE, value, sizeof(value) };
+    CK_ULONG valueLen = 0;
+    CK_ATTRIBUTE lenTmpl = { CKA_VALUE_LEN, &valueLen, sizeof(valueLen) };
+#if defined(HAVE_ECC) || defined(HAVE_AES_CBC) || defined(HAVE_AESGCM) || \
+    defined(WOLFSSL_HAVE_PRF) || defined(HAVE_AESECB)
+    CK_BYTE in[16] = { 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9 };
+    CK_BYTE out[128];
+    CK_ULONG outSz;
+#endif
+#ifndef NO_HMAC
+    CK_BYTE data[16] = { 0 };
+    CK_BYTE mac[WC_SHA256_DIGEST_SIZE];
+    CK_BYTE macSess[WC_SHA256_DIGEST_SIZE];
+    CK_ULONG macLen;
+#endif
+#ifdef HAVE_AES_CBC
+    CK_BYTE iv[16] = { 0 };
+    CK_BYTE cbcOut[16];
+    CK_BYTE cbcSessOut[16];
+    CK_SESSION_HANDLE cbcSession = CK_INVALID_HANDLE;
+#endif
+#ifdef HAVE_AESECB
+    CK_SESSION_HANDLE ecbSession = CK_INVALID_HANDLE;
+#endif
+#ifdef HAVE_AESGCM
+    CK_BYTE gcmIv[12] = { 0 };
+    CK_GCM_PARAMS gcm;
+    CK_SESSION_HANDLE gcmSession = CK_INVALID_HANDLE;
+#endif
+#if defined(WOLFSSL_HAVE_PRF) && !defined(NO_SHA256)
+    CK_TLS_MAC_PARAMS tlsMac;
+    CK_SESSION_HANDLE tlsSession = CK_INVALID_HANDLE;
+#endif
+#if defined(WOLFPKCS11_NSS) && defined(WOLFSSL_HAVE_PRF)
+    CK_SESSION_HANDLE prfSession = CK_INVALID_HANDLE;
+#endif
+#ifdef HAVE_AES_KEYWRAP
+    CK_BYTE wrapped[40];
+    CK_ULONG wrappedLen;
+    CK_ULONG unwrapLen = 16;
+    CK_ATTRIBUTE unwrapTmpl[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_VALUE_LEN, &unwrapLen, sizeof(unwrapLen)},
+    };
+#endif
+#if !defined(NO_DH) || defined(HAVE_ECC)
+    CK_ULONG deriveLen = 32;
+    CK_ATTRIBUTE deriveTmpl[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_VALUE_LEN, &deriveLen, sizeof(deriveLen)},
+    };
+#endif
+#ifndef NO_DH
+    CK_BYTE dhPeer[sizeof(dh_ffdhe2048_p)];
+#endif
+#ifdef HAVE_ECC
+    CK_ECDH1_DERIVE_PARAMS ecdh;
+#endif
+#ifdef WOLFPKCS11_HKDF
+    CK_HKDF_PARAMS hkdf;
+    CK_ULONG outLen = 32;
+    CK_ATTRIBUTE outTmpl[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_PRIVATE, &ckFalse, sizeof(ckFalse)},
+        {CKA_VALUE_LEN, &outLen, sizeof(outLen)},
+    };
+#endif
+#ifndef NO_SHA256
+    CK_BYTE hash[WC_SHA256_DIGEST_SIZE];
+    CK_ULONG hashLen;
+#endif
+    CK_ATTRIBUTE tokTmpl[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_PRIVATE, &ckFalse, sizeof(ckFalse)},
+        {CKA_SIGN, &ckTrue, sizeof(ckTrue)},
+        {CKA_VERIFY, &ckTrue, sizeof(ckTrue)},
+        {CKA_DERIVE, &ckTrue, sizeof(ckTrue)},
+        {CKA_VALUE, macKey, sizeof(macKey)},
+        {CKA_TOKEN, &ckTrue, sizeof(ckTrue)},
+    };
+    CK_ULONG tokCnt = sizeof(tokTmpl) / sizeof(*tokTmpl);
+    CK_ATTRIBUTE aesTmpl[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &aesKeyType, sizeof(aesKeyType)},
+        {CKA_PRIVATE, &ckFalse, sizeof(ckFalse)},
+        {CKA_ENCRYPT, &ckTrue, sizeof(ckTrue)},
+        {CKA_DECRYPT, &ckTrue, sizeof(ckTrue)},
+        {CKA_WRAP, &ckTrue, sizeof(ckTrue)},
+        {CKA_UNWRAP, &ckTrue, sizeof(ckTrue)},
+        {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
+        {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
+        {CKA_VALUE, aes_128_key, sizeof(aes_128_key)},
+        {CKA_TOKEN, &ckTrue, sizeof(ckTrue)},
+    };
+    CK_ULONG aesCnt = sizeof(aesTmpl) / sizeof(*aesTmpl);
+#ifdef HAVE_ECC
+    CK_ATTRIBUTE ecPubTmpl[] = {
+        {CKA_EC_PARAMS, ecc_p256_params, sizeof(ecc_p256_params)},
+        {CKA_VERIFY, &ckTrue, sizeof(ckTrue)},
+    };
+    CK_ATTRIBUTE ecPrivTmpl[] = {
+        {CKA_SIGN, &ckTrue, sizeof(ckTrue)},
+        {CKA_DERIVE, &ckTrue, sizeof(ckTrue)},
+        {CKA_PRIVATE, &ckFalse, sizeof(ckFalse)},
+        {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
+        {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
+        {CKA_TOKEN, &ckTrue, sizeof(ckTrue)},
+    };
+#endif
+
+    if (userPinLen == 0)
+        return CKR_SKIPPED;
+
+    memset(macKey, 0x5a, sizeof(macKey));
+
+    ret = funcList->C_CreateObject(session, tokTmpl, tokCnt, &hTok);
+    CHECK_CKR(ret, "Create public token secret key");
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, tokTmpl, tokCnt - 1, &hSess);
+        CHECK_CKR(ret, "Create public session secret key");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, aesTmpl, aesCnt, &hAes);
+        CHECK_CKR(ret, "Create public token AES key");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, aesTmpl, aesCnt - 1,
+                                       &hAesSess);
+        CHECK_CKR(ret, "Create public session AES key");
+    }
+#if !defined(NO_RSA) && !defined(WC_NO_RSA_OAEP) && !defined(NO_SHA256)
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, rsaTmpl, rsaCnt, &hRsa);
+        CHECK_CKR(ret, "Create public token RSA private key");
+    }
+#endif
+#ifndef NO_DH
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, dhTmpl,
+                                       sizeof(dhTmpl) / sizeof(*dhTmpl), &hDh);
+        CHECK_CKR(ret, "Create public token DH private key");
+    }
+#endif
+#ifdef HAVE_ECC
+    if (ret == CKR_OK) {
+        mech.mechanism = CKM_EC_KEY_PAIR_GEN;
+        mech.pParameter = NULL;
+        mech.ulParameterLen = 0;
+        ret = funcList->C_GenerateKeyPair(session, &mech, ecPubTmpl,
+                  sizeof(ecPubTmpl) / sizeof(*ecPubTmpl), ecPrivTmpl,
+                  sizeof(ecPrivTmpl) / sizeof(*ecPrivTmpl), &hEcPub, &hEcPriv);
+        CHECK_CKR(ret, "Generate public token EC private key");
+    }
+    mech.mechanism = CKM_ECDSA;
+    if (ret == CKR_OK) {
+        ret = funcList->C_SignInit(session, &mech, hEcPriv);
+        CHECK_CKR(ret, "ECDSA sign init before logout");
+    }
+#endif
+#ifdef HAVE_AES_CBC
+    mech.mechanism = CKM_AES_CBC;
+    mech.pParameter = iv;
+    mech.ulParameterLen = sizeof(iv);
+    if (ret == CKR_OK) {
+        ret = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                      NULL, NULL, &cbcSession);
+        CHECK_CKR(ret, "Open session for AES-CBC");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_EncryptInit(cbcSession, &mech, hAes);
+        CHECK_CKR(ret, "AES-CBC encrypt init before logout");
+    }
+#endif
+#ifdef HAVE_AESGCM
+    XMEMSET(&gcm, 0, sizeof(gcm));
+    gcm.pIv = gcmIv;
+    gcm.ulIvLen = sizeof(gcmIv);
+    gcm.ulTagBits = 128;
+    mech.mechanism = CKM_AES_GCM;
+    mech.pParameter = &gcm;
+    mech.ulParameterLen = sizeof(gcm);
+    if (ret == CKR_OK) {
+        ret = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                      NULL, NULL, &gcmSession);
+        CHECK_CKR(ret, "Open session for AES-GCM");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_EncryptInit(gcmSession, &mech, hAes);
+        CHECK_CKR(ret, "AES-GCM encrypt init before logout");
+    }
+#endif
+#ifdef HAVE_AESECB
+    mech.mechanism = CKM_AES_ECB;
+    mech.pParameter = NULL;
+    mech.ulParameterLen = 0;
+    if (ret == CKR_OK) {
+        ret = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                      NULL, NULL, &ecbSession);
+        CHECK_CKR(ret, "Open session for AES-ECB");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_EncryptInit(ecbSession, &mech, hAes);
+        CHECK_CKR(ret, "AES-ECB encrypt init before logout");
+    }
+#endif
+#if defined(WOLFSSL_HAVE_PRF) && !defined(NO_SHA256)
+    tlsMac.prfHashMechanism = CKM_SHA256;
+    tlsMac.ulMacLength = 12;
+    tlsMac.ulServerOrClient = 1;
+    mech.mechanism = CKM_TLS_MAC;
+    mech.pParameter = &tlsMac;
+    mech.ulParameterLen = sizeof(tlsMac);
+    if (ret == CKR_OK) {
+        ret = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                      NULL, NULL, &tlsSession);
+        CHECK_CKR(ret, "Open session for TLS MAC");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_SignInit(tlsSession, &mech, hTok);
+        CHECK_CKR(ret, "TLS MAC sign init before logout");
+    }
+#endif
+#if !defined(NO_RSA) && !defined(WC_NO_RSA_OAEP) && !defined(NO_SHA256)
+    oaep.hashAlg = CKM_SHA256;
+    oaep.mgf = CKG_MGF1_SHA256;
+    oaep.source = CKZ_DATA_SPECIFIED;
+    oaep.pSourceData = label;
+    oaep.ulSourceDataLen = sizeof(label);
+    mech.mechanism = CKM_RSA_PKCS_OAEP;
+    mech.pParameter = &oaep;
+    mech.ulParameterLen = sizeof(oaep);
+    if (ret == CKR_OK) {
+        ret = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                      NULL, NULL, &oaepSession);
+        CHECK_CKR(ret, "Open session for RSA-OAEP");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(oaepSession, rsaTmpl, rsaCnt - 1,
+                                       &hRsaSess);
+        CHECK_CKR(ret, "Create public session RSA private key");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DecryptInit(oaepSession, &mech, hRsa);
+        CHECK_CKR(ret, "RSA-OAEP decrypt init before logout");
+    }
+#endif
+#if defined(WOLFPKCS11_NSS) && defined(WOLFSSL_HAVE_PRF)
+    mech.mechanism = CKM_NSS_TLS_PRF_GENERAL_SHA256;
+    mech.pParameter = NULL;
+    mech.ulParameterLen = 0;
+    if (ret == CKR_OK) {
+        ret = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                      NULL, NULL, &prfSession);
+        CHECK_CKR(ret, "Open session for NSS TLS PRF");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_SignInit(prfSession, &mech, hTok);
+        CHECK_CKR(ret, "NSS TLS PRF sign init before logout");
+    }
+#endif
+    if (ret == CKR_OK) {
+        ret = funcList->C_Logout(session);
+        CHECK_CKR(ret, "Logout");
+        loggedOut = (ret == CKR_OK);
+    }
+#ifdef HAVE_ECC
+    if (ret == CKR_OK) {
+        outSz = sizeof(out);
+        ret = funcList->C_Sign(session, in, sizeof(in), out, &outSz);
+        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
+                       "ECDSA sign started before logout");
+    }
+#endif
+#ifdef HAVE_AES_CBC
+    if (ret == CKR_OK) {
+        outSz = sizeof(cbcOut);
+        ret = funcList->C_Encrypt(cbcSession, in, sizeof(in), cbcOut, &outSz);
+        CHECK_CKR(ret, "AES-CBC encrypt started before logout");
+    }
+#endif
+#ifdef HAVE_AESGCM
+    if (ret == CKR_OK) {
+        outSz = sizeof(out);
+        ret = funcList->C_Encrypt(gcmSession, in, sizeof(in), out, &outSz);
+        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
+                       "AES-GCM encrypt started before logout");
+    }
+#endif
+#ifdef HAVE_AESECB
+    if (ret == CKR_OK) {
+        outSz = sizeof(out);
+        ret = funcList->C_Encrypt(ecbSession, in, sizeof(in), out, &outSz);
+        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
+                       "AES-ECB encrypt started before logout");
+    }
+#endif
+#if defined(WOLFSSL_HAVE_PRF) && !defined(NO_SHA256)
+    if (ret == CKR_OK) {
+        outSz = sizeof(out);
+        ret = funcList->C_Sign(tlsSession, in, sizeof(in), out, &outSz);
+        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
+                       "TLS MAC sign started before logout");
+    }
+#endif
+#if defined(WOLFPKCS11_NSS) && defined(WOLFSSL_HAVE_PRF)
+    if (ret == CKR_OK) {
+        outSz = sizeof(out);
+        ret = funcList->C_Sign(prfSession, in, sizeof(in), out, &outSz);
+        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
+                       "NSS TLS PRF sign started before logout");
+    }
+#endif
+#if !defined(NO_RSA) && !defined(WC_NO_RSA_OAEP) && !defined(NO_SHA256)
+    mech.mechanism = CKM_RSA_PKCS_OAEP;
+    mech.pParameter = &oaep;
+    mech.ulParameterLen = sizeof(oaep);
+    if (ret == CKR_OK) {
+        ret = funcList->C_DecryptInit(oaepSession, &mech, hRsaSess);
+        CHECK_CKR(ret, "RSA-OAEP decrypt init after logout");
+    }
+    for (i = 0; ret == CKR_OK && i < (int)(sizeof(rsaAttrs) /
+                                            sizeof(*rsaAttrs)); i++) {
+        getTmpl.type = rsaAttrs[i];
+        getTmpl.ulValueLen = sizeof(value);
+        ret = funcList->C_GetAttributeValue(session, hRsa, &getTmpl, 1);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_SENSITIVE,
+                       "Get RSA key attribute after logout");
+    }
+#endif
+    if (ret == CKR_OK) {
+        getTmpl.type = CKA_VALUE;
+        getTmpl.ulValueLen = sizeof(value);
+        ret = funcList->C_GetAttributeValue(session, hAes, &getTmpl, 1);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_SENSITIVE,
+                       "Get token key value after logout");
+    }
+    CHECK_COND(ret != CKR_OK ||
+               getTmpl.ulValueLen == CK_UNAVAILABLE_INFORMATION, ret,
+               "Token key value unavailable after logout");
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, hAes, &lenTmpl, 1);
+        CHECK_CKR(ret, "Get token key length after logout");
+    }
+    CHECK_COND(ret != CKR_OK || valueLen == sizeof(aes_128_key), ret,
+               "Token key length after logout");
+    if (ret == CKR_OK) {
+        getTmpl.type = CKA_MODULUS;
+        getTmpl.ulValueLen = sizeof(value);
+        ret = funcList->C_GetAttributeValue(session, hAes, &getTmpl, 1);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_TYPE_INVALID,
+                       "Get modulus of token AES key after logout");
+    }
+#ifdef HAVE_ECC
+    if (ret == CKR_OK) {
+        getTmpl.type = CKA_EC_PARAMS;
+        getTmpl.ulValueLen = sizeof(value);
+        ret = funcList->C_GetAttributeValue(session, hEcPriv, &getTmpl, 1);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_SENSITIVE,
+                       "Get EC parameters of token private key after logout");
+    }
+    if (ret == CKR_OK) {
+        getTmpl.type = CKA_VALUE;
+        getTmpl.ulValueLen = sizeof(value);
+        ret = funcList->C_GetAttributeValue(session, hEcPriv, &getTmpl, 1);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_SENSITIVE,
+                       "Get value of token EC private key after logout");
+    }
+    if (ret == CKR_OK) {
+        getTmpl.type = CKA_EC_POINT;
+        getTmpl.ulValueLen = sizeof(value);
+        ret = funcList->C_GetAttributeValue(session, hEcPriv, &getTmpl, 1);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_SENSITIVE,
+                       "Get EC point of token private key after logout");
+    }
+    if (ret == CKR_OK) {
+        getTmpl.type = CKA_MODULUS;
+        getTmpl.ulValueLen = sizeof(value);
+        ret = funcList->C_GetAttributeValue(session, hEcPriv, &getTmpl, 1);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_TYPE_INVALID,
+                       "Get modulus of token EC private key after logout");
+    }
+#endif
+#ifndef NO_DH
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, hDh, &primeTmpl, 1);
+        CHECK_CKR(ret, "Get DH prime after logout");
+    }
+    CHECK_COND(ret != CKR_OK || (primeTmpl.ulValueLen == sizeof(prime) &&
+               XMEMCMP(prime, dh_ffdhe2048_p, sizeof(prime)) == 0), ret,
+               "DH prime after logout");
+    if (ret == CKR_OK) {
+        getTmpl.type = CKA_VALUE;
+        getTmpl.ulValueLen = sizeof(value);
+        ret = funcList->C_GetAttributeValue(session, hDh, &getTmpl, 1);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_SENSITIVE,
+                       "Get DH private value after logout");
+    }
+#endif
+#ifndef NO_SHA
+    if (ret == CKR_OK) {
+        getTmpl.type = CKA_CHECK_VALUE;
+        getTmpl.ulValueLen = sizeof(value);
+        ret = funcList->C_GetAttributeValue(session, hTok, &getTmpl, 1);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_SENSITIVE,
+                       "Get token key check value after logout");
+    }
+#endif
+    if (ret == CKR_OK) {
+        ret = funcList->C_CopyObject(session, hAes, NULL, 0, &hCopy);
+        CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN,
+                       "Copy token key after logout");
+    }
+
+    mech.pParameter = NULL;
+    mech.ulParameterLen = 0;
+#ifndef NO_HMAC
+    mech.mechanism = CKM_SHA256_HMAC;
+    if (ret == CKR_OK) {
+        ret = funcList->C_SignInit(session, &mech, hTok);
+        CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN, "HMAC sign after logout");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, hTok);
+        CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN,
+                       "HMAC verify after logout");
+    }
+#endif
+#ifdef HAVE_AES_CBC
+    mech.mechanism = CKM_AES_CBC;
+    mech.pParameter = iv;
+    mech.ulParameterLen = sizeof(iv);
+    if (ret == CKR_OK) {
+        ret = funcList->C_EncryptInit(session, &mech, hAes);
+        CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN,
+                       "AES encrypt after logout");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DecryptInit(session, &mech, hAes);
+        CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN,
+                       "AES decrypt after logout");
+    }
+    mech.pParameter = NULL;
+    mech.ulParameterLen = 0;
+#endif
+#ifdef HAVE_AES_KEYWRAP
+    mech.mechanism = CKM_AES_KEY_WRAP;
+    if (ret == CKR_OK) {
+        wrappedLen = sizeof(wrapped);
+        ret = funcList->C_WrapKey(session, &mech, hAes, hAesSess, wrapped,
+                                  &wrappedLen);
+        CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN,
+                       "Wrap with token key after logout");
+    }
+    if (ret == CKR_OK) {
+        wrappedLen = sizeof(wrapped);
+        ret = funcList->C_WrapKey(session, &mech, hAesSess, hAes, wrapped,
+                                  &wrappedLen);
+        CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN,
+                       "Wrap token key after logout");
+    }
+    if (ret == CKR_OK) {
+        XMEMSET(wrapped, 0, sizeof(wrapped));
+        ret = funcList->C_UnwrapKey(session, &mech, hAes, wrapped, 24,
+                                    unwrapTmpl,
+                                    sizeof(unwrapTmpl) / sizeof(*unwrapTmpl),
+                                    &hKey);
+        CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN,
+                       "Unwrap with token key after logout");
+    }
+#endif
+#ifdef WOLFPKCS11_HKDF
+    XMEMSET(&hkdf, 0, sizeof(hkdf));
+    hkdf.bExtract = CK_TRUE;
+    hkdf.prfHashMechanism = CKM_SHA256_HMAC;
+    hkdf.ulSaltType = CKF_HKDF_SALT_NULL;
+    mech.mechanism = CKM_HKDF_DERIVE;
+    mech.pParameter = &hkdf;
+    mech.ulParameterLen = sizeof(hkdf);
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mech, hTok, outTmpl,
+                                    sizeof(outTmpl) / sizeof(*outTmpl), &hKey);
+        CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN,
+                       "HKDF from token key after logout");
+    }
+    if (ret == CKR_OK) {
+        hkdf.ulSaltType = CKF_HKDF_SALT_KEY;
+        hkdf.hSaltKey = hTok;
+        ret = funcList->C_DeriveKey(session, &mech, hSess, outTmpl,
+                                    sizeof(outTmpl) / sizeof(*outTmpl), &hKey);
+        CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN,
+                       "HKDF with token salt key after logout");
+    }
+#ifdef HAVE_ECC
+    if (ret == CKR_OK) {
+        hkdf.hSaltKey = hEcPriv;
+        ret = funcList->C_DeriveKey(session, &mech, hSess, outTmpl,
+                                    sizeof(outTmpl) / sizeof(*outTmpl), &hKey);
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
+                       "HKDF with private key salt after logout");
+    }
+#endif
+    mech.pParameter = NULL;
+    mech.ulParameterLen = 0;
+#endif
+#ifdef HAVE_ECC
+    mech.mechanism = CKM_ECDSA;
+    if (ret == CKR_OK) {
+        ret = funcList->C_SignInit(session, &mech, hEcPriv);
+        CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN,
+                       "ECDSA sign after logout");
+    }
+    XMEMSET(&ecdh, 0, sizeof(ecdh));
+    ecdh.kdf = CKD_NULL;
+    ecdh.pPublicData = ecc_p256_point;
+    ecdh.ulPublicDataLen = sizeof(ecc_p256_point);
+    mech.mechanism = CKM_ECDH1_DERIVE;
+    mech.pParameter = &ecdh;
+    mech.ulParameterLen = sizeof(ecdh);
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mech, hEcPriv, deriveTmpl,
+                                    sizeof(deriveTmpl) / sizeof(*deriveTmpl),
+                                    &hKey);
+        CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN, "ECDH after logout");
+    }
+    mech.pParameter = NULL;
+    mech.ulParameterLen = 0;
+#endif
+#ifndef NO_DH
+    XMEMSET(dhPeer, 0x07, sizeof(dhPeer));
+    mech.mechanism = CKM_DH_PKCS_DERIVE;
+    mech.pParameter = dhPeer;
+    mech.ulParameterLen = sizeof(dhPeer);
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mech, hDh, deriveTmpl,
+                                    sizeof(deriveTmpl) / sizeof(*deriveTmpl),
+                                    &hKey);
+        CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN, "DH derive after logout");
+    }
+    mech.pParameter = NULL;
+    mech.ulParameterLen = 0;
+#endif
+#ifndef NO_HMAC
+    mech.mechanism = CKM_SHA256_HMAC;
+    if (ret == CKR_OK) {
+        ret = funcList->C_SignInit(session, &mech, hAes);
+        CHECK_CKR_FAIL(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
+                       "Sign with token key lacking CKA_SIGN after logout");
+    }
+#endif
+#ifndef NO_SHA256
+    mech.mechanism = CKM_SHA256;
+    if (ret == CKR_OK) {
+        ret = funcList->C_DigestInit(session, &mech);
+        CHECK_CKR(ret, "Digest init after logout");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DigestKey(session, hTok);
+        CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN,
+                       "Digest token key after logout");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DigestInit(session, &mech);
+        CHECK_CKR(ret, "Digest init after failed digest key");
+    }
+    if (ret == CKR_OK) {
+        hashLen = sizeof(hash);
+        ret = funcList->C_DigestFinal(session, hash, &hashLen);
+        CHECK_CKR(ret, "Digest final");
+    }
+#endif
+
+    if (loggedOut) {
+        loginRet = funcList->C_Login(session, CKU_USER, userPin, userPinLen);
+        CHECK_CKR(loginRet, "Login again");
+        if (ret == CKR_OK)
+            ret = loginRet;
+    }
+
+#ifndef NO_HMAC
+    mech.mechanism = CKM_SHA256_HMAC;
+    if (ret == CKR_OK) {
+        ret = funcList->C_SignInit(session, &mech, hTok);
+        CHECK_CKR(ret, "HMAC sign init after login");
+    }
+    if (ret == CKR_OK) {
+        macLen = sizeof(mac);
+        ret = funcList->C_Sign(session, data, sizeof(data), mac, &macLen);
+        CHECK_CKR(ret, "HMAC sign with token key");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_SignInit(session, &mech, hSess);
+        CHECK_CKR(ret, "HMAC sign init with session key");
+    }
+    if (ret == CKR_OK) {
+        macLen = sizeof(macSess);
+        ret = funcList->C_Sign(session, data, sizeof(data), macSess, &macLen);
+        CHECK_CKR(ret, "HMAC sign with session key");
+    }
+    CHECK_COND(ret != CKR_OK || XMEMCMP(mac, macSess, sizeof(mac)) == 0, ret,
+               "Token key decoded after login");
+#endif
+#ifdef HAVE_AES_CBC
+    mech.mechanism = CKM_AES_CBC;
+    mech.pParameter = iv;
+    mech.ulParameterLen = sizeof(iv);
+    if (ret == CKR_OK) {
+        ret = funcList->C_EncryptInit(session, &mech, hAesSess);
+        CHECK_CKR(ret, "AES-CBC encrypt init with session key");
+    }
+    if (ret == CKR_OK) {
+        outSz = sizeof(cbcSessOut);
+        ret = funcList->C_Encrypt(session, in, sizeof(in), cbcSessOut, &outSz);
+        CHECK_CKR(ret, "AES-CBC encrypt with session key");
+    }
+    CHECK_COND(ret != CKR_OK ||
+               XMEMCMP(cbcOut, cbcSessOut, sizeof(cbcOut)) == 0, ret,
+               "AES-CBC across logout used the key value");
+    if (cbcSession != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(cbcSession);
+#endif
+#ifdef HAVE_AESGCM
+    if (gcmSession != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(gcmSession);
+#endif
+#ifdef HAVE_AESECB
+    if (ecbSession != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(ecbSession);
+#endif
+#if defined(WOLFSSL_HAVE_PRF) && !defined(NO_SHA256)
+    if (tlsSession != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(tlsSession);
+#endif
+#if !defined(NO_RSA) && !defined(WC_NO_RSA_OAEP) && !defined(NO_SHA256)
+    if (oaepSession != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(oaepSession);
+    if (hRsa != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hRsa);
+#endif
+#if defined(WOLFPKCS11_NSS) && defined(WOLFSSL_HAVE_PRF)
+    if (prfSession != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(prfSession);
+#endif
+
+    if (hCopy != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hCopy);
+    if (hKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hKey);
+#ifndef NO_DH
+    if (hDh != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hDh);
+#endif
+    if (hEcPriv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hEcPriv);
+    if (hEcPub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hEcPub);
+    if (hAesSess != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hAesSess);
+    if (hAes != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hAes);
+    if (hSess != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hSess);
+    if (hTok != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hTok);
+
+    return ret;
+}
+#endif
+
 #if defined(HAVE_ECC) && (defined(HAVE_ALL_CURVES) || defined(HAVE_ECC384)) && \
     !defined(NO_AES) && !defined(WOLFPKCS11_NSS)
 static CK_RV test_ecdh_derive_aes_no_value_len(void* args)
@@ -20257,6 +21293,16 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_concatenate_wrap_with_trusted),
 #ifndef WOLFPKCS11_NO_STORE
     PKCS11TEST_FUNC_SESS_DECL(test_concatenate_logged_out),
+#endif
+#ifndef WOLFPKCS11_NO_STORE
+    PKCS11TEST_FUNC_SESS_DECL(test_key_use_logged_out),
+#endif
+#if defined(HAVE_ECC) && !defined(NO_SHA256)
+    PKCS11TEST_FUNC_SESS_DECL(test_completed_op_stale_key),
+#endif
+#if !defined(NO_RSA) && !defined(WC_NO_RSA_OAEP) && !defined(NO_SHA256)
+    PKCS11TEST_FUNC_SESS_DECL(test_oaep_failed_decrypt),
+    PKCS11TEST_FUNC_SESS_DECL(test_oaep_key_destroyed),
 #endif
 #if defined(HAVE_ECC) && (defined(HAVE_ALL_CURVES) || defined(HAVE_ECC384)) && \
     !defined(NO_AES) && !defined(WOLFPKCS11_NSS)

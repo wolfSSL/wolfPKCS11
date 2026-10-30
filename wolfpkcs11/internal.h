@@ -574,6 +574,8 @@ WP11_LOCAL int WP11_Object_OnToken(WP11_Object* object);
 WP11_LOCAL void WP11_Object_Persist(WP11_Object* object);
 WP11_LOCAL int WP11_KeyType_IsSecret(CK_KEY_TYPE type);
 WP11_LOCAL CK_KEY_TYPE WP11_Object_GetType(WP11_Object* object);
+WP11_LOCAL WP11_Slot* WP11_Object_GetSlot(WP11_Object* object);
+WP11_LOCAL int WP11_Object_KeyState(WP11_Object* object);
 WP11_LOCAL CK_ULONG WP11_Object_GetDevId(WP11_Object* object);
 
 WP11_LOCAL int WP11_Object_SetRsaKey(WP11_Object* object, unsigned char** data,

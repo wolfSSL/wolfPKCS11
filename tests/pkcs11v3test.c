@@ -4256,6 +4256,128 @@ static CK_RV test_xmss_paramset_setattr_rejected(void* args)
 #endif /* WOLFPKCS11_XMSS */
 
 
+#if defined(WOLFPKCS11_PKCS11_V3_2) && !defined(WOLFPKCS11_NO_STORE) && \
+    (defined(WOLFPKCS11_MLDSA) || defined(WOLFPKCS11_MLKEM))
+static CK_RV pqc_attrs_logged_out(CK_SESSION_HANDLE session,
+                                  CK_MECHANISM_TYPE genMech, CK_ULONG paramSet,
+                                  CK_ATTRIBUTE_TYPE useAttr,
+                                  CK_MECHANISM_TYPE useMech)
+{
+    CK_RV ret;
+    CK_RV loginRet;
+    CK_BBOOL ckFalse = CK_FALSE;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { genMech, NULL, 0 };
+    CK_MECHANISM opMech = { useMech, NULL, 0 };
+    CK_ULONG gotSet = 0;
+    CK_BYTE value[64];
+    CK_ATTRIBUTE setAttr = { CKA_PARAMETER_SET, &gotSet, sizeof(gotSet) };
+    CK_ATTRIBUTE valueAttr = { CKA_VALUE, value, sizeof(value) };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_PARAMETER_SET, &paramSet, sizeof(paramSet) },
+        { CKA_TOKEN,         &ckTrue,   sizeof(ckTrue)   },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { useAttr,         &ckTrue,  sizeof(ckTrue)  },
+        { CKA_PRIVATE,     &ckFalse, sizeof(ckFalse) },
+        { CKA_SENSITIVE,   &ckFalse, sizeof(ckFalse) },
+        { CKA_EXTRACTABLE, &ckTrue,  sizeof(ckTrue)  },
+        { CKA_TOKEN,       &ckTrue,  sizeof(ckTrue)  },
+    };
+
+    if (userPinLen == 0)
+        return CKR_SKIPPED;
+
+    ret = funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+                                      sizeof(pubTmpl) / sizeof(*pubTmpl),
+                                      privTmpl,
+                                      sizeof(privTmpl) / sizeof(*privTmpl),
+                                      &pub, &priv);
+    CHECK_CKR(ret, "Generate public token key pair");
+    if (ret == CKR_OK) {
+        ret = funcList->C_Logout(session);
+        CHECK_CKR(ret, "Logout");
+        if (ret == CKR_OK) {
+            ret = funcList->C_GetAttributeValue(session, priv, &valueAttr, 1);
+            CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_SENSITIVE,
+                           "Private key value after logout");
+            if (ret == CKR_OK) {
+                ret = funcList->C_GetAttributeValue(session, priv, &setAttr,
+                                                    1);
+                CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_SENSITIVE,
+                               "Private key parameter set after logout");
+            }
+            if (ret == CKR_OK) {
+                setAttr.ulValueLen = sizeof(gotSet);
+                ret = funcList->C_GetAttributeValue(session, pub, &setAttr, 1);
+                CHECK_CKR(ret, "Public key parameter set after logout");
+                CHECK_COND(ret != CKR_OK || gotSet == paramSet, ret,
+                           "Public key parameter set value after logout");
+            }
+            if (ret == CKR_OK && useAttr == CKA_SIGN) {
+                ret = funcList->C_SignInit(session, &opMech, priv);
+                CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN,
+                               "Sign with private key after logout");
+            }
+#ifdef WOLFPKCS11_MLKEM
+            if (ret == CKR_OK && useAttr == CKA_DECAPSULATE) {
+                CK_FUNCTION_LIST_3_2* funcListExt =
+                    (CK_FUNCTION_LIST_3_2*)funcList;
+                CK_OBJECT_HANDLE secret = CK_INVALID_HANDLE;
+                CK_OBJECT_CLASS secretClass = CKO_SECRET_KEY;
+                CK_KEY_TYPE genericType = CKK_GENERIC_SECRET;
+                CK_BYTE ct[WC_ML_KEM_512_CIPHER_TEXT_SIZE];
+                CK_ATTRIBUTE secretTmpl[] = {
+                    { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+                    { CKA_KEY_TYPE, &genericType, sizeof(genericType) },
+                };
+
+                XMEMSET(ct, 0, sizeof(ct));
+                ret = funcListExt->C_DecapsulateKey(session, &opMech, priv,
+                          secretTmpl, sizeof(secretTmpl) / sizeof(*secretTmpl),
+                          ct, sizeof(ct), &secret);
+                CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN,
+                               "Decapsulate with private key after logout");
+            }
+#endif
+            loginRet = funcList->C_Login(session, CKU_USER, userPin,
+                                         userPinLen);
+            CHECK_CKR(loginRet, "Login again");
+            if (ret == CKR_OK)
+                ret = loginRet;
+        }
+    }
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+
+    return ret;
+}
+
+#ifdef WOLFPKCS11_MLDSA
+static CK_RV test_mldsa_attrs_logged_out(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+
+    return pqc_attrs_logged_out(session, CKM_ML_DSA_KEY_PAIR_GEN,
+                                CKP_ML_DSA_44, CKA_SIGN, CKM_ML_DSA);
+}
+#endif
+
+#ifdef WOLFPKCS11_MLKEM
+static CK_RV test_mlkem_attrs_logged_out(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+
+    return pqc_attrs_logged_out(session, CKM_ML_KEM_KEY_PAIR_GEN,
+                                CKP_ML_KEM_512, CKA_DECAPSULATE,
+                                CKM_ML_KEM);
+}
+#endif
+#endif
+
 static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_NO_INIT_DECL(test_get_interface_list),
     PKCS11TEST_FUNC_NO_INIT_DECL(test_get_interface),
@@ -4272,6 +4394,9 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_fixed_keys_seed),
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_fixed_keys_both),
     PKCS11TEST_FUNC_SESS_DECL(test_copy_object_mldsa_key),
+#ifndef WOLFPKCS11_NO_STORE
+    PKCS11TEST_FUNC_SESS_DECL(test_mldsa_attrs_logged_out),
+#endif
 #endif
 #ifdef WOLFPKCS11_MLKEM
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_gen_keys),
@@ -4293,6 +4418,9 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_copy_object_mlkem_key),
 #if defined(HAVE_ECC) && defined(WOLFPKCS11_HKDF) && !defined(NO_HMAC)
     PKCS11TEST_FUNC_SESS_DECL(test_concatenate_hybrid_agreement),
+#endif
+#ifndef WOLFPKCS11_NO_STORE
+    PKCS11TEST_FUNC_SESS_DECL(test_mlkem_attrs_logged_out),
 #endif
 #endif
 #ifdef WOLFPKCS11_LMS
