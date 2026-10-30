@@ -15997,6 +15997,1019 @@ static CK_RV test_hkdf_derive_implied_class(void* args)
 }
 #endif
 
+static CK_RV concat_create_key(CK_SESSION_HANDLE session, CK_BYTE* value,
+                               CK_ULONG len, CK_BBOOL sensitive,
+                               CK_BBOOL extractable, CK_BBOOL derive,
+                               CK_BBOOL token, CK_OBJECT_HANDLE* key)
+{
+    CK_ATTRIBUTE tmpl[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_TOKEN, &token, sizeof(token)},
+        {CKA_SENSITIVE, &sensitive, sizeof(sensitive)},
+        {CKA_EXTRACTABLE, &extractable, sizeof(extractable)},
+        {CKA_DERIVE, &derive, sizeof(derive)},
+        {CKA_SIGN, &ckTrue, sizeof(ckTrue)},
+        {CKA_VALUE, value, len},
+    };
+
+    return funcList->C_CreateObject(session, tmpl,
+                                    sizeof(tmpl) / sizeof(*tmpl), key);
+}
+
+static CK_RV concat_derive(CK_SESSION_HANDLE session, CK_MECHANISM* mech,
+                           CK_OBJECT_HANDLE base, CK_KEY_TYPE keyType,
+                           CK_ULONG valueLen, CK_OBJECT_HANDLE* key)
+{
+    CK_ATTRIBUTE tmpl[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &keyType, sizeof(keyType)},
+        {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
+        {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
+        {CKA_DERIVE, &ckTrue, sizeof(ckTrue)},
+        {CKA_SIGN, &ckTrue, sizeof(ckTrue)},
+        {CKA_VALUE_LEN, &valueLen, sizeof(valueLen)},
+    };
+    CK_ULONG cnt = sizeof(tmpl) / sizeof(*tmpl);
+
+    if (valueLen == 0)
+        cnt--;
+    *key = CK_INVALID_HANDLE;
+    return funcList->C_DeriveKey(session, mech, base, tmpl, cnt, key);
+}
+
+static CK_RV concat_check_value(CK_SESSION_HANDLE session,
+                                CK_OBJECT_HANDLE key, CK_BYTE* exp,
+                                CK_ULONG expLen)
+{
+    CK_RV ret;
+    CK_BYTE value[64];
+    CK_ATTRIBUTE attr = {CKA_VALUE, value, sizeof(value)};
+
+    ret = funcList->C_GetAttributeValue(session, key, &attr, 1);
+    CHECK_CKR(ret, "Get concatenated value");
+    if (ret == CKR_OK && (attr.ulValueLen != expLen ||
+            XMEMCMP(value, exp, expLen) != 0)) {
+        ret = CKR_DATA_INVALID;
+        CHECK_CKR(ret, "Concatenated value");
+    }
+    funcList->C_DestroyObject(session, key);
+
+    return ret;
+}
+
+static CK_RV concat_check_bools(CK_SESSION_HANDLE session,
+                                CK_OBJECT_HANDLE key, CK_BBOOL sensitive,
+                                CK_BBOOL extractable,
+                                CK_BBOOL alwaysSensitive,
+                                CK_BBOOL neverExtractable)
+{
+    CK_RV ret;
+    CK_BBOOL got[4];
+    CK_ATTRIBUTE attrs[] = {
+        {CKA_SENSITIVE, &got[0], sizeof(CK_BBOOL)},
+        {CKA_EXTRACTABLE, &got[1], sizeof(CK_BBOOL)},
+        {CKA_ALWAYS_SENSITIVE, &got[2], sizeof(CK_BBOOL)},
+        {CKA_NEVER_EXTRACTABLE, &got[3], sizeof(CK_BBOOL)},
+    };
+
+    ret = funcList->C_GetAttributeValue(session, key, attrs, 4);
+    CHECK_CKR(ret, "Get derived key protection");
+    if (ret == CKR_OK && (got[0] != sensitive || got[1] != extractable ||
+            got[2] != alwaysSensitive || got[3] != neverExtractable)) {
+        ret = CKR_DATA_INVALID;
+        CHECK_CKR(ret, "Derived key protection");
+    }
+    funcList->C_DestroyObject(session, key);
+
+    return ret;
+}
+
+static CK_RV test_concatenate_base_and_key(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_BYTE a[16] = {
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f
+    };
+    CK_BYTE b[8] = { 0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7 };
+    CK_BYTE ab[24];
+    CK_BYTE aa[32];
+    CK_OBJECT_HANDLE hA = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hB = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hOther = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hKey;
+    CK_MECHANISM mech = { CKM_CONCATENATE_BASE_AND_KEY, &hOther,
+                          sizeof(hOther) };
+
+    XMEMCPY(ab, a, sizeof(a));
+    XMEMCPY(ab + sizeof(a), b, sizeof(b));
+    XMEMCPY(aa, a, sizeof(a));
+    XMEMCPY(aa + sizeof(a), a, sizeof(a));
+
+    ret = concat_create_key(session, a, sizeof(a), CK_FALSE, CK_TRUE, CK_TRUE,
+                            CK_FALSE, &hA);
+    CHECK_CKR(ret, "Create base key");
+    if (ret == CKR_OK) {
+        ret = concat_create_key(session, b, sizeof(b), CK_FALSE, CK_TRUE,
+                                CK_TRUE, CK_TRUE, &hB);
+        CHECK_CKR(ret, "Create token key");
+    }
+    if (ret == CKR_OK) {
+        hOther = hB;
+        ret = concat_derive(session, &mech, hA, CKK_GENERIC_SECRET, 0, &hKey);
+        CHECK_CKR(ret, "Concatenate base and key");
+    }
+    if (ret == CKR_OK)
+        ret = concat_check_value(session, hKey, ab, sizeof(ab));
+    if (ret == CKR_OK) {
+        ret = concat_derive(session, &mech, hA, CKK_GENERIC_SECRET, 20, &hKey);
+        CHECK_CKR(ret, "Concatenate base and key, shorter length");
+    }
+    if (ret == CKR_OK)
+        ret = concat_check_value(session, hKey, ab, 20);
+    if (ret == CKR_OK) {
+        ret = concat_derive(session, &mech, hA, CKK_GENERIC_SECRET,
+                            sizeof(ab) + 1, &hKey);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+                       "Concatenate base and key, length too long");
+    }
+    if (ret == CKR_OK) {
+        hOther = hA;
+        ret = concat_derive(session, &mech, hA, CKK_GENERIC_SECRET, 0, &hKey);
+        CHECK_CKR(ret, "Concatenate base key with itself");
+    }
+    if (ret == CKR_OK)
+        ret = concat_check_value(session, hKey, aa, sizeof(aa));
+#ifndef NO_AES
+    if (ret == CKR_OK) {
+        hOther = hB;
+        ret = concat_derive(session, &mech, hA, CKK_AES, 0, &hKey);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCOMPLETE,
+                       "Concatenate to AES key without length");
+    }
+    if (ret == CKR_OK) {
+        ret = concat_derive(session, &mech, hA, CKK_AES, sizeof(ab), &hKey);
+        CHECK_CKR(ret, "Concatenate to AES-192 key");
+    }
+    if (ret == CKR_OK)
+        ret = concat_check_value(session, hKey, ab, sizeof(ab));
+#endif
+
+    if (hB != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hB);
+    if (hA != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hA);
+
+    return ret;
+}
+
+static CK_RV test_concatenate_data(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_BYTE a[8] = { 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef };
+    CK_BYTE d[4] = { 0xd0, 0xd1, 0xd2, 0xd3 };
+    CK_BYTE ad[12] = {
+        0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+        0xd0, 0xd1, 0xd2, 0xd3
+    };
+    CK_BYTE da[12] = {
+        0xd0, 0xd1, 0xd2, 0xd3,
+        0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef
+    };
+    CK_OBJECT_HANDLE hA = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hKey;
+    CK_KEY_DERIVATION_STRING_DATA params = { d, sizeof(d) };
+    CK_MECHANISM mech = { CKM_CONCATENATE_BASE_AND_DATA, &params,
+                          sizeof(params) };
+#ifndef NO_AES
+    CK_BYTE aes[16] = {
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+        0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f
+    };
+    CK_BYTE aesD[20];
+    CK_OBJECT_HANDLE hAes = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE aesTmpl[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &aesKeyType, sizeof(aesKeyType)},
+        {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
+        {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
+        {CKA_DERIVE, &ckTrue, sizeof(ckTrue)},
+        {CKA_VALUE, aes, sizeof(aes)},
+    };
+
+    XMEMCPY(aesD, aes, sizeof(aes));
+    XMEMCPY(aesD + sizeof(aes), d, sizeof(d));
+#endif
+
+    ret = concat_create_key(session, a, sizeof(a), CK_FALSE, CK_TRUE, CK_TRUE,
+                            CK_FALSE, &hA);
+    CHECK_CKR(ret, "Create base key");
+    if (ret == CKR_OK) {
+        ret = concat_derive(session, &mech, hA, CKK_GENERIC_SECRET, 0, &hKey);
+        CHECK_CKR(ret, "Concatenate base and data");
+    }
+    if (ret == CKR_OK)
+        ret = concat_check_value(session, hKey, ad, sizeof(ad));
+    if (ret == CKR_OK) {
+        ret = concat_derive(session, &mech, hA, CKK_GENERIC_SECRET, 10, &hKey);
+        CHECK_CKR(ret, "Concatenate base and data, shorter length");
+    }
+    if (ret == CKR_OK)
+        ret = concat_check_value(session, hKey, ad, 10);
+    if (ret == CKR_OK) {
+        mech.mechanism = CKM_CONCATENATE_DATA_AND_BASE;
+        ret = concat_derive(session, &mech, hA, CKK_GENERIC_SECRET, 0, &hKey);
+        CHECK_CKR(ret, "Concatenate data and base");
+    }
+    if (ret == CKR_OK)
+        ret = concat_check_value(session, hKey, da, sizeof(da));
+#ifdef WOLFPKCS11_HKDF
+    if (ret == CKR_OK) {
+        ret = concat_derive(session, &mech, hA, CKK_HKDF, 0, &hKey);
+        CHECK_CKR(ret, "Concatenate data and base to HKDF key");
+    }
+    if (ret == CKR_OK)
+        ret = concat_check_value(session, hKey, da, sizeof(da));
+#endif
+    if (ret == CKR_OK) {
+        ret = concat_derive(session, &mech, hA, CKK_GENERIC_SECRET, 6, &hKey);
+        CHECK_CKR(ret, "Concatenate data and base, shorter length");
+    }
+    if (ret == CKR_OK)
+        ret = concat_check_value(session, hKey, da, 6);
+    if (ret == CKR_OK) {
+        params.ulLen = 0;
+        ret = concat_derive(session, &mech, hA, CKK_GENERIC_SECRET, 0, &hKey);
+        CHECK_CKR(ret, "Concatenate empty data and base");
+    }
+    if (ret == CKR_OK)
+        ret = concat_check_value(session, hKey, a, sizeof(a));
+#ifndef NO_AES
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, aesTmpl,
+                                       sizeof(aesTmpl) / sizeof(*aesTmpl),
+                                       &hAes);
+        CHECK_CKR(ret, "Create AES base key");
+    }
+    if (ret == CKR_OK) {
+        mech.mechanism = CKM_CONCATENATE_BASE_AND_DATA;
+        params.ulLen = sizeof(d);
+        ret = concat_derive(session, &mech, hAes, CKK_GENERIC_SECRET, 0,
+                            &hKey);
+        CHECK_CKR(ret, "Concatenate AES base key and data");
+    }
+    if (ret == CKR_OK)
+        ret = concat_check_value(session, hKey, aesD, sizeof(aesD));
+    if (hAes != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hAes);
+#endif
+
+    if (hA != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hA);
+
+    return ret;
+}
+
+static CK_RV test_concatenate_protection(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_BYTE a[16] = { 0 };
+    CK_ULONG genLen = 16;
+    CK_OBJECT_HANDLE hA = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hG1 = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hG2 = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hOther = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hKey;
+    CK_MECHANISM genMech = { CKM_GENERIC_SECRET_KEY_GEN, NULL, 0 };
+    CK_MECHANISM mech = { CKM_CONCATENATE_BASE_AND_KEY, &hOther,
+                          sizeof(hOther) };
+    CK_KEY_DERIVATION_STRING_DATA params = { a, sizeof(a) };
+    CK_MECHANISM dataMech = { CKM_CONCATENATE_BASE_AND_DATA, &params,
+                              sizeof(params) };
+    CK_ATTRIBUTE genTmpl[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_SENSITIVE, &ckTrue, sizeof(ckTrue)},
+        {CKA_EXTRACTABLE, &ckFalse, sizeof(ckFalse)},
+        {CKA_DERIVE, &ckTrue, sizeof(ckTrue)},
+        {CKA_VALUE_LEN, &genLen, sizeof(genLen)},
+    };
+    CK_ULONG genCnt = sizeof(genTmpl) / sizeof(*genTmpl);
+
+    ret = concat_create_key(session, a, sizeof(a), CK_FALSE, CK_TRUE, CK_TRUE,
+                            CK_FALSE, &hA);
+    CHECK_CKR(ret, "Create plain key");
+    if (ret == CKR_OK) {
+        ret = funcList->C_GenerateKey(session, &genMech, genTmpl, genCnt,
+                                      &hG1);
+        CHECK_CKR(ret, "Generate protected key 1");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_GenerateKey(session, &genMech, genTmpl, genCnt,
+                                      &hG2);
+        CHECK_CKR(ret, "Generate protected key 2");
+    }
+    if (ret == CKR_OK) {
+        hOther = hG1;
+        ret = concat_derive(session, &mech, hA, CKK_GENERIC_SECRET, 0, &hKey);
+        CHECK_CKR(ret, "Concatenate plain base and protected key");
+    }
+    if (ret == CKR_OK) {
+        ret = concat_check_bools(session, hKey, CK_TRUE, CK_FALSE, CK_FALSE,
+                                 CK_FALSE);
+    }
+    if (ret == CKR_OK) {
+        hOther = hA;
+        ret = concat_derive(session, &mech, hG1, CKK_GENERIC_SECRET, 0, &hKey);
+        CHECK_CKR(ret, "Concatenate protected base and plain key");
+    }
+    if (ret == CKR_OK) {
+        ret = concat_check_bools(session, hKey, CK_TRUE, CK_FALSE, CK_FALSE,
+                                 CK_FALSE);
+    }
+    if (ret == CKR_OK) {
+        hOther = hG2;
+        ret = concat_derive(session, &mech, hG1, CKK_GENERIC_SECRET, 0, &hKey);
+        CHECK_CKR(ret, "Concatenate two protected keys");
+    }
+    if (ret == CKR_OK) {
+        ret = concat_check_bools(session, hKey, CK_TRUE, CK_FALSE, CK_TRUE,
+                                 CK_TRUE);
+    }
+    if (ret == CKR_OK) {
+        ret = concat_derive(session, &dataMech, hG1, CKK_GENERIC_SECRET, 0,
+                            &hKey);
+        CHECK_CKR(ret, "Concatenate protected base and data");
+    }
+    if (ret == CKR_OK) {
+        ret = concat_check_bools(session, hKey, CK_TRUE, CK_FALSE, CK_TRUE,
+                                 CK_TRUE);
+    }
+    if (ret == CKR_OK) {
+        dataMech.mechanism = CKM_CONCATENATE_DATA_AND_BASE;
+        ret = concat_derive(session, &dataMech, hG1, CKK_GENERIC_SECRET,
+                            sizeof(a), &hKey);
+        CHECK_CKR(ret, "Concatenate data and protected base, data only");
+    }
+    if (ret == CKR_OK) {
+        ret = concat_check_bools(session, hKey, CK_TRUE, CK_FALSE, CK_FALSE,
+                                 CK_FALSE);
+    }
+    if (ret == CKR_OK) {
+        ret = concat_derive(session, &dataMech, hG1, CKK_GENERIC_SECRET,
+                            sizeof(a) + 1, &hKey);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+                       "Concatenate data and one protected base byte");
+    }
+    if (ret == CKR_OK) {
+        dataMech.mechanism = CKM_CONCATENATE_BASE_AND_DATA;
+        ret = concat_derive(session, &dataMech, hG1, CKK_GENERIC_SECRET,
+                            genLen - 1, &hKey);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+                       "Concatenate truncated protected base and data");
+    }
+    if (ret == CKR_OK) {
+        hOther = hG1;
+        ret = concat_derive(session, &mech, hA, CKK_GENERIC_SECRET,
+                            sizeof(a) + 1, &hKey);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+                       "Concatenate plain base and one protected key byte");
+    }
+    if (ret == CKR_OK) {
+        ret = concat_derive(session, &mech, hA, CKK_GENERIC_SECRET,
+                            sizeof(a) - 1, &hKey);
+        CHECK_CKR(ret, "Concatenate truncated plain base, protected key "
+                       "dropped");
+    }
+    if (ret == CKR_OK) {
+        ret = concat_check_bools(session, hKey, CK_TRUE, CK_FALSE, CK_FALSE,
+                                 CK_FALSE);
+    }
+
+    if (hG2 != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hG2);
+    if (hG1 != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hG1);
+    if (hA != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hA);
+
+    return ret;
+}
+
+static CK_RV test_concatenate_errors(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_BYTE a[16] = { 0 };
+    CK_OBJECT_HANDLE hA = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hNoDerive = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hData = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hOther = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hKey;
+    CK_MECHANISM mech = { CKM_CONCATENATE_BASE_AND_KEY, &hOther,
+                          sizeof(hOther) };
+    CK_KEY_DERIVATION_STRING_DATA params = { NULL, 4 };
+    CK_MECHANISM dataMech = { CKM_CONCATENATE_DATA_AND_BASE, &params,
+                              sizeof(params) };
+    CK_MECHANISM_INFO info;
+    CK_ATTRIBUTE dataTmpl[] = {
+        {CKA_CLASS, &dataClass, sizeof(dataClass)},
+        {CKA_VALUE, a, sizeof(a)},
+    };
+    CK_ULONG valueLen = 0;
+    CK_ATTRIBUTE lenTmpl[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_VALUE_LEN, &valueLen, sizeof(valueLen)},
+    };
+    CK_ULONG lenCnt = sizeof(lenTmpl) / sizeof(*lenTmpl);
+    CK_BYTE* big = NULL;
+    CK_ULONG maxLen = 0;
+    CK_OBJECT_HANDLE hBig = CK_INVALID_HANDLE;
+#ifdef HAVE_ECC
+    CK_OBJECT_HANDLE hEcPub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hEcPriv = CK_INVALID_HANDLE;
+#endif
+#ifndef NO_AES
+    CK_BYTE zero[24] = { 0 };
+#endif
+
+    ret = funcList->C_GetMechanismInfo(slot, CKM_CONCATENATE_BASE_AND_KEY,
+                                       &info);
+    CHECK_CKR(ret, "Concatenate mechanism info");
+    if (ret == CKR_OK && ((info.flags & CKF_DERIVE) == 0 ||
+            info.ulMinKeySize != 8 || info.ulMaxKeySize % 8 != 0 ||
+            info.ulMaxKeySize < 64 * 8)) {
+        ret = CKR_MECHANISM_INVALID;
+        CHECK_CKR(ret, "Concatenate mechanism info values");
+    }
+    if (ret == CKR_OK) {
+        maxLen = info.ulMaxKeySize / 8;
+        big = (CK_BYTE*)XMALLOC(maxLen + 1, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (big == NULL)
+            ret = CKR_DEVICE_MEMORY;
+        CHECK_CKR(ret, "Allocate maximum length data");
+    }
+    if (ret == CKR_OK)
+        XMEMSET(big, 0x5a, maxLen + 1);
+    if (ret == CKR_OK) {
+        ret = concat_create_key(session, a, sizeof(a), CK_FALSE, CK_TRUE,
+                                CK_TRUE, CK_FALSE, &hA);
+        CHECK_CKR(ret, "Create base key");
+    }
+    if (ret == CKR_OK) {
+        ret = concat_create_key(session, a, sizeof(a), CK_FALSE, CK_TRUE,
+                                CK_FALSE, CK_FALSE, &hNoDerive);
+        CHECK_CKR(ret, "Create key without derive");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, dataTmpl,
+                                       sizeof(dataTmpl) / sizeof(*dataTmpl),
+                                       &hData);
+        CHECK_CKR(ret, "Create data object");
+    }
+    if (ret == CKR_OK) {
+        hOther = hA + 1000;
+        ret = concat_derive(session, &mech, hA, CKK_GENERIC_SECRET, 0, &hKey);
+        CHECK_CKR_FAIL(ret, CKR_KEY_HANDLE_INVALID, "Unknown other key");
+    }
+    if (ret == CKR_OK) {
+        hOther = hData;
+        ret = concat_derive(session, &mech, hA, CKK_GENERIC_SECRET, 0, &hKey);
+        CHECK_CKR_FAIL(ret, CKR_KEY_TYPE_INCONSISTENT, "Other key is data");
+    }
+#ifdef HAVE_ECC
+    if (ret == CKR_OK) {
+        ret = gen_ec_keys(session, ecc_p256_params, sizeof(ecc_p256_params),
+                          &hEcPub, &hEcPriv, NULL, 0, NULL, 0, 0);
+    }
+    if (ret == CKR_OK) {
+        hOther = hA;
+        ret = concat_derive(session, &mech, hEcPriv, CKK_GENERIC_SECRET, 0,
+                            &hKey);
+        CHECK_CKR_FAIL(ret, CKR_KEY_TYPE_INCONSISTENT, "Base key is EC");
+    }
+#endif
+    if (ret == CKR_OK) {
+        hOther = hA;
+        mech.pParameter = NULL;
+        ret = concat_derive(session, &mech, hA, CKK_GENERIC_SECRET, 0, &hKey);
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID, "NULL parameter");
+        mech.pParameter = &hOther;
+    }
+    if (ret == CKR_OK) {
+        valueLen = 0;
+        ret = funcList->C_DeriveKey(session, &mech, hA, lenTmpl, lenCnt,
+                                    &hKey);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID, "Zero length");
+    }
+    if (ret == CKR_OK) {
+        valueLen = 16;
+        lenTmpl[2].ulValueLen = sizeof(valueLen) - 1;
+        ret = funcList->C_DeriveKey(session, &mech, hA, lenTmpl, lenCnt,
+                                    &hKey);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID, "Malformed length");
+        lenTmpl[2].ulValueLen = sizeof(valueLen);
+    }
+#if !defined(WOLFPKCS11_NSS) && !defined(WP11_NSS_PERMISSIVE_KEY_DEFAULTS)
+    if (ret == CKR_OK) {
+        hOther = hNoDerive;
+        ret = concat_derive(session, &mech, hA, CKK_GENERIC_SECRET, 0, &hKey);
+        CHECK_CKR_FAIL(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
+                       "Other key without derive");
+    }
+#endif
+    if (ret == CKR_OK) {
+        hOther = hA;
+        mech.ulParameterLen = sizeof(hOther) - 1;
+        ret = concat_derive(session, &mech, hA, CKK_GENERIC_SECRET, 0, &hKey);
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
+                       "Bad other key parameter length");
+        mech.ulParameterLen = sizeof(hOther);
+    }
+    if (ret == CKR_OK) {
+        ret = concat_derive(session, &dataMech, hA, CKK_GENERIC_SECRET, 0,
+                            &hKey);
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID, "NULL data");
+    }
+    if (ret == CKR_OK) {
+        params.pData = a;
+        dataMech.ulParameterLen = sizeof(params) - 1;
+        ret = concat_derive(session, &dataMech, hA, CKK_GENERIC_SECRET, 0,
+                            &hKey);
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
+                       "Bad data parameter length");
+        dataMech.ulParameterLen = sizeof(params);
+    }
+    if (ret == CKR_OK) {
+        params.pData = big;
+        params.ulLen = (CK_ULONG)-1;
+        ret = concat_derive(session, &dataMech, hA, CKK_GENERIC_SECRET, 16,
+                            &hKey);
+        CHECK_CKR_FAIL(ret, CKR_KEY_SIZE_RANGE, "Data length overflow");
+    }
+    if (ret == CKR_OK) {
+        params.ulLen = maxLen + 1;
+        ret = concat_derive(session, &dataMech, hA, CKK_GENERIC_SECRET, 16,
+                            &hKey);
+        CHECK_CKR(ret, "Data longer than a key, truncated");
+    }
+    if (ret == CKR_OK)
+        ret = concat_check_value(session, hKey, big, 16);
+    if (ret == CKR_OK) {
+        ret = concat_create_key(session, big, maxLen / 2 + 1, CK_FALSE,
+                                CK_TRUE, CK_TRUE, CK_FALSE, &hBig);
+        CHECK_CKR(ret, "Create half maximum length key");
+    }
+    if (ret == CKR_OK) {
+        hOther = hBig;
+        ret = concat_derive(session, &mech, hBig, CKK_GENERIC_SECRET, 0,
+                            &hKey);
+        CHECK_CKR_FAIL(ret, CKR_KEY_SIZE_RANGE, "Two keys too long");
+    }
+    if (ret == CKR_OK) {
+        params.ulLen = maxLen;
+        ret = concat_derive(session, &dataMech, hA, CKK_GENERIC_SECRET, 0,
+                            &hKey);
+        CHECK_CKR_FAIL(ret, CKR_KEY_SIZE_RANGE, "Concatenation too long");
+    }
+    if (ret == CKR_OK) {
+        ret = concat_derive(session, &dataMech, hA, CKK_GENERIC_SECRET, 32,
+                            &hKey);
+        CHECK_CKR(ret, "Concatenation too long, truncated");
+    }
+    if (ret == CKR_OK)
+        ret = concat_check_value(session, hKey, big, 32);
+    params.pData = a;
+    params.ulLen = sizeof(a);
+#ifndef NO_AES
+    if (ret == CKR_OK) {
+        params.ulLen = 4;
+        ret = concat_derive(session, &dataMech, hA, CKK_AES, 0, &hKey);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCOMPLETE,
+                       "AES key without length from 20 bytes");
+    }
+#ifndef WOLFPKCS11_NSS
+    if (ret == CKR_OK) {
+        ret = concat_derive(session, &dataMech, hA, CKK_AES, 20, &hKey);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+                       "AES key of 20 bytes");
+    }
+#endif
+    params.ulLen = sizeof(a);
+    if (ret == CKR_OK) {
+        ret = concat_derive(session, &dataMech, hA, CKK_AES, 24, &hKey);
+        CHECK_CKR(ret, "AES-192 key from 32 bytes");
+    }
+    if (ret == CKR_OK)
+        ret = concat_check_value(session, hKey, zero, sizeof(zero));
+#endif
+
+#ifdef HAVE_ECC
+    if (hEcPriv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hEcPriv);
+    if (hEcPub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hEcPub);
+#endif
+    if (hBig != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hBig);
+    XFREE(big, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    if (hData != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hData);
+    if (hNoDerive != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hNoDerive);
+    if (hA != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hA);
+
+    return ret;
+}
+
+static CK_RV test_concatenate_wrap_with_trusted(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_BYTE a[16] = { 0 };
+    CK_BBOOL trusted;
+    CK_OBJECT_HANDLE hA = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hT = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hOther = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hKey;
+    CK_MECHANISM mech = { CKM_CONCATENATE_BASE_AND_KEY, &hOther,
+                          sizeof(hOther) };
+    CK_KEY_DERIVATION_STRING_DATA params = { NULL, 0 };
+    CK_MECHANISM dataMech = { CKM_CONCATENATE_BASE_AND_DATA, &params,
+                              sizeof(params) };
+    CK_ATTRIBUTE tmpl[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
+        {CKA_DERIVE, &ckTrue, sizeof(ckTrue)},
+        {CKA_WRAP_WITH_TRUSTED, &ckTrue, sizeof(ckTrue)},
+        {CKA_VALUE, a, sizeof(a)},
+    };
+    CK_ATTRIBUTE attr = { CKA_WRAP_WITH_TRUSTED, &trusted, sizeof(trusted) };
+
+    ret = concat_create_key(session, a, sizeof(a), CK_FALSE, CK_TRUE, CK_TRUE,
+                            CK_FALSE, &hA);
+    CHECK_CKR(ret, "Create plain key");
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, tmpl,
+                                       sizeof(tmpl) / sizeof(*tmpl), &hT);
+        CHECK_CKR(ret, "Create wrap with trusted key");
+    }
+    if (ret == CKR_OK) {
+        ret = concat_derive(session, &dataMech, hT, CKK_GENERIC_SECRET, 0,
+                            &hKey);
+        CHECK_CKR(ret, "Copy wrap with trusted key");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, hKey, &attr, 1);
+        CHECK_CKR(ret, "Get copy wrap with trusted");
+        funcList->C_DestroyObject(session, hKey);
+    }
+    CHECK_COND(ret != CKR_OK || trusted == CK_TRUE, ret,
+               "Copy keeps wrap with trusted");
+    if (ret == CKR_OK) {
+        hOther = hT;
+        ret = concat_derive(session, &mech, hA, CKK_GENERIC_SECRET, 0, &hKey);
+        CHECK_CKR(ret, "Concatenate plain key and wrap with trusted key");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, hKey, &attr, 1);
+        CHECK_CKR(ret, "Get concatenation wrap with trusted");
+        funcList->C_DestroyObject(session, hKey);
+    }
+    CHECK_COND(ret != CKR_OK || trusted == CK_TRUE, ret,
+               "Concatenation keeps wrap with trusted of other key");
+    if (ret == CKR_OK) {
+        hOther = hA;
+        ret = concat_derive(session, &mech, hA, CKK_GENERIC_SECRET, 0, &hKey);
+        CHECK_CKR(ret, "Concatenate plain keys");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, hKey, &attr, 1);
+        CHECK_CKR(ret, "Get plain concatenation wrap with trusted");
+        funcList->C_DestroyObject(session, hKey);
+    }
+    CHECK_COND(ret != CKR_OK || trusted == CK_FALSE, ret,
+               "Plain concatenation has no wrap with trusted");
+
+    if (hT != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hT);
+    if (hA != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hA);
+
+    return ret;
+}
+
+#ifndef WOLFPKCS11_NO_STORE
+static CK_RV test_concatenate_logged_out(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_RV loginRet;
+    CK_BYTE a[16] = { 0 };
+    CK_BYTE d[4] = { 0xd0, 0xd1, 0xd2, 0xd3 };
+    CK_OBJECT_HANDLE hA = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hS = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hKey = CK_INVALID_HANDLE;
+    CK_KEY_DERIVATION_STRING_DATA params = { d, sizeof(d) };
+    CK_MECHANISM mech = { CKM_CONCATENATE_BASE_AND_DATA, &params,
+                          sizeof(params) };
+    CK_MECHANISM keyMech = { CKM_CONCATENATE_BASE_AND_KEY, &hA, sizeof(hA) };
+    CK_ATTRIBUTE sessTmpl[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_PRIVATE, &ckFalse, sizeof(ckFalse)},
+        {CKA_DERIVE, &ckTrue, sizeof(ckTrue)},
+        {CKA_VALUE, d, sizeof(d)},
+    };
+    CK_ATTRIBUTE keyTmpl[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_TOKEN, &ckTrue, sizeof(ckTrue)},
+        {CKA_PRIVATE, &ckFalse, sizeof(ckFalse)},
+        {CKA_DERIVE, &ckTrue, sizeof(ckTrue)},
+        {CKA_VALUE, a, sizeof(a)},
+    };
+    CK_ATTRIBUTE tmpl[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_PRIVATE, &ckFalse, sizeof(ckFalse)},
+    };
+
+    if (userPinLen == 0)
+        return CKR_SKIPPED;
+
+    ret = funcList->C_CreateObject(session, keyTmpl,
+                                   sizeof(keyTmpl) / sizeof(*keyTmpl), &hA);
+    CHECK_CKR(ret, "Create public token key");
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, sessTmpl,
+                                       sizeof(sessTmpl) / sizeof(*sessTmpl),
+                                       &hS);
+        CHECK_CKR(ret, "Create public session key");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Logout(session);
+        CHECK_CKR(ret, "Logout");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mech, hA, tmpl,
+                                    sizeof(tmpl) / sizeof(*tmpl), &hKey);
+        CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN,
+                       "Concatenate encoded key after logout");
+        if (ret == CKR_OK) {
+            ret = funcList->C_DeriveKey(session, &keyMech, hS, tmpl,
+                                        sizeof(tmpl) / sizeof(*tmpl), &hKey);
+            CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN,
+                           "Concatenate encoded other key after logout");
+        }
+        loginRet = funcList->C_Login(session, CKU_USER, userPin, userPinLen);
+        CHECK_CKR(loginRet, "Login again");
+        if (ret == CKR_OK)
+            ret = loginRet;
+    }
+
+    if (hKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hKey);
+    if (hS != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hS);
+    if (hA != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hA);
+
+    return ret;
+}
+#endif
+
+#if defined(HAVE_ECC) && (defined(HAVE_ALL_CURVES) || defined(HAVE_ECC384)) && \
+    !defined(NO_AES) && !defined(WOLFPKCS11_NSS)
+static CK_RV test_ecdh_derive_aes_no_value_len(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_BYTE p384Params[] = { 0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22 };
+    CK_OBJECT_HANDLE hPub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hPriv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hKey = CK_INVALID_HANDLE;
+    CK_BYTE point[128];
+    CK_ATTRIBUTE pointAttr = { CKA_EC_POINT, point, sizeof(point) };
+    CK_ECDH1_DERIVE_PARAMS params;
+    CK_MECHANISM mech = { CKM_ECDH1_DERIVE, &params, sizeof(params) };
+    CK_ULONG valueLen = 32;
+    CK_ATTRIBUTE tmpl[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &aesKeyType, sizeof(aesKeyType)},
+        {CKA_VALUE_LEN, &valueLen, sizeof(valueLen)},
+    };
+    CK_ULONG cnt = sizeof(tmpl) / sizeof(*tmpl);
+
+    ret = gen_ec_keys(session, p384Params, sizeof(p384Params), &hPub, &hPriv,
+                      NULL, 0, NULL, 0, 0);
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, hPub, &pointAttr, 1);
+        CHECK_CKR(ret, "Get P-384 point");
+    }
+    if (ret == CKR_OK) {
+        params.kdf = CKD_NULL;
+        params.pSharedData = NULL;
+        params.ulSharedDataLen = 0;
+        params.pPublicData = point;
+        params.ulPublicDataLen = pointAttr.ulValueLen;
+        ret = funcList->C_DeriveKey(session, &mech, hPriv, tmpl, cnt - 1,
+                                    &hKey);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCOMPLETE,
+                       "AES key without length from P-384 secret");
+    }
+    if (ret == CKR_OK) {
+        tmpl[2].ulValueLen = sizeof(valueLen) - 1;
+        ret = funcList->C_DeriveKey(session, &mech, hPriv, tmpl, cnt, &hKey);
+        CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
+                       "AES key with short length from P-384 secret");
+        tmpl[2].ulValueLen = sizeof(valueLen);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mech, hPriv, tmpl, cnt, &hKey);
+        CHECK_CKR(ret, "AES-256 key from P-384 secret");
+    }
+
+    if (hKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hKey);
+    if (hPriv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hPriv);
+    if (hPub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hPub);
+
+    return ret;
+}
+#endif
+
+#if defined(WOLFPKCS11_HKDF) && defined(WOLFSSL_SHA384) && !defined(NO_AES) && \
+    !defined(WOLFPKCS11_NSS)
+static CK_RV test_hkdf_derive_aes_no_value_len(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_BYTE ikm[32] = { 0 };
+    CK_BYTE salt[16] = { 0 };
+    CK_OBJECT_HANDLE hBase = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hKey = CK_INVALID_HANDLE;
+    CK_HKDF_PARAMS params = {
+        CK_TRUE, CK_FALSE, CKM_SHA384_HMAC, CKF_HKDF_SALT_DATA,
+        salt, sizeof(salt), CK_INVALID_HANDLE, NULL, 0
+    };
+    CK_MECHANISM mech = { CKM_HKDF_DERIVE, &params, sizeof(params) };
+    CK_ATTRIBUTE tmpl[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &aesKeyType, sizeof(aesKeyType)},
+    };
+    CK_ULONG cnt = sizeof(tmpl) / sizeof(*tmpl);
+
+    ret = concat_create_key(session, ikm, sizeof(ikm), CK_FALSE, CK_TRUE,
+                            CK_TRUE, CK_FALSE, &hBase);
+    CHECK_CKR(ret, "Create HKDF base key");
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mech, hBase, tmpl, cnt, &hKey);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCOMPLETE,
+                       "AES key without length from SHA-384 extract");
+    }
+    if (ret == CKR_OK) {
+        params.prfHashMechanism = CKM_SHA256_HMAC;
+        ret = funcList->C_DeriveKey(session, &mech, hBase, tmpl, cnt, &hKey);
+        CHECK_CKR(ret, "AES-256 key from SHA-256 extract");
+    }
+
+    if (hKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hKey);
+    if (hBase != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hBase);
+
+    return ret;
+}
+#endif
+
+#if defined(WOLFPKCS11_HKDF) && !defined(NO_HMAC)
+static CK_RV test_concatenate_hybrid_hkdf(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_BYTE zEcdh[32] = { 0 };
+    CK_BYTE zMlkem[32];
+    CK_BYTE salt[16];
+    CK_BYTE info[10];
+    CK_BYTE msg[16];
+    CK_BYTE mac[32];
+    CK_ULONG macLen = sizeof(mac);
+    CK_BYTE expMac[32] = {
+        0x71, 0xe9, 0x0f, 0x7e, 0xea, 0xec, 0x0f, 0x44,
+        0x08, 0x5b, 0x7d, 0x7e, 0xed, 0x2a, 0x38, 0x39,
+        0xf6, 0x5b, 0xb9, 0xd1, 0x7d, 0x3a, 0x8e, 0x0a,
+        0x4c, 0xbd, 0x84, 0xcf, 0x3b, 0xac, 0xb0, 0x7c
+    };
+    CK_ULONG okmLen = 32;
+    CK_OBJECT_HANDLE hEcdh = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hMlkem = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hIkm = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hOkm = CK_INVALID_HANDLE;
+    CK_MECHANISM concatMech = { CKM_CONCATENATE_BASE_AND_KEY, &hMlkem,
+                                sizeof(hMlkem) };
+    CK_HKDF_PARAMS hkdfParams = {
+        CK_TRUE, CK_TRUE, CKM_SHA256_HMAC, CKF_HKDF_SALT_DATA,
+        salt, sizeof(salt), CK_INVALID_HANDLE, info, sizeof(info)
+    };
+    CK_MECHANISM hkdfMech = { CKM_HKDF_DERIVE, &hkdfParams,
+                              sizeof(hkdfParams) };
+    CK_MECHANISM macMech = { CKM_SHA256_HMAC, NULL, 0 };
+    CK_ATTRIBUTE ikmTmpl[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_SENSITIVE, &ckTrue, sizeof(ckTrue)},
+        {CKA_EXTRACTABLE, &ckFalse, sizeof(ckFalse)},
+        {CKA_DERIVE, &ckTrue, sizeof(ckTrue)},
+    };
+    CK_ATTRIBUTE okmTmpl[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_SIGN, &ckTrue, sizeof(ckTrue)},
+        {CKA_VALUE_LEN, &okmLen, sizeof(okmLen)},
+    };
+#if !defined(WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT) && !defined(WOLFPKCS11_NSS)
+    CK_BBOOL got[2];
+    CK_ATTRIBUTE protAttrs[] = {
+        {CKA_SENSITIVE, &got[0], sizeof(CK_BBOOL)},
+        {CKA_EXTRACTABLE, &got[1], sizeof(CK_BBOOL)},
+    };
+#endif
+    CK_ULONG i;
+
+    for (i = 0; i < sizeof(zMlkem); i++)
+        zMlkem[i] = (CK_BYTE)(i + 1);
+    for (i = 0; i < sizeof(salt); i++)
+        salt[i] = (CK_BYTE)(0x10 + i);
+    for (i = 0; i < sizeof(info); i++)
+        info[i] = (CK_BYTE)(0xf0 + i);
+    for (i = 0; i < sizeof(msg); i++)
+        msg[i] = (CK_BYTE)(0x40 + i);
+
+    ret = concat_create_key(session, zEcdh, sizeof(zEcdh), CK_TRUE, CK_FALSE,
+                            CK_TRUE, CK_FALSE, &hEcdh);
+    CHECK_CKR(ret, "Create ECDH secret");
+    if (ret == CKR_OK) {
+        ret = concat_create_key(session, zMlkem, sizeof(zMlkem), CK_TRUE,
+                                CK_FALSE, CK_TRUE, CK_FALSE, &hMlkem);
+        CHECK_CKR(ret, "Create ML-KEM secret");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &concatMech, hEcdh, ikmTmpl,
+                                    sizeof(ikmTmpl) / sizeof(*ikmTmpl), &hIkm);
+        CHECK_CKR(ret, "Concatenate hybrid secrets");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &hkdfMech, hIkm, okmTmpl,
+                                    sizeof(okmTmpl) / sizeof(*okmTmpl), &hOkm);
+        CHECK_CKR(ret, "HKDF from concatenated secret");
+    }
+#if !defined(WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT) && !defined(WOLFPKCS11_NSS)
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, hOkm, protAttrs, 2);
+        CHECK_CKR(ret, "Get HKDF key protection");
+    }
+    if (ret == CKR_OK && (got[0] != CK_TRUE || got[1] != CK_FALSE)) {
+        ret = CKR_DATA_INVALID;
+        CHECK_CKR(ret, "HKDF key inherits protection");
+    }
+#endif
+    if (ret == CKR_OK) {
+        ret = funcList->C_SignInit(session, &macMech, hOkm);
+        CHECK_CKR(ret, "HMAC sign init");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Sign(session, msg, sizeof(msg), mac, &macLen);
+        CHECK_CKR(ret, "HMAC sign");
+    }
+    if (ret == CKR_OK && (macLen != sizeof(expMac) ||
+            XMEMCMP(mac, expMac, sizeof(expMac)) != 0)) {
+        ret = CKR_DATA_INVALID;
+        CHECK_CKR(ret, "HMAC with hybrid HKDF key");
+    }
+
+    if (hOkm != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hOkm);
+    if (hIkm != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hIkm);
+    if (hMlkem != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hMlkem);
+    if (hEcdh != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hEcdh);
+
+    return ret;
+}
+#endif
+
 #ifndef NO_SHA
 static CK_RV test_x509_check_value(void* args)
 {
@@ -19236,6 +20249,25 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_hkdf_gen_key),
     PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_expand_null_value_len),
     PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_implied_class),
+#endif
+    PKCS11TEST_FUNC_SESS_DECL(test_concatenate_base_and_key),
+    PKCS11TEST_FUNC_SESS_DECL(test_concatenate_data),
+    PKCS11TEST_FUNC_SESS_DECL(test_concatenate_protection),
+    PKCS11TEST_FUNC_SESS_DECL(test_concatenate_errors),
+    PKCS11TEST_FUNC_SESS_DECL(test_concatenate_wrap_with_trusted),
+#ifndef WOLFPKCS11_NO_STORE
+    PKCS11TEST_FUNC_SESS_DECL(test_concatenate_logged_out),
+#endif
+#if defined(HAVE_ECC) && (defined(HAVE_ALL_CURVES) || defined(HAVE_ECC384)) && \
+    !defined(NO_AES) && !defined(WOLFPKCS11_NSS)
+    PKCS11TEST_FUNC_SESS_DECL(test_ecdh_derive_aes_no_value_len),
+#endif
+#if defined(WOLFPKCS11_HKDF) && defined(WOLFSSL_SHA384) && !defined(NO_AES) && \
+    !defined(WOLFPKCS11_NSS)
+    PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_aes_no_value_len),
+#endif
+#if defined(WOLFPKCS11_HKDF) && !defined(NO_HMAC)
+    PKCS11TEST_FUNC_SESS_DECL(test_concatenate_hybrid_hkdf),
 #endif
 #ifdef WOLFSSL_HAVE_PRF
 #ifndef NO_MD5

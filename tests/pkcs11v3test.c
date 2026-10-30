@@ -2423,6 +2423,257 @@ static CK_RV test_copy_object_mlkem_key(void* args)
 
     return ret;
 }
+
+#if defined(HAVE_ECC) && defined(WOLFPKCS11_HKDF) && !defined(NO_HMAC)
+static CK_OBJECT_CLASS hybridSecretClass = CKO_SECRET_KEY;
+static CK_KEY_TYPE hybridGenericType = CKK_GENERIC_SECRET;
+static CK_BBOOL hybridFalse = CK_FALSE;
+
+static CK_RV hybrid_ec_pair(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE* priv,
+                            CK_BYTE* point, CK_ULONG* pointLen)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_EC_KEY_PAIR_GEN, NULL, 0 };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_EC_PARAMS, ecc_p256_params, sizeof(ecc_p256_params) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_DERIVE, &ckTrue, sizeof(ckTrue) },
+    };
+    CK_ATTRIBUTE pointTmpl = { CKA_EC_POINT, point, *pointLen };
+
+    ret = funcList->C_GenerateKeyPair(session, &mech, pubTmpl, 1, privTmpl, 1,
+                                      &pub, priv);
+    CHECK_CKR(ret, "Generate EC key pair");
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, pub, &pointTmpl, 1);
+        CHECK_CKR(ret, "Get EC point");
+    }
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+    /* ECDH takes the raw point, so drop the DER OCTET STRING header. */
+    if (ret == CKR_OK) {
+        CHECK_COND(pointTmpl.ulValueLen > 2 && point[0] == 0x04 &&
+                   point[1] == pointTmpl.ulValueLen - 2, ret,
+                   "EC point is a DER OCTET STRING");
+    }
+    if (ret == CKR_OK) {
+        *pointLen = pointTmpl.ulValueLen - 2;
+        XMEMMOVE(point, point + 2, *pointLen);
+    }
+
+    return ret;
+}
+
+static CK_RV hybrid_concat(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE base,
+                           CK_OBJECT_HANDLE other, CK_OBJECT_HANDLE* key)
+{
+    CK_RV ret;
+    CK_MECHANISM mech = { CKM_CONCATENATE_BASE_AND_KEY, &other,
+                          sizeof(other) };
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,    &hybridSecretClass, sizeof(hybridSecretClass) },
+        { CKA_KEY_TYPE, &hybridGenericType, sizeof(hybridGenericType) },
+        { CKA_DERIVE,   &ckTrue,            sizeof(ckTrue)            },
+    };
+
+    ret = funcList->C_DeriveKey(session, &mech, base, tmpl,
+                                sizeof(tmpl) / sizeof(*tmpl), key);
+    CHECK_CKR(ret, "Concatenate base and key");
+
+    return ret;
+}
+
+static CK_RV hybrid_party_mac(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE psk,
+                              CK_OBJECT_HANDLE ecPriv, CK_BYTE* peerPoint,
+                              CK_ULONG peerPointLen, CK_OBJECT_HANDLE kemSecret,
+                              CK_BYTE* mac, CK_ULONG* macLen)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE zEcdh = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE pskEcdh = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE ikm = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE okm = CK_INVALID_HANDLE;
+    CK_ULONG ecdhLen = 32;
+    CK_ULONG okmLen = 32;
+    CK_ULONG ikmLen = 0;
+    CK_BYTE value[96];
+    CK_BYTE salt[16] = { 0x73, 0x61, 0x6c, 0x74 };
+    CK_BYTE info[8] = { 0x69, 0x6e, 0x66, 0x6f };
+    CK_BYTE msg[16] = { 0x6d, 0x73, 0x67 };
+    CK_ECDH1_DERIVE_PARAMS ecdh;
+    CK_MECHANISM ecdhMech = { CKM_ECDH1_DERIVE, &ecdh, sizeof(ecdh) };
+    CK_HKDF_PARAMS hkdf;
+    CK_MECHANISM hkdfMech = { CKM_HKDF_DERIVE, &hkdf, sizeof(hkdf) };
+    CK_MECHANISM macMech = { CKM_SHA256_HMAC, NULL, 0 };
+    CK_ATTRIBUTE ecdhTmpl[] = {
+        { CKA_CLASS,       &hybridSecretClass, sizeof(hybridSecretClass) },
+        { CKA_KEY_TYPE,    &hybridGenericType, sizeof(hybridGenericType) },
+        { CKA_VALUE_LEN,   &ecdhLen,           sizeof(ecdhLen)           },
+        { CKA_DERIVE,      &ckTrue,            sizeof(ckTrue)            },
+        { CKA_SENSITIVE,   &ckTrue,            sizeof(ckTrue)            },
+        { CKA_EXTRACTABLE, &hybridFalse,       sizeof(hybridFalse)       },
+    };
+    CK_ATTRIBUTE okmTmpl[] = {
+        { CKA_CLASS,     &hybridSecretClass, sizeof(hybridSecretClass) },
+        { CKA_KEY_TYPE,  &hybridGenericType, sizeof(hybridGenericType) },
+        { CKA_VALUE_LEN, &okmLen,            sizeof(okmLen)            },
+        { CKA_SIGN,      &ckTrue,            sizeof(ckTrue)            },
+    };
+    CK_ATTRIBUTE lenTmpl = { CKA_VALUE_LEN, &ikmLen, sizeof(ikmLen) };
+    CK_ATTRIBUTE valueTmpl = { CKA_VALUE, value, sizeof(value) };
+
+    XMEMSET(&ecdh, 0, sizeof(ecdh));
+    ecdh.kdf = CKD_NULL;
+    ecdh.pPublicData = peerPoint;
+    ecdh.ulPublicDataLen = peerPointLen;
+    XMEMSET(&hkdf, 0, sizeof(hkdf));
+    hkdf.bExtract = CK_TRUE;
+    hkdf.bExpand = CK_TRUE;
+    hkdf.prfHashMechanism = CKM_SHA256_HMAC;
+    hkdf.ulSaltType = CKF_HKDF_SALT_DATA;
+    hkdf.pSalt = salt;
+    hkdf.ulSaltLen = sizeof(salt);
+    hkdf.pInfo = info;
+    hkdf.ulInfoLen = sizeof(info);
+
+    ret = funcList->C_DeriveKey(session, &ecdhMech, ecPriv, ecdhTmpl,
+                                sizeof(ecdhTmpl) / sizeof(*ecdhTmpl), &zEcdh);
+    CHECK_CKR(ret, "ECDH derive");
+    if (ret == CKR_OK)
+        ret = hybrid_concat(session, psk, zEcdh, &pskEcdh);
+    if (zEcdh != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, zEcdh);
+    if (ret == CKR_OK)
+        ret = hybrid_concat(session, pskEcdh, kemSecret, &ikm);
+    if (pskEcdh != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pskEcdh);
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, ikm, &lenTmpl, 1);
+        CHECK_CKR(ret, "Get hybrid IKM length");
+    }
+    CHECK_COND(ret != CKR_OK || ikmLen == 96, ret, "Hybrid IKM is 96 bytes");
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, ikm, &valueTmpl, 1);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_SENSITIVE,
+                       "Hybrid IKM value is not readable");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &hkdfMech, ikm, okmTmpl,
+                                    sizeof(okmTmpl) / sizeof(*okmTmpl), &okm);
+        CHECK_CKR(ret, "HKDF from hybrid IKM");
+    }
+    if (ikm != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, ikm);
+    if (ret == CKR_OK) {
+        ret = funcList->C_SignInit(session, &macMech, okm);
+        CHECK_CKR(ret, "HMAC sign init with OKM");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Sign(session, msg, sizeof(msg), mac, macLen);
+        CHECK_CKR(ret, "HMAC sign with OKM");
+    }
+
+    if (okm != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, okm);
+
+    return ret;
+}
+
+static CK_RV test_concatenate_hybrid_agreement(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_FUNCTION_LIST_3_2* funcListExt = (CK_FUNCTION_LIST_3_2*)funcList;
+    CK_OBJECT_HANDLE psk = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE ecPrivA = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE ecPrivB = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE kemPub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE kemPriv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE ssA = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE ssB = CK_INVALID_HANDLE;
+    CK_BYTE pointA[80];
+    CK_BYTE pointB[80];
+    CK_ULONG pointALen = sizeof(pointA);
+    CK_ULONG pointBLen = sizeof(pointB);
+    CK_BYTE ct[WC_ML_KEM_512_CIPHER_TEXT_SIZE];
+    CK_ULONG ctLen = sizeof(ct);
+    CK_BYTE pskValue[32];
+    CK_BYTE macA[32];
+    CK_BYTE macB[32];
+    CK_ULONG macALen = sizeof(macA);
+    CK_ULONG macBLen = sizeof(macB);
+    CK_MECHANISM kemMech = { CKM_ML_KEM, NULL, 0 };
+    CK_ATTRIBUTE pskTmpl[] = {
+        { CKA_CLASS,       &hybridSecretClass, sizeof(hybridSecretClass) },
+        { CKA_KEY_TYPE,    &hybridGenericType, sizeof(hybridGenericType) },
+        { CKA_VALUE,       pskValue,           sizeof(pskValue)          },
+        { CKA_DERIVE,      &ckTrue,            sizeof(ckTrue)            },
+        { CKA_SENSITIVE,   &ckTrue,            sizeof(ckTrue)            },
+        { CKA_EXTRACTABLE, &hybridFalse,       sizeof(hybridFalse)       },
+    };
+    CK_ATTRIBUTE ssTmpl[] = {
+        { CKA_CLASS,       &hybridSecretClass, sizeof(hybridSecretClass) },
+        { CKA_KEY_TYPE,    &hybridGenericType, sizeof(hybridGenericType) },
+        { CKA_DERIVE,      &ckTrue,            sizeof(ckTrue)            },
+        { CKA_SENSITIVE,   &ckTrue,            sizeof(ckTrue)            },
+        { CKA_EXTRACTABLE, &hybridFalse,       sizeof(hybridFalse)       },
+    };
+    CK_ULONG ssCnt = sizeof(ssTmpl) / sizeof(*ssTmpl);
+
+    XMEMSET(pskValue, 0x5a, sizeof(pskValue));
+    ret = funcList->C_CreateObject(session, pskTmpl,
+                                   sizeof(pskTmpl) / sizeof(*pskTmpl), &psk);
+    CHECK_CKR(ret, "Create PSK");
+    if (ret == CKR_OK)
+        ret = hybrid_ec_pair(session, &ecPrivA, pointA, &pointALen);
+    if (ret == CKR_OK)
+        ret = hybrid_ec_pair(session, &ecPrivB, pointB, &pointBLen);
+    if (ret == CKR_OK) {
+        ret = gen_mlkem_keys(session, CKP_ML_KEM_512, &kemPub, &kemPriv, NULL,
+                             0, NULL, 0, 0);
+    }
+    if (ret == CKR_OK) {
+        ret = funcListExt->C_EncapsulateKey(session, &kemMech, kemPub, ssTmpl,
+                                            ssCnt, ct, &ctLen, &ssA);
+        CHECK_CKR(ret, "ML-KEM encapsulate");
+    }
+    if (ret == CKR_OK) {
+        ret = funcListExt->C_DecapsulateKey(session, &kemMech, kemPriv, ssTmpl,
+                                            ssCnt, ct, ctLen, &ssB);
+        CHECK_CKR(ret, "ML-KEM decapsulate");
+    }
+    if (kemPriv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, kemPriv);
+    if (kemPub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, kemPub);
+    if (ret == CKR_OK) {
+        ret = hybrid_party_mac(session, psk, ecPrivA, pointB, pointBLen, ssA,
+                               macA, &macALen);
+    }
+    if (ret == CKR_OK) {
+        ret = hybrid_party_mac(session, psk, ecPrivB, pointA, pointALen, ssB,
+                               macB, &macBLen);
+    }
+    CHECK_COND(ret != CKR_OK || (macALen == macBLen &&
+               XMEMCMP(macA, macB, macALen) == 0), ret,
+               "Both parties derive the same key");
+
+    if (ssB != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, ssB);
+    if (ssA != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, ssA);
+    if (ecPrivB != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, ecPrivB);
+    if (ecPrivA != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, ecPrivA);
+    if (psk != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, psk);
+
+    return ret;
+}
+#endif
 #endif /* WOLFPKCS11_MLKEM */
 #endif /* WOLFPKCS11_PKCS11_V3_2 */
 
@@ -4040,6 +4291,9 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_initial_states),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_encap_decap_not_permitted),
     PKCS11TEST_FUNC_SESS_DECL(test_copy_object_mlkem_key),
+#if defined(HAVE_ECC) && defined(WOLFPKCS11_HKDF) && !defined(NO_HMAC)
+    PKCS11TEST_FUNC_SESS_DECL(test_concatenate_hybrid_agreement),
+#endif
 #endif
 #ifdef WOLFPKCS11_LMS
     PKCS11TEST_FUNC_SESS_DECL(test_hss_verify_kat),

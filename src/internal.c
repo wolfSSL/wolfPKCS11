@@ -19044,6 +19044,129 @@ int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
 
 #endif
 
+/* Call with the object lock held when the key is on the token. */
+static int wp11_Concat_KeyState(WP11_Object* key)
+{
+    int ret = 0;
+
+    if (key->objClass != CKO_SECRET_KEY || key->data.symmKey == NULL)
+        ret = BAD_FUNC_ARG;
+#ifndef WOLFPKCS11_NO_STORE
+    else if (key->encoded || key->undecoded)
+        ret = BAD_STATE_E;
+#endif
+#ifdef WOLFSSL_STM32U5_DHUK
+    else if (key->dhukIvLen > 0)
+        ret = NOT_AVAILABLE_E;
+#endif
+
+    return ret;
+}
+
+/**
+ * Get the length of a secret key's value for concatenation.
+ *
+ * @param  key  [in]   Secret key object.
+ * @param  len  [out]  Length of the key value in bytes.
+ * @return  BAD_FUNC_ARG when the object is not a secret key.
+ *          BAD_STATE_E when the key value is not decoded.
+ *          NOT_AVAILABLE_E when the key value is wrapped by hardware.
+ *          0 on success.
+ */
+int WP11_Concat_KeyLen(WP11_Object* key, word32* len)
+{
+    int ret;
+
+    if (key == NULL || len == NULL)
+        return BAD_FUNC_ARG;
+
+    if (key->onToken)
+        WP11_Lock_LockRO(key->lock);
+    ret = wp11_Concat_KeyState(key);
+    if (ret == 0)
+        *len = key->data.symmKey->len;
+    if (key->onToken)
+        WP11_Lock_UnlockRO(key->lock);
+
+    return ret;
+}
+
+/* Append up to outLen leading bytes of a secret key's value to out. */
+static int wp11_Concat_Key(WP11_Object* key, byte* out, word32 outLen,
+                           word32* used)
+{
+    int ret;
+    word32 len;
+
+    if (key->onToken)
+        WP11_Lock_LockRO(key->lock);
+    ret = wp11_Concat_KeyState(key);
+    if (ret == 0) {
+        len = key->data.symmKey->len;
+        if (len > outLen)
+            len = outLen;
+        if (len > 0)
+            XMEMCPY(out, key->data.symmKey->data, len);
+        *used += len;
+    }
+    if (key->onToken)
+        WP11_Lock_UnlockRO(key->lock);
+
+    return ret;
+}
+
+/**
+ * Concatenate a secret key's value with another key's value or with data.
+ *
+ * @param  base       [in]   Base secret key object.
+ * @param  other      [in]   Key appended to the base key. NULL to use data.
+ * @param  data       [in]   Data to concatenate with the base key.
+ * @param  dataLen    [in]   Length of data in bytes.
+ * @param  dataFirst  [in]   Data goes before the base key value when set.
+ * @param  out        [out]  Buffer to hold the leading outLen bytes.
+ * @param  outLen     [in]   Number of bytes to output.
+ * @return  BAD_FUNC_ARG when an object is not a secret key or the
+ *          concatenation is shorter than outLen.
+ *          BAD_STATE_E when a key value is not decoded.
+ *          NOT_AVAILABLE_E when a key value is wrapped by hardware.
+ *          0 on success.
+ */
+int WP11_Concat_Derive(WP11_Object* base, WP11_Object* other,
+                       const byte* data, word32 dataLen, int dataFirst,
+                       byte* out, word32 outLen)
+{
+    int ret;
+    word32 used = 0;
+    word32 len;
+
+    if (base == NULL || out == NULL ||
+            (other == NULL && data == NULL && dataLen > 0))
+        return BAD_FUNC_ARG;
+
+    if (other == NULL && dataFirst) {
+        len = (dataLen < outLen) ? dataLen : outLen;
+        if (len > 0)
+            XMEMCPY(out, data, len);
+        used = len;
+    }
+    ret = wp11_Concat_Key(base, out + used, outLen - used, &used);
+    if (ret == 0 && other != NULL) {
+        ret = wp11_Concat_Key(other, out + used, outLen - used, &used);
+    }
+    else if (ret == 0 && !dataFirst) {
+        len = outLen - used;
+        if (dataLen < len)
+            len = dataLen;
+        if (len > 0)
+            XMEMCPY(out + used, data, len);
+        used += len;
+    }
+
+    if (ret == 0 && used != outLen)
+        ret = BAD_FUNC_ARG;
+    return ret;
+}
+
 #ifndef NO_DH
 /**
  * Generate an DH key pair.
