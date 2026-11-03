@@ -7795,6 +7795,30 @@ static int XmssObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
 #endif /* WOLFPKCS11_XMSS */
 
 /**
+ * Get the length of the secret in a stored symmetric key record.
+ *
+ * @param [in]   object  Symmetric key object.
+ * @param [out]  len     Length of the secret in bytes.
+ * @return  0 on success.
+ * @return  BAD_FUNC_ARG when the record is shorter than the tag.
+ * @return  BUFFER_E when the secret does not fit the key buffer.
+ */
+static int wp11_Object_SymmKeyLen(WP11_Object* object, word32* len)
+{
+    /* keyDataLen is signed and covers the encrypted payload plus the trailing
+     * AES_BLOCK_SIZE tag. Reject lengths below the tag so the payload length
+     * below cannot go negative when used as an unsigned length. A length of
+     * exactly AES_BLOCK_SIZE is a valid zero-byte secret: the encoder writes
+     * symmKey->len + AES_BLOCK_SIZE, so a zero-length key must still load. */
+    if (object->keyDataLen < AES_BLOCK_SIZE)
+        return BAD_FUNC_ARG;
+    if ((word32)(object->keyDataLen - AES_BLOCK_SIZE) > WP11_MAX_SYM_KEY_SZ)
+        return BUFFER_E;
+    *len = (word32)(object->keyDataLen - AES_BLOCK_SIZE);
+    return 0;
+}
+
+/**
  * Decode the symmetric key - requires decryption.
  *
  * @param [in, out]  object  Symmetric key object.
@@ -7803,29 +7827,18 @@ static int XmssObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
  */
 static int wp11_Object_Decode_SymmKey(WP11_Object* object)
 {
-    int ret = 0;
+    int ret;
+    word32 len = 0;
 
-    /* keyDataLen is signed and covers the encrypted payload plus the trailing
-     * AES_BLOCK_SIZE tag. Reject lengths below the tag so the payload length
-     * below cannot go negative when used as an unsigned length. A length of
-     * exactly AES_BLOCK_SIZE is a valid zero-byte secret: the encoder writes
-     * symmKey->len + AES_BLOCK_SIZE, so a zero-length key must still load. */
-    if (object->keyDataLen < AES_BLOCK_SIZE)
-        ret = BAD_FUNC_ARG;
-    if (ret == 0 &&
-            (word32)(object->keyDataLen - AES_BLOCK_SIZE) > WP11_MAX_SYM_KEY_SZ)
-        ret = BUFFER_E;
+    ret = wp11_Object_SymmKeyLen(object, &len);
     if (ret == 0) {
         ret = wp11_Object_DecryptKeyData(object, object->data.symmKey->data,
-                                         object->keyData,
-                                         object->keyDataLen - AES_BLOCK_SIZE);
-        if (ret != 0) {
-            wc_ForceZero(object->data.symmKey->data,
-                         (word32)(object->keyDataLen - AES_BLOCK_SIZE));
-        }
+                                         object->keyData, (int)len);
+        if (ret != 0)
+            wc_ForceZero(object->data.symmKey->data, len);
     }
     if (ret == 0)
-        object->data.symmKey->len = object->keyDataLen - AES_BLOCK_SIZE;
+        object->data.symmKey->len = len;
     object->encoded = (ret != 0);
 
     return ret;
@@ -7876,6 +7889,7 @@ static int wp11_Object_Load_SymmKey(WP11_Object* object, int tokenId, int objId)
 {
     int ret;
     void* storage = NULL;
+    word32 len = 0;
 
     /* Open access to symmetric key. */
     ret = wp11_storage_open_readonly(WOLFPKCS11_STORE_SYMMKEY, tokenId, objId,
@@ -7886,6 +7900,9 @@ static int wp11_Object_Load_SymmKey(WP11_Object* object, int tokenId, int objId)
             &object->keyDataLen);
         wp11_storage_close(storage);
     }
+    /* CKA_VALUE_LEN is readable before the key is decoded. */
+    if (ret == 0 && wp11_Object_SymmKeyLen(object, &len) == 0)
+        object->data.symmKey->len = len;
 
     return ret;
 }
@@ -9359,6 +9376,10 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
         for (i = token->objCnt - 1; (ret == 0) && (i >= 0); i--) {
             /* Load the objects. */
             ret = wp11_Object_Load(object, tokenId, i);
+            /* Objects not under the token key are usable before any login. */
+            if (ret == 0 && !wp11_Object_IsEncrypted(object) &&
+                    wp11_Object_Decode(object) != 0)
+                object->undecoded = 1;
             /* Keep new token object ids above the stored ones, in case the
              * counter was not stored or was not usable. */
             if (ret == 0 && (int)OBJ_HANDLE_OBJ_ID(object->handle) >=
@@ -9381,7 +9402,8 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
                           token->key, sizeof(token->key), slot);
             object = token->object;
             while (ret == 0 && object != NULL) {
-                ret = wp11_Object_Decode(object);
+                if (wp11_Object_IsEncrypted(object) || object->undecoded)
+                    ret = wp11_Object_Decode(object);
                 object = object->next;
             }
 #endif
@@ -10215,6 +10237,9 @@ int WP11_Slot_OpenSession(WP11_Slot* slot, unsigned long flags, void* app,
 }
 
 static void wp11_Slot_Logout(WP11_Slot* slot);
+#ifndef WOLFPKCS11_NO_STORE
+static void wp11_Slot_ClearKeyOps(WP11_Slot* slot, WP11_Object* object);
+#endif
 
 /**
  * Close a session associated with a slot.
@@ -11166,7 +11191,8 @@ int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen)
         XMEMCPY(token->key, d->key, sizeof(token->key));
         object = token->object;
         while (ret == 0 && object != NULL) {
-            ret = wp11_Object_Decode(object);
+            if (wp11_Object_IsEncrypted(object) || object->undecoded)
+                ret = wp11_Object_Decode(object);
             if (ret != 0)
                 failed = object;
             object = object->next;
@@ -11694,6 +11720,11 @@ static void wp11_Slot_Logout(WP11_Slot* slot)
         /* Zero token key only on user logout — SO logout must preserve it
          * for subsequent object encryption (e.g., empty-PIN flow). */
         wc_ForceZero(slot->token.key, sizeof(slot->token.key));
+        for (object = slot->token.object; object != NULL;
+                object = object->next) {
+            if (object->encoded)
+                wp11_Slot_ClearKeyOps(slot, object);
+        }
     }
 #endif
 #ifndef WOLFPKCS11_NSS
@@ -12065,7 +12096,11 @@ static int wp11_init_get_op_category(int init)
 static int wp11_mech_reads_key(CK_MECHANISM_TYPE mechanism)
 {
     return mechanism == CKM_AES_GCM || mechanism == CKM_AES_CCM ||
-           mechanism == CKM_AES_ECB;
+           mechanism == CKM_AES_ECB || mechanism == CKM_TLS_MAC
+#ifdef WOLFPKCS11_NSS
+           || mechanism == CKM_NSS_TLS_PRF_GENERAL_SHA256
+#endif
+           ;
 }
 
 /**
@@ -12089,8 +12124,33 @@ int WP11_Session_IsOpCategoryInit(WP11_Session* session, int opCategory)
 }
 
 /**
+ * Release the operation state of a session whose key was dropped by a destroy
+ * or a logout.
+ *
+ * @param  session  [in]  Session object.
+ * @return  Current object of the session, NULL when there is none.
+ */
+static WP11_Object* wp11_Session_ReleaseStaleOp(WP11_Session* session)
+{
+    WP11_Object* curr;
+    int op;
+    int abortOp;
+
+    WP11_Lock_LockRO(&session->slot->lock);
+    curr = session->curr;
+    op = session->init & ~WP11_INIT_DIGEST_MASK;
+    abortOp = (curr == NULL && op != 0 && op != WP11_INIT_DIGEST);
+    WP11_Lock_UnlockRO(&session->slot->lock);
+    if (abortOp)
+        WP11_Session_AbortOp(session);
+
+    return curr;
+}
+
+/**
  * Check whether the session has an active operation of the given category.
  * Per PKCS#11 spec, only operations of the same type block re-initialization.
+ * An operation whose key was dropped is released first, whatever its category.
  *
  * @param  session     [in]  Session object.
  * @param  opCategory  [in]  Operation category (WP11_OP_*).
@@ -12099,10 +12159,7 @@ int WP11_Session_IsOpCategoryInit(WP11_Session* session, int opCategory)
  */
 int WP11_Session_IsOpCategoryActive(WP11_Session* session, int opCategory)
 {
-    /* The key of this operation was destroyed so it can no longer run. */
-    if (session->curr == NULL && wp11_mech_reads_key(session->mechanism))
-        return 0;
-
+    (void)wp11_Session_ReleaseStaleOp(session);
     return WP11_Session_IsOpCategoryInit(session, opCategory);
 }
 
@@ -13475,24 +13532,40 @@ WP11_API int WP11_Test_SetObjectClass(CK_SESSION_HANDLE hSession,
 #endif /* DEBUG_WOLFPKCS11 */
 
 /**
+ * Drop the session's reference to its operation key unless the operation
+ * copied the key at init. Caller holds the slot lock for writing.
+ *
+ * @param  session    [in]  Session whose operation uses the key.
+ * @param  symmetric  [in]  Whether the key is a secret key.
+ */
+static void wp11_Session_ClearActive(WP11_Session* session, int symmetric)
+{
+    if (!symmetric || wp11_mech_reads_key(session->mechanism))
+        session->curr = NULL;
+}
+
+#ifndef WOLFPKCS11_NO_STORE
+/**
+ * Clear the running operations that use a key whose value logout scrubbed.
+ * Caller holds the slot lock for writing.
+ *
+ * @param  slot    [in]  Slot whose sessions are scanned.
+ * @param  object  [in]  Token object that is now encoded.
+ */
+static void wp11_Slot_ClearKeyOps(WP11_Slot* slot, WP11_Object* object)
+{
+    WP11_Session* sess;
+    int symmetric = WP11_KeyType_IsSecret(object->type);
+
+    for (sess = slot->session; sess != NULL; sess = sess->next) {
+        if (sess->curr == object)
+            wp11_Session_ClearActive(sess, symmetric);
+    }
+}
+#endif
+
+/**
  * Drop any session reference to an object that is about to be freed.
- *
- * The active object pointer (session->curr) is a raw pointer cached when an
- * operation is initialized. A token object can be the active object of more
- * than one session. Since this reaches into other sessions, session->curr is
- * only accessed under the slot lock (see WP11_Session_GetObject()).
- *
- * Symmetric operations (AES, HMAC/generic-secret, HKDF) copy the key into the
- * operation context during their *Init and run to completion without referring
- * to the object again, so a caller may legitimately destroy the key before
- * finishing the operation (wolfCrypt's PKCS#11 layer does exactly this for
- * multi-part HMAC). Those operations are left untouched. AES-GCM, AES-CCM and
- * AES-ECB read the key object when data is processed, so only their reference
- * is dropped; the owning session releases the operation state itself.
- *
- * Asymmetric operations dereference the key object while running, so for those
- * key types drop the active reference in every session that holds it and reset
- * the operation state, ensuring a later step cannot use freed memory.
  *
  * @param  slot    [in]  Slot whose sessions are scanned.
  * @param  object  [in]  Object being destroyed.
@@ -13500,37 +13573,17 @@ WP11_API int WP11_Test_SetObjectClass(CK_SESSION_HANDLE hSession,
 void WP11_Slot_ClearActiveObject(WP11_Slot* slot, WP11_Object* object)
 {
     WP11_Session* curr;
-    CK_KEY_TYPE keyType;
     int symmetric;
 
     if (slot == NULL || object == NULL)
         return;
 
-    keyType = WP11_Object_GetType(object);
-    symmetric = WP11_KeyType_IsSecret(keyType);
+    symmetric = WP11_KeyType_IsSecret(WP11_Object_GetType(object));
 
     WP11_Lock_LockRW(&slot->lock);
     for (curr = slot->session; curr != NULL; curr = curr->next) {
-        if (curr->curr == object && symmetric) {
-            if (wp11_mech_reads_key(curr->mechanism))
-                curr->curr = NULL;
-        }
-        else if (curr->curr == object) {
-#if !defined(NO_RSA) && !defined(WC_NO_RSA_OAEP)
-            /* Release the operation-owned RSA-OAEP label before dropping the
-             * operation state. Otherwise a later init for a different mechanism
-             * overwrites the params union and the label can no longer be
-             * freed. */
-            if (curr->mechanism == CKM_RSA_PKCS_OAEP &&
-                    curr->params.oaep.label != NULL) {
-                XFREE(curr->params.oaep.label, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-                curr->params.oaep.label = NULL;
-                curr->params.oaep.labelSz = 0;
-            }
-#endif
-            curr->curr = NULL;
-            curr->init = 0;
-        }
+        if (curr->curr == object)
+            wp11_Session_ClearActive(curr, symmetric);
     }
     WP11_Lock_UnlockRW(&slot->lock);
 }
@@ -13546,18 +13599,7 @@ void WP11_Slot_ClearActiveObject(WP11_Slot* slot, WP11_Object* object)
  */
 void WP11_Session_GetObject(WP11_Session* session, WP11_Object** object)
 {
-    WP11_Object* curr;
-    int abortOp;
-
-    WP11_Lock_LockRO(&session->slot->lock);
-    curr = session->curr;
-    /* The key was destroyed: release the state its operation still holds. */
-    abortOp = (curr == NULL && wp11_mech_reads_key(session->mechanism) &&
-               (session->init & ~WP11_INIT_DIGEST_MASK) != 0);
-    WP11_Lock_UnlockRO(&session->slot->lock);
-    if (abortOp)
-        WP11_Session_AbortOp(session);
-    *object = curr;
+    *object = wp11_Session_ReleaseStaleOp(session);
 }
 
 /**
@@ -14062,6 +14104,49 @@ int WP11_KeyType_IsSecret(CK_KEY_TYPE type)
 CK_KEY_TYPE WP11_Object_GetType(WP11_Object* object)
 {
     return object->type;
+}
+
+/**
+ * Get the slot the object belongs to.
+ *
+ * @param  object  [in]  Object object.
+ * @return  Slot of the object.
+ */
+WP11_Slot* WP11_Object_GetSlot(WP11_Object* object)
+{
+    return object->slot;
+}
+
+/* Call with the object lock held when the object is on the token. */
+static int wp11_Object_KeyStateLocked(WP11_Object* object)
+{
+#ifndef WOLFPKCS11_NO_STORE
+    if (object->encoded || object->undecoded)
+        return BAD_STATE_E;
+#else
+    (void)object;
+#endif
+    return 0;
+}
+
+/**
+ * Check that the key value of an object is decoded and can be used.
+ *
+ * @param  object  [in]  Object object.
+ * @return  BAD_STATE_E when the key value is not decoded.
+ *          0 otherwise.
+ */
+int WP11_Object_KeyState(WP11_Object* object)
+{
+    int ret;
+
+    if (object->onToken)
+        WP11_Lock_LockRO(object->lock);
+    ret = wp11_Object_KeyStateLocked(object);
+    if (object->onToken)
+        WP11_Lock_UnlockRO(object->lock);
+
+    return ret;
 }
 
 /**
@@ -15399,13 +15484,19 @@ static int RsaObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
     int ret = 0;
     int noPriv = (((object->opFlag & WP11_FLAG_SENSITIVE) != 0) ||
                  ((object->opFlag & WP11_FLAG_EXTRACTABLE) == 0));
+    int noKey = (wp11_Object_KeyStateLocked(object) != 0);
 
     if (mp_iszero(&object->data.rsaKey->d))
         noPriv = 1;
 
     switch (type) {
         case CKA_MODULUS:
-            ret = GetMPIData(&object->data.rsaKey->n, data, len);
+            if (noKey) {
+                *len = CK_UNAVAILABLE_INFORMATION;
+                ret = CKR_ATTRIBUTE_SENSITIVE;
+            }
+            else
+                ret = GetMPIData(&object->data.rsaKey->n, data, len);
             break;
         case CKA_PRIVATE_EXPONENT:
             if (noPriv) {
@@ -15456,10 +15547,21 @@ static int RsaObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
                 ret = GetMPIData(&object->data.rsaKey->u, data, len);
             break;
         case CKA_PUBLIC_EXPONENT:
-            ret = GetMPIData(&object->data.rsaKey->e, data, len);
+            if (noKey) {
+                *len = CK_UNAVAILABLE_INFORMATION;
+                ret = CKR_ATTRIBUTE_SENSITIVE;
+            }
+            else
+                ret = GetMPIData(&object->data.rsaKey->e, data, len);
             break;
         case CKA_MODULUS_BITS:
-            ret = GetULong(mp_count_bits(&object->data.rsaKey->n), data, len);
+            if (noKey) {
+                *len = CK_UNAVAILABLE_INFORMATION;
+                ret = CKR_ATTRIBUTE_SENSITIVE;
+            }
+            else
+                ret = GetULong(mp_count_bits(&object->data.rsaKey->n), data,
+                               len);
             break;
         case CKA_WRAP_TEMPLATE:
         case CKA_UNWRAP_TEMPLATE:
@@ -15587,6 +15689,7 @@ static int EcObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
     int noPriv = (((object->opFlag & WP11_FLAG_SENSITIVE) != 0) ||
                  ((object->opFlag & WP11_FLAG_EXTRACTABLE) == 0));
     int noPub = 0;
+    int noKey = (wp11_Object_KeyStateLocked(object) != 0);
 
     if (object->data.ecKey->type == ECC_PUBLICKEY)
         noPriv = 1;
@@ -15595,10 +15698,15 @@ static int EcObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
 
     switch (type) {
         case CKA_EC_PARAMS:
-            ret = GetEcParams(object->data.ecKey, data, len);
+            if (noKey) {
+                *len = CK_UNAVAILABLE_INFORMATION;
+                ret = CKR_ATTRIBUTE_SENSITIVE;
+            }
+            else
+                ret = GetEcParams(object->data.ecKey, data, len);
             break;
         case CKA_VALUE:
-            if (noPriv) {
+            if (noPriv || noKey) {
                 *len = CK_UNAVAILABLE_INFORMATION;
                 ret = CKR_ATTRIBUTE_SENSITIVE;
             }
@@ -15613,6 +15721,10 @@ static int EcObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
             if (noPub) {
                 *len = CK_UNAVAILABLE_INFORMATION;
                 ret = NOT_AVAILABLE_E;
+            }
+            else if (noKey) {
+                *len = CK_UNAVAILABLE_INFORMATION;
+                ret = CKR_ATTRIBUTE_SENSITIVE;
             }
             else
                 ret = GetEcPoint(object->data.ecKey, data, len);
@@ -15747,6 +15859,7 @@ static int MldsaObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
     int noPriv = (((object->opFlag & WP11_FLAG_SENSITIVE) != 0) ||
                   ((object->opFlag & WP11_FLAG_EXTRACTABLE) == 0));
     int noPub = 0;
+    int noKey = (wp11_Object_KeyStateLocked(object) != 0);
 
     if (!object->data.mldsaKey->prvKeySet)
         noPriv = 1;
@@ -15755,7 +15868,12 @@ static int MldsaObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
 
     switch (type) {
         case CKA_PARAMETER_SET:
-            ret = GetMldsaParams(object->data.mldsaKey, data, len);
+            if (noKey) {
+                *len = CK_UNAVAILABLE_INFORMATION;
+                ret = CKR_ATTRIBUTE_SENSITIVE;
+            }
+            else
+                ret = GetMldsaParams(object->data.mldsaKey, data, len);
             break;
         case CKA_SEED:
             *len = CK_UNAVAILABLE_INFORMATION;
@@ -15763,7 +15881,7 @@ static int MldsaObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
             break;
         case CKA_VALUE:
             if (object->objClass == CKO_PRIVATE_KEY) {
-                if (noPriv) {
+                if (noPriv || noKey) {
                     *len = CK_UNAVAILABLE_INFORMATION;
                     ret = CKR_ATTRIBUTE_SENSITIVE;
                 }
@@ -15819,7 +15937,8 @@ static int DhObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
             /* Public key held in key when object class is CKO_PUBLIC_KEY and
              * private key when object class is CKO_PRIVATE_KEY.
              */
-            if (object->objClass != CKO_PRIVATE_KEY || !noPriv) {
+            if (object->objClass != CKO_PRIVATE_KEY ||
+                    (!noPriv && wp11_Object_KeyStateLocked(object) == 0)) {
                 ret = GetData(object->data.dhKey->key, object->data.dhKey->len,
                                                                      data, len);
             }
@@ -15937,6 +16056,7 @@ static int MlKemObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
     int noPriv = (((object->opFlag & WP11_FLAG_SENSITIVE) != 0) ||
                                ((object->opFlag & WP11_FLAG_EXTRACTABLE) == 0));
     int noPub = 0;
+    int noKey = (wp11_Object_KeyStateLocked(object) != 0);
 
     if (!(object->data.mlKemKey->flags & MLKEM_FLAG_PRIV_SET))
         noPriv = 1;
@@ -15945,7 +16065,12 @@ static int MlKemObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
 
     switch (type) {
         case CKA_PARAMETER_SET:
-            ret = GetMlKemParams(object->data.mlKemKey, data, len);
+            if (noKey) {
+                *len = CK_UNAVAILABLE_INFORMATION;
+                ret = CKR_ATTRIBUTE_SENSITIVE;
+            }
+            else
+                ret = GetMlKemParams(object->data.mlKemKey, data, len);
             break;
         case CKA_SEED:
             *len = CK_UNAVAILABLE_INFORMATION;
@@ -15953,7 +16078,7 @@ static int MlKemObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
             break;
         case CKA_VALUE:
             if (object->objClass == CKO_PRIVATE_KEY) {
-                if (noPriv) {
+                if (noPriv || noKey) {
                     *len = CK_UNAVAILABLE_INFORMATION;
                     ret = CKR_ATTRIBUTE_SENSITIVE;
                 }
@@ -16023,7 +16148,7 @@ static int SecretObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
 
     switch (type) {
         case CKA_VALUE:
-            if (noPriv) {
+            if (noPriv || wp11_Object_KeyStateLocked(object) != 0) {
                 *len = CK_UNAVAILABLE_INFORMATION;
                 ret = CKR_ATTRIBUTE_SENSITIVE;
             }
@@ -16332,6 +16457,11 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                 ret = NOT_AVAILABLE_E;
 #endif
             }
+            else if (object->objClass == CKO_SECRET_KEY &&
+                     wp11_Object_KeyStateLocked(object) != 0) {
+                *len = CK_UNAVAILABLE_INFORMATION;
+                ret = CKR_ATTRIBUTE_SENSITIVE;
+            }
             else if (object->objClass == CKO_SECRET_KEY)
                 ret = GetSecretKeyCheckValue(object, data, len);
             else
@@ -16582,7 +16712,7 @@ static int wp11_Object_PolicyChanged(WP11_Object* object,
             (object->objClass != prevClass ||
              ((object->opFlag ^ prevFlag) &
               ~(word32)WP11_FLAG_POLICY_EXCLUDED) != 0)) {
-        if (object->encoded || object->undecoded) {
+        if (wp11_Object_KeyStateLocked(object) != 0) {
             object->objClass = prevClass;
             object->opFlag = prevFlag;
             ret = BAD_STATE_E;
@@ -17640,11 +17770,11 @@ int WP11_RsaOaep_PublicEncrypt(unsigned char* in, word32 inLen,
     if (ret >= 0) {
         *outLen = ret;
         ret = 0;
-
-        if (oaep->label != NULL) {
-            XFREE(oaep->label, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-            oaep->label = NULL;
-        }
+    }
+    /* The operation ends whatever the result. */
+    if (oaep->label != NULL) {
+        XFREE(oaep->label, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        oaep->label = NULL;
     }
 
     return ret;
@@ -17713,11 +17843,9 @@ int WP11_RsaOaep_PrivateDecrypt(unsigned char* in, word32 inLen,
     if (priv->onToken)
         WP11_Lock_UnlockRW(priv->lock);
 
-    if (ret == 0) {
-        if (oaep->label != NULL) {
-            XFREE(oaep->label, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-            oaep->label = NULL;
-        }
+    if (oaep->label != NULL) {
+        XFREE(oaep->label, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        oaep->label = NULL;
     }
     (void)slot;
 
@@ -19001,6 +19129,8 @@ int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
                     !WP11_KeyType_IsSecret(saltKey->type) ||
                     saltKey->data.symmKey == NULL)
                     return CKR_MECHANISM_PARAM_INVALID;
+                if (WP11_Object_KeyState(saltKey) != 0)
+                    return BAD_STATE_E;
                 salt = saltKey->data.symmKey->data;
                 saltLen = saltKey->data.symmKey->len;
                 break;
@@ -19043,6 +19173,127 @@ int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
 }
 
 #endif
+
+/* Call with the object lock held when the key is on the token. */
+static int wp11_Concat_KeyState(WP11_Object* key)
+{
+    int ret;
+
+    if (key->objClass != CKO_SECRET_KEY || key->data.symmKey == NULL)
+        ret = BAD_FUNC_ARG;
+    else
+        ret = wp11_Object_KeyStateLocked(key);
+#ifdef WOLFSSL_STM32U5_DHUK
+    if (ret == 0 && key->dhukIvLen > 0)
+        ret = NOT_AVAILABLE_E;
+#endif
+
+    return ret;
+}
+
+/**
+ * Get the length of a secret key's value for concatenation.
+ *
+ * @param  key  [in]   Secret key object.
+ * @param  len  [out]  Length of the key value in bytes.
+ * @return  BAD_FUNC_ARG when the object is not a secret key.
+ *          BAD_STATE_E when the key value is not decoded.
+ *          NOT_AVAILABLE_E when the key value is wrapped by hardware.
+ *          0 on success.
+ */
+int WP11_Concat_KeyLen(WP11_Object* key, word32* len)
+{
+    int ret;
+
+    if (key == NULL || len == NULL)
+        return BAD_FUNC_ARG;
+
+    if (key->onToken)
+        WP11_Lock_LockRO(key->lock);
+    ret = wp11_Concat_KeyState(key);
+    if (ret == 0)
+        *len = key->data.symmKey->len;
+    if (key->onToken)
+        WP11_Lock_UnlockRO(key->lock);
+
+    return ret;
+}
+
+/* Append up to outLen leading bytes of a secret key's value to out. */
+static int wp11_Concat_Key(WP11_Object* key, byte* out, word32 outLen,
+                           word32* used)
+{
+    int ret;
+    word32 len;
+
+    if (key->onToken)
+        WP11_Lock_LockRO(key->lock);
+    ret = wp11_Concat_KeyState(key);
+    if (ret == 0) {
+        len = key->data.symmKey->len;
+        if (len > outLen)
+            len = outLen;
+        if (len > 0)
+            XMEMCPY(out, key->data.symmKey->data, len);
+        *used += len;
+    }
+    if (key->onToken)
+        WP11_Lock_UnlockRO(key->lock);
+
+    return ret;
+}
+
+/**
+ * Concatenate a secret key's value with another key's value or with data.
+ *
+ * @param  base       [in]   Base secret key object.
+ * @param  other      [in]   Key appended to the base key. NULL to use data.
+ * @param  data       [in]   Data to concatenate with the base key.
+ * @param  dataLen    [in]   Length of data in bytes.
+ * @param  dataFirst  [in]   Data goes before the base key value when set.
+ * @param  out        [out]  Buffer to hold the leading outLen bytes.
+ * @param  outLen     [in]   Number of bytes to output.
+ * @return  BAD_FUNC_ARG when an object is not a secret key or the
+ *          concatenation is shorter than outLen.
+ *          BAD_STATE_E when a key value is not decoded.
+ *          NOT_AVAILABLE_E when a key value is wrapped by hardware.
+ *          0 on success.
+ */
+int WP11_Concat_Derive(WP11_Object* base, WP11_Object* other,
+                       const byte* data, word32 dataLen, int dataFirst,
+                       byte* out, word32 outLen)
+{
+    int ret;
+    word32 used = 0;
+    word32 len;
+
+    if (base == NULL || out == NULL ||
+            (other == NULL && data == NULL && dataLen > 0))
+        return BAD_FUNC_ARG;
+
+    if (other == NULL && dataFirst) {
+        len = (dataLen < outLen) ? dataLen : outLen;
+        if (len > 0)
+            XMEMCPY(out, data, len);
+        used = len;
+    }
+    ret = wp11_Concat_Key(base, out + used, outLen - used, &used);
+    if (ret == 0 && other != NULL) {
+        ret = wp11_Concat_Key(other, out + used, outLen - used, &used);
+    }
+    else if (ret == 0 && !dataFirst) {
+        len = outLen - used;
+        if (dataLen < len)
+            len = dataLen;
+        if (len > 0)
+            XMEMCPY(out + used, data, len);
+        used += len;
+    }
+
+    if (ret == 0 && used != outLen)
+        ret = BAD_FUNC_ARG;
+    return ret;
+}
 
 #ifndef NO_DH
 /**
@@ -21485,6 +21736,7 @@ int WP11_Digest_Update(unsigned char* data, word32 dataLen,
 * @param  key      [in]  Key to be digested.
 * @param  session  [in]  Session object with the Digest object.
 * @return  CKR_KEY_INDIGESTIBLE when the key is not a secret key value.
+*          BAD_STATE_E when the key value is not decoded.
 *          -ve on failure.
 *          0 on success.
 */
@@ -21498,18 +21750,20 @@ int WP11_Digest_Key(WP11_Object* key, WP11_Session* session)
             !WP11_KeyType_IsSecret(key->type) || key->data.symmKey == NULL) {
         return (int)CKR_KEY_INDIGESTIBLE;
     }
-    if (key->encoded)
-        return BAD_FUNC_ARG;
     if (key->onToken) {
         WP11_Lock_LockRO(key->lock);
     }
-    ret = wc_HashUpdate(&digest->hash, digest->hashType,
-                        key->data.symmKey->data, key->data.symmKey->len);
+    ret = wp11_Object_KeyStateLocked(key);
+    if (ret == 0) {
+        ret = wc_HashUpdate(&digest->hash, digest->hashType,
+                            key->data.symmKey->data, key->data.symmKey->len);
+        /* A hash context holding key bytes must not leave the token. */
+        if (ret == 0)
+            digest->keyDigested = 1;
+    }
     if (key->onToken) {
         WP11_Lock_UnlockRO(key->lock);
     }
-    /* The hash context now holds key bytes: it must not leave the token. */
-    digest->keyDigested = 1;
 #else
     (void) session;
     (void) key;

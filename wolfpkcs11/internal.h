@@ -353,6 +353,8 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #define WP11_MAX_SYM_KEY_SZ            (2048)
 #elif !defined(NO_DH)
 #define WP11_MAX_SYM_KEY_SZ            (4096/8)
+#elif defined(WOLFPKCS11_MLKEM)
+#define WP11_MAX_SYM_KEY_SZ            256
 #elif defined(HAVE_ECC)
 #define WP11_MAX_SYM_KEY_SZ            ((521+7)/8)
 #else
@@ -572,6 +574,8 @@ WP11_LOCAL int WP11_Object_OnToken(WP11_Object* object);
 WP11_LOCAL void WP11_Object_Persist(WP11_Object* object);
 WP11_LOCAL int WP11_KeyType_IsSecret(CK_KEY_TYPE type);
 WP11_LOCAL CK_KEY_TYPE WP11_Object_GetType(WP11_Object* object);
+WP11_LOCAL WP11_Slot* WP11_Object_GetSlot(WP11_Object* object);
+WP11_LOCAL int WP11_Object_KeyState(WP11_Object* object);
 WP11_LOCAL CK_ULONG WP11_Object_GetDevId(WP11_Object* object);
 
 WP11_LOCAL int WP11_Object_SetRsaKey(WP11_Object* object, unsigned char** data,
@@ -720,6 +724,10 @@ WP11_LOCAL int WP11_GenerateRandomKey(WP11_Object* secret, WP11_Slot* slot,
 
 WP11_LOCAL int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
                     unsigned char* key, word32* keyLen, WP11_Object* priv);
+WP11_LOCAL int WP11_Concat_KeyLen(WP11_Object* key, word32* len);
+WP11_LOCAL int WP11_Concat_Derive(WP11_Object* base, WP11_Object* other,
+                                  const byte* data, word32 dataLen,
+                                  int dataFirst, byte* out, word32 outLen);
 
 WP11_LOCAL int WP11_Tls12_Master_Key_Derive(CK_SSL3_RANDOM_DATA* random,
                                  CK_MECHANISM_TYPE mech, const char* label,
