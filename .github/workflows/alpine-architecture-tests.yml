@@ -45,7 +45,7 @@ jobs:
       run: |
         mkdir -p "$RUNNER_TEMP/apk-tools"
         cd "$RUNNER_TEMP/apk-tools"
-        curl -fsSL --retry 3 -o apk-tools-static.apk "$APK_TOOLS_STATIC_URL"
+        curl -fsSL --retry 3 --retry-all-errors --connect-timeout 10 --max-time 120 -o apk-tools-static.apk "$APK_TOOLS_STATIC_URL"
         tar -xzf apk-tools-static.apk sbin/apk.static
         nohup python3 -m http.server 8099 --bind 127.0.0.1 --directory sbin \
             > http-server.log 2>&1 &
