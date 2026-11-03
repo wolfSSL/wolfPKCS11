@@ -199,6 +199,11 @@ versions may need to update templates or error-handling:
   `C_SetAttributeValue` of `CKA_KEY_TYPE` on them returns
   `CKR_ATTRIBUTE_TYPE_INVALID`.
 
+One known gap remains: `CKM_RSA_PKCS_OAEP` does not support an empty message,
+although PKCS#11 and RFC 8017 allow one. wolfCrypt rejects it on both sides, so
+`C_Encrypt` of 0 bytes returns `CKR_FUNCTION_FAILED` and `C_Decrypt` of a valid
+OAEP ciphertext of an empty message returns `CKR_ENCRYPTED_DATA_INVALID`.
+
 #### Analog Devices, Inc. MAXQ10xx Secure Elements ([MAXQ1065](https://www.analog.com/en/products/maxq1065.html)/MAXQ1080)
 
 Support has been added to use the MAXQ10xx hardware for cryptographic operations
