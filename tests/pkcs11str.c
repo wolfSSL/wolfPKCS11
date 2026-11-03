@@ -1357,14 +1357,17 @@ static CK_RV pkcs11_test(int slotId, int setPin, int closeDl)
             }
 #endif
             (void)genericKeyType;
+            (void)pub;
 #ifndef NO_AES
     #ifdef HAVE_AESGCM
             (void)aes_128_gcm_exp_tag;
             (void)aes_128_gcm_exp;
     #endif
+    #ifndef NO_AES_CBC
             (void)aes_128_cbc_pad_exp;
             (void)aes_128_cbc_exp;
             (void)aes_128_cbc_encrypt_exp;
+    #endif
     #ifdef HAVE_AESCTS
             (void)aes_128_cts_exp;
     #endif

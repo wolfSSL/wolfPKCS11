@@ -1855,6 +1855,7 @@ static CK_RV test_pkcs5_pbkdf2_key_gen(void* args)
         ret = CKR_OK; /* Reset for next test */
     }
 
+#ifndef NO_AES
     /* Test with different key types from template */
     if (ret == CKR_OK) {
         CK_KEY_TYPE testAesKeyType = CKK_AES;
@@ -1888,7 +1889,9 @@ static CK_RV test_pkcs5_pbkdf2_key_gen(void* args)
             key = CK_INVALID_HANDLE;
         }
     }
+#endif
 
+#ifdef WOLFPKCS11_HKDF
     /* Test with HKDF key type from template */
     if (ret == CKR_OK) {
         CK_KEY_TYPE testHkdfKeyType = CKK_HKDF;
@@ -1908,6 +1911,7 @@ static CK_RV test_pkcs5_pbkdf2_key_gen(void* args)
             key = CK_INVALID_HANDLE;
         }
     }
+#endif
 
     /* Test with NULL salt */
     if (ret == CKR_OK) {
@@ -21429,9 +21433,9 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_nss_pkcs12_pbe_key_sizes),
 #endif
 #endif
+#endif
 #ifndef NO_HMAC
     PKCS11TEST_FUNC_SESS_DECL(test_pkcs5_pbkdf2_key_gen),
-#endif
 #endif
 #ifndef NO_SHA
     PKCS11TEST_FUNC_SESS_DECL(test_x509_check_value),
