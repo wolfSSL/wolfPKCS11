@@ -54,6 +54,13 @@
 
 #define PRF_KEY_SIZE            48
 
+/* Derive mechanisms that build their output into a secret key object. */
+#if defined(HAVE_ECC) || !defined(NO_DH) || defined(WOLFPKCS11_HKDF) || \
+    (!defined(NO_AES) && defined(HAVE_AES_CBC)) || \
+    defined(WOLFSSL_HAVE_PRF) || defined(WOLFPKCS11_CONCATENATE)
+    #define WP11_DERIVE_SECRET_KEY
+#endif
+
 /* Check that a CK_ULONG value fits in word32 with room for overhead such as
  * authentication tags, key wrap blocks, or padding. On LP64 platforms CK_ULONG
  * is 64-bit but wolfCrypt functions use word32/int for lengths. */
@@ -650,6 +657,7 @@ static CK_RV SetInitialStates(WP11_Object* key)
     return rv;
 }
 
+#ifdef WP11_DERIVE_SECRET_KEY
 /* PKCS#11 derive rules: the historical flags also need the base key's. */
 static CK_RV SetDerivedStates(WP11_Object* key, CK_BBOOL baseAlwaysSensitive,
                               CK_BBOOL baseNeverExtractable)
@@ -678,6 +686,7 @@ static CK_RV SetDerivedStates(WP11_Object* key, CK_BBOOL baseAlwaysSensitive,
     }
     return rv;
 }
+#endif
 
 static CK_RV TemplateHasAttribute(CK_ATTRIBUTE_TYPE type,
         CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount)
@@ -10164,6 +10173,7 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
     return rv;
 }
 
+#ifdef WP11_DERIVE_SECRET_KEY
 /**
  * Determine the key length of the object.
  *
@@ -10213,6 +10223,7 @@ static int SymmKeyLen(WP11_Object* obj, word32 len, CK_ULONG* symmKeyLen)
 
     return ret;
 }
+#endif
 
 #ifdef WOLFSSL_HAVE_PRF
 static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
@@ -10365,6 +10376,7 @@ static int Tls12_Extract_Keys(WP11_Session* session,
 }
 #endif
 
+#ifdef WOLFPKCS11_CONCATENATE
 static CK_RV ConcatKeyRv(WP11_Session* session, int ret)
 {
     if (ret == 0)
@@ -10394,6 +10406,7 @@ static int ConcatCutsProtectedKey(WP11_Object* key, CK_ULONG off,
         extractable = CK_FALSE;
     return sensitive == CK_TRUE || extractable == CK_FALSE;
 }
+#endif
 
 /**
  * Generate a symmetric key into a new key object.
@@ -10437,6 +10450,7 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
     CK_RV rv = CKR_OK;
     WP11_Session* session;
     WP11_Object* obj = NULL;
+#ifdef WP11_DERIVE_SECRET_KEY
     WP11_Object* otherKey = NULL;
     byte* derivedKey = NULL;
     word32 keyLen;
@@ -10462,6 +10476,7 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
     CK_ULONG reqValueLen = 0;
 #if !defined(NO_AES) && !defined(WOLFPKCS11_NSS)
     CK_ATTRIBUTE* keyTypeAttr = NULL;
+#endif
 #endif
 #ifndef NO_DH
     CK_ULONG dhPrimeLen = 0;
@@ -10873,6 +10888,7 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
         }
 #endif
 #endif
+#ifdef WOLFPKCS11_CONCATENATE
         case CKM_CONCATENATE_BASE_AND_KEY:
         case CKM_CONCATENATE_BASE_AND_DATA:
         case CKM_CONCATENATE_DATA_AND_BASE: {
@@ -10982,11 +10998,13 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
             rv = ConcatKeyRv(session, ret);
             break;
         }
+#endif
         default:
             (void)ulAttributeCount;
             return CKR_MECHANISM_INVALID;
     }
 
+#ifdef WP11_DERIVE_SECRET_KEY
     if ((ret == 0) && (derivedKey != NULL)) {
         /* F-4533: read the base key's protection bits while `obj' still
          * refers to it, before CreateObject reuses `obj' for the new key. */
@@ -11132,6 +11150,7 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
         wc_ForceZero(derivedKey, keyLen);
         XFREE(derivedKey, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     }
+#endif
 
     return rv;
 }

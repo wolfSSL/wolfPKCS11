@@ -336,6 +336,16 @@ then
     AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_HKDF"
 fi
 
+AC_ARG_ENABLE([concatenate],
+    [AS_HELP_STRING([--enable-concatenate],[Enable CKM_CONCATENATE_* key derivation (default: enabled)])],
+    [ ENABLED_CONCATENATE=$enableval ],
+    [ ENABLED_CONCATENATE=yes ]
+    )
+if test "$ENABLED_CONCATENATE" = "yes"
+then
+    AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_CONCATENATE"
+fi
+
 AC_ARG_ENABLE([pbkdf2],
     [AS_HELP_STRING([--enable-pbkdf2],[Enable internal PBKDF2 for PIN hashing (default: disabled)])],
     [ ENABLED_PBKDF2=$enableval ],
@@ -851,6 +861,7 @@ echo "   * RSA-PSS:                    $ENABLED_RSAPSS"
 echo "   * DH:                         $ENABLED_DH"
 echo "   * ECC:                        $ENABLED_ECC"
 echo "   * HKDF:                       $ENABLED_HKDF"
+echo "   * Concatenate derive:         $ENABLED_CONCATENATE"
 echo "   * ML-DSA:                     $ENABLED_MLDSA"
 echo "   * ML-KEM:                     $ENABLED_MLKEM"
 echo "   * LMS/HSS verify:             $ENABLED_LMS"

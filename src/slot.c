@@ -497,9 +497,11 @@ static CK_MECHANISM_TYPE mechanismList[] = {
     CKM_TLS_MAC,
 #endif
     CKM_GENERIC_SECRET_KEY_GEN,
+#ifdef WOLFPKCS11_CONCATENATE
     CKM_CONCATENATE_BASE_AND_KEY,
     CKM_CONCATENATE_BASE_AND_DATA,
     CKM_CONCATENATE_DATA_AND_BASE,
+#endif
 #ifndef NO_HMAC
     CKM_PKCS5_PBKD2
 #endif
@@ -912,9 +914,11 @@ static CK_MECHANISM_INFO sha3MechInfo = {
 static CK_MECHANISM_INFO genSecKeyGenMechInfo = {
     8, WP11_MAX_SYM_KEY_SZ * 8, CKF_GENERATE
 };
+#ifdef WOLFPKCS11_CONCATENATE
 static CK_MECHANISM_INFO concatMechInfo = {
     8, WP11_MAX_SYM_KEY_SZ * 8, CKF_DERIVE
 };
+#endif
 
 #ifndef NO_HMAC
 static CK_MECHANISM_INFO pkcs5Pbkdf2MechInfo = {
@@ -1299,11 +1303,13 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
             XMEMCPY(pInfo, &genSecKeyGenMechInfo,
                     sizeof(CK_MECHANISM_INFO));
             break;
+#ifdef WOLFPKCS11_CONCATENATE
         case CKM_CONCATENATE_BASE_AND_KEY:
         case CKM_CONCATENATE_BASE_AND_DATA:
         case CKM_CONCATENATE_DATA_AND_BASE:
             XMEMCPY(pInfo, &concatMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
+#endif
 #ifndef NO_HMAC
         case CKM_PKCS5_PBKD2:
             XMEMCPY(pInfo, &pkcs5Pbkdf2MechInfo,

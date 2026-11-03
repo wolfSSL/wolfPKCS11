@@ -311,6 +311,7 @@ cmake -DCMAKE_PREFIX_PATH=/path/to/wolfssl/install ..
 | `WOLFPKCS11_AESCMAC` | `no` | AES-CMAC support |
 | `WOLFPKCS11_HMAC` | `yes` | HMAC support |
 | `WOLFPKCS11_HKDF` | `yes` | HKDF support |
+| `WOLFPKCS11_CONCATENATE` | `yes` | `CKM_CONCATENATE_*` key derivation |
 | `WOLFPKCS11_PBKDF2` | `no` | PBKDF2 for PIN hashing |
 | `PBKDF2_ITERATIONS` | `600000` | PBKDF2 iteration count (used when `WOLFPKCS11_PBKDF2=yes`) |
 | `WOLFPKCS11_MD5` | `yes` | MD5 support |
