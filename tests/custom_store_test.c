@@ -21,15 +21,17 @@
  * The library sources are built into this test with WOLFPKCS11_CUSTOM_STORE,
  * and the test implements the store in memory. It is built twice:
  *  - custom_store_test, with WOLFPKCS11_CUSTOM_STORE_CLOSE_COMMIT, checks that
- *    a record whose commit fails, or whose write fails, fails the create, that
- *    a failed write closes the record with commit set to 0, that a failed
- *    commit fails a destroy, and that the next store writes the records of
- *    every object again,
+ *    a record whose commit fails, with any code, or whose write fails, fails
+ *    the create, that a failed write closes the record with commit set to 0,
+ *    that a failed commit fails a destroy, and that the next store writes the
+ *    records of every object again,
  *  - custom_store_legacy_test, without it, checks that a store implementing
  *    only wolfPKCS11_Store_Close() still builds and keeps token objects.
  * Both check that a record that fails to open for writing fails the create
- * with CKR_FUNCTION_FAILED, whatever code the store returns, and that a record
- * that fails to open, for writing or reading, is not closed.
+ * with CKR_FUNCTION_FAILED, whatever code the store returns, that a failed
+ * remove fails the destroy, that any failed read or open for reading fails
+ * loading the token, and that a record that fails to open, for writing or
+ * reading, is not closed.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -92,11 +94,20 @@ static StoreRecord records[STORE_RECORDS];
 static int commitCnt;           /* Commits tried */
 static int openCnt;             /* Opens for writing tried */
 static int writeCnt;            /* Writes tried */
+static int readOpenCnt;         /* Opens for reading tried */
+static int readCnt;             /* Reads tried */
+static int removeCnt;           /* Removes tried */
 static int discardCnt;          /* Written records closed without commit */
 static int nullCloseCnt;        /* Closes of a store that was not opened */
+static int injectCnt;           /* Failures injected */
 static int failCommitAt = -1;   /* Commit to fail, counted by commitCnt */
 static int failOpenAt = -1;     /* Open to fail, counted by openCnt */
 static int failWriteAt = -1;    /* Write to fail, counted by writeCnt */
+static int failReadOpenAt = -1; /* Open to fail, counted by readOpenCnt */
+static int failReadAt = -1;     /* Read to fail, counted by readCnt */
+static int failRemoveAt = -1;   /* Remove to fail, counted by removeCnt */
+static int failCommitCode = STORE_FAIL_E;   /* Code of a failed commit */
+static int failOpenCode = STORE_FAIL_E;     /* Code of a failed write open */
 
 static StoreRecord* store_find(int type, CK_ULONG id1, CK_ULONG id2)
 {
@@ -152,7 +163,8 @@ static int store_close(void* store, int commit)
         }
         else if (commitCnt++ == failCommitAt) {
             /* As a failed flash commit: the record keeps its old data. */
-            ret = STORE_FAIL_E;
+            injectCnt++;
+            ret = failCommitCode;
         }
         else {
             ret = store_commit(handle);
@@ -170,10 +182,16 @@ int wolfPKCS11_Store_Open(int type, CK_ULONG id1, CK_ULONG id2, int read,
     StoreHandle* handle;
 
     *store = NULL;
+    if (read && readOpenCnt++ == failReadOpenAt) {
+        injectCnt++;
+        return STORE_FAIL_E;
+    }
     if (read && rec == NULL)
         return NOT_AVAILABLE_E;
-    if (!read && openCnt++ == failOpenAt)
-        return STORE_FAIL_E;
+    if (!read && openCnt++ == failOpenAt) {
+        injectCnt++;
+        return failOpenCode;
+    }
     handle = (StoreHandle*)calloc(1, sizeof(*handle));
     if (handle == NULL)
         return STORE_FAIL_E;
@@ -194,6 +212,10 @@ int wolfPKCS11_Store_Remove(int type, CK_ULONG id1, CK_ULONG id2)
 {
     StoreRecord* rec = store_find(type, id1, id2);
 
+    if (removeCnt++ == failRemoveAt) {
+        injectCnt++;
+        return STORE_FAIL_E;
+    }
     if (rec == NULL)
         return NOT_AVAILABLE_E;
     free(rec->data);
@@ -219,6 +241,10 @@ int wolfPKCS11_Store_Read(void* store, unsigned char* buffer, int len)
 
     if (handle == NULL || !handle->read || len < 0)
         return STORE_FAIL_E;
+    if (readCnt++ == failReadAt) {
+        injectCnt++;
+        return STORE_FAIL_E;
+    }
     if (len > handle->len - handle->pos)
         len = handle->len - handle->pos;
     if (len > 0)
@@ -234,8 +260,10 @@ int wolfPKCS11_Store_Write(void* store, unsigned char* buffer, int len)
 
     if (handle == NULL || handle->read || len < 0)
         return STORE_FAIL_E;
-    if (writeCnt++ == failWriteAt)
+    if (writeCnt++ == failWriteAt) {
+        injectCnt++;
         return STORE_FAIL_E;
+    }
     data = (unsigned char*)realloc(handle->data, handle->len + len + 1);
     if (data == NULL)
         return STORE_FAIL_E;
@@ -390,7 +418,6 @@ static CK_RV create_obj(CK_SESSION_HANDLE session, const char* name)
         sizeof(tmpl) / sizeof(tmpl[0]), &obj);
 }
 
-#ifdef WOLFPKCS11_CUSTOM_STORE_CLOSE_COMMIT
 /* Destroy the token object with the name as label. */
 static CK_RV destroy_obj(CK_SESSION_HANDLE session, const char* name)
 {
@@ -413,7 +440,6 @@ static CK_RV destroy_obj(CK_SESSION_HANDLE session, const char* name)
         rv = funcList->C_DestroyObject(session, obj);
     return rv;
 }
-#endif
 
 /* Find the token object with the name as label, and check its value.
  * Returns the number found, or -1 on a wrong value. */
@@ -460,6 +486,54 @@ static int count_token_objects(CK_SESSION_HANDLE session)
     return (int)cnt;
 }
 
+/* Load the token and check that exactly the kept objects load back. Returns
+ * the number of reads and of opens for reading that loading took. */
+static int load_kept(const char** kept, int keptCnt, int* reads, int* opens)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session;
+    int startReads = readCnt;
+    int startOpens = readOpenCnt;
+    int i;
+
+    rv = pkcs11_init();
+    CHECK_RV(rv, "Initialize again");
+    *reads = readCnt - startReads;
+    *opens = readOpenCnt - startOpens;
+    rv = open_user_session(&session);
+    CHECK_RV(rv, "Open user session again");
+    CHECK(count_token_objects(session) == keptCnt, "Object count");
+    for (i = 0; i < keptCnt; i++)
+        CHECK(find_obj(session, kept[i]) == 1, "Object loaded");
+    (void)funcList->C_Logout(session);
+    (void)funcList->C_CloseSession(session);
+    (void)funcList->C_Finalize(NULL);
+    return 0;
+}
+
+/* Fail each of the store calls that loading the token makes, one per load,
+ * and check that every load fails. */
+static int load_fails(int* failAt, const int* callCnt, int calls,
+    const char* msg)
+{
+    CK_RV rv;
+    int i;
+
+    for (i = 0; i < calls; i++) {
+        injectCnt = 0;
+        *failAt = *callCnt + i;
+        rv = pkcs11_init();
+        *failAt = -1;
+        if (rv == CKR_OK)
+            (void)funcList->C_Finalize(NULL);
+        CHECK(injectCnt == 1, "Failure injected while loading");
+        if (rv == CKR_OK)
+            fprintf(stderr, "Store call %d of %d while loading\n", i, calls);
+        CHECK(rv != CKR_OK, msg);
+    }
+    return 0;
+}
+
 static int custom_store_test(void)
 {
     CK_RV rv;
@@ -469,7 +543,8 @@ static int custom_store_test(void)
     int keptCnt;
     int commits;
     int discards = 0;
-    int i;
+    int reads;
+    int opens;
 
     rv = pkcs11_init();
     CHECK_RV(rv, "Initialize");
@@ -502,6 +577,27 @@ static int custom_store_test(void)
     CHECK(rv == CKR_FUNCTION_FAILED, "Failed open fails the create");
     CHECK(find_obj(session, "objY") == 0, "Failed create not added");
     CHECK(nullCloseCnt == 0, "Record that did not open not closed");
+
+    /* NOT_AVAILABLE_E from an open for writing fails the create too, rather
+     * than reading as storage turned off. */
+    failOpenAt = openCnt;
+    failOpenCode = NOT_AVAILABLE_E;
+    rv = create_obj(session, "objZ");
+    failOpenAt = -1;
+    failOpenCode = STORE_FAIL_E;
+    CHECK(rv == CKR_FUNCTION_FAILED, "Unavailable open fails the create");
+    CHECK(find_obj(session, "objZ") == 0, "Failed create not added");
+
+    /* objR's records fail to be removed when it is destroyed. */
+    rv = create_obj(session, "objR");
+    CHECK_RV(rv, "Create objR");
+    failRemoveAt = removeCnt;
+    rv = destroy_obj(session, "objR");
+    failRemoveAt = -1;
+    CHECK(rv == CKR_FUNCTION_FAILED, "Failed remove fails the destroy");
+    CHECK(find_obj(session, "objR") == 0, "Destroyed object removed");
+    /* Creating objR wrote every object, after the failures above. */
+    commits = object_commits(0);
 
 #ifdef WOLFPKCS11_CUSTOM_STORE_CLOSE_COMMIT
     /* The first record of objC does not commit, so the create fails. */
@@ -542,6 +638,16 @@ static int custom_store_test(void)
     failCommitAt = -1;
     CHECK(rv == CKR_FUNCTION_FAILED, "Failed commit fails the destroy");
     CHECK(find_obj(session, "objE") == 0, "Destroyed object removed");
+
+    /* NOT_AVAILABLE_E from a commit fails the create too, rather than
+     * reading as storage turned off. */
+    failCommitAt = commitCnt;
+    failCommitCode = NOT_AVAILABLE_E;
+    rv = create_obj(session, "objH");
+    failCommitAt = -1;
+    failCommitCode = STORE_FAIL_E;
+    CHECK(rv == CKR_FUNCTION_FAILED, "Unavailable commit fails the create");
+    CHECK(find_obj(session, "objH") == 0, "Failed create not added");
 #endif
     /* Records written without a failure are closed with commit of 1. */
     CHECK(discardCnt == discards, "No other record discarded");
@@ -551,16 +657,24 @@ static int custom_store_test(void)
     (void)funcList->C_Finalize(NULL);
 
     /* The objects load back from the store. */
-    rv = pkcs11_init();
-    CHECK_RV(rv, "Initialize again");
-    rv = open_user_session(&session);
-    CHECK_RV(rv, "Open user session again");
-    CHECK(count_token_objects(session) == keptCnt, "Object count");
-    for (i = 0; i < keptCnt; i++)
-        CHECK(find_obj(session, kept[i]) == 1, "Object loaded");
-    (void)funcList->C_Logout(session);
-    (void)funcList->C_CloseSession(session);
-    (void)funcList->C_Finalize(NULL);
+    if (load_kept(kept, keptCnt, &reads, &opens) != 0)
+        return -1;
+
+    /* Any read, or open for reading, that fails while loading fails the
+     * load. A failed read must not read as the end of a record in an older
+     * format, which would load it without the fields after that point. */
+    if (load_fails(&failReadAt, &readCnt, reads,
+            "Failed read fails the load") != 0) {
+        return -1;
+    }
+    if (load_fails(&failReadOpenAt, &readOpenCnt, opens,
+            "Failed open fails the load") != 0) {
+        return -1;
+    }
+    CHECK(nullCloseCnt == 0, "Record that did not open not closed");
+    /* The failed loads left the store as it was. */
+    if (load_kept(kept, keptCnt, &reads, &opens) != 0)
+        return -1;
 
     /* A data record that is missing does not open for reading. Loading the
      * token fails, and the record is not closed. */
@@ -568,6 +682,7 @@ static int custom_store_test(void)
     rv = pkcs11_init();
     if (rv == CKR_OK)
         (void)funcList->C_Finalize(NULL);
+    CHECK(rv != CKR_OK, "Missing record fails the load");
     CHECK(nullCloseCnt == 0, "Record that did not open not closed");
 
     return 0;

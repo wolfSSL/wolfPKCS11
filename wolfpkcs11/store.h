@@ -56,6 +56,9 @@
  * @return  0 on success.
  * @return  -4 when data not available.
  * @return  Other value to indicate failure.
+ *
+ * With a custom store (WOLFPKCS11_CUSTOM_STORE), any failure to open for
+ * writing, -4 included, fails the operation that writes.
  */
 WP11_LOCAL int wolfPKCS11_Store_Open(int type, CK_ULONG id1, CK_ULONG id2, int read,
     void** store);
