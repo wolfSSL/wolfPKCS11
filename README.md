@@ -128,6 +128,16 @@ Enables debugging printf's for store.
 Removes default implementation of storage functions.
 See wolfpkcs11/store.h for prototypes of functions to implement.
 
+#### Define WOLFPKCS11_CUSTOM_STORE_CLOSE_COMMIT
+
+With `WOLFPKCS11_CUSTOM_STORE`, records that were written are closed with
+`wolfPKCS11_Store_CloseCommit()` instead of `wolfPKCS11_Store_Close()`, so the
+custom store must implement it too (`wolfPKCS11_Store_Close()` still closes
+records that were read). It returns non-zero when the record did not commit,
+for example when a flash write failed. wolfPKCS11 then fails the operation and
+writes all records of the token on its next store. Without this define, the
+custom store cannot report a failed commit.
+
 #### Define WOLFPKCS11_KEYPAIR_GEN_COMMON_LABEL
 
 Sets the private key's label against the public key when generating key pairs.

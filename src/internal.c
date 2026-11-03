@@ -2999,7 +2999,7 @@ static int wolfPKCS11_Store_TpmCommit(WP11_TpmStore* tpmStore)
  * @return  0 on success.
  * @return  Other value when written data could not be committed.
  */
-static int wolfPKCS11_Store_CloseCommit(void* store, int commit)
+int wolfPKCS11_Store_CloseCommit(void* store, int commit)
 {
     int ret = 0;
 #ifdef WOLFPKCS11_TPM_STORE
@@ -3220,6 +3220,26 @@ int wolfPKCS11_Store_Write(void* store, unsigned char* buffer, int len)
 }
 #endif
 
+#ifdef WOLFPKCS11_CUSTOM_STORE
+/*
+ * Maps a custom store's failure code to BUFFER_E.
+ * The store's own code could otherwise read as another status, such as
+ * PIN_INVALID_E.
+ *
+ * @param [in]  ret        Result of the store call.
+ * @param [in]  keepNotAv  1 to keep NOT_AVAILABLE_E, which means the data is
+ *                         not stored.
+ * @return  0, or NOT_AVAILABLE_E when kept, as passed in.
+ * @return  BUFFER_E for any other failure.
+ */
+static int wp11_storage_custom_ret(int ret, int keepNotAv)
+{
+    if (ret != 0 && (ret != NOT_AVAILABLE_E || !keepNotAv))
+        ret = BUFFER_E;
+    return ret;
+}
+#endif
+
 /*
  * Opens access to location to read token data.
  *
@@ -3236,7 +3256,12 @@ int wolfPKCS11_Store_Write(void* store, unsigned char* buffer, int len)
 static int wp11_storage_open_readonly(int type, CK_ULONG id1, CK_ULONG id2,
                               void** storage)
 {
-    return wolfPKCS11_Store_Open(type, id1, id2, 1, storage);
+    int ret = wolfPKCS11_Store_Open(type, id1, id2, 1, storage);
+
+#ifdef WOLFPKCS11_CUSTOM_STORE
+    ret = wp11_storage_custom_ret(ret, 1);
+#endif
+    return ret;
 }
 
 /*
@@ -3257,14 +3282,28 @@ static int wp11_storage_open(int type, CK_ULONG id1, CK_ULONG id2,
 #ifdef WOLFPKCS11_TPM_STORE
     return wolfPKCS11_Store_OpenSz(type, id1, id2, 0, variableSz, storage);
 #else
+    int ret;
+
     (void)variableSz; /* not used */
-    return wolfPKCS11_Store_Open(type, id1, id2, 0, storage);
+    ret = wolfPKCS11_Store_Open(type, id1, id2, 0, storage);
+#ifdef WOLFPKCS11_CUSTOM_STORE
+    /* NOT_AVAILABLE_E fails too: it would read as storage turned off, and the
+     * data would not be stored. */
+    ret = wp11_storage_custom_ret(ret, 0);
+#endif
+    return ret;
 #endif
 }
 
 static int wp11_storage_remove(int type, CK_ULONG id1, CK_ULONG id2)
 {
-    return wolfPKCS11_Store_Remove(type, id1, id2);
+    int ret = wolfPKCS11_Store_Remove(type, id1, id2);
+
+#ifdef WOLFPKCS11_CUSTOM_STORE
+    /* NOT_AVAILABLE_E is kept: there was nothing to remove. */
+    ret = wp11_storage_custom_ret(ret, 1);
+#endif
+    return ret;
 }
 
 /*
@@ -3289,11 +3328,19 @@ static void wp11_storage_close(void* storage)
  */
 static int wp11_storage_close_write(void* storage, int ret)
 {
-#ifdef WOLFPKCS11_CUSTOM_STORE
+#if defined(WOLFPKCS11_CUSTOM_STORE) && \
+    !defined(WOLFPKCS11_CUSTOM_STORE_CLOSE_COMMIT)
+    /* The store cannot report a failed commit. */
     wolfPKCS11_Store_Close(storage);
 #else
     int closeRet = wolfPKCS11_Store_CloseCommit(storage, ret == 0);
 
+#ifdef WOLFPKCS11_CUSTOM_STORE
+    /* Any failure means the data did not commit. A custom store's code could
+     * otherwise read as NOT_AVAILABLE_E, which means storage is turned off. */
+    if (closeRet != 0)
+        closeRet = BUFFER_E;
+#endif
     if (ret == 0)
         ret = closeRet;
 #endif
@@ -3351,6 +3398,14 @@ static int wp11_storage_read(void* storage, unsigned char* buffer, int len)
         /* Failed to read all data. */
         ret = BUFFER_E;
     }
+#ifdef WOLFPKCS11_CUSTOM_STORE
+    else {
+        /* A custom store's failure code could otherwise read as another
+         * status, such as PIN_INVALID_E. Not BUFFER_E: loaders take that as
+         * the end of a record in an older format. */
+        ret = WC_HW_E;
+    }
+#endif
 
     return ret;
 }
@@ -3425,8 +3480,9 @@ static int wp11_storage_write(void* storage, unsigned char* buffer, int len)
         /* All written successfully. */
         ret = 0;
     }
-    else if (ret == 0) {
-        /* Failed to write all data. */
+    else {
+        /* Failed to write all data. A custom store's failure code could
+         * otherwise read as another status, such as PIN_INVALID_E. */
         ret = BUFFER_E;
     }
 
@@ -4987,27 +5043,27 @@ static int wp11_Object_Load_Data(WP11_Object* object, int tokenId, int objId)
             &tempLen);
         if (ret == 0)
             object->data.genericData.dataLen = (word32)tempLen;
-    }
 
-    /* Read application length and application. */
-    if (ret == 0) {
-        ret = wp11_storage_read_alloc_array(storage,
-            &object->data.genericData.application,
-            &tempLen);
-        if (ret == 0)
-            object->data.genericData.applicationLen = (word32)tempLen;
-    }
+        /* Read application length and application. */
+        if (ret == 0) {
+            ret = wp11_storage_read_alloc_array(storage,
+                &object->data.genericData.application,
+                &tempLen);
+            if (ret == 0)
+                object->data.genericData.applicationLen = (word32)tempLen;
+        }
 
-    /* Read object ID length and object ID. */
-    if (ret == 0) {
-        ret = wp11_storage_read_alloc_array(storage,
-            &object->data.genericData.objectId,
-            &tempLen);
-        if (ret == 0)
-            object->data.genericData.objectIdLen = (word32)tempLen;
-    }
+        /* Read object ID length and object ID. */
+        if (ret == 0) {
+            ret = wp11_storage_read_alloc_array(storage,
+                &object->data.genericData.objectId,
+                &tempLen);
+            if (ret == 0)
+                object->data.genericData.objectIdLen = (word32)tempLen;
+        }
 
-    wp11_storage_close(storage);
+        wp11_storage_close(storage);
+    }
 
     return ret;
 }
@@ -5556,28 +5612,28 @@ static int wp11_Object_Store_Data(WP11_Object* object, int tokenId, int objId)
     /* Open access to data. */
     ret = wp11_storage_open(WOLFPKCS11_STORE_DATA, tokenId, objId,
         variableSz, &storage);
-    /* Write data length and data. */
     if (ret == 0) {
+        /* Write data length and data. */
         ret = wp11_storage_write_array(storage,
             object->data.genericData.data,
             object->data.genericData.dataLen);
-    }
 
-    /* Write application length and application. */
-    if (ret == 0) {
-        ret = wp11_storage_write_array(storage,
-            object->data.genericData.application,
-            object->data.genericData.applicationLen);
-    }
+        /* Write application length and application. */
+        if (ret == 0) {
+            ret = wp11_storage_write_array(storage,
+                object->data.genericData.application,
+                object->data.genericData.applicationLen);
+        }
 
         /* Write object ID length and object ID. */
-    if (ret == 0) {
-        ret = wp11_storage_write_array(storage,
-            object->data.genericData.objectId,
-            object->data.genericData.objectIdLen);
-    }
+        if (ret == 0) {
+            ret = wp11_storage_write_array(storage,
+                object->data.genericData.objectId,
+                object->data.genericData.objectIdLen);
+        }
 
-    ret = wp11_storage_close_write(storage, ret);
+        ret = wp11_storage_close_write(storage, ret);
+    }
 
     return ret;
 }

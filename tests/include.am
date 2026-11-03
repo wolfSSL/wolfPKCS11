@@ -408,6 +408,28 @@ noinst_PROGRAMS += tests/token_partial_store_test
 tests_token_partial_store_test_SOURCES = tests/token_partial_store_test.c
 tests_token_partial_store_test_LDADD =
 
+# The custom store tests build the library sources in, with the store in the
+# test, so they are built for make check only. See BUILD_CUSTOM_STORE_TEST in
+# configure.ac for when they are built.
+if BUILD_CUSTOM_STORE_TEST
+check_PROGRAMS += tests/custom_store_test
+tests_custom_store_test_SOURCES = tests/custom_store_test.c \
+                                  $(src_libwolfpkcs11_la_SOURCES)
+tests_custom_store_test_CFLAGS = -DBUILDING_WOLFPKCS11 \
+                                 -DWOLFPKCS11_CUSTOM_STORE \
+                                 -DWOLFPKCS11_CUSTOM_STORE_CLOSE_COMMIT \
+                                 $(AM_CFLAGS)
+tests_custom_store_test_LDADD =
+
+check_PROGRAMS += tests/custom_store_legacy_test
+tests_custom_store_legacy_test_SOURCES = tests/custom_store_test.c \
+                                         $(src_libwolfpkcs11_la_SOURCES)
+tests_custom_store_legacy_test_CFLAGS = -DBUILDING_WOLFPKCS11 \
+                                        -DWOLFPKCS11_CUSTOM_STORE \
+                                        $(AM_CFLAGS)
+tests_custom_store_legacy_test_LDADD =
+endif
+
 if !BUILD_STATIC_WOLFSSL
 check_PROGRAMS += tests/token_store_test
 check_PROGRAMS += tests/logout_retire_test

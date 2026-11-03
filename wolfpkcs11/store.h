@@ -56,6 +56,9 @@
  * @return  0 on success.
  * @return  -4 when data not available.
  * @return  Other value to indicate failure.
+ *
+ * With a custom store (WOLFPKCS11_CUSTOM_STORE), any failure to open for
+ * writing, -4 included, fails the operation that writes.
  */
 WP11_LOCAL int wolfPKCS11_Store_Open(int type, CK_ULONG id1, CK_ULONG id2, int read,
     void** store);
@@ -96,6 +99,23 @@ WP11_LOCAL int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int
  * @param [in]  store  Context for operation.
  */
 WP11_LOCAL void wolfPKCS11_Store_Close(void* store);
+
+/*
+ * Closes access to location being written and reports whether the written
+ * data was committed.
+ * Any dynamic memory associated with the store is freed here.
+ *
+ * A custom store (WOLFPKCS11_CUSTOM_STORE) implements this only when
+ * WOLFPKCS11_CUSTOM_STORE_CLOSE_COMMIT is defined. Otherwise records are
+ * closed with wolfPKCS11_Store_Close() and are taken to be committed.
+ *
+ * @param [in]  store   Context for operation.
+ * @param [in]  commit  1 to commit the written data. 0 when writing failed:
+ *                      the store discards the data when it can.
+ * @return  0 on success.
+ * @return  Other value when the written data was not committed.
+ */
+WP11_LOCAL int wolfPKCS11_Store_CloseCommit(void* store, int commit);
 
 /*
  * Reads a specific number of bytes into buffer.
