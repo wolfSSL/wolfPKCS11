@@ -666,8 +666,11 @@ OPTION_FLAGS="$CFLAGS $CPPFLAGS $AM_CFLAGS"
 
 # The custom store tests build the library with WOLFPKCS11_CUSTOM_STORE. NSS
 # needs the file store, and a custom store cannot be built with the TPM store.
+# Either macro may be defined with a value.
 AS_CASE([" $OPTION_FLAGS "],
-    [*" -DWOLFPKCS11_NSS "*|*" -DWOLFPKCS11_TPM_STORE "*],
+    [*" -DWOLFPKCS11_NSS "*|*" -DWOLFPKCS11_NSS="*],
+    [ENABLED_CUSTOM_STORE_TEST=no],
+    [*" -DWOLFPKCS11_TPM_STORE "*|*" -DWOLFPKCS11_TPM_STORE="*],
     [ENABLED_CUSTOM_STORE_TEST=no],
     [ENABLED_CUSTOM_STORE_TEST=yes])
 AM_CONDITIONAL([BUILD_CUSTOM_STORE_TEST],
