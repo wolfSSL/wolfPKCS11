@@ -152,6 +152,11 @@ noinst_PROGRAMS += tests/decrypt_final_bufsize_test
 tests_decrypt_final_bufsize_test_SOURCES = tests/decrypt_final_bufsize_test.c
 tests_decrypt_final_bufsize_test_LDADD =
 
+check_PROGRAMS += tests/single_part_op_state_test
+noinst_PROGRAMS += tests/single_part_op_state_test
+tests_single_part_op_state_test_SOURCES = tests/single_part_op_state_test.c
+tests_single_part_op_state_test_LDADD =
+
 check_PROGRAMS += tests/create_object_class_test
 noinst_PROGRAMS += tests/create_object_class_test
 tests_create_object_class_test_SOURCES = tests/create_object_class_test.c
@@ -476,6 +481,7 @@ tests_verify_recover_class_test_LDADD += src/libwolfpkcs11.la
 tests_login_another_user_test_LDADD += src/libwolfpkcs11.la
 tests_key_function_not_permitted_test_LDADD += src/libwolfpkcs11.la
 tests_decrypt_final_bufsize_test_LDADD += src/libwolfpkcs11.la
+tests_single_part_op_state_test_LDADD += src/libwolfpkcs11.la
 tests_create_object_class_test_LDADD += src/libwolfpkcs11.la
 tests_aead_null_aad_test_LDADD += src/libwolfpkcs11.la
 tests_gen_keypair_incomplete_test_LDADD += src/libwolfpkcs11.la
@@ -553,6 +559,7 @@ tests_verify_recover_class_test_LDADD += src/libwolfpkcs11.la
 tests_login_another_user_test_LDADD += src/libwolfpkcs11.la
 tests_key_function_not_permitted_test_LDADD += src/libwolfpkcs11.la
 tests_decrypt_final_bufsize_test_LDADD += src/libwolfpkcs11.la
+tests_single_part_op_state_test_LDADD += src/libwolfpkcs11.la
 tests_create_object_class_test_LDADD += src/libwolfpkcs11.la
 tests_aead_null_aad_test_LDADD += src/libwolfpkcs11.la
 tests_gen_keypair_incomplete_test_LDADD += src/libwolfpkcs11.la

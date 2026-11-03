@@ -568,9 +568,8 @@ out:
 #endif
 
 #if defined(TRACK_ALLOCS) && !defined(NO_AES) && defined(HAVE_AESGCM)
-/* Re-initializing AES-GCM must release, scrubbed, any data a previous GCM
- * operation left buffered on the session. */
-static void test_gcm_reinit_releases_buffer(void)
+/* Aborting AES-GCM must release, scrubbed, the data it buffered. */
+static void test_gcm_abort_releases_buffer(void)
 {
     CK_RV rv;
     CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
@@ -584,7 +583,7 @@ static void test_gcm_reinit_releases_buffer(void)
     long before;
     int hit;
 
-    printf("\n--- GCM re-init releases buffered data ---\n");
+    printf("\n--- GCM abort releases buffered data ---\n");
     XMEMSET(&gcmParams, 0, sizeof(gcmParams));
     gcmParams.pIv = gcmIv;
     gcmParams.ulIvLen = sizeof(gcmIv);
@@ -608,14 +607,14 @@ static void test_gcm_reinit_releases_buffer(void)
                                    out, &outLen);
     CHECK_RV(rv, "C_EncryptUpdate(AES-GCM)", CKR_OK);
     outLen = sizeof(out);
-    rv = funcList->C_Encrypt(session, gcmIv, sizeof(gcmIv), out, &outLen);
-    CHECK_RV(rv, "C_Encrypt(AES-GCM) ends the operation", CKR_OK);
-
     watch_start(plainMarker, sizeof(plainMarker));
+    rv = funcList->C_Encrypt(session, gcmIv, sizeof(gcmIv), out, &outLen);
+    CHECK_RV(rv, "C_Encrypt(AES-GCM) after an update ends the operation",
+             CKR_FUNCTION_FAILED);
     rv = funcList->C_EncryptInit(session, &gcmMech, aesKey);
     hit = watch_stop();
     CHECK_RV(rv, "C_EncryptInit(AES-GCM) again", CKR_OK);
-    CHECK_TRUE(!hit, "GCM re-init scrubs buffered data before release");
+    CHECK_TRUE(!hit, "GCM buffered data is scrubbed before release");
 
     rv = funcList->C_DestroyObject(session, aesKey);
     CHECK_RV(rv, "C_DestroyObject(AES)", CKR_OK);
@@ -624,7 +623,7 @@ static void test_gcm_reinit_releases_buffer(void)
     funcList->C_CloseSession(session);
     session = CK_INVALID_HANDLE;
     CHECK_TRUE(liveBlocks == before,
-               "GCM re-init leaves no allocation behind");
+               "GCM abort leaves no allocation behind");
 
 out:
     if (session != CK_INVALID_HANDLE)
@@ -1504,7 +1503,7 @@ static int run_test(void)
     test_failed_operation_scrubs_state();
 #endif
 #if defined(TRACK_ALLOCS) && !defined(NO_AES) && defined(HAVE_AESGCM)
-    test_gcm_reinit_releases_buffer();
+    test_gcm_abort_releases_buffer();
 #endif
 #if !defined(NO_AES) && defined(HAVE_AES_CBC)
     test_failed_key_setup_keeps_session_usable();

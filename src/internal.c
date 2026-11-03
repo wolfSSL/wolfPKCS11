@@ -568,6 +568,7 @@ struct WP11_Session {
     WP11_Session* next;                /* Next session for slot               */
     WP11_Object* retired;              /* Private objects invalidated by logout
                                         * and freed once nothing uses them    */
+    byte opUpdated;                    /* Multi-part update called on op      */
 };
 
 typedef struct WP11_Token {
@@ -1370,6 +1371,7 @@ static void wp11_Session_FreeOp(WP11_Session* session)
     wc_ForceZero(&session->params, sizeof(session->params));
     /* Ensure no stale bits remain after all cleanup. */
     session->init = 0;
+    session->opUpdated = 0;
 }
 
 /**
@@ -12436,6 +12438,29 @@ enum wc_HashType WP11_Session_ToHashType(WP11_Session* session)
 void WP11_Session_SetOpInitialized(WP11_Session* session, int init)
 {
     session->init = init;
+    session->opUpdated = 0;
+}
+
+/**
+ * Record that a multi-part update was called on the active operation.
+ *
+ * @param  session  [in]  Session object.
+ */
+void WP11_Session_SetOpUpdated(WP11_Session* session)
+{
+    session->opUpdated = 1;
+}
+
+/**
+ * Return whether a multi-part update was called on the active operation.
+ *
+ * @param  session  [in]  Session object.
+ * @return  1 when an update was called.
+ *          0 otherwise.
+ */
+int WP11_Session_IsOpUpdated(WP11_Session* session)
+{
+    return session->opUpdated;
 }
 
 /**
@@ -22380,7 +22405,7 @@ int WP11_GetOperationState(WP11_Session* session, unsigned char* stateData,
         default:
             return CKR_STATE_UNSAVEABLE;
     }
-    *stateDataLen = sizeof(session->mechanism) + mechSize;
+    *stateDataLen = sizeof(session->mechanism) + mechSize + 1;
 
     if (stateData == NULL)
         return CKR_OK;
@@ -22430,6 +22455,7 @@ int WP11_GetOperationState(WP11_Session* session, unsigned char* stateData,
             break;
 #endif
     }
+    stateData[mechSize] = session->opUpdated;
 
     return CKR_OK;
 }
@@ -22440,6 +22466,7 @@ int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
     unsigned long mechSize = 0;
     int hashType = WC_HASH_TYPE_NONE;
     int ret;
+    byte updated = 1;
     CK_MECHANISM_TYPE mechanism;
 #if defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX < 0x05007004
     wc_HashAlg* hashAlg;
@@ -22488,6 +22515,8 @@ int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
 
     if (stateDataLen < (sizeof(mechanism) + mechSize))
         return CKR_SAVED_STATE_INVALID;
+    if (stateDataLen > (sizeof(mechanism) + mechSize))
+        updated = stateData[sizeof(mechanism) + mechSize];
 
     stateData += sizeof(mechanism);
 
@@ -22514,7 +22543,9 @@ int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
         hashAlg = &session->params.digest.hash.alg;
     #endif
 
-    session->init = WP11_INIT_DIGEST;
+    WP11_Session_SetOpInitialized(session, WP11_INIT_DIGEST);
+    if (updated)
+        WP11_Session_SetOpUpdated(session);
 
     switch (session->mechanism) {
 #ifndef NO_MD5
