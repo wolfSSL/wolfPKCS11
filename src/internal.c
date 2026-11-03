@@ -19230,6 +19230,7 @@ int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
 
 #endif
 
+#ifdef WOLFPKCS11_CONCATENATE
 /* Call with the object lock held when the key is on the token. */
 static int wp11_Concat_KeyState(WP11_Object* key)
 {
@@ -19350,6 +19351,7 @@ int WP11_Concat_Derive(WP11_Object* base, WP11_Object* other,
         ret = BAD_FUNC_ARG;
     return ret;
 }
+#endif /* WOLFPKCS11_CONCATENATE */
 
 #ifndef NO_DH
 /**

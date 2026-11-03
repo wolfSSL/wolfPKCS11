@@ -50,6 +50,7 @@
 
 #define TEST_DIR "./store/decrypt_final_bufsize_test"
 
+#if !defined(NO_AES) && !defined(NO_AES_CBC)
 static int run_test(void)
 {
     CK_RV rv;
@@ -182,6 +183,7 @@ out:
     pkcs11_unload();
     return 0;
 }
+#endif
 
 int main(int argc, char* argv[])
 {
@@ -193,6 +195,10 @@ int main(int argc, char* argv[])
 #endif
 
     printf("=== wolfPKCS11 C_DecryptFinal CBC-PAD buffer-size test ===\n");
+#if !defined(NO_AES) && !defined(NO_AES_CBC)
     run_test();
+#else
+    printf("AES-CBC not available, skipping\n");
+#endif
     return pkcs11_test_summary();
 }

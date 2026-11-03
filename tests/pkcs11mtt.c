@@ -73,9 +73,7 @@ static CK_OBJECT_CLASS pubKeyClass     = CKO_PUBLIC_KEY;
 static CK_OBJECT_CLASS privKeyClass    = CKO_PRIVATE_KEY;
 static CK_OBJECT_CLASS secretKeyClass  = CKO_SECRET_KEY;
 
-#if defined(HAVE_ECC) || !defined(NO_DH)
 static CK_BBOOL ckFalse = CK_FALSE;
-#endif
 static CK_BBOOL ckTrue  = CK_TRUE;
 
 #ifndef NO_RSA

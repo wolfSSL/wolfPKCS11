@@ -73,6 +73,7 @@ extern "C" {
 #define WOLFSSL_KEY_GEN
  //#define HAVE_SCRYPT /* For PKCS11 Pin. Scrypt uses massive memory */
 //#define WOLFPKCS11_USER_ENV
+#define WOLFPKCS11_CONCATENATE
 
 /* PKCS11 TPM */
 #define WOLFPKCS11_TPM

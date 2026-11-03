@@ -349,16 +349,21 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #endif
 
 /* Maximum size of storage for generated/derived symmetric key. */
+#ifndef WP11_MAX_SYM_KEY_SZ
 #ifdef WOLFPKCS11_NSS
 #define WP11_MAX_SYM_KEY_SZ            (2048)
 #elif !defined(NO_DH)
 #define WP11_MAX_SYM_KEY_SZ            (4096/8)
-#elif defined(WOLFPKCS11_MLKEM)
+#elif defined(WOLFPKCS11_CONCATENATE)
 #define WP11_MAX_SYM_KEY_SZ            256
 #elif defined(HAVE_ECC)
 #define WP11_MAX_SYM_KEY_SZ            ((521+7)/8)
 #else
 #define WP11_MAX_SYM_KEY_SZ            64
+#endif
+#endif
+#if !defined(NO_AES) && WP11_MAX_SYM_KEY_SZ < 32
+#error "WP11_MAX_SYM_KEY_SZ must hold an AES-256 key"
 #endif
 
 /* Maximum size of storage for generated/derived DH key. */
@@ -724,10 +729,12 @@ WP11_LOCAL int WP11_GenerateRandomKey(WP11_Object* secret, WP11_Slot* slot,
 
 WP11_LOCAL int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
                     unsigned char* key, word32* keyLen, WP11_Object* priv);
+#ifdef WOLFPKCS11_CONCATENATE
 WP11_LOCAL int WP11_Concat_KeyLen(WP11_Object* key, word32* len);
 WP11_LOCAL int WP11_Concat_Derive(WP11_Object* base, WP11_Object* other,
                                   const byte* data, word32 dataLen,
                                   int dataFirst, byte* out, word32 outLen);
+#endif
 
 WP11_LOCAL int WP11_Tls12_Master_Key_Derive(CK_SSL3_RANDOM_DATA* random,
                                  CK_MECHANISM_TYPE mech, const char* label,

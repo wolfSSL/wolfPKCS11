@@ -1134,7 +1134,7 @@ static CK_RV create_aes_key(CK_SESSION_HANDLE session)
 }
 #endif
 
-#ifndef NO_AES
+#if !defined(NO_AES) && !defined(NO_AES_CBC)
 /* Count the AES keys visible after a login and check one still encrypts. */
 static CK_RV use_stored_aes_key(CK_SESSION_HANDLE session)
 {
@@ -1259,7 +1259,7 @@ int main(int argc, char* argv[])
 #ifdef HAVE_ALLOC_TRACKING
     test_failed_decrypt_scrubbed();
     test_failed_key_decrypt_scrubbed();
-#ifndef NO_AES
+#if !defined(NO_AES) && !defined(NO_AES_CBC)
     test_login_after_failed_encode();
 #endif
 #endif

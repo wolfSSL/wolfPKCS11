@@ -2424,7 +2424,8 @@ static CK_RV test_copy_object_mlkem_key(void* args)
     return ret;
 }
 
-#if defined(HAVE_ECC) && defined(WOLFPKCS11_HKDF) && !defined(NO_HMAC)
+#if defined(WOLFPKCS11_CONCATENATE) && defined(HAVE_ECC) && \
+    defined(WOLFPKCS11_HKDF) && !defined(NO_HMAC)
 static CK_OBJECT_CLASS hybridSecretClass = CKO_SECRET_KEY;
 static CK_KEY_TYPE hybridGenericType = CKK_GENERIC_SECRET;
 static CK_BBOOL hybridFalse = CK_FALSE;
@@ -4416,7 +4417,8 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_initial_states),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_encap_decap_not_permitted),
     PKCS11TEST_FUNC_SESS_DECL(test_copy_object_mlkem_key),
-#if defined(HAVE_ECC) && defined(WOLFPKCS11_HKDF) && !defined(NO_HMAC)
+#if defined(WOLFPKCS11_CONCATENATE) && defined(HAVE_ECC) && \
+    defined(WOLFPKCS11_HKDF) && !defined(NO_HMAC)
     PKCS11TEST_FUNC_SESS_DECL(test_concatenate_hybrid_agreement),
 #endif
 #ifndef WOLFPKCS11_NO_STORE

@@ -1855,6 +1855,7 @@ static CK_RV test_pkcs5_pbkdf2_key_gen(void* args)
         ret = CKR_OK; /* Reset for next test */
     }
 
+#ifndef NO_AES
     /* Test with different key types from template */
     if (ret == CKR_OK) {
         CK_KEY_TYPE testAesKeyType = CKK_AES;
@@ -1888,7 +1889,9 @@ static CK_RV test_pkcs5_pbkdf2_key_gen(void* args)
             key = CK_INVALID_HANDLE;
         }
     }
+#endif
 
+#ifdef WOLFPKCS11_HKDF
     /* Test with HKDF key type from template */
     if (ret == CKR_OK) {
         CK_KEY_TYPE testHkdfKeyType = CKK_HKDF;
@@ -1908,6 +1911,7 @@ static CK_RV test_pkcs5_pbkdf2_key_gen(void* args)
             key = CK_INVALID_HANDLE;
         }
     }
+#endif
 
     /* Test with NULL salt */
     if (ret == CKR_OK) {
@@ -16065,6 +16069,7 @@ static CK_RV test_hkdf_derive_implied_class(void* args)
 }
 #endif
 
+#ifdef WOLFPKCS11_CONCATENATE
 static CK_RV concat_create_key(CK_SESSION_HANDLE session, CK_BYTE* value,
                                CK_ULONG len, CK_BBOOL sensitive,
                                CK_BBOOL extractable, CK_BBOOL derive,
@@ -16853,6 +16858,77 @@ static CK_RV test_concatenate_logged_out(void* args)
     return ret;
 }
 #endif
+#else
+static CK_RV test_concatenate_disabled(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_MECHANISM_TYPE mechs[3] = {
+        CKM_CONCATENATE_BASE_AND_KEY, CKM_CONCATENATE_BASE_AND_DATA,
+        CKM_CONCATENATE_DATA_AND_BASE
+    };
+    CK_MECHANISM_TYPE* list = NULL;
+    CK_MECHANISM_INFO info;
+    CK_ULONG count = 0;
+    CK_ULONG i;
+    int j;
+    unsigned char keyData[16] = { 0 };
+    unsigned char data[4] = { 0 };
+    CK_KEY_DERIVATION_STRING_DATA params = { data, sizeof(data) };
+    CK_MECHANISM mech = { CKM_CONCATENATE_BASE_AND_DATA, &params,
+                          sizeof(params) };
+    CK_ULONG valueLen = sizeof(keyData) + sizeof(data);
+    CK_ATTRIBUTE tmpl[] = {
+        {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
+        {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_VALUE_LEN, &valueLen, sizeof(valueLen)},
+    };
+    CK_OBJECT_HANDLE hBase = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hKey = CK_INVALID_HANDLE;
+
+    ret = funcList->C_GetMechanismList(slot, NULL, &count);
+    CHECK_CKR(ret, "Get Mechanism List count");
+    if (ret == CKR_OK) {
+        list = (CK_MECHANISM_TYPE*)XMALLOC(count * sizeof(CK_MECHANISM_TYPE),
+                                           NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (list == NULL)
+            ret = CKR_DEVICE_MEMORY;
+        CHECK_CKR(ret, "Allocate mechanism list memory");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetMechanismList(slot, list, &count);
+        CHECK_CKR(ret, "Get Mechanism List");
+    }
+    for (i = 0; ret == CKR_OK && i < count; i++) {
+        for (j = 0; j < 3; j++) {
+            CHECK_COND(list[i] != mechs[j], ret,
+                       "Concatenate mechanism not advertised");
+        }
+    }
+    for (j = 0; ret == CKR_OK && j < 3; j++) {
+        ret = funcList->C_GetMechanismInfo(slot, mechs[j], &info);
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_INVALID,
+                       "Concatenate mechanism info");
+    }
+    if (ret == CKR_OK)
+        ret = get_generic_key(session, keyData, sizeof(keyData), CK_TRUE,
+                              &hBase);
+    if (ret == CKR_OK) {
+        ret = funcList->C_DeriveKey(session, &mech, hBase, tmpl,
+                                    sizeof(tmpl) / sizeof(*tmpl), &hKey);
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_INVALID, "Concatenate derive");
+    }
+
+    if (hKey != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hKey);
+    if (hBase != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, hBase);
+    if (list != NULL)
+        XFREE(list, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+
+    return ret;
+}
+#endif /* WOLFPKCS11_CONCATENATE */
 
 #if defined(HAVE_ECC) && !defined(NO_SHA256)
 static CK_RV stale_key_digest(CK_SESSION_HANDLE session, CK_BBOOL token)
@@ -17905,9 +17981,7 @@ static CK_RV test_hkdf_derive_aes_no_value_len(void* args)
     };
     CK_ULONG cnt = sizeof(tmpl) / sizeof(*tmpl);
 
-    ret = concat_create_key(session, ikm, sizeof(ikm), CK_FALSE, CK_TRUE,
-                            CK_TRUE, CK_FALSE, &hBase);
-    CHECK_CKR(ret, "Create HKDF base key");
+    ret = get_generic_key(session, ikm, sizeof(ikm), CK_TRUE, &hBase);
     if (ret == CKR_OK) {
         ret = funcList->C_DeriveKey(session, &mech, hBase, tmpl, cnt, &hKey);
         CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCOMPLETE,
@@ -17928,7 +18002,8 @@ static CK_RV test_hkdf_derive_aes_no_value_len(void* args)
 }
 #endif
 
-#if defined(WOLFPKCS11_HKDF) && !defined(NO_HMAC)
+#if defined(WOLFPKCS11_CONCATENATE) && defined(WOLFPKCS11_HKDF) && \
+    !defined(NO_HMAC)
 static CK_RV test_concatenate_hybrid_hkdf(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -21286,6 +21361,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_expand_null_value_len),
     PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_implied_class),
 #endif
+#ifdef WOLFPKCS11_CONCATENATE
     PKCS11TEST_FUNC_SESS_DECL(test_concatenate_base_and_key),
     PKCS11TEST_FUNC_SESS_DECL(test_concatenate_data),
     PKCS11TEST_FUNC_SESS_DECL(test_concatenate_protection),
@@ -21293,6 +21369,9 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_concatenate_wrap_with_trusted),
 #ifndef WOLFPKCS11_NO_STORE
     PKCS11TEST_FUNC_SESS_DECL(test_concatenate_logged_out),
+#endif
+#else
+    PKCS11TEST_FUNC_SESS_DECL(test_concatenate_disabled),
 #endif
 #ifndef WOLFPKCS11_NO_STORE
     PKCS11TEST_FUNC_SESS_DECL(test_key_use_logged_out),
@@ -21312,7 +21391,8 @@ static TEST_FUNC testFunc[] = {
     !defined(WOLFPKCS11_NSS)
     PKCS11TEST_FUNC_SESS_DECL(test_hkdf_derive_aes_no_value_len),
 #endif
-#if defined(WOLFPKCS11_HKDF) && !defined(NO_HMAC)
+#if defined(WOLFPKCS11_CONCATENATE) && defined(WOLFPKCS11_HKDF) && \
+    !defined(NO_HMAC)
     PKCS11TEST_FUNC_SESS_DECL(test_concatenate_hybrid_hkdf),
 #endif
 #ifdef WOLFSSL_HAVE_PRF
@@ -21353,9 +21433,9 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_nss_pkcs12_pbe_key_sizes),
 #endif
 #endif
+#endif
 #ifndef NO_HMAC
     PKCS11TEST_FUNC_SESS_DECL(test_pkcs5_pbkdf2_key_gen),
-#endif
 #endif
 #ifndef NO_SHA
     PKCS11TEST_FUNC_SESS_DECL(test_x509_check_value),

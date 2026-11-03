@@ -103,6 +103,16 @@ jobs:
     uses: ./.github/workflows/build-workflow.yml
     with:
       config: --disable-hmac --disable-hkdf
+  no_concatenate:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --disable-concatenate
+  no_derive_secret_key:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --disable-ecc --disable-dh --disable-hkdf --disable-aescbc --disable-concatenate
+      wolfssl_config: --enable-cryptonly --disable-crypttests --disable-examples
+      wolfssl_cflags: -DNO_KDF
   with_nss:
     uses: ./.github/workflows/build-workflow.yml
     with:

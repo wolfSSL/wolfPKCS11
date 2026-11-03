@@ -330,6 +330,16 @@ if(WOLFPKCS11_HKDF)
 endif()
 
 
+# Concatenation key derivation
+add_option("WOLFPKCS11_CONCATENATE"
+    "Enable wolfPKCS11 CKM_CONCATENATE_* key derivation (default: enabled)"
+    "yes" "yes;no")
+
+if(WOLFPKCS11_CONCATENATE)
+    list(APPEND WOLFPKCS11_DEFINITIONS "-DWOLFPKCS11_CONCATENATE")
+endif()
+
+
 # PBKDF2
 add_option("WOLFPKCS11_PBKDF2"
     "Enable wolfPKCS11 PBKDF2 support (default: disabled)"
