@@ -3639,9 +3639,11 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             return CKR_MECHANISM_INVALID;
     }
 
-    WP11_Session_SetOpInitialized(session, 0);
-    if (ret != 0)
+    if (ret != 0) {
+        WP11_Session_AbortOp(session);
         return CKR_FUNCTION_FAILED;
+    }
+    WP11_Session_SetOpInitialized(session, 0);
     return CKR_OK;
 }
 
@@ -4860,9 +4862,11 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
             return CKR_MECHANISM_INVALID;
     }
 
-    WP11_Session_SetOpInitialized(session, 0);
-    if (ret != 0)
+    if (ret != 0) {
+        WP11_Session_AbortOp(session);
         return CKR_ENCRYPTED_DATA_INVALID;
+    }
+    WP11_Session_SetOpInitialized(session, 0);
     return CKR_OK;
 }
 
@@ -6584,9 +6588,11 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             WP11_Session_AbortOp(session);
             return CKR_MECHANISM_INVALID;
     }
-    WP11_Session_SetOpInitialized(session, 0);
-    if (ret < 0)
+    if (ret < 0) {
+        WP11_Session_AbortOp(session);
         return CKR_FUNCTION_FAILED;
+    }
+    WP11_Session_SetOpInitialized(session, 0);
 
     return CKR_OK;
 }
@@ -7764,9 +7770,11 @@ static CK_RV wp11_C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             WP11_Session_AbortOp(session);
             return CKR_MECHANISM_INVALID;
     }
-    WP11_Session_SetOpInitialized(session, 0);
-    if (ret < 0)
+    if (ret < 0) {
+        WP11_Session_AbortOp(session);
         return CKR_FUNCTION_FAILED;
+    }
+    WP11_Session_SetOpInitialized(session, 0);
     if (ret != 0 || !stat)
         return CKR_SIGNATURE_INVALID;
 

@@ -18,8 +18,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  *
- * A call refused for a missing operation must leave the active operation
- * alone, and a single-part call must not finish a multi-part operation.
+ * Operation state left by refused, single-part and short-buffer calls.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -108,6 +107,99 @@ static void set_mech(CK_MECHANISM* mech, CK_MECHANISM_TYPE type)
         mech->pParameter = iv;
         mech->ulParameterLen = sizeof(iv);
     }
+}
+
+static void test_cbc_pad_short_buffer(CK_SESSION_HANDLE session,
+                                      CK_OBJECT_HANDLE aesKey)
+{
+    CK_RV rv;
+    CK_MECHANISM mech;
+    byte plain[43];
+    byte enc[64];
+    byte dec[128];
+    CK_ULONG encSz;
+    CK_ULONG decSz;
+    CK_ULONG shortSz[] = { 1, 16, 31, 32, 33, 42 };
+    CK_ULONG fitSz[] = { 43, 47 };
+    size_t i;
+
+    for (i = 0; i < sizeof(plain); i++)
+        plain[i] = (byte)(i + 1);
+    set_mech(&mech, CKM_AES_CBC_PAD);
+
+    rv = funcList->C_EncryptInit(session, &mech, aesKey);
+    CHECK_RV(rv, "C_EncryptInit(CBC_PAD)", CKR_OK);
+    encSz = sizeof(enc);
+    rv = funcList->C_Encrypt(session, plain, sizeof(plain), enc, &encSz);
+    CHECK_RV(rv, "C_Encrypt(CBC_PAD)", CKR_OK);
+    CHECK_TRUE(encSz == 48, "43 bytes pad to 48");
+
+    for (i = 0; i < sizeof(shortSz) / sizeof(*shortSz); i++) {
+        rv = funcList->C_DecryptInit(session, &mech, aesKey);
+        CHECK_RV(rv, "C_DecryptInit(CBC_PAD)", CKR_OK);
+        decSz = shortSz[i];
+        rv = funcList->C_Decrypt(session, enc, encSz, dec, &decSz);
+        CHECK_RV(rv, "C_Decrypt into a short buffer", CKR_BUFFER_TOO_SMALL);
+        CHECK_TRUE(decSz == sizeof(plain), "short buffer reports 43 bytes");
+
+        XMEMSET(dec, 0, sizeof(dec));
+        decSz = sizeof(dec);
+        rv = funcList->C_Decrypt(session, enc, encSz, dec, &decSz);
+        CHECK_RV(rv, "C_Decrypt retry", CKR_OK);
+        CHECK_TRUE(decSz == sizeof(plain) &&
+                   XMEMCMP(dec, plain, sizeof(plain)) == 0,
+                   "retry returns the plaintext");
+    }
+
+    for (i = 0; i < sizeof(fitSz) / sizeof(*fitSz); i++) {
+        rv = funcList->C_DecryptInit(session, &mech, aesKey);
+        CHECK_RV(rv, "C_DecryptInit(CBC_PAD fitting)", CKR_OK);
+        decSz = fitSz[i];
+        rv = funcList->C_Decrypt(session, enc, encSz, dec, &decSz);
+        CHECK_RV(rv, "C_Decrypt into a fitting buffer", CKR_OK);
+        CHECK_TRUE(decSz == sizeof(plain) &&
+                   XMEMCMP(dec, plain, sizeof(plain)) == 0,
+                   "fitting buffer returns the plaintext");
+    }
+
+    /* Flipping a bit of the previous block turns pad 05 into 04. */
+    enc[encSz - 17] ^= 0x01;
+    rv = funcList->C_DecryptInit(session, &mech, aesKey);
+    CHECK_RV(rv, "C_DecryptInit(CBC_PAD bad pad)", CKR_OK);
+    decSz = 10;
+    rv = funcList->C_Decrypt(session, enc, encSz, dec, &decSz);
+    CHECK_RV(rv, "C_Decrypt bad padding into a short buffer",
+             CKR_ENCRYPTED_DATA_INVALID);
+    decSz = sizeof(dec);
+    rv = funcList->C_Decrypt(session, enc, encSz, dec, &decSz);
+    CHECK_RV(rv, "C_Decrypt after bad padding", CKR_OPERATION_NOT_INITIALIZED);
+    rv = funcList->C_DecryptInit(session, &mech, aesKey);
+    CHECK_RV(rv, "C_DecryptInit(CBC_PAD bad pad full)", CKR_OK);
+    decSz = sizeof(dec);
+    rv = funcList->C_Decrypt(session, enc, encSz, dec, &decSz);
+    CHECK_RV(rv, "C_Decrypt bad padding into a full buffer",
+             CKR_ENCRYPTED_DATA_INVALID);
+    decSz = sizeof(dec);
+    rv = funcList->C_Decrypt(session, enc, encSz, dec, &decSz);
+    CHECK_RV(rv, "C_Decrypt after bad padding (full)",
+             CKR_OPERATION_NOT_INITIALIZED);
+
+    rv = funcList->C_EncryptInit(session, &mech, aesKey);
+    CHECK_RV(rv, "C_EncryptInit(CBC_PAD one block)", CKR_OK);
+    encSz = sizeof(enc);
+    rv = funcList->C_Encrypt(session, plain, 5, enc, &encSz);
+    CHECK_RV(rv, "C_Encrypt(CBC_PAD one block)", CKR_OK);
+    rv = funcList->C_DecryptInit(session, &mech, aesKey);
+    CHECK_RV(rv, "C_DecryptInit(CBC_PAD one block)", CKR_OK);
+    decSz = 2;
+    rv = funcList->C_Decrypt(session, enc, encSz, dec, &decSz);
+    CHECK_RV(rv, "C_Decrypt one block short", CKR_BUFFER_TOO_SMALL);
+    CHECK_TRUE(decSz == 5, "one block reports 5 bytes");
+    decSz = sizeof(dec);
+    rv = funcList->C_Decrypt(session, enc, encSz, dec, &decSz);
+    CHECK_RV(rv, "C_Decrypt one block retry", CKR_OK);
+    CHECK_TRUE(decSz == 5 && XMEMCMP(dec, plain, 5) == 0,
+               "one block retry returns the plaintext");
 }
 
 static void check_no_other_op(CK_SESSION_HANDLE session, int notEncrypt,
@@ -445,6 +537,7 @@ static int run_test(void)
         CHECK_RV(rv, "C_CreateObject(HMAC key)", CKR_OK);
     }
     if (rv == CKR_OK) {
+        test_cbc_pad_short_buffer(session, aesKey);
         test_stray_calls(session, aesKey, hmacKey);
         test_single_part_after_update(session, aesKey, hmacKey);
     }
