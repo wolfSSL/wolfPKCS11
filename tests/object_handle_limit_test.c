@@ -248,7 +248,7 @@ static void reload_test(CK_OBJECT_HANDLE tokFirst, CK_OBJECT_HANDLE tokLast)
         check_label(session, tokLast, "token-last",
                     "last token object label after reload");
         rv = create_data(session, CK_TRUE, "token-over", &obj);
-        CHECK_RV(rv, "token object after reload fails", CKR_FUNCTION_FAILED);
+        CHECK_RV(rv, "token object after reload fails", CKR_DEVICE_MEMORY);
         rv = create_data(session, CK_FALSE, "session-reload", &obj);
         CHECK_RV(rv, "session object after reload", CKR_OK);
         CHECK_TRUE((obj & HANDLE_ON_TOKEN) == 0,
@@ -343,7 +343,7 @@ static void run_test(void)
     CHECK_TRUE(tokLast == (HANDLE_ON_TOKEN | OBJ_ID_MAX),
                "token object handle has the last id");
     rv = create_data(session, CK_TRUE, "token-over", &over);
-    CHECK_RV(rv, "token object past the limit fails", CKR_FUNCTION_FAILED);
+    CHECK_RV(rv, "token object past the limit fails", CKR_DEVICE_MEMORY);
 
     rv = create_data(session, CK_FALSE, "session-first", &sessFirst);
     CHECK_RV(rv, "session object with token ids used up", CKR_OK);
@@ -361,7 +361,7 @@ static void run_test(void)
     /* The public key takes the last id and the private key fails, so the
      * public key has to be taken back off the session list. */
     rv = gen_keypair(session, &pub, &priv);
-    CHECK_RV(rv, "key pair needing two ids fails", CKR_FUNCTION_FAILED);
+    CHECK_RV(rv, "key pair needing two ids fails", CKR_DEVICE_MEMORY);
     CHECK_TRUE(count_objects(session, CK_FALSE) == 2,
                "public key rolled back");
 #else
@@ -370,7 +370,7 @@ static void run_test(void)
                "use the last session object id");
 #endif
     rv = create_data(session, CK_FALSE, "session-over", &over);
-    CHECK_RV(rv, "session object past the limit fails", CKR_FUNCTION_FAILED);
+    CHECK_RV(rv, "session object past the limit fails", CKR_DEVICE_MEMORY);
 
     check_label(session, tokFirst, "token-first", "first token object label");
     check_label(session, tokLast, "token-last", "last token object label");

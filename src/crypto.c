@@ -1275,6 +1275,8 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
                         return CKR_TEMPLATE_INCOMPLETE;
                     if (ret == BAD_FUNC_ARG)
                         return CKR_ATTRIBUTE_VALUE_INVALID;
+                    if (ret == ECC_CURVE_OID_E)
+                        return CKR_CURVE_NOT_SUPPORTED;
                     break;
         #endif
         #ifdef WOLFPKCS11_MLDSA
@@ -1329,14 +1331,14 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
                 case CKK_GENERIC_SECRET:
                     ret = WP11_Object_SetSecretKey(obj, data, len);
                     /* A length the key type cannot take. */
-                    if (ret == BAD_FUNC_ARG)
+                    if (ret == BAD_FUNC_ARG || ret == BUFFER_E)
                         return CKR_ATTRIBUTE_VALUE_INVALID;
                     break;
                 default:
                     break;
             }
         }
-        if (ret == MEMORY_E)
+        if (ret == MEMORY_E || ret == MP_MEM)
             return CKR_DEVICE_MEMORY;
         if (ret != 0)
             return CKR_FUNCTION_FAILED;
@@ -1444,6 +1446,8 @@ static CK_RV NewObject(WP11_Session* session, CK_KEY_TYPE keyType,
  * @param  phKey      [out]  Handle to new key object.
  * @return  CKR_ATTRIBUTE_VALUE_INVALID when attribute value is not valid for
  *          data type.
+ *          CKR_USER_NOT_LOGGED_IN when a private object needs a login.
+ *          CKR_DEVICE_MEMORY when the object table is full.
  *          CKR_FUNCTION_FAILED when setting an attribute fails.
  *          CKR_OK on success.
  */
@@ -1467,6 +1471,8 @@ static CK_RV AddObject(WP11_Session* session, WP11_Object* object,
     ret = WP11_Session_AddObject(session, onToken, object);
     if (ret == PIN_INVALID_E)
         return CKR_USER_NOT_LOGGED_IN;
+    if (ret == OBJ_COUNT_E)
+        return CKR_DEVICE_MEMORY;
     if (ret != 0)
         return CKR_FUNCTION_FAILED;
 
@@ -1613,8 +1619,9 @@ err_out:
  *          CKR_SESSION_READ_ONLY when the session cannot create objects.
  *          CKR_TEMPLATE_INCOMPLETE when CKA_KEY_TYPE is missing.
  *          CKR_ATTRIBUTE_VALUE_INVALID when an attribute has invalid value or
- *          length.
- *          CKR_DEVICE_MEMORY when dynamic memory allocation fails.
+ *          length, or the class is not one the token creates.
+ *          CKR_DEVICE_MEMORY when dynamic memory allocation fails or the
+ *          object table is full.
  *          CKR_FUNCTION_FAILED when creating the object fails.
  *          CKR_OK on success.
  */
@@ -1670,7 +1677,8 @@ static CK_RV CreateObject(WP11_Session* session, CK_ATTRIBUTE_PTR pTemplate,
         objType = CKK_NSS_TRUST;
     }
 #endif
-    else {
+    else if (objectClass == CKO_PUBLIC_KEY || objectClass == CKO_PRIVATE_KEY ||
+             objectClass == CKO_SECRET_KEY) {
         FindAttributeType(pTemplate, ulCount, CKA_KEY_TYPE, &attr);
         if (attr == NULL)
             return CKR_TEMPLATE_INCOMPLETE;
@@ -1725,6 +1733,9 @@ static CK_RV CreateObject(WP11_Session* session, CK_ATTRIBUTE_PTR pTemplate,
                 (WP11_KeyType_IsSecret(objType) != 0)) {
             return CKR_TEMPLATE_INCONSISTENT;
         }
+    }
+    else {
+        return CKR_ATTRIBUTE_VALUE_INVALID;
     }
 
     rv = NewObject(session, objType, objectClass, pTemplate, ulCount, object);
@@ -2198,8 +2209,11 @@ static CK_RV wp11_C_CopyObject(CK_SESSION_HANDLE hSession,
     ret = WP11_Session_AddObject(session, onToken, newObj);
     if (ret != 0) {
         WP11_Object_Free(newObj);
-        return (ret == PIN_INVALID_E) ? CKR_USER_NOT_LOGGED_IN :
-                                        CKR_FUNCTION_FAILED;
+        if (ret == PIN_INVALID_E)
+            return CKR_USER_NOT_LOGGED_IN;
+        if (ret == OBJ_COUNT_E)
+            return CKR_DEVICE_MEMORY;
+        return CKR_FUNCTION_FAILED;
     }
 
     *phNewObject = WP11_Object_GetHandle(newObj);
@@ -9269,6 +9283,10 @@ static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
                               CKA_MODULUS_BITS, &reqAttr);
             if (reqAttr == NULL)
                 return CKR_TEMPLATE_INCOMPLETE;
+            if (reqAttr->pValue != NULL &&
+                    reqAttr->ulValueLen == sizeof(CK_ULONG) &&
+                    *(CK_ULONG*)reqAttr->pValue < (CK_ULONG)RSA_MIN_SIZE)
+                return CKR_ATTRIBUTE_VALUE_INVALID;
 
             *phPublicKey = *phPrivateKey = CK_INVALID_HANDLE;
 
@@ -9282,7 +9300,9 @@ static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
             if (rv == CKR_OK) {
                 ret = WP11_Rsa_GenerateKeyPair(pub, priv,
                                                  WP11_Session_GetSlot(session));
-                if (ret != 0)
+                if (ret > 0)
+                    rv = (CK_RV)ret;
+                else if (ret != 0)
                     rv = CKR_FUNCTION_FAILED;
             }
             break;

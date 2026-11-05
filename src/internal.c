@@ -13157,10 +13157,10 @@ int WP11_Session_AddObject(WP11_Session* session, int onToken,
         int oldNextObjId = token->nextObjId;
 #endif
 
-        if (token->objCnt >= WP11_TOKEN_OBJECT_CNT_MAX)
+        if (ret == 0 && token->objCnt >= WP11_TOKEN_OBJECT_CNT_MAX)
             ret = OBJ_COUNT_E;
         /* Ids are not reused, so a token can run out of them. */
-        if (token->nextObjId > OBJ_ID_MAX)
+        if (ret == 0 && token->nextObjId > OBJ_ID_MAX)
             ret = OBJ_COUNT_E;
     #ifndef WOLFPKCS11_NO_STORE
         if (ret == 0)
@@ -13199,11 +13199,11 @@ int WP11_Session_AddObject(WP11_Session* session, int onToken,
     #endif
     }
     else {
-        if (session->objCnt >= WP11_SESSION_OBJECT_CNT_MAX)
+        if (ret == 0 && session->objCnt >= WP11_SESSION_OBJECT_CNT_MAX)
             ret = OBJ_COUNT_E;
     #ifndef WOLFPKCS11_NSS
         /* Retired objects awaiting free still use memory. */
-        if (session->objCnt + wp11_Session_RetiredHeld(session) >=
+        if (ret == 0 && session->objCnt + wp11_Session_RetiredHeld(session) >=
                 WP11_SESSION_OBJECT_CNT_MAX) {
             ret = OBJ_COUNT_E;
         }
@@ -13211,7 +13211,7 @@ int WP11_Session_AddObject(WP11_Session* session, int onToken,
         /* Session objects have their own ids, so they do not use up the
          * token's ids. Their handles have no onToken flag, so the two cannot
          * clash. */
-        if (session->slot->nextSessObjId > OBJ_ID_MAX)
+        if (ret == 0 && session->slot->nextSessObjId > OBJ_ID_MAX)
             ret = OBJ_COUNT_E;
         if (ret == 0) {
             session->objCnt++;
@@ -14396,14 +14396,59 @@ static int ecc_lookup_curve(const byte* oid, word32 len)
 #endif
 
 /**
+ * Check that a DER length is minimally encoded and covers the rest of the data.
+ *
+ * @param  p  [in]  DER length bytes.
+ * @param  n  [in]  Number of bytes from the length to the end of the data.
+ * @return  1 when the length is valid and covers the data, otherwise 0.
+ */
+static int wp11_DerLenCovers(const byte* p, int n)
+{
+    int cnt;
+    int i;
+    int l = 0;
+
+    if (n < 1)
+        return 0;
+    if (p[0] < 0x80)
+        return p[0] == n - 1;
+    cnt = p[0] & 0x7f;
+    if (cnt == 0 || cnt > 2 || n < 1 + cnt || p[1] == 0)
+        return 0;
+    for (i = 1; i <= cnt; i++)
+        l = (l << 8) | p[i];
+    return l >= 0x80 && l == n - 1 - cnt;
+}
+
+/**
+ * Check that the body of a DER OID is made of valid base-128 subidentifiers.
+ *
+ * @param  oid  [in]  OID body.
+ * @param  len  [in]  Length of OID body in bytes.
+ * @return  1 when the encoding is valid, otherwise 0.
+ */
+static int wp11_OidValid(const byte* oid, int len)
+{
+    int i;
+
+    if (len < 1 || (oid[len - 1] & 0x80) != 0)
+        return 0;
+    for (i = 0; i < len; i++) {
+        if (oid[i] == 0x80 && (i == 0 || (oid[i - 1] & 0x80) == 0))
+            return 0;
+    }
+    return 1;
+}
+
+/**
  * Set the EC Parameters based on the DER encoding of the OID.
  *
  * @param  key  [in]  EC Key object.
  * @param  der  [in]  DER encoding of OID.
  * @param  len  [in]  Length of DER encoding.
- * @return  BUFFER_E when len is too short.
- *          ASN_PARSE_E when DER encoding is bad.
- *          BAD_FUNC_ARG when OID is not known.
+ * @return  BAD_FUNC_ARG when the DER encoding is not an OID.
+ *          ECC_CURVE_OID_E when the OID is not a supported curve, or the
+ *          curve is given as explicit parameters.
  *          Other -ve on failure.
  *          0 on success.
  */
@@ -14413,12 +14458,14 @@ static int EcSetParams(ecc_key* key, byte* der, int len)
     int keySize;
     int curveId;
 
-    if (len < 2)
-        ret = BUFFER_E;
-    if (ret == 0 && der[0] != ASN_OBJECT_ID)
-        ret = ASN_PARSE_E;
-    if (ret == 0 && der[1] != len - 2)
-        ret = BUFFER_E;
+    if (len > 0 && der[0] == (ASN_SEQUENCE | ASN_CONSTRUCTED) &&
+            wp11_DerLenCovers(der + 1, len - 1)) {
+        ret = ECC_CURVE_OID_E;
+    }
+    else if (len < 3 || der[0] != ASN_OBJECT_ID || der[1] != len - 2 ||
+             !wp11_OidValid(der + 2, len - 2)) {
+        ret = BAD_FUNC_ARG;
+    }
     if (ret == 0) {
 #ifdef USE_LOCAL_CURVE_OID_LOOKUP
         /* Find the curve matching the OID. */
@@ -14430,7 +14477,7 @@ static int EcSetParams(ecc_key* key, byte* der, int len)
         curveId = wc_ecc_get_curve_id_from_oid(der + 2, der[1]);
 #endif
         if (curveId == ECC_CURVE_INVALID)
-            ret = BAD_FUNC_ARG;
+            ret = ECC_CURVE_OID_E;
     }
     if (ret == 0) {
         /* Set the curve into the EC key. */
@@ -14442,13 +14489,26 @@ static int EcSetParams(ecc_key* key, byte* der, int len)
 }
 
 /**
+ * Check whether a wolfCrypt error means an encoded EC point is not valid.
+ *
+ * @param  ret  [in]  wolfCrypt error code.
+ * @return  1 when the error is about the encoded point.
+ *          0 otherwise.
+ */
+static int wp11_Ec_PointInvalid(int ret)
+{
+    return ret == BAD_FUNC_ARG || ret == BUFFER_E || ret == ASN_PARSE_E ||
+           ret == ECC_BAD_ARG_E || ret == IS_POINT_E || ret == ECC_INF_E ||
+           ret == ECC_OUT_OF_RANGE_E || ret == MP_VAL;
+}
+
+/**
  * Set the EC Point, encoded in DER and X9.63, as the public key.
  *
  * @param  key  [in]  EC Key object.
  * @param  der  [in]  DER encoding of OID.
  * @param  len  [in]  Length of DER encoding.
- * @return  BUFFER_E when len is too short.
- *          ASN_PARSE_E when DER encoding is bad.
+ * @return  BAD_FUNC_ARG when the data is not a DER encoded point on the curve.
  *          Other -ve on failure.
  *          0 on success.
  */
@@ -14459,23 +14519,50 @@ static int EcSetPoint(ecc_key* key, byte* der, int len)
     int i = 0;
 
     if (len < 3)
-        ret = BUFFER_E;
+        ret = BAD_FUNC_ARG;
     if (ret == 0 && der[i++] != ASN_OCTET_STRING)
-        ret = ASN_PARSE_E;
+        ret = BAD_FUNC_ARG;
     if (ret == 0 && der[i] >= ASN_LONG_LENGTH) {
         if (der[i] != (ASN_LONG_LENGTH | 1))
-            ret = ASN_PARSE_E;
+            ret = BAD_FUNC_ARG;
         else
             i++;
     }
     if (ret == 0) {
         dataLen = der[i++];
         if (dataLen != len - i)
-            ret = BUFFER_E;
+            ret = BAD_FUNC_ARG;
     }
     if (ret == 0) {
         /* Now stripped of DER encoding. */
         ret = wc_ecc_import_x963_ex(der + i, len - i, key, key->dp->id);
+        if (wp11_Ec_PointInvalid(ret))
+            ret = BAD_FUNC_ARG;
+    }
+
+    return ret;
+}
+
+/**
+ * Check that a private scalar is in [1, n-1] for the key's curve.
+ *
+ * @param  key  [in]  EC key with the curve and private scalar set.
+ * @param  k    [in]  Private scalar.
+ * @return  BAD_FUNC_ARG when the scalar is out of range.
+ *          Other -ve on failure.
+ *          0 on success.
+ */
+static int EcCheckPrivRange(ecc_key* key, mp_int* k)
+{
+    int ret;
+    mp_int order;
+
+    ret = mp_init(&order);
+    if (ret == 0) {
+        ret = mp_read_radix(&order, key->dp->order, MP_RADIX_HEX);
+        if (ret == 0 && (mp_iszero(k) || mp_cmp(k, &order) != MP_LT))
+            ret = BAD_FUNC_ARG;
+        mp_free(&order);
     }
 
     return ret;
@@ -14514,9 +14601,15 @@ int WP11_Object_SetEcKey(WP11_Object* object, unsigned char** data,
             key->type = ECC_PRIVATEKEY_ONLY;
 #if defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION <= 5)
             ret = SetMPI(&key->k, data[1], (int)len[1]);
+            if (ret == 0)
+                ret = EcCheckPrivRange(key, &key->k);
 #else
             ret = SetMPI(key->k, data[1], (int)len[1]);
+            if (ret == 0)
+                ret = EcCheckPrivRange(key, key->k);
 #endif
+            if (ret != 0 && ret != MP_MEM)
+                ret = BAD_FUNC_ARG;
         }
         if (ret == 0 && data[2] != NULL) {
             if (key->type == ECC_PRIVATEKEY_ONLY)
@@ -14904,15 +14997,6 @@ int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
         if (keyLen > WP11_MAX_SYM_KEY_SZ)
             ret = BUFFER_E;
     }
-#if !defined(NO_AES) && !defined(WOLFPKCS11_NSS)
-    if (ret == 0 && object->type == CKK_AES && data[0] != NULL) {
-        if (keyLen != AES_128_KEY_SIZE &&
-            keyLen != AES_192_KEY_SIZE &&
-            keyLen != AES_256_KEY_SIZE) {
-            ret = BAD_FUNC_ARG;
-        }
-    }
-#endif
     if (ret == 0 && data[0] != NULL)
         newLen = (word32)keyLen;
 
@@ -14927,6 +15011,15 @@ int WP11_Object_SetSecretKey(WP11_Object* object, unsigned char** data,
         else if (len[1] != (CK_ULONG)newLen)
             ret = BUFFER_E;
     }
+#if !defined(NO_AES) && !defined(WOLFPKCS11_NSS)
+    if (ret == 0 && object->type == CKK_AES &&
+            ((data[0] != NULL && keyLen == 0) ||
+             ((data[0] != NULL || data[1] != NULL) &&
+              newLen != AES_128_KEY_SIZE && newLen != AES_192_KEY_SIZE &&
+              newLen != AES_256_KEY_SIZE))) {
+        ret = BAD_FUNC_ARG;
+    }
+#endif
 
     /* Replace the key only once the new value is known to be valid. */
     if (ret == 0) {
@@ -17520,7 +17613,10 @@ int WP11_Rsa_PrivKey2PubKey(WP11_Object* privKey, WP11_Object* pubKey,
  * @param  pub   [in]  Public key object.
  * @param  priv  [in]  Private key object.
  * @param  slot  [in]  Slot operation is performed on.
- * @return  -ve when key generation fails.
+ * @return  CKR_TEMPLATE_INCONSISTENT when the public exponent cannot be used.
+ *          CKR_ATTRIBUTE_VALUE_INVALID when wolfCrypt refuses the modulus
+ *          size.
+ *          -ve when key generation fails.
  *          0 on success.
  */
 int WP11_Rsa_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
@@ -17539,20 +17635,27 @@ int WP11_Rsa_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
         /* Public exponent must be size of a long for API. */
         eSz = mp_unsigned_bin_size(&pub->data.rsaKey->e);
         if (eSz > (int)sizeof(eData))
-            ret = BAD_FUNC_ARG;
+            ret = (int)CKR_TEMPLATE_INCONSISTENT;
         if (ret == 0)
             ret = mp_to_unsigned_bin_len(&pub->data.rsaKey->e, eData, eSz);
         if (ret == 0) {
             eVal = GetRsaExponentValue(eData, eSz);
             if (eVal > (~0UL >> 1))
-                ret = BAD_FUNC_ARG;
+                ret = (int)CKR_TEMPLATE_INCONSISTENT;
             else
                 e = (long)eVal;
         }
+        /* The exponent rule of wc_MakeRsaKey. */
+    #ifdef HAVE_FIPS
+        if (ret == 0 && (e < WC_RSA_EXPONENT || (e & 1) == 0))
+    #else
+        if (ret == 0 && (e < 3 || (e & 1) == 0))
+    #endif
+            ret = (int)CKR_TEMPLATE_INCONSISTENT;
     }
     else {
-        e = WC_RSA_EXPONENT;
-        ret = mp_set_int(&pub->data.rsaKey->e, e);
+        /* An absent exponent was set to 65537, so zero was given. */
+        ret = (int)CKR_TEMPLATE_INCONSISTENT;
     }
 
     if (ret == 0) {
@@ -17567,6 +17670,8 @@ int WP11_Rsa_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
 
                 /* Generate into the private key. */
                 ret = wc_MakeRsaKey(priv->data.rsaKey, pub->size, e, &rng);
+                if (ret == BAD_FUNC_ARG)
+                    ret = (int)CKR_ATTRIBUTE_VALUE_INVALID;
             #ifdef WOLFPKCS11_TPM
                 if (ret == 0) {
                     /* set flag indicating this is TPM based key */

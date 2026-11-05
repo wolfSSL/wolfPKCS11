@@ -18,7 +18,8 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  *
- * Return codes for bad key handles and attribute templates.
+ * Return codes for bad key handles, attribute templates, object creation
+ * and key generation.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -323,6 +324,306 @@ static void test_ec_public_attrs(CK_SESSION_HANDLE session)
 }
 #endif
 
+static void test_create_object(CK_SESSION_HANDLE session)
+{
+    CK_OBJECT_CLASS badClass = 0x12345;
+    CK_KEY_TYPE aesType = CKK_AES;
+    CK_ULONG zeroLen = 0;
+    CK_ATTRIBUTE badClassTmpl[] = {
+        { CKA_CLASS, &badClass, sizeof(badClass) },
+        { CKA_TOKEN, &ckFalse,  sizeof(ckFalse)  },
+    };
+    CK_ATTRIBUTE noClassTmpl[] = {
+        { CKA_KEY_TYPE, &genericType, sizeof(genericType) },
+        { CKA_TOKEN,    &ckFalse,     sizeof(ckFalse)     },
+        { CKA_VALUE,    keyBytes,     16                  },
+    };
+    CK_ATTRIBUTE aesTmpl[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &aesType,     sizeof(aesType)     },
+        { CKA_TOKEN,    &ckFalse,     sizeof(ckFalse)     },
+        { CKA_PRIVATE,  &ckFalse,     sizeof(ckFalse)     },
+        { CKA_ENCRYPT,  &ckTrue,      sizeof(ckTrue)      },
+        { CKA_VALUE,    keyBytes,     16                  },
+        { CKA_VALUE_LEN, &zeroLen,    sizeof(zeroLen)     },
+    };
+
+    printf("\n--- C_CreateObject class and value checks ---\n");
+
+    create_expect(session, badClassTmpl, TMPL_CNT(badClassTmpl),
+                  CKR_ATTRIBUTE_VALUE_INVALID, "undefined CKA_CLASS");
+    create_expect(session, noClassTmpl, TMPL_CNT(noClassTmpl),
+                  CKR_TEMPLATE_INCOMPLETE, "no CKA_CLASS");
+#if !defined(NO_AES) && !defined(WOLFPKCS11_NSS)
+    create_expect(session, aesTmpl, TMPL_CNT(aesTmpl) - 1, CKR_OK,
+                  "16-byte AES key (control)");
+    create_expect(session, aesTmpl, TMPL_CNT(aesTmpl),
+                  CKR_ATTRIBUTE_VALUE_INVALID, "AES key with CKA_VALUE_LEN 0");
+    aesTmpl[5].ulValueLen = 13;
+    create_expect(session, aesTmpl, TMPL_CNT(aesTmpl) - 1,
+                  CKR_ATTRIBUTE_VALUE_INVALID, "13-byte AES key");
+#else
+    (void)aesTmpl;
+    (void)zeroLen;
+#endif
+}
+
+#ifdef HAVE_ECC
+static void test_ec_params(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_MECHANISM mech = { CKM_EC_KEY_PAIR_GEN, NULL, 0 };
+    CK_KEY_TYPE ecType = CKK_EC;
+    CK_BYTE truncated[] = { 0x06, 0x05, 0x2B, 0x81 };
+    CK_BYTE octets[] = { 0x04, 0x02, 0x01, 0x02 };
+    CK_BYTE unknownOid[] = { 0x06, 0x03, 0x2A, 0x03, 0x04 };
+    CK_BYTE emptyOid[] = { 0x06, 0x00 };
+    CK_BYTE bigPoint[sizeof(ecc_p256_pub)];
+    CK_BYTE explicitParams[] = { 0x30, 0x03, 0x02, 0x01, 0x01 };
+    CK_BYTE explicitLong[3 + 0x80];
+    CK_BYTE seqTag[] = { 0x30 };
+    CK_BYTE shortSeq[] = { 0x30, 0x05, 0x02 };
+    CK_BYTE openOid[] = { 0x06, 0x01, 0x80 };
+    CK_BYTE paddedOid[] = { 0x06, 0x03, 0x80, 0x01, 0x01 };
+    CK_OBJECT_HANDLE pub, priv;
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_EC_PARAMS, truncated, sizeof(truncated) },
+        { CKA_TOKEN,     &ckFalse,  sizeof(ckFalse)   },
+        { CKA_VERIFY,    &ckTrue,   sizeof(ckTrue)    },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_TOKEN,   &ckFalse, sizeof(ckFalse) },
+        { CKA_PRIVATE, &ckFalse, sizeof(ckFalse) },
+        { CKA_SIGN,    &ckTrue,  sizeof(ckTrue)  },
+    };
+    CK_BYTE bigValue[32];
+    CK_ATTRIBUTE privTmplBig[] = {
+        { CKA_CLASS,     &privClass,      sizeof(privClass)       },
+        { CKA_KEY_TYPE,  &ecType,         sizeof(ecType)          },
+        { CKA_TOKEN,     &ckFalse,        sizeof(ckFalse)         },
+        { CKA_PRIVATE,   &ckFalse,        sizeof(ckFalse)         },
+        { CKA_EC_PARAMS, ecc_p256_params, sizeof(ecc_p256_params) },
+        { CKA_VALUE,     bigValue,        sizeof(bigValue)        },
+    };
+    CK_ATTRIBUTE createTmpl[] = {
+        { CKA_CLASS,     &pubClass,    sizeof(pubClass)     },
+        { CKA_KEY_TYPE,  &ecType,      sizeof(ecType)       },
+        { CKA_TOKEN,     &ckFalse,     sizeof(ckFalse)      },
+        { CKA_EC_PARAMS, unknownOid,   sizeof(unknownOid)   },
+        { CKA_EC_POINT,  ecc_p256_pub, sizeof(ecc_p256_pub) },
+    };
+
+    printf("\n--- CKA_EC_PARAMS ---\n");
+
+    rv = funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+            TMPL_CNT(pubTmpl), privTmpl, TMPL_CNT(privTmpl), &pub, &priv);
+    CHECK_RV(rv, "truncated OID", CKR_ATTRIBUTE_VALUE_INVALID);
+    pubTmpl[0].pValue = octets;
+    pubTmpl[0].ulValueLen = sizeof(octets);
+    rv = funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+            TMPL_CNT(pubTmpl), privTmpl, TMPL_CNT(privTmpl), &pub, &priv);
+    CHECK_RV(rv, "OCTET STRING params", CKR_ATTRIBUTE_VALUE_INVALID);
+    pubTmpl[0].pValue = unknownOid;
+    pubTmpl[0].ulValueLen = sizeof(unknownOid);
+    rv = funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+            TMPL_CNT(pubTmpl), privTmpl, TMPL_CNT(privTmpl), &pub, &priv);
+    CHECK_RV(rv, "unknown curve keygen", CKR_CURVE_NOT_SUPPORTED);
+    create_expect(session, createTmpl, TMPL_CNT(createTmpl),
+                  CKR_CURVE_NOT_SUPPORTED, "unknown curve public key");
+    createTmpl[3].pValue = emptyOid;
+    createTmpl[3].ulValueLen = sizeof(emptyOid);
+    create_expect(session, createTmpl, TMPL_CNT(createTmpl),
+                  CKR_ATTRIBUTE_VALUE_INVALID, "empty OID");
+    createTmpl[3].pValue = explicitParams;
+    createTmpl[3].ulValueLen = sizeof(explicitParams);
+    create_expect(session, createTmpl, TMPL_CNT(createTmpl),
+                  CKR_CURVE_NOT_SUPPORTED, "explicit curve parameters");
+    XMEMSET(explicitLong, 0x05, sizeof(explicitLong));
+    explicitLong[0] = 0x30;
+    explicitLong[1] = 0x81;
+    explicitLong[2] = 0x80;
+    createTmpl[3].pValue = explicitLong;
+    createTmpl[3].ulValueLen = sizeof(explicitLong);
+    create_expect(session, createTmpl, TMPL_CNT(createTmpl),
+                  CKR_CURVE_NOT_SUPPORTED, "long explicit curve parameters");
+    createTmpl[3].pValue = seqTag;
+    createTmpl[3].ulValueLen = sizeof(seqTag);
+    create_expect(session, createTmpl, TMPL_CNT(createTmpl),
+                  CKR_ATTRIBUTE_VALUE_INVALID, "SEQUENCE tag alone");
+    createTmpl[3].pValue = shortSeq;
+    createTmpl[3].ulValueLen = sizeof(shortSeq);
+    create_expect(session, createTmpl, TMPL_CNT(createTmpl),
+                  CKR_ATTRIBUTE_VALUE_INVALID, "truncated SEQUENCE");
+    createTmpl[3].pValue = openOid;
+    createTmpl[3].ulValueLen = sizeof(openOid);
+    create_expect(session, createTmpl, TMPL_CNT(createTmpl),
+                  CKR_ATTRIBUTE_VALUE_INVALID, "unterminated OID subidentifier");
+    createTmpl[3].pValue = paddedOid;
+    createTmpl[3].ulValueLen = sizeof(paddedOid);
+    create_expect(session, createTmpl, TMPL_CNT(createTmpl),
+                  CKR_ATTRIBUTE_VALUE_INVALID, "padded OID subidentifier");
+    createTmpl[3].pValue = ecc_p256_params;
+    createTmpl[3].ulValueLen = sizeof(ecc_p256_params);
+    createTmpl[4].pValue = ecc_p256_point;
+    createTmpl[4].ulValueLen = sizeof(ecc_p256_point);
+    create_expect(session, createTmpl, TMPL_CNT(createTmpl),
+                  CKR_ATTRIBUTE_VALUE_INVALID, "EC point without DER wrapping");
+    XMEMSET(bigPoint, 0xFF, sizeof(bigPoint));
+    bigPoint[0] = 0x04;
+    bigPoint[1] = 0x41;
+    bigPoint[2] = 0x04;
+    createTmpl[4].pValue = bigPoint;
+    createTmpl[4].ulValueLen = sizeof(bigPoint);
+    create_expect(session, createTmpl, TMPL_CNT(createTmpl),
+                  CKR_ATTRIBUTE_VALUE_INVALID, "EC point coordinates above p");
+    XMEMSET(bigValue, 0xFF, sizeof(bigValue));
+    create_expect(session, privTmplBig, TMPL_CNT(privTmplBig),
+                  CKR_ATTRIBUTE_VALUE_INVALID, "EC private value above order");
+    XMEMSET(bigValue, 0, sizeof(bigValue));
+    create_expect(session, privTmplBig, TMPL_CNT(privTmplBig),
+                  CKR_ATTRIBUTE_VALUE_INVALID, "zero EC private value");
+}
+#endif
+
+#if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN)
+static CK_SLOT_ID session_slot(CK_SESSION_HANDLE session)
+{
+    CK_SESSION_INFO info;
+
+    XMEMSET(&info, 0, sizeof(info));
+    funcList->C_GetSessionInfo(session, &info);
+    return info.slotID;
+}
+#endif
+
+#if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN)
+static void test_rsa_keygen(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_MECHANISM mech = { CKM_RSA_PKCS_KEY_PAIR_GEN, NULL, 0 };
+    CK_MECHANISM_INFO info;
+    CK_ULONG bits = RSA_MIN_SIZE - 8;
+    CK_BYTE bigExp[] = { 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,
+                         0x01 };
+    CK_BYTE evenExp[] = { 0x01, 0x00, 0x00 };
+    CK_BYTE zeroExp[] = { 0x00 };
+    CK_OBJECT_HANDLE pub, priv;
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_MODULUS_BITS, &bits,   sizeof(bits)    },
+        { CKA_TOKEN,        &ckFalse, sizeof(ckFalse) },
+        { CKA_VERIFY,       &ckTrue,  sizeof(ckTrue)  },
+    };
+    CK_ATTRIBUTE expTmpl[] = {
+        { CKA_MODULUS_BITS,    &bits,   sizeof(bits)    },
+        { CKA_TOKEN,           &ckFalse, sizeof(ckFalse) },
+        { CKA_VERIFY,          &ckTrue,  sizeof(ckTrue)  },
+        { CKA_PUBLIC_EXPONENT, bigExp,   sizeof(bigExp)  },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_TOKEN,   &ckFalse, sizeof(ckFalse) },
+        { CKA_PRIVATE, &ckFalse, sizeof(ckFalse) },
+        { CKA_SIGN,    &ckTrue,  sizeof(ckTrue)  },
+    };
+
+    printf("\n--- RSA key generation size and exponent ---\n");
+
+    rv = funcList->C_GetMechanismInfo(session_slot(session),
+                                      CKM_RSA_PKCS_KEY_PAIR_GEN, &info);
+    CHECK_RV(rv, "C_GetMechanismInfo", CKR_OK);
+    CHECK_TRUE(rv == CKR_OK && info.ulMinKeySize == (CK_ULONG)RSA_MIN_SIZE &&
+               info.ulMaxKeySize == (CK_ULONG)RSA_MAX_SIZE,
+               "sizes are wolfSSL's RSA_MIN_SIZE and RSA_MAX_SIZE");
+    rv = funcList->C_GetMechanismInfo(session_slot(session), CKM_RSA_PKCS,
+                                      &info);
+    CHECK_TRUE(rv == CKR_OK && info.ulMinKeySize == 1024 &&
+               info.ulMaxKeySize == (CK_ULONG)RSA_MAX_SIZE,
+               "CKM_RSA_PKCS sizes are 1024 and RSA_MAX_SIZE");
+
+    rv = funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+            TMPL_CNT(pubTmpl), privTmpl, TMPL_CNT(privTmpl), &pub, &priv);
+    CHECK_RV(rv, "modulus below the minimum", CKR_ATTRIBUTE_VALUE_INVALID);
+
+    bits = 2048;
+    rv = funcList->C_GenerateKeyPair(session, &mech, expTmpl,
+            TMPL_CNT(expTmpl), privTmpl, TMPL_CNT(privTmpl), &pub, &priv);
+    CHECK_RV(rv, "exponent wider than a long", CKR_TEMPLATE_INCONSISTENT);
+    expTmpl[3].pValue = evenExp;
+    expTmpl[3].ulValueLen = sizeof(evenExp);
+    rv = funcList->C_GenerateKeyPair(session, &mech, expTmpl,
+            TMPL_CNT(expTmpl), privTmpl, TMPL_CNT(privTmpl), &pub, &priv);
+    CHECK_RV(rv, "even exponent", CKR_TEMPLATE_INCONSISTENT);
+    expTmpl[3].pValue = zeroExp;
+    expTmpl[3].ulValueLen = sizeof(zeroExp);
+    rv = funcList->C_GenerateKeyPair(session, &mech, expTmpl,
+            TMPL_CNT(expTmpl), privTmpl, TMPL_CNT(privTmpl), &pub, &priv);
+    CHECK_RV(rv, "zero exponent", CKR_TEMPLATE_INCONSISTENT);
+    expTmpl[3].ulValueLen = CK_UNAVAILABLE_INFORMATION;
+    rv = funcList->C_GenerateKeyPair(session, &mech, expTmpl,
+            TMPL_CNT(expTmpl), privTmpl, TMPL_CNT(privTmpl), &pub, &priv);
+    CHECK_RV(rv, "exponent of unavailable length", CKR_ATTRIBUTE_VALUE_INVALID);
+}
+#endif
+
+static void test_generic_secret_len(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_MECHANISM mech = { CKM_GENERIC_SECRET_KEY_GEN, NULL, 0 };
+    CK_ULONG len = 32;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,     &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE,  &genericType, sizeof(genericType) },
+        { CKA_TOKEN,     &ckFalse,     sizeof(ckFalse)     },
+        { CKA_PRIVATE,   &ckFalse,     sizeof(ckFalse)     },
+        { CKA_VALUE_LEN, &len,         sizeof(len)         },
+    };
+
+    printf("\n--- generic secret length ---\n");
+
+    rv = funcList->C_GenerateKey(session, &mech, tmpl, TMPL_CNT(tmpl), &key);
+    CHECK_RV(rv, "32 bytes (control)", CKR_OK);
+    if (rv == CKR_OK)
+        funcList->C_DestroyObject(session, key);
+    len = 0x100000;
+    rv = funcList->C_GenerateKey(session, &mech, tmpl, TMPL_CNT(tmpl), &key);
+    CHECK_RV(rv, "1 MiB", CKR_ATTRIBUTE_VALUE_INVALID);
+}
+
+static void test_object_limit(CK_SESSION_HANDLE session)
+{
+    CK_RV rv = CKR_OK;
+    static CK_OBJECT_HANDLE objs[8192];
+    CK_OBJECT_HANDLE copy;
+    CK_ULONG cnt = 0;
+    CK_ULONG i;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS, &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN, &ckFalse,   sizeof(ckFalse)   },
+    };
+
+    printf("\n--- full object table ---\n");
+
+    while (cnt < TMPL_CNT(objs)) {
+        rv = funcList->C_CreateObject(session, tmpl, TMPL_CNT(tmpl),
+                                      &objs[cnt]);
+        if (rv != CKR_OK)
+            break;
+        cnt++;
+    }
+    CHECK_TRUE(cnt > 0, "objects created before the limit");
+    if (cnt < TMPL_CNT(objs)) {
+        CHECK_RV(rv, "object past the limit", CKR_DEVICE_MEMORY);
+        if (cnt > 0) {
+            rv = funcList->C_CopyObject(session, objs[0], NULL, 0, &copy);
+            CHECK_RV(rv, "copy past the limit", CKR_DEVICE_MEMORY);
+        }
+    }
+    else
+        printf("SKIP: object limit above %lu\n", (unsigned long)cnt);
+    for (i = 0; i < cnt; i++)
+        funcList->C_DestroyObject(session, objs[i]);
+}
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -348,7 +649,14 @@ static int run_test(void)
 #endif
 #ifdef HAVE_ECC
     test_ec_public_attrs(session);
+    test_ec_params(session);
 #endif
+    test_create_object(session);
+#if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN)
+    test_rsa_keygen(session);
+#endif
+    test_generic_secret_len(session);
+    test_object_limit(session);
 
 out:
     if (session != 0)

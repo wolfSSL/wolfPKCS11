@@ -9968,7 +9968,7 @@ static CK_RV test_ecc_create_key_fail(void* args)
         ecc_p256_priv_key[3].ulValueLen = 1;
         ret = funcList->C_CreateObject(session, ecc_p256_priv_key,
                                                    ecc_p256_priv_key_cnt, &obj);
-        CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED,
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
                               "EC Private Key Create Object - param len short");
         ecc_p256_priv_key[3].ulValueLen = sizeof(ecc_p256_params);
     }
@@ -9977,7 +9977,7 @@ static CK_RV test_ecc_create_key_fail(void* args)
         ecc_p256_priv_key[3].ulValueLen = sizeof(paramsNotObj);
         ret = funcList->C_CreateObject(session, ecc_p256_priv_key,
                                                    ecc_p256_priv_key_cnt, &obj);
-        CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED,
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
                          "EC Private Key Create Object - not object in params");
         ecc_p256_priv_key[3].pValue = ecc_p256_params;
         ecc_p256_priv_key[3].ulValueLen = sizeof(ecc_p256_params);
@@ -9987,7 +9987,7 @@ static CK_RV test_ecc_create_key_fail(void* args)
         ecc_p256_priv_key[3].ulValueLen = sizeof(paramsObjLen);
         ret = funcList->C_CreateObject(session, ecc_p256_priv_key,
                                                    ecc_p256_priv_key_cnt, &obj);
-        CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED,
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
                      "EC Private Key Create Object - bad object len in params");
         ecc_p256_priv_key[3].pValue = ecc_p256_params;
         ecc_p256_priv_key[3].ulValueLen = sizeof(ecc_p256_params);
@@ -9997,7 +9997,7 @@ static CK_RV test_ecc_create_key_fail(void* args)
         ecc_p256_priv_key[3].ulValueLen = sizeof(paramsBadOid);
         ret = funcList->C_CreateObject(session, ecc_p256_priv_key,
                                                    ecc_p256_priv_key_cnt, &obj);
-        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+        CHECK_CKR_FAIL(ret, CKR_CURVE_NOT_SUPPORTED,
                             "EC Private Key Create Object - bad OID in params");
         ecc_p256_priv_key[3].pValue = ecc_p256_params;
         ecc_p256_priv_key[3].ulValueLen = sizeof(ecc_p256_params);
@@ -10006,7 +10006,7 @@ static CK_RV test_ecc_create_key_fail(void* args)
         ecc_p256_priv_key[5].ulValueLen = 1;
         ret = funcList->C_CreateObject(session, ecc_p256_priv_key,
                                                    ecc_p256_priv_key_cnt, &obj);
-        CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED,
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
                               "EC Private Key Create Object - point len short");
         ecc_p256_priv_key[5].ulValueLen = sizeof(ecc_p256_params);
     }
@@ -10015,7 +10015,7 @@ static CK_RV test_ecc_create_key_fail(void* args)
         ecc_p256_priv_key[5].ulValueLen = sizeof(pubNotOctet);
         ret = funcList->C_CreateObject(session, ecc_p256_priv_key,
                                                    ecc_p256_priv_key_cnt, &obj);
-        CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED,
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
                            "EC Private Key Create Object - not octet in point");
         ecc_p256_priv_key[5].pValue = ecc_p256_pub;
         ecc_p256_priv_key[5].ulValueLen = sizeof(ecc_p256_pub);
@@ -10025,7 +10025,7 @@ static CK_RV test_ecc_create_key_fail(void* args)
         ecc_p256_priv_key[5].ulValueLen = sizeof(pubOctetLen);
         ret = funcList->C_CreateObject(session, ecc_p256_priv_key,
                                                    ecc_p256_priv_key_cnt, &obj);
-        CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED,
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
                        "EC Private Key Create Object - bad octet len in point");
         ecc_p256_priv_key[5].pValue = ecc_p256_pub;
         ecc_p256_priv_key[5].ulValueLen = sizeof(ecc_p256_pub);
@@ -10035,7 +10035,7 @@ static CK_RV test_ecc_create_key_fail(void* args)
         ecc_p256_priv_key[5].ulValueLen = sizeof(pubOctetBadLongLen);
         ret = funcList->C_CreateObject(session, ecc_p256_priv_key,
                                                    ecc_p256_priv_key_cnt, &obj);
-        CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED,
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
                   "EC Private Key Create Object - bad octet long len in point");
         ecc_p256_priv_key[5].pValue = ecc_p256_pub;
         ecc_p256_priv_key[5].ulValueLen = sizeof(ecc_p256_pub);
@@ -10045,7 +10045,7 @@ static CK_RV test_ecc_create_key_fail(void* args)
         ecc_p256_priv_key[5].ulValueLen = sizeof(pubOctetBadLenLong);
         ret = funcList->C_CreateObject(session, ecc_p256_priv_key,
                                                    ecc_p256_priv_key_cnt, &obj);
-        CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED,
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
                   "EC Private Key Create Object - bad octet len long in point");
         ecc_p256_priv_key[5].pValue = ecc_p256_pub;
         ecc_p256_priv_key[5].ulValueLen = sizeof(ecc_p256_pub);
