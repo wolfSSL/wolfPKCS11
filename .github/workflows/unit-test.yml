@@ -21,6 +21,12 @@ jobs:
     with:
       config: --enable-aesecb
 
+  aescmac:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --enable-aescmac
+      wolfssl_config: --enable-cmac
+
   tpm:
     uses: ./.github/workflows/build-workflow.yml
     with:

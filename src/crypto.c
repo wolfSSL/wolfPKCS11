@@ -7407,6 +7407,15 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
     return rv;
 }
 
+#if defined(WOLFPKCS11_MLDSA) || defined(WOLFPKCS11_LMS) || \
+    defined(WOLFPKCS11_XMSS)
+/* An expected length of 0 is unknown and leaves the check to the helper. */
+static int SigLenMismatch(CK_ULONG sigLen, word32 expLen)
+{
+    return expLen != 0 && sigLen != (CK_ULONG)expLen;
+}
+#endif
+
 /**
  * Verify the single-part data.
  *
@@ -7420,6 +7429,8 @@ CK_RV C_VerifyInit(CK_SESSION_HANDLE hSession,
  *          CKR_ARGUMENTS_BAD when pData or pSignature is NULL.
  *          CKR_OPERATION_NOT_INITIALIZED when C_VerifyInit has not been
  *          successfully called.
+ *          CKR_DATA_LEN_RANGE when the data has the wrong length for raw RSA.
+ *          CKR_SIGNATURE_LEN_RANGE when the signature has the wrong length.
  *          CKR_FUNCTION_FAILED when verification fails.
  *          CKR_MECHANISM_INVALID when wrong initialization function was used.
  *          CKR_SIGNATURE_INVALID when the signature does not verify the data.
@@ -7433,6 +7444,7 @@ static CK_RV wp11_C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
     int stat = 0;
 #ifndef NO_RSA
     int oid = 0;
+    word32 rsaLen = 0;
 #endif
     WP11_Session* session = NULL;
     WP11_Object* obj = NULL;
@@ -7484,6 +7496,15 @@ static CK_RV wp11_C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                                                   WP11_INIT_RSA_X_509_VERIFY)) {
                 return CKR_OPERATION_NOT_INITIALIZED;
             }
+            rsaLen = WP11_Rsa_KeyLen(obj);
+            if (ulSignatureLen != (CK_ULONG)rsaLen) {
+                WP11_Session_AbortOp(session);
+                return CKR_SIGNATURE_LEN_RANGE;
+            }
+            if (ulDataLen > (CK_ULONG)rsaLen) {
+                WP11_Session_AbortOp(session);
+                return CKR_DATA_LEN_RANGE;
+            }
 
             ret = WP11_Rsa_Verify(pSignature, (int)ulSignatureLen, pData,
                                                     (int)ulDataLen, &stat, obj);
@@ -7516,6 +7537,17 @@ static CK_RV wp11_C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             }
             if (!WP11_Session_IsHashOpInitialized(session, (int)mechanism))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            rsaLen = WP11_Rsa_KeyLen(obj);
+            if (ulSignatureLen != (CK_ULONG)rsaLen) {
+                WP11_Session_AbortOp(session);
+                return CKR_SIGNATURE_LEN_RANGE;
+            }
+            if (hash_type == WC_HASH_TYPE_NONE &&
+                    (rsaLen < (word32)RSA_MIN_PAD_SZ ||
+                     ulDataLen > (CK_ULONG)(rsaLen - RSA_MIN_PAD_SZ))) {
+                WP11_Session_AbortOp(session);
+                return CKR_DATA_LEN_RANGE;
+            }
 
             if (hash_type != WC_HASH_TYPE_NONE) {
                 if (wc_Hash(hash_type, pData, (word32)ulDataLen, digest,
@@ -7574,6 +7606,17 @@ static CK_RV wp11_C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             }
             if (!WP11_Session_IsHashOpInitialized(session, (int)mechanism))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            rsaLen = WP11_Rsa_KeyLen(obj);
+            if (ulSignatureLen != (CK_ULONG)rsaLen) {
+                WP11_Session_AbortOp(session);
+                return CKR_SIGNATURE_LEN_RANGE;
+            }
+            if (hash_type == WC_HASH_TYPE_NONE &&
+                    ulDataLen !=
+                    (CK_ULONG)WP11_Session_GetPssHashLen(session)) {
+                WP11_Session_AbortOp(session);
+                return CKR_DATA_LEN_RANGE;
+            }
 
             if (hash_type != WC_HASH_TYPE_NONE) {
                 if (wc_Hash(hash_type, pData, (word32)ulDataLen, digest,
@@ -7642,6 +7685,11 @@ static CK_RV wp11_C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
         case CKM_HASH_ML_DSA:
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_MLDSA_VERIFY))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            if (SigLenMismatch(ulSignatureLen,
+                               (word32)WP11_Mldsa_SigLen(obj))) {
+                WP11_Session_AbortOp(session);
+                return CKR_SIGNATURE_LEN_RANGE;
+            }
 
             ret = WP11_Mldsa_Verify(pSignature, (int)ulSignatureLen, pData,
                                     (int)ulDataLen, &stat, obj, session);
@@ -7651,6 +7699,10 @@ static CK_RV wp11_C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
         case CKM_HSS:
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_HSS_VERIFY))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            if (SigLenMismatch(ulSignatureLen, WP11_Hss_SigLen(obj))) {
+                WP11_Session_AbortOp(session);
+                return CKR_SIGNATURE_LEN_RANGE;
+            }
 
             ret = WP11_Hss_Verify(pSignature, (word32)ulSignatureLen, pData,
                                   (word32)ulDataLen, &stat, obj);
@@ -7661,6 +7713,10 @@ static CK_RV wp11_C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
         case CKM_XMSSMT:
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_XMSS_VERIFY))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            if (SigLenMismatch(ulSignatureLen, WP11_Xmss_SigLen(obj))) {
+                WP11_Session_AbortOp(session);
+                return CKR_SIGNATURE_LEN_RANGE;
+            }
 
             ret = WP11_Xmss_Verify(pSignature, (word32)ulSignatureLen, pData,
                                    (word32)ulDataLen, &stat, obj);
@@ -7704,6 +7760,10 @@ static CK_RV wp11_C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 
             if (!WP11_Session_IsHashOpInitialized(session, (int)mechanism))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            if (ulSignatureLen != (CK_ULONG)WP11_Hmac_SigLen(session)) {
+                WP11_Session_AbortOp(session);
+                return CKR_SIGNATURE_LEN_RANGE;
+            }
 
             ret = WP11_Hmac_Verify(pSignature, (int)ulSignatureLen, pData,
                                                 (int)ulDataLen, &stat, session);
@@ -7715,6 +7775,10 @@ static CK_RV wp11_C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
         case CKM_AES_CMAC:
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CMAC_VERIFY))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            if (ulSignatureLen != (CK_ULONG)WP11_Aes_Cmac_SigLen(session)) {
+                WP11_Session_AbortOp(session);
+                return CKR_SIGNATURE_LEN_RANGE;
+            }
 
             ret = WP11_Aes_Cmac_Verify(pData, (word32)ulDataLen, pSignature,
                     (word32)ulSignatureLen, &stat, session);
@@ -7944,6 +8008,7 @@ CK_RV C_VerifyUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
  *          CKR_ARGUMENTS_BAD when pSignature is NULL.
  *          CKR_OPERATION_NOT_INITIALIZED when C_VerifyInit has not been
  *          successfully called.
+ *          CKR_SIGNATURE_LEN_RANGE when the signature has the wrong length.
  *          CKR_FUNCTION_FAILED when verification fails.
  *          CKR_MECHANISM_INVALID when wrong initialization function was used.
  *          CKR_SIGNATURE_INVALID when the signature does not verify the data.
@@ -8032,6 +8097,10 @@ static CK_RV wp11_C_VerifyFinal(CK_SESSION_HANDLE hSession,
 
             if (!WP11_Session_IsHashOpInitialized(session, (int)mechanism))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            if (ulSignatureLen != (CK_ULONG)WP11_Hmac_SigLen(session)) {
+                WP11_Session_AbortOp(session);
+                return CKR_SIGNATURE_LEN_RANGE;
+            }
 
             ret = WP11_Hmac_VerifyFinal(pSignature, (int)ulSignatureLen, &stat,
                                                                        session);
@@ -8043,6 +8112,10 @@ static CK_RV wp11_C_VerifyFinal(CK_SESSION_HANDLE hSession,
         case CKM_AES_CMAC:
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CMAC_VERIFY))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            if (ulSignatureLen != (CK_ULONG)WP11_Aes_Cmac_SigLen(session)) {
+                WP11_Session_AbortOp(session);
+                return CKR_SIGNATURE_LEN_RANGE;
+            }
 
             ret = WP11_Aes_Cmac_Verify_Final(pSignature, (word32)ulSignatureLen,
                     &stat, session);
@@ -8238,6 +8311,12 @@ CK_RV C_VerifyRecoverInit(CK_SESSION_HANDLE hSession,
  *          ulSignatureLen is 0.
  *          CKR_OPERATION_NOT_INITIALIZED when C_VerifyInit has not been
  *          successfully called.
+ *          CKR_SIGNATURE_LEN_RANGE when the signature is not the modulus
+ *          length.
+ *          CKR_BUFFER_TOO_SMALL when pData is too small; *pulDataLen is set to
+ *          the recovered data length and the operation stays active.
+ *          CKR_SIGNATURE_INVALID when the signature does not verify.
+ *          CKR_FUNCTION_FAILED when verification fails.
  *          CKR_OK on success.
  */
 static CK_RV wp11_C_VerifyRecover(CK_SESSION_HANDLE hSession,
@@ -8309,31 +8388,24 @@ static CK_RV wp11_C_VerifyRecover(CK_SESSION_HANDLE hSession,
     }
     if (WP11_Object_GetType(obj) != CKK_RSA)
         return CKR_KEY_TYPE_INCONSISTENT;
-    if (!CK_ULONG_FITS_WORD32(ulSignatureLen))
-        return CKR_ARGUMENTS_BAD;
 
     decDataLen = WP11_Rsa_KeyLen(obj);
     if (pData == NULL) {
         *pulDataLen = decDataLen;
         return CKR_OK;
     }
-    if (!CK_ULONG_FITS_WORD32(*pulDataLen))
-        return CKR_ARGUMENTS_BAD;
-    if ((CK_ULONG)decDataLen > *pulDataLen) {
-        /* Report the required size as mandated by PKCS#11. */
-        *pulDataLen = decDataLen;
-        return CKR_BUFFER_TOO_SMALL;
+    if (ulSignatureLen != (CK_ULONG)decDataLen) {
+        WP11_Session_AbortOp(session);
+        return CKR_SIGNATURE_LEN_RANGE;
     }
 
-    ret = WP11_Rsa_Verify_Recover(mechanism, pSignature, (word32)ulSignatureLen,
-                                  pData, pulDataLen, obj);
+    ret = WP11_Rsa_Verify_Recover(mechanism, pSignature, decDataLen, pData,
+                                  pulDataLen, obj);
+    if (ret == CKR_BUFFER_TOO_SMALL)
+        return CKR_BUFFER_TOO_SMALL;
 
     WP11_Session_SetOpInitialized(session, 0);
-    if (ret != CKR_OK) {
-        return ret;
-    }
-
-    return CKR_OK;
+    return ret;
 #endif
 }
 

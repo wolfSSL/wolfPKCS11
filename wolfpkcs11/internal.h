@@ -504,6 +504,7 @@ WP11_LOCAL void WP11_Session_SetMechanism(WP11_Session* session,
                                CK_MECHANISM_TYPE mechanism);
 WP11_LOCAL int WP11_Session_SetPssParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
                               CK_MECHANISM_TYPE mgf, CK_ULONG sLen);
+WP11_LOCAL int WP11_Session_GetPssHashLen(WP11_Session* session);
 WP11_LOCAL int WP11_Session_SetOaepParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
                                CK_MECHANISM_TYPE mgf, byte* label, int labelSz);
 WP11_LOCAL int WP11_Session_SetCbcParams(WP11_Session* session, unsigned char* iv, int enc,
@@ -693,6 +694,7 @@ WP11_LOCAL int WP11_Mldsa_Verify(unsigned char* sig, word32 sigLen, unsigned cha
 #ifdef WOLFPKCS11_LMS
 WP11_LOCAL int WP11_Object_SetHssKey(WP11_Object* object, unsigned char** data,
                                      CK_ULONG* len);
+WP11_LOCAL word32 WP11_Hss_SigLen(WP11_Object* pub);
 WP11_LOCAL int WP11_Hss_Verify(unsigned char* sig, word32 sigLen,
                                unsigned char* data, word32 dataLen, int* stat,
                                WP11_Object* pub);
@@ -701,6 +703,7 @@ WP11_LOCAL int WP11_Hss_Verify(unsigned char* sig, word32 sigLen,
 #ifdef WOLFPKCS11_XMSS
 WP11_LOCAL int WP11_Object_SetXmssKey(WP11_Object* object, unsigned char** data,
                                       CK_ULONG* len);
+WP11_LOCAL word32 WP11_Xmss_SigLen(WP11_Object* pub);
 WP11_LOCAL int WP11_Xmss_Verify(unsigned char* sig, word32 sigLen,
                                 unsigned char* data, word32 dataLen, int* stat,
                                 WP11_Object* pub);
@@ -850,6 +853,7 @@ WP11_LOCAL int WP11_AesCts_DecryptFinal(unsigned char* dec, word32* decSz,
 
 WP11_LOCAL int WP11_Aes_Cmac_Init(WP11_Object* secret, WP11_Session* session,
         word32 sigLen);
+WP11_LOCAL word32 WP11_Aes_Cmac_SigLen(WP11_Session* session);
 WP11_LOCAL int WP11_Aes_Cmac_Check_Len(CK_BYTE_PTR pSignature,
         CK_ULONG_PTR pulSignatureLen, WP11_Session* session);
 WP11_LOCAL int WP11_Aes_Cmac_Sign(unsigned char* data, word32 dataLen, unsigned char* sig,
