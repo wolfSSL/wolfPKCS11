@@ -170,6 +170,17 @@ versions may need to update templates or error-handling:
   generates ephemeral ECDHE keys without setting `CKA_DERIVE` and relies on
   the historic permissive behavior; non-NSS builds get the spec-compliant
   enforcement.
+- `C_DeriveKey` returns `CKR_TEMPLATE_INCONSISTENT` and creates no key when
+  the template sets `CKA_SENSITIVE=CK_FALSE` under a sensitive base key, or
+  `CKA_EXTRACTABLE=CK_TRUE` under a non-extractable one. The second key of
+  `CKM_CONCATENATE_BASE_AND_KEY` counts as a base key too. Previously the key
+  was created with the base key's values in place of the template's, and
+  `CKM_TLS12_KEY_AND_MAC_DERIVE` used the template's values. A template that
+  leaves these attributes out gets a sensitive key from a sensitive base key
+  and a non-extractable key from a non-extractable one; for
+  `CKM_TLS12_KEY_AND_MAC_DERIVE` this is new, as its keys used the defaults
+  before. NSS builds and builds with `WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT`
+  are unchanged.
 - `C_CopyObject` enforces `CKA_COPYABLE` (returns `CKR_ACTION_PROHIBITED`
   on `CK_FALSE`).
 - `C_DestroyObject` enforces `CKA_DESTROYABLE` (returns

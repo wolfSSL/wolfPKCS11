@@ -363,8 +363,6 @@ static void test_derive_invalid_secret_length(CK_SESSION_HANDLE session)
         { CKA_KEY_TYPE,    &aesType,     sizeof(aesType)     },
         { CKA_TOKEN,       &ckFalse,     sizeof(ckFalse)     },
         { CKA_PRIVATE,     &ckFalse,     sizeof(ckFalse)     },
-        { CKA_SENSITIVE,   &ckFalse,     sizeof(ckFalse)     },
-        { CKA_EXTRACTABLE, &ckTrue,      sizeof(ckTrue)      },
         { CKA_VALUE_LEN,   &badLen,      sizeof(badLen)      },
     };
 

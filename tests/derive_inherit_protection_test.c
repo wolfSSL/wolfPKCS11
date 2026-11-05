@@ -18,11 +18,8 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  *
- * Test for issue F-4533: a derived key must inherit protection strength from
- * its base key (PKCS#11 v3.0 5.5.5). If the base key is CKA_SENSITIVE=CK_TRUE
- * the derived key must be CKA_SENSITIVE=CK_TRUE; if the base key is
- * CKA_EXTRACTABLE=CK_FALSE the derived key must be CKA_EXTRACTABLE=CK_FALSE,
- * even when the caller's template requests weaker protection.
+ * Test that a derived key inherits a sensitive or non-extractable base key's
+ * protection, and that a template asking for less is refused.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -104,10 +101,10 @@ static int read_bool(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE obj,
     return (int)funcList->C_GetAttributeValue(session, obj, tmpl, 1);
 }
 
-/* HKDF-extract derive from `base' producing a generic secret. The derived
- * template deliberately requests the weakest protection. */
+/* HKDF-extract derive from `base' producing a generic secret, with the
+ * weakest protection in the template when `weak' is set. */
 static CK_RV hkdf_derive(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE base,
-                         CK_OBJECT_HANDLE* derived)
+                         int weak, CK_OBJECT_HANDLE* derived)
 {
     CK_ULONG derivedLen = 32;
     /* >= FIPS HMAC min key (14) so HKDF-Extract works under FIPS. */
@@ -117,11 +114,15 @@ static CK_RV hkdf_derive(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE base,
     CK_ATTRIBUTE derivedTmpl[] = {
         { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
         { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_VALUE_LEN,   &derivedLen,     sizeof(derivedLen)     },
         { CKA_SENSITIVE,   &ckFalse,        sizeof(ckFalse)        },
         { CKA_EXTRACTABLE, &ckTrue,         sizeof(ckTrue)         },
-        { CKA_VALUE_LEN,   &derivedLen,     sizeof(derivedLen)     },
     };
     CK_ULONG derivedCnt = sizeof(derivedTmpl) / sizeof(*derivedTmpl);
+
+    if (!weak)
+        derivedCnt -= 2;
+    *derived = CK_INVALID_HANDLE;
 
     XMEMSET(salt, 0, sizeof(salt));
     XMEMSET(&params, 0, sizeof(params));
@@ -162,7 +163,20 @@ static int test_sensitive_inheritance(CK_SESSION_HANDLE session)
     ret = funcList->C_CreateObject(session, baseTmpl, baseCnt, &base);
     CHECK_CKR(ret, "create sensitive base key");
 
-    ret = hkdf_derive(session, base, &derived);
+    ret = hkdf_derive(session, base, 1, &derived);
+#ifndef EXPECT_NO_INHERIT
+    if (ret != CKR_TEMPLATE_INCONSISTENT || derived != CK_INVALID_HANDLE) {
+        fprintf(stderr, "FAIL: weaker template under a sensitive base: "
+                "0x%lx\n", (unsigned long)ret);
+        test_failed++;
+        result = -1;
+        goto cleanup;
+    }
+    printf("PASS: weaker template under a sensitive base refused\n");
+    test_passed++;
+
+    ret = hkdf_derive(session, base, 0, &derived);
+#endif
     CHECK_CKR(ret, "derive from sensitive base");
 
     ret = read_bool(session, derived, CKA_SENSITIVE, &sensitive);
@@ -235,7 +249,20 @@ static int test_extractable_inheritance(CK_SESSION_HANDLE session)
     ret = funcList->C_CreateObject(session, baseTmpl, baseCnt, &base);
     CHECK_CKR(ret, "create non-extractable base key");
 
-    ret = hkdf_derive(session, base, &derived);
+    ret = hkdf_derive(session, base, 1, &derived);
+#ifndef EXPECT_NO_INHERIT
+    if (ret != CKR_TEMPLATE_INCONSISTENT || derived != CK_INVALID_HANDLE) {
+        fprintf(stderr, "FAIL: weaker template under a non-extractable base: "
+                "0x%lx\n", (unsigned long)ret);
+        test_failed++;
+        result = -1;
+        goto cleanup;
+    }
+    printf("PASS: weaker template under a non-extractable base refused\n");
+    test_passed++;
+
+    ret = hkdf_derive(session, base, 0, &derived);
+#endif
     CHECK_CKR(ret, "derive from non-extractable base");
 
     ret = read_bool(session, derived, CKA_EXTRACTABLE, &extractable);

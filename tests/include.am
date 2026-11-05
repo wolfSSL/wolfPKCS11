@@ -211,6 +211,11 @@ noinst_PROGRAMS += tests/derive_inherit_protection_test
 tests_derive_inherit_protection_test_SOURCES = tests/derive_inherit_protection_test.c
 tests_derive_inherit_protection_test_LDADD =
 
+check_PROGRAMS += tests/derive_template_rollback_test
+noinst_PROGRAMS += tests/derive_template_rollback_test
+tests_derive_template_rollback_test_SOURCES = tests/derive_template_rollback_test.c
+tests_derive_template_rollback_test_LDADD =
+
 check_PROGRAMS += tests/ec_derive_test
 noinst_PROGRAMS += tests/ec_derive_test
 tests_ec_derive_test_SOURCES = tests/ec_derive_test.c
@@ -487,6 +492,7 @@ tests_empty_pin_cache_test_LDADD += src/libwolfpkcs11.la
 tests_key_sensitive_default_test_LDADD += src/libwolfpkcs11.la
 tests_derive_disabled_key_test_LDADD += src/libwolfpkcs11.la
 tests_derive_inherit_protection_test_LDADD += src/libwolfpkcs11.la
+tests_derive_template_rollback_test_LDADD += src/libwolfpkcs11.la
 tests_ec_derive_test_LDADD += src/libwolfpkcs11.la
 tests_kdf_tls_derive_test_LDADD += src/libwolfpkcs11.la
 tests_secret_extractable_default_test_LDADD += src/libwolfpkcs11.la
@@ -564,6 +570,7 @@ tests_empty_pin_cache_test_LDADD += src/libwolfpkcs11.la
 tests_key_sensitive_default_test_LDADD += src/libwolfpkcs11.la
 tests_derive_disabled_key_test_LDADD += src/libwolfpkcs11.la
 tests_derive_inherit_protection_test_LDADD += src/libwolfpkcs11.la
+tests_derive_template_rollback_test_LDADD += src/libwolfpkcs11.la
 tests_ec_derive_test_LDADD += src/libwolfpkcs11.la
 tests_kdf_tls_derive_test_LDADD += src/libwolfpkcs11.la
 tests_secret_extractable_default_test_LDADD += src/libwolfpkcs11.la

@@ -10174,6 +10174,65 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
 }
 
 #ifdef WP11_DERIVE_SECRET_KEY
+static void GetBaseProtection(WP11_Object* obj, CK_BBOOL* sensitive,
+                              CK_BBOOL* extractable)
+{
+    CK_ULONG len = sizeof(CK_BBOOL);
+
+    if (WP11_Object_GetAttr(obj, CKA_SENSITIVE, sensitive, &len) != 0)
+        *sensitive = CK_FALSE;
+    len = sizeof(CK_BBOOL);
+    if (WP11_Object_GetAttr(obj, CKA_EXTRACTABLE, extractable, &len) != 0)
+        *extractable = CK_TRUE;
+}
+
+static int ApplyBaseProtection(WP11_Object* obj, CK_BBOOL baseSensitive,
+                               CK_BBOOL baseExtractable)
+{
+    CK_BBOOL bbTrue = CK_TRUE;
+    CK_BBOOL bbFalse = CK_FALSE;
+    int ret = 0;
+
+    if (baseSensitive == CK_TRUE)
+        ret = WP11_Object_SetAttr(obj, CKA_SENSITIVE, &bbTrue, sizeof(bbTrue));
+    if (ret == 0 && baseExtractable == CK_FALSE) {
+        ret = WP11_Object_SetAttr(obj, CKA_EXTRACTABLE, &bbFalse,
+                                  sizeof(bbFalse));
+    }
+    return ret;
+}
+
+#ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
+/* Every occurrence counts, as CreateObject applies them all. */
+static int TemplateBoolIs(CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
+                          CK_ATTRIBUTE_TYPE type, CK_BBOOL value)
+{
+    CK_ULONG i;
+
+    for (i = 0; i < ulCount; i++) {
+        if (pTemplate[i].type == type && pTemplate[i].pValue != NULL &&
+                pTemplate[i].ulValueLen == sizeof(CK_BBOOL) &&
+                *(CK_BBOOL*)pTemplate[i].pValue == value) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static CK_RV CheckDeriveProtection(CK_ATTRIBUTE_PTR pTemplate,
+                                   CK_ULONG ulCount, CK_BBOOL baseSensitive,
+                                   CK_BBOOL baseExtractable)
+{
+    if ((baseSensitive == CK_TRUE &&
+            TemplateBoolIs(pTemplate, ulCount, CKA_SENSITIVE, CK_FALSE)) ||
+            (baseExtractable == CK_FALSE &&
+            TemplateBoolIs(pTemplate, ulCount, CKA_EXTRACTABLE, CK_TRUE))) {
+        return CKR_TEMPLATE_INCONSISTENT;
+    }
+    return CKR_OK;
+}
+#endif
+
 /**
  * Determine the key length of the object.
  *
@@ -10228,7 +10287,8 @@ static int SymmKeyLen(WP11_Object* obj, word32 len, CK_ULONG* symmKeyLen)
 #ifdef WOLFSSL_HAVE_PRF
 static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
                          CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulAttributeCount,
-                         CK_BBOOL isMac, CK_BBOOL baseAlwaysSensitive,
+                         CK_BBOOL isMac, CK_BBOOL baseSensitive,
+                         CK_BBOOL baseExtractable, CK_BBOOL baseAlwaysSensitive,
                          CK_BBOOL baseNeverExtractable,
                          CK_OBJECT_HANDLE* handle)
 {
@@ -10245,6 +10305,11 @@ static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
                             CKO_SECRET_KEY, &secret);
     if (ret != 0)
         return ret;
+    ret = ApplyBaseProtection(secret, baseSensitive, baseExtractable);
+    if (ret != 0) {
+        WP11_Object_Free(secret);
+        return CKR_FUNCTION_FAILED;
+    }
 
     ret = SymmKeyLen(secret, (word32)length, &symmKeyLen);
     if (ret == 0) {
@@ -10311,6 +10376,7 @@ static int Tls12_Extract_Keys(WP11_Session* session,
                             CK_TLS12_KEY_MAT_PARAMS* tlsParams,
                             CK_ATTRIBUTE_PTR pTemplate,
                             CK_ULONG ulAttributeCount, byte* derivedKey,
+                            CK_BBOOL baseSensitive, CK_BBOOL baseExtractable,
                             CK_BBOOL baseAlwaysSensitive,
                             CK_BBOOL baseNeverExtractable)
 {
@@ -10325,8 +10391,8 @@ static int Tls12_Extract_Keys(WP11_Session* session,
     /* Client MAC key */
     length = tlsParams->ulMacSizeInBits / 8;
     ret = SetKeyExtract(session, ptr, length, pTemplate,
-            ulAttributeCount, CK_TRUE, baseAlwaysSensitive,
-            baseNeverExtractable,
+            ulAttributeCount, CK_TRUE, baseSensitive, baseExtractable,
+            baseAlwaysSensitive, baseNeverExtractable,
             &tlsParams->pReturnedKeyMaterial->hClientMacSecret);
     if (ret != 0) {
         return ret;
@@ -10334,8 +10400,8 @@ static int Tls12_Extract_Keys(WP11_Session* session,
     ptr += length;
     /* Server MAC key */
     ret = SetKeyExtract(session, ptr, length, pTemplate,
-            ulAttributeCount, CK_TRUE, baseAlwaysSensitive,
-            baseNeverExtractable,
+            ulAttributeCount, CK_TRUE, baseSensitive, baseExtractable,
+            baseAlwaysSensitive, baseNeverExtractable,
             &tlsParams->pReturnedKeyMaterial->hServerMacSecret);
     if (ret != 0) {
         return ret;
@@ -10344,8 +10410,8 @@ static int Tls12_Extract_Keys(WP11_Session* session,
     /* Client key */
     length = tlsParams->ulKeySizeInBits / 8;
     ret = SetKeyExtract(session, ptr, length, pTemplate,
-            ulAttributeCount, CK_FALSE, baseAlwaysSensitive,
-            baseNeverExtractable,
+            ulAttributeCount, CK_FALSE, baseSensitive, baseExtractable,
+            baseAlwaysSensitive, baseNeverExtractable,
             &tlsParams->pReturnedKeyMaterial->hClientKey);
     if (ret != 0) {
         return ret;
@@ -10353,8 +10419,8 @@ static int Tls12_Extract_Keys(WP11_Session* session,
     ptr += length;
     /* Server key */
     ret = SetKeyExtract(session, ptr, length, pTemplate,
-            ulAttributeCount, CK_FALSE, baseAlwaysSensitive,
-            baseNeverExtractable,
+            ulAttributeCount, CK_FALSE, baseSensitive, baseExtractable,
+            baseAlwaysSensitive, baseNeverExtractable,
             &tlsParams->pReturnedKeyMaterial->hServerKey);
     if (ret != 0) {
         return ret;
@@ -10436,6 +10502,8 @@ static int ConcatCutsProtectedKey(WP11_Object* key, CK_ULONG off,
  *          CKR_KEY_SIZE_RANGE when the derived key is too long.
  *          CKR_TEMPLATE_INCOMPLETE when an AES key has no CKA_VALUE_LEN and
  *          is concatenated, or the derived length is not an AES key size.
+ *          CKR_TEMPLATE_INCONSISTENT when the template asks for a key that is
+ *          less protected than the base key or the concatenated key.
  *          CKR_USER_NOT_LOGGED_IN when a token key value is not decoded.
  *          CKR_OK on success.
  */
@@ -10740,6 +10808,13 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                 tlsParams->RandomInfo.pClientRandom == NULL ||
                 tlsParams->RandomInfo.pServerRandom == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
+#ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
+            GetBaseProtection(obj, &baseSensitive, &baseExtractable);
+            rv = CheckDeriveProtection(pTemplate, ulAttributeCount,
+                                       baseSensitive, baseExtractable);
+            if (rv != CKR_OK)
+                return rv;
+#endif
 
             {
                 CK_ULONG totalBits;
@@ -10796,6 +10871,7 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                     baseNeverExtractable = CK_FALSE;
                 ret = Tls12_Extract_Keys(session, tlsParams, pTemplate,
                                          ulAttributeCount, derivedKey,
+                                         baseSensitive, baseExtractable,
                                          baseAlwaysSensitive,
                                          baseNeverExtractable);
             }
@@ -11009,14 +11085,7 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
         /* F-4533: read the base key's protection bits while `obj' still
          * refers to it, before CreateObject reuses `obj' for the new key. */
         if (inherit) {
-            bLen = sizeof(CK_BBOOL);
-            if (WP11_Object_GetAttr(obj, CKA_SENSITIVE, &baseSensitive,
-                                    &bLen) != 0)
-                baseSensitive = CK_FALSE;
-            bLen = sizeof(CK_BBOOL);
-            if (WP11_Object_GetAttr(obj, CKA_EXTRACTABLE, &baseExtractable,
-                                    &bLen) != 0)
-                baseExtractable = CK_TRUE;
+            GetBaseProtection(obj, &baseSensitive, &baseExtractable);
             bLen = sizeof(CK_BBOOL);
             if (otherKey != NULL && WP11_Object_GetAttr(otherKey,
                     CKA_SENSITIVE, &otherState, &bLen) == 0 &&
@@ -11070,6 +11139,12 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
 #endif
         if (reqValueLen > keyLen)
             rv = CKR_ATTRIBUTE_VALUE_INVALID;
+#ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
+        if (rv == CKR_OK) {
+            rv = CheckDeriveProtection(pTemplate, ulAttributeCount,
+                                       baseSensitive, baseExtractable);
+        }
+#endif
 #if !defined(NO_AES) && !defined(WOLFPKCS11_NSS)
         if (rv == CKR_OK && valueLenAttr == NULL) {
             FindAttributeType(pTemplate, ulAttributeCount, CKA_KEY_TYPE,
@@ -11088,22 +11163,9 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
         }
         if (rv == CKR_OK) {
             /* obj now refers to the newly created derived key. */
-            /* F-4533: PKCS#11 v3.0 5.5.5 - a derived key must be at least as
-             * protected as its base key. Force the inherited attributes after
-             * the caller template has been applied so a weaker template
-             * cannot win. */
-            if (baseSensitive == CK_TRUE) {
-                CK_BBOOL bbTrue = CK_TRUE;
-                if (WP11_Object_SetAttr(obj, CKA_SENSITIVE, &bbTrue,
-                                        sizeof(bbTrue)) != 0)
-                    rv = CKR_FUNCTION_FAILED;
-            }
-            if (rv == CKR_OK && baseExtractable == CK_FALSE) {
-                CK_BBOOL bbFalse = CK_FALSE;
-                if (WP11_Object_SetAttr(obj, CKA_EXTRACTABLE, &bbFalse,
-                                        sizeof(bbFalse)) != 0)
-                    rv = CKR_FUNCTION_FAILED;
-            }
+            /* A derived key defaults to its base key's protection. */
+            if (ApplyBaseProtection(obj, baseSensitive, baseExtractable) != 0)
+                rv = CKR_FUNCTION_FAILED;
             if (rv == CKR_OK && wrapTrusted == CK_TRUE) {
                 CK_BBOOL bbTrue = CK_TRUE;
                 if (WP11_Object_SetAttr(obj, CKA_WRAP_WITH_TRUSTED, &bbTrue,

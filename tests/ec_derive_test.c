@@ -339,8 +339,9 @@ static int test_unsupported_der_length_form(CK_SESSION_HANDLE session)
     };
     CK_ATTRIBUTE privTmpl[] = {
         { CKA_PRIVATE,   &ckFalse,   sizeof(ckFalse)    },
-        { CKA_SENSITIVE, &ckFalse,   sizeof(ckFalse)    },
-        { CKA_DERIVE,    &ckTrue,    sizeof(ckTrue)     },
+        { CKA_SENSITIVE,   &ckFalse, sizeof(ckFalse)    },
+        { CKA_EXTRACTABLE, &ckTrue,  sizeof(ckTrue)     },
+        { CKA_DERIVE,      &ckTrue,  sizeof(ckTrue)     },
     };
     int result = 0;
 
