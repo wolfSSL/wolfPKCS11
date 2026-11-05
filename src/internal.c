@@ -18863,7 +18863,9 @@ int WP11_Ec_Verify(unsigned char* sig, word32 sigLen, unsigned char* hash,
  * @param  key       [in]  Buffer to hold secret key.
  * @param  keyLen    [in]  Length of buffer in bytes.
  * @param  priv      [in]  The private key.
- * @return  -ve when derivation fails.
+ * @return  CKR_MECHANISM_PARAM_INVALID when the peer's value is not a point on
+ *          the key's curve.
+ *          -ve when derivation fails.
  *          0 on success.
  */
 int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
@@ -18915,24 +18917,28 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
     }
 
     ret = wc_ecc_init_ex(&pubKey, NULL, priv->devId);
-    if (ret == 0 && x963Len > pointLen - (word32)(x963Data - point))
-        ret = BUFFER_E;
-    if (ret == 0 && priv->data.ecKey->dp != NULL) {
-        /* Compressed point is size + 1 bytes, uncompressed 2 * size + 1 */
-        expectedPointLen = (word32)priv->data.ecKey->dp->size + 1;
-        if (x963Len > 0 && x963Data[0] == ECC_POINT_UNCOMP)
-            expectedPointLen += (word32)priv->data.ecKey->dp->size;
-        if (x963Len != expectedPointLen)
-            ret = ECC_BAD_ARG_E;
-    }
     if (ret == 0) {
-        if (priv->data.ecKey->dp) {
-            ret = wc_ecc_import_x963_ex(x963Data, x963Len, &pubKey,
-                                        priv->data.ecKey->dp->id);
+        if (x963Len > pointLen - (word32)(x963Data - point))
+            ret = BUFFER_E;
+        if (ret == 0 && priv->data.ecKey->dp != NULL) {
+            /* Compressed point is size + 1 bytes, uncompressed 2 * size + 1 */
+            expectedPointLen = (word32)priv->data.ecKey->dp->size + 1;
+            if (x963Len > 0 && x963Data[0] == ECC_POINT_UNCOMP)
+                expectedPointLen += (word32)priv->data.ecKey->dp->size;
+            if (x963Len != expectedPointLen)
+                ret = ECC_BAD_ARG_E;
         }
-        else {
-            ret = wc_ecc_import_x963(x963Data, x963Len, &pubKey);
+        if (ret == 0) {
+            if (priv->data.ecKey->dp) {
+                ret = wc_ecc_import_x963_ex(x963Data, x963Len, &pubKey,
+                                            priv->data.ecKey->dp->id);
+            }
+            else {
+                ret = wc_ecc_import_x963(x963Data, x963Len, &pubKey);
+            }
         }
+        if (wp11_Ec_PointInvalid(ret))
+            ret = (int)CKR_MECHANISM_PARAM_INVALID;
     }
 #if defined(ECC_TIMING_RESISTANT) && (!defined(HAVE_FIPS) || \
     (defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION > 2)))
@@ -18982,6 +18988,8 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
             PRIVATE_KEY_UNLOCK();
             ret = wc_ecc_shared_secret(priv->data.ecKey, &pubKey, key, keyLen);
             PRIVATE_KEY_LOCK();
+            if (ret == IS_POINT_E || ret == ECC_INF_E)
+                ret = (int)CKR_MECHANISM_PARAM_INVALID;
         }
 #if defined(ECC_TIMING_RESISTANT) && (!defined(HAVE_FIPS) || \
     (defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION > 2)))
@@ -19251,7 +19259,8 @@ int WP11_GenerateRandomKey(WP11_Object* secret, WP11_Slot* slot,
  * @param  key        [in]  Buffer to hold the secret key.
  * @param  keyLen     [in]  Buffer length in bytes.
  * @param  priv       [in]  The private key.
- * @return  -ve when derivation fails.
+ * @return  CKR_MECHANISM_PARAM_INVALID when the hash or salt is not usable.
+ *          -ve when derivation fails.
  *          0 on success
  */
 
@@ -19288,7 +19297,7 @@ int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
             case CKF_HKDF_SALT_KEY:
                 ret = WP11_Object_Find(session, params->hSaltKey, &saltKey);
                 if (ret != 0)
-                    return CKR_OBJECT_HANDLE_INVALID;
+                    return CKR_MECHANISM_PARAM_INVALID;
                 /* Only these secret key types hold their value in symmKey. */
                 if (saltKey->objClass != CKO_SECRET_KEY ||
                     !WP11_KeyType_IsSecret(saltKey->type) ||

@@ -74,15 +74,11 @@
     (CK_ULONG_FITS_WORD32(v) ? (word32)(v) : \
                                (word32)(0xFFFFFFFF - CK_ULONG_MAX_OVERHEAD))
 
-/* RFC 5869 limits HKDF-Expand output to 255 * HashLen octets. Cap the
- * requested output length to the largest such value across supported digests
- * so an oversized request does not drive a large allocation and zeroization
- * before wolfCrypt enforces the per-digest limit. */
-#define WP11_MAX_HKDF_OUTPUT   (255 * WC_MAX_DIGEST_SIZE)
-
 #define CHECK_KEYTYPE(kt) \
    (kt == CKK_RSA || kt == CKK_EC || kt == CKK_DH || \
-    kt == CKK_AES || kt == CKK_HKDF || kt == CKK_GENERIC_SECRET) ? \
+    kt == CKK_AES || kt == CKK_HKDF || kt == CKK_GENERIC_SECRET || \
+    kt == CKK_ML_DSA || kt == CKK_ML_KEM || kt == CKK_HSS || \
+    kt == CKK_XMSS || kt == CKK_XMSSMT) ? \
     CKR_OK : CKR_ATTRIBUTE_VALUE_INVALID
 
 #define CHECK_KEYCLASS(kc) \
@@ -515,6 +511,7 @@ static CK_RV CheckPrivateLogin(WP11_Session* session,
  * @param  set        [in]  Whether attributes are being used to set or get
  *                          value.
  * @return  CKR_ATTRIBUTE_TYPE_INVALID if the attribute type is not supported.
+ *          CKR_TEMPLATE_INCONSISTENT if setting an attribute-array template.
  *          CKR_ATTRIBUTE_VALUE_INVALID if value or length is not valid for
  *          data type.
  *          CKR_OK on success.
@@ -533,6 +530,10 @@ static CK_RV CheckAttributes(CK_ATTRIBUTE* pTemplate, CK_ULONG ulCount, int set)
         }
         if (j == ATTR_TYPE_SIZE)
             return CKR_ATTRIBUTE_TYPE_INVALID;
+        if (set && (attr->type == CKA_WRAP_TEMPLATE ||
+                    attr->type == CKA_UNWRAP_TEMPLATE ||
+                    attr->type == CKA_DERIVE_TEMPLATE))
+            return CKR_TEMPLATE_INCONSISTENT;
 
         if (attrType[j].type == ATTR_TYPE_ULONG) {
             if (attr->pValue == NULL && set)
@@ -4779,7 +4780,8 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
             /* AES Key Wrap ciphertext is at least two semiblocks: one data
              * semiblock plus the 8-byte integrity check value. */
             if (!CK_ULONG_FITS_WORD32(ulEncryptedDataLen) ||
-                ulEncryptedDataLen < 2 * KEYWRAP_BLOCK_SIZE) {
+                ulEncryptedDataLen < 2 * KEYWRAP_BLOCK_SIZE ||
+                (ulEncryptedDataLen % KEYWRAP_BLOCK_SIZE) != 0) {
                 WP11_Session_AbortOp(session);
                 return CKR_ENCRYPTED_DATA_LEN_RANGE;
             }
@@ -9898,7 +9900,10 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pMechanism or pulWrappedKeyLen is NULL.
- *          CKR_OBJECT_HANDLE_INVALID when a key object handle is not valid.
+ *          CKR_UNWRAPPING_KEY_HANDLE_INVALID when the unwrapping key handle is
+ *          not valid.
+ *          CKR_TEMPLATE_INCONSISTENT when the template's key type cannot be
+ *          unwrapped.
  *          CKR_MECHANISM_INVALID when the mechanism is not supported with this
  *          type of operation.
  */
@@ -10011,7 +10016,7 @@ static CK_RV wp11_C_UnwrapKey(CK_SESSION_HANDLE hSession,
 
     rv = CHECK_WRAPPABLE(keyClass, keyType);
     if (rv != CKR_OK)
-        return rv;
+        return CKR_TEMPLATE_INCONSISTENT;
 
     if (!CK_ULONG_FITS_WORD32(ulWrappedKeyLen))
         return CKR_WRAPPED_KEY_LEN_RANGE;
@@ -10134,7 +10139,13 @@ static CK_RV wp11_C_UnwrapKey(CK_SESSION_HANDLE hSession,
             rv = CreateObject(session, pTemplate, ulAttributeCount,
                               WP11_NO_IMPLICIT_CLASS, &keyObj);
             if (rv == CKR_OK) {
-                if (WP11_Object_SetSecretKey(keyObj, keyData, keyDataLens) != 0)
+                ret = WP11_Object_SetSecretKey(keyObj, keyData, keyDataLens);
+                /* The unwrapped value is a length the key type cannot take. */
+                if (ret == BUFFER_E)
+                    rv = CKR_WRAPPED_KEY_LEN_RANGE;
+                else if (ret == BAD_FUNC_ARG)
+                    rv = CKR_WRAPPED_KEY_INVALID;
+                else if (ret != 0)
                     rv = CKR_FUNCTION_FAILED;
             }
             if (rv == CKR_OK) {
@@ -10153,7 +10164,7 @@ static CK_RV wp11_C_UnwrapKey(CK_SESSION_HANDLE hSession,
             break;
         }
         default:
-            rv = CKR_KEY_NOT_WRAPPABLE;
+            rv = CKR_TEMPLATE_INCONSISTENT;
             goto err_out;
     }
     (void)wrapkeyType;
@@ -10601,7 +10612,11 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
             ret = WP11_EC_Derive(params->pPublicData,
                                     (word32)params->ulPublicDataLen, derivedKey,
                                     &keyLen, obj);
-            if (ret != 0)
+            if (ret == (int)CKR_MECHANISM_PARAM_INVALID)
+                rv = CKR_MECHANISM_PARAM_INVALID;
+            else if (ret == MEMORY_E || ret == MP_MEM)
+                rv = CKR_DEVICE_MEMORY;
+            else if (ret != 0)
                 rv = CKR_FUNCTION_FAILED;
             break;
         }
@@ -10654,9 +10669,7 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                     return CKR_ATTRIBUTE_VALUE_INVALID;
                 }
                 XMEMCPY(&reqLen, lenAttr->pValue, sizeof(CK_ULONG));
-                /* Reject zero and cap to the RFC 5869 maximum, which also
-                 * keeps the value within word32 range. */
-                if (reqLen == 0 || reqLen > WP11_MAX_HKDF_OUTPUT) {
+                if (reqLen == 0 || reqLen > WP11_MAX_SYM_KEY_SZ) {
                     return CKR_ATTRIBUTE_VALUE_INVALID;
                 }
                 keyLen = (word32)reqLen;
@@ -10672,8 +10685,8 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
             ret = WP11_KDF_Derive(session, kdfParams, derivedKey, &keyLen, obj);
 
             /* A parameter check reports a CK_RV, not a wolfCrypt error. */
-            if (ret == (int)CKR_MECHANISM_PARAM_INVALID)
-                rv = CKR_MECHANISM_PARAM_INVALID;
+            if (ret > 0)
+                rv = (CK_RV)ret;
             else if (ret != 0)
                 rv = CKR_FUNCTION_FAILED;
             break;

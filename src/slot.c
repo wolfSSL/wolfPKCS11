@@ -699,10 +699,10 @@ static CK_MECHANISM_INFO xmssMechInfo = {
 #endif
 #ifdef WOLFPKCS11_HKDF
 static CK_MECHANISM_INFO hkdfMechInfo = {
-    1, 16320, CKF_DERIVE
+    1, WP11_MAX_SYM_KEY_SZ, CKF_DERIVE
 };
 static CK_MECHANISM_INFO hkdfDatMechInfo = {
-    1, 16320, CKF_DERIVE
+    1, WP11_MAX_SYM_KEY_SZ, CKF_DERIVE
 };
 static CK_MECHANISM_INFO hkdfKeyGenMechInfo = {
     20, 64, CKF_GENERATE

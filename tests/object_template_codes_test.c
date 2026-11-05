@@ -18,8 +18,8 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  *
- * Return codes for bad key handles, attribute templates, object creation
- * and key generation.
+ * Return codes for bad key handles, templates, object creation, key
+ * generation, derivation and unwrapping.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -485,7 +485,7 @@ static void test_ec_params(CK_SESSION_HANDLE session)
 }
 #endif
 
-#if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN)
+#if (!defined(NO_RSA) && defined(WOLFSSL_KEY_GEN)) || defined(WOLFPKCS11_HKDF)
 static CK_SLOT_ID session_slot(CK_SESSION_HANDLE session)
 {
     CK_SESSION_INFO info;
@@ -589,6 +589,125 @@ static void test_generic_secret_len(CK_SESSION_HANDLE session)
     CHECK_RV(rv, "1 MiB", CKR_ATTRIBUTE_VALUE_INVALID);
 }
 
+#ifdef WOLFPKCS11_HKDF
+static void test_hkdf_len(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_HKDF_PARAMS params;
+    CK_MECHANISM mech = { CKM_HKDF_DERIVE, &params, sizeof(params) };
+    CK_MECHANISM_INFO info;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_ULONG len = 32;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,     &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE,  &genericType, sizeof(genericType) },
+        { CKA_TOKEN,     &ckFalse,     sizeof(ckFalse)     },
+        { CKA_PRIVATE,   &ckFalse,     sizeof(ckFalse)     },
+        { CKA_VALUE_LEN, &len,         sizeof(len)         },
+    };
+
+    printf("\n--- HKDF output length ---\n");
+
+    XMEMSET(&params, 0, sizeof(params));
+    params.bExtract = CK_TRUE;
+    params.bExpand = CK_TRUE;
+    params.prfHashMechanism = CKM_SHA256;
+    params.ulSaltType = CKF_HKDF_SALT_NULL;
+
+    rv = funcList->C_GetMechanismInfo(session_slot(session), CKM_HKDF_DERIVE,
+                                      &info);
+    CHECK_RV(rv, "C_GetMechanismInfo", CKR_OK);
+    if (rv != CKR_OK || create_generic_key(session, &base) != CKR_OK)
+        return;
+
+    rv = funcList->C_DeriveKey(session, &mech, base, tmpl, TMPL_CNT(tmpl),
+                               &key);
+    CHECK_RV(rv, "32 bytes (control)", CKR_OK);
+    if (rv == CKR_OK)
+        funcList->C_DestroyObject(session, key);
+    len = info.ulMaxKeySize;
+    rv = funcList->C_DeriveKey(session, &mech, base, tmpl, TMPL_CNT(tmpl),
+                               &key);
+    CHECK_RV(rv, "advertised maximum", CKR_OK);
+    if (rv == CKR_OK)
+        funcList->C_DestroyObject(session, key);
+    len = info.ulMaxKeySize + 1;
+    rv = funcList->C_DeriveKey(session, &mech, base, tmpl, TMPL_CNT(tmpl),
+                               &key);
+    CHECK_RV(rv, "above the advertised maximum", CKR_ATTRIBUTE_VALUE_INVALID);
+    len = 32;
+    params.ulSaltType = CKF_HKDF_SALT_KEY;
+    params.hSaltKey = BAD_HANDLE;
+    rv = funcList->C_DeriveKey(session, &mech, base, tmpl, TMPL_CNT(tmpl),
+                               &key);
+    CHECK_RV(rv, "unresolved salt key", CKR_MECHANISM_PARAM_INVALID);
+    funcList->C_DestroyObject(session, base);
+}
+#endif
+
+#if defined(HAVE_ECC) && !defined(WOLFPKCS11_TPM)
+static void test_ecdh_peer(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_KEY_TYPE ecType = CKK_EC;
+    CK_ECDH1_DERIVE_PARAMS params;
+    CK_MECHANISM mech = { CKM_ECDH1_DERIVE, &params, sizeof(params) };
+    CK_BYTE bigPeer[sizeof(ecc_p256_pub)];
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_ULONG len = 32;
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_CLASS,     &privClass,      sizeof(privClass)       },
+        { CKA_KEY_TYPE,  &ecType,         sizeof(ecType)          },
+        { CKA_TOKEN,     &ckFalse,        sizeof(ckFalse)         },
+        { CKA_PRIVATE,   &ckFalse,        sizeof(ckFalse)         },
+        { CKA_DERIVE,    &ckTrue,         sizeof(ckTrue)          },
+        { CKA_EC_PARAMS, ecc_p256_params, sizeof(ecc_p256_params) },
+        { CKA_VALUE,     ecc_p256_priv,   sizeof(ecc_p256_priv)   },
+    };
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,     &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE,  &genericType, sizeof(genericType) },
+        { CKA_TOKEN,     &ckFalse,     sizeof(ckFalse)     },
+        { CKA_PRIVATE,   &ckFalse,     sizeof(ckFalse)     },
+        { CKA_VALUE_LEN, &len,         sizeof(len)         },
+    };
+
+    printf("\n--- ECDH peer point ---\n");
+
+    rv = funcList->C_CreateObject(session, privTmpl, TMPL_CNT(privTmpl),
+                                  &priv);
+    CHECK_RV(rv, "create EC private key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    XMEMSET(&params, 0, sizeof(params));
+    params.kdf = CKD_NULL;
+    params.pPublicData = ecc_p256_pub;
+    params.ulPublicDataLen = sizeof(ecc_p256_pub);
+    rv = funcList->C_DeriveKey(session, &mech, priv, tmpl, TMPL_CNT(tmpl),
+                               &key);
+    CHECK_RV(rv, "DER peer point (control)", CKR_OK);
+    if (rv == CKR_OK)
+        funcList->C_DestroyObject(session, key);
+    params.ulPublicDataLen = 42;
+    rv = funcList->C_DeriveKey(session, &mech, priv, tmpl, TMPL_CNT(tmpl),
+                               &key);
+    CHECK_RV(rv, "truncated DER peer point", CKR_MECHANISM_PARAM_INVALID);
+    XMEMSET(bigPeer, 0xFF, sizeof(bigPeer));
+    bigPeer[0] = 0x04;
+    bigPeer[1] = 0x41;
+    bigPeer[2] = 0x04;
+    params.pPublicData = bigPeer;
+    params.ulPublicDataLen = sizeof(bigPeer);
+    rv = funcList->C_DeriveKey(session, &mech, priv, tmpl, TMPL_CNT(tmpl),
+                               &key);
+    CHECK_RV(rv, "peer coordinates above p", CKR_MECHANISM_PARAM_INVALID);
+    funcList->C_DestroyObject(session, priv);
+}
+#endif
+
 static void test_object_limit(CK_SESSION_HANDLE session)
 {
     CK_RV rv = CKR_OK;
@@ -624,6 +743,122 @@ static void test_object_limit(CK_SESSION_HANDLE session)
         funcList->C_DestroyObject(session, objs[i]);
 }
 
+#ifndef NO_AES
+static void test_unwrap(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_KEY_TYPE aesType = CKK_AES;
+    CK_KEY_TYPE ecType = CKK_EC;
+    CK_ATTRIBUTE inner[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &aesType,     sizeof(aesType)     },
+    };
+    CK_ATTRIBUTE kekTmpl[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &aesType,     sizeof(aesType)     },
+        { CKA_TOKEN,    &ckFalse,     sizeof(ckFalse)     },
+        { CKA_PRIVATE,  &ckFalse,     sizeof(ckFalse)     },
+        { CKA_WRAP,     &ckTrue,      sizeof(ckTrue)      },
+        { CKA_UNWRAP,   &ckTrue,      sizeof(ckTrue)      },
+        { CKA_ENCRYPT,  &ckTrue,      sizeof(ckTrue)      },
+        { CKA_VALUE,    keyBytes,     sizeof(keyBytes)    },
+        { CKA_WRAP_TEMPLATE, inner,   sizeof(inner)       },
+    };
+    CK_ULONG kekCnt = TMPL_CNT(kekTmpl);
+    CK_OBJECT_HANDLE kek = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE key;
+    CK_BYTE iv[16];
+    CK_BYTE blob[48];
+    CK_MECHANISM cbcPad = { CKM_AES_CBC_PAD, iv, sizeof(iv) };
+    CK_ATTRIBUTE ecTmpl[] = {
+        { CKA_CLASS,    &privClass, sizeof(privClass) },
+        { CKA_KEY_TYPE, &ecType,    sizeof(ecType)    },
+        { CKA_TOKEN,    &ckFalse,   sizeof(ckFalse)   },
+        { CKA_PRIVATE,  &ckFalse,   sizeof(ckFalse)   },
+    };
+#if (defined(HAVE_AES_CBC) && !defined(WOLFPKCS11_NSS)) || \
+    defined(HAVE_AES_KEYWRAP)
+    CK_ATTRIBUTE aesTmpl[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &aesType,     sizeof(aesType)     },
+        { CKA_TOKEN,    &ckFalse,     sizeof(ckFalse)     },
+        { CKA_PRIVATE,  &ckFalse,     sizeof(ckFalse)     },
+    };
+#endif
+#ifdef HAVE_AES_KEYWRAP
+    CK_MECHANISM keyWrap = { CKM_AES_KEY_WRAP, NULL, 0 };
+#endif
+#if defined(HAVE_AES_CBC) && !defined(WOLFPKCS11_NSS)
+    CK_ULONG encLen = sizeof(blob);
+    static CK_BYTE bigClear[4100];
+    static CK_BYTE bigBlob[4100 + 16];
+    CK_ULONG bigLen;
+    CK_ATTRIBUTE genTmpl[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &genericType, sizeof(genericType) },
+        { CKA_TOKEN,    &ckFalse,     sizeof(ckFalse)     },
+        { CKA_PRIVATE,  &ckFalse,     sizeof(ckFalse)     },
+    };
+#endif
+
+    printf("\n--- attribute-array templates and unwrap ---\n");
+    XMEMSET(iv, 0, sizeof(iv));
+    XMEMSET(blob, 0x5A, sizeof(blob));
+
+    create_expect(session, kekTmpl, kekCnt, CKR_TEMPLATE_INCONSISTENT,
+                  "CKA_WRAP_TEMPLATE");
+    kekTmpl[kekCnt - 1].type = CKA_UNWRAP_TEMPLATE;
+    create_expect(session, kekTmpl, kekCnt, CKR_TEMPLATE_INCONSISTENT,
+                  "CKA_UNWRAP_TEMPLATE");
+    kekTmpl[kekCnt - 1].type = CKA_DERIVE_TEMPLATE;
+    create_expect(session, kekTmpl, kekCnt, CKR_TEMPLATE_INCONSISTENT,
+                  "CKA_DERIVE_TEMPLATE");
+
+    rv = funcList->C_CreateObject(session, kekTmpl, kekCnt - 1, &kek);
+    CHECK_RV(rv, "create KEK", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    rv = funcList->C_SetAttributeValue(session, kek, &kekTmpl[kekCnt - 1], 1);
+    CHECK_RV(rv, "set CKA_DERIVE_TEMPLATE", CKR_TEMPLATE_INCONSISTENT);
+
+    rv = funcList->C_UnwrapKey(session, &cbcPad, kek, blob, 32, ecTmpl,
+                               TMPL_CNT(ecTmpl), &key);
+    CHECK_RV(rv, "EC private key unwrap", CKR_TEMPLATE_INCONSISTENT);
+#if defined(HAVE_AES_CBC) && !defined(WOLFPKCS11_NSS)
+    rv = funcList->C_EncryptInit(session, &cbcPad, kek);
+    if (rv == CKR_OK)
+        rv = funcList->C_Encrypt(session, keyBytes, 20, blob, &encLen);
+    CHECK_RV(rv, "CBC-PAD encrypt a 20-byte value", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_UnwrapKey(session, &cbcPad, kek, blob, encLen,
+                                   aesTmpl, TMPL_CNT(aesTmpl), &key);
+        CHECK_RV(rv, "20-byte AES key unwrap", CKR_WRAPPED_KEY_INVALID);
+    }
+    bigLen = sizeof(bigBlob);
+    rv = funcList->C_EncryptInit(session, &cbcPad, kek);
+    if (rv == CKR_OK)
+        rv = funcList->C_Encrypt(session, bigClear, sizeof(bigClear), bigBlob,
+                                 &bigLen);
+    CHECK_RV(rv, "CBC-PAD encrypt an oversized secret", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_UnwrapKey(session, &cbcPad, kek, bigBlob, bigLen,
+                                   genTmpl, TMPL_CNT(genTmpl), &key);
+        CHECK_RV(rv, "oversized secret unwrap", CKR_WRAPPED_KEY_LEN_RANGE);
+    }
+    XMEMSET(blob, 0x5A, sizeof(blob));
+#endif
+#ifdef HAVE_AES_KEYWRAP
+    rv = funcList->C_UnwrapKey(session, &keyWrap, kek, blob, 20, aesTmpl,
+                               TMPL_CNT(aesTmpl), &key);
+    CHECK_RV(rv, "20-byte AES key wrap blob", CKR_WRAPPED_KEY_LEN_RANGE);
+    rv = funcList->C_UnwrapKey(session, &keyWrap, kek, blob, 24, aesTmpl,
+                               TMPL_CNT(aesTmpl), &key);
+    CHECK_RV(rv, "24-byte corrupt blob (control)", CKR_WRAPPED_KEY_INVALID);
+#endif
+    funcList->C_DestroyObject(session, kek);
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -656,6 +891,15 @@ static int run_test(void)
     test_rsa_keygen(session);
 #endif
     test_generic_secret_len(session);
+#ifdef WOLFPKCS11_HKDF
+    test_hkdf_len(session);
+#endif
+#if defined(HAVE_ECC) && !defined(WOLFPKCS11_TPM)
+    test_ecdh_peer(session);
+#endif
+#ifndef NO_AES
+    test_unwrap(session);
+#endif
     test_object_limit(session);
 
 out:
