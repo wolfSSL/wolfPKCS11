@@ -379,6 +379,7 @@ static void test_ec_params(CK_SESSION_HANDLE session)
     CK_BYTE unknownOid[] = { 0x06, 0x03, 0x2A, 0x03, 0x04 };
     CK_BYTE emptyOid[] = { 0x06, 0x00 };
     CK_BYTE bigPoint[sizeof(ecc_p256_pub)];
+    CK_BYTE offCurve[sizeof(ecc_p256_pub)];
     CK_BYTE explicitParams[] = { 0x30, 0x03, 0x02, 0x01, 0x01 };
     CK_BYTE explicitLong[3 + 0x80];
     CK_BYTE seqTag[] = { 0x30 };
@@ -476,6 +477,12 @@ static void test_ec_params(CK_SESSION_HANDLE session)
     createTmpl[4].ulValueLen = sizeof(bigPoint);
     create_expect(session, createTmpl, TMPL_CNT(createTmpl),
                   CKR_ATTRIBUTE_VALUE_INVALID, "EC point coordinates above p");
+    XMEMCPY(offCurve, ecc_p256_pub, sizeof(offCurve));
+    offCurve[sizeof(offCurve) - 1] ^= 0x01;
+    createTmpl[4].pValue = offCurve;
+    createTmpl[4].ulValueLen = sizeof(offCurve);
+    create_expect(session, createTmpl, TMPL_CNT(createTmpl),
+                  CKR_ATTRIBUTE_VALUE_INVALID, "EC point off the curve");
     XMEMSET(bigValue, 0xFF, sizeof(bigValue));
     create_expect(session, privTmplBig, TMPL_CNT(privTmplBig),
                   CKR_ATTRIBUTE_VALUE_INVALID, "EC private value above order");
@@ -654,6 +661,7 @@ static void test_ecdh_peer(CK_SESSION_HANDLE session)
     CK_ECDH1_DERIVE_PARAMS params;
     CK_MECHANISM mech = { CKM_ECDH1_DERIVE, &params, sizeof(params) };
     CK_BYTE bigPeer[sizeof(ecc_p256_pub)];
+    CK_BYTE offCurve[sizeof(ecc_p256_pub)];
     CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
     CK_ULONG len = 32;
@@ -704,6 +712,13 @@ static void test_ecdh_peer(CK_SESSION_HANDLE session)
     rv = funcList->C_DeriveKey(session, &mech, priv, tmpl, TMPL_CNT(tmpl),
                                &key);
     CHECK_RV(rv, "peer coordinates above p", CKR_MECHANISM_PARAM_INVALID);
+    XMEMCPY(offCurve, ecc_p256_pub, sizeof(offCurve));
+    offCurve[sizeof(offCurve) - 1] ^= 0x01;
+    params.pPublicData = offCurve;
+    params.ulPublicDataLen = sizeof(offCurve);
+    rv = funcList->C_DeriveKey(session, &mech, priv, tmpl, TMPL_CNT(tmpl),
+                               &key);
+    CHECK_RV(rv, "peer point off the curve", CKR_MECHANISM_PARAM_INVALID);
     funcList->C_DestroyObject(session, priv);
 }
 #endif

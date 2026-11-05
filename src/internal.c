@@ -14503,6 +14503,60 @@ static int wp11_Ec_PointInvalid(int ret)
 }
 
 /**
+ * Check that the public point of an EC key lies on its curve.
+ *
+ * @param  key  [in]  EC key with the curve and public point set.
+ * @return  IS_POINT_E or ECC_OUT_OF_RANGE_E when the point is not on the
+ *          curve.
+ *          Other -ve on failure.
+ *          0 on success, or when the build has no point check.
+ */
+static int wp11_Ec_PointOnCurve(ecc_key* key)
+{
+/* Older releases build wc_ecc_point_is_on_curve only with USE_ECC_B_PARAM. */
+#if defined(USE_ECC_B_PARAM) || LIBWOLFSSL_VERSION_HEX >= 0x05009004
+    return wc_ecc_point_is_on_curve(&key->pubkey, key->idx);
+/* The guard wolfSSL v5.8 puts around wc_ecc_is_point. */
+#elif !defined(NO_ECC_CHECK_PUBKEY_ORDER) && \
+    !defined(WOLF_CRYPTO_CB_ONLY_ECC) && !defined(WOLFSSL_ATECC508A) && \
+    !defined(WOLFSSL_ATECC608A) && !defined(WOLFSSL_CRYPTOCELL) && \
+    !defined(WOLFSSL_SILABS_SE_ACCEL) && !defined(WOLFSSL_SE050) && \
+    !defined(WOLFSSL_STM32_PKA)
+    int ret;
+    mp_int a;
+    mp_int b;
+    mp_int prime;
+
+    ret = mp_init(&a);
+    if (ret == 0) {
+        ret = mp_init(&b);
+        if (ret == 0) {
+            ret = mp_init(&prime);
+            if (ret == 0) {
+                ret = mp_read_radix(&a, key->dp->Af, MP_RADIX_HEX);
+                if (ret == 0)
+                    ret = mp_read_radix(&b, key->dp->Bf, MP_RADIX_HEX);
+                if (ret == 0) {
+                    ret = mp_read_radix(&prime, key->dp->prime,
+                                        MP_RADIX_HEX);
+                }
+                if (ret == 0)
+                    ret = wc_ecc_is_point(&key->pubkey, &a, &b, &prime);
+                mp_free(&prime);
+            }
+            mp_free(&b);
+        }
+        mp_free(&a);
+    }
+
+    return ret;
+#else
+    (void)key;
+    return 0;
+#endif
+}
+
+/**
  * Set the EC Point, encoded in DER and X9.63, as the public key.
  *
  * @param  key  [in]  EC Key object.
@@ -14536,6 +14590,8 @@ static int EcSetPoint(ecc_key* key, byte* der, int len)
     if (ret == 0) {
         /* Now stripped of DER encoding. */
         ret = wc_ecc_import_x963_ex(der + i, len - i, key, key->dp->id);
+        if (ret == 0)
+            ret = wp11_Ec_PointOnCurve(key);
         if (wp11_Ec_PointInvalid(ret))
             ret = BAD_FUNC_ARG;
     }
@@ -18937,6 +18993,8 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
                 ret = wc_ecc_import_x963(x963Data, x963Len, &pubKey);
             }
         }
+        if (ret == 0)
+            ret = wp11_Ec_PointOnCurve(&pubKey);
         if (wp11_Ec_PointInvalid(ret))
             ret = (int)CKR_MECHANISM_PARAM_INVALID;
     }
