@@ -322,6 +322,40 @@ static void test_ec_public_attrs(CK_SESSION_HANDLE session)
                    "public key CKA_VALUE");
     funcList->C_DestroyObject(session, pub);
 }
+
+static void test_ec_private_with_point(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_KEY_TYPE ecType = CKK_EC;
+    CK_MECHANISM mech = { CKM_ECDSA, NULL, 0 };
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_BYTE hash[32];
+    CK_BYTE sig[2 * 32 + 8];
+    CK_ULONG sigLen = sizeof(sig);
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,     &privClass,      sizeof(privClass)       },
+        { CKA_KEY_TYPE,  &ecType,         sizeof(ecType)          },
+        { CKA_TOKEN,     &ckFalse,        sizeof(ckFalse)         },
+        { CKA_PRIVATE,   &ckFalse,        sizeof(ckFalse)         },
+        { CKA_SIGN,      &ckTrue,         sizeof(ckTrue)          },
+        { CKA_EC_PARAMS, ecc_p256_params, sizeof(ecc_p256_params) },
+        { CKA_VALUE,     ecc_p256_priv,   sizeof(ecc_p256_priv)   },
+        { CKA_EC_POINT,  ecc_p256_pub,    sizeof(ecc_p256_pub)    },
+    };
+
+    printf("\n--- EC private key with CKA_EC_POINT ---\n");
+    XMEMSET(hash, 0x11, sizeof(hash));
+
+    rv = funcList->C_CreateObject(session, tmpl, TMPL_CNT(tmpl), &priv);
+    CHECK_RV(rv, "create EC private key with point", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    rv = funcList->C_SignInit(session, &mech, priv);
+    if (rv == CKR_OK)
+        rv = funcList->C_Sign(session, hash, sizeof(hash), sig, &sigLen);
+    CHECK_RV(rv, "sign with it", CKR_OK);
+    funcList->C_DestroyObject(session, priv);
+}
 #endif
 
 static void test_create_object(CK_SESSION_HANDLE session)
@@ -899,6 +933,7 @@ static int run_test(void)
 #endif
 #ifdef HAVE_ECC
     test_ec_public_attrs(session);
+    test_ec_private_with_point(session);
     test_ec_params(session);
 #endif
     test_create_object(session);

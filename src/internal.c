@@ -14653,8 +14653,12 @@ int WP11_Object_SetEcKey(WP11_Object* object, unsigned char** data,
                 (data[1] != NULL || data[2] != NULL)) {
             ret = BAD_FUNC_ARG;
         }
+        /* Importing the point resets the key, so it goes before the scalar. */
+        if (ret == 0 && data[2] != NULL) {
+            key->type = ECC_PUBLICKEY;
+            ret = EcSetPoint(key, data[2], (int)len[2]);
+        }
         if (ret == 0 && data[1] != NULL) {
-            key->type = ECC_PRIVATEKEY_ONLY;
 #if defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION <= 5)
             ret = SetMPI(&key->k, data[1], (int)len[1]);
             if (ret == 0)
@@ -14666,13 +14670,8 @@ int WP11_Object_SetEcKey(WP11_Object* object, unsigned char** data,
 #endif
             if (ret != 0 && ret != MP_MEM)
                 ret = BAD_FUNC_ARG;
-        }
-        if (ret == 0 && data[2] != NULL) {
-            if (key->type == ECC_PRIVATEKEY_ONLY)
-                key->type = ECC_PRIVATEKEY;
-            else
-                key->type = ECC_PUBLICKEY;
-            ret = EcSetPoint(key, data[2], (int)len[2]);
+            key->type = (data[2] != NULL) ? ECC_PRIVATEKEY :
+                                            ECC_PRIVATEKEY_ONLY;
         }
 
         if (ret != 0)
