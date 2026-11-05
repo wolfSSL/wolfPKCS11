@@ -18,8 +18,8 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  *
- * Tests C_DeriveKey templates weaker than the base key and the DH secret
- * length.
+ * Tests C_DeriveKey templates weaker than the base key, the DH secret length
+ * and the TLS 1.2 key-and-MAC derive leaving no keys behind on failure.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -45,6 +45,18 @@
 #include "testdata.h"
 
 #define TEST_DIR "./store/derive_template_rollback_test"
+
+#if defined(WOLFSSL_HAVE_PRF) && !defined(WOLFPKCS11_NSS) && \
+    !defined(WOLFPKCS11_NO_STORE) && !defined(WOLFPKCS11_CUSTOM_STORE) && \
+    !defined(WOLFPKCS11_TPM_STORE) && !defined(WOLFPKCS11_NO_ENV) && \
+    !defined(_WIN32)
+    #define TEST_TOKEN_RELOAD
+    #include <dirent.h>
+    #include <errno.h>
+    #include <sys/stat.h>
+    #include <unistd.h>
+    #define SNAP_DIR TEST_DIR "-snap"
+#endif
 
 static int test_passed = 0;
 static int test_failed = 0;
@@ -324,6 +336,307 @@ static void test_dh_secret_length(CK_SESSION_HANDLE session)
 
 #endif
 
+#ifdef WOLFSSL_HAVE_PRF
+#define MAX_TEST_OBJECTS 8192
+
+static CK_OBJECT_HANDLE fill[MAX_TEST_OBJECTS];
+
+#define COUNT_FAILED ((CK_ULONG)-1)
+
+/* Counts the secret keys, only the token ones when `token' is set. */
+static CK_ULONG count_secret_keys(CK_SESSION_HANDLE session, int token)
+{
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_TOKEN, &ckTrue,         sizeof(ckTrue)         },
+    };
+    CK_OBJECT_HANDLE found[64];
+    CK_ULONG cnt = 0;
+    CK_ULONG total = 0;
+
+    if (funcList->C_FindObjectsInit(session, tmpl, token ? 2 : 1) != CKR_OK)
+        return COUNT_FAILED;
+    do {
+        if (funcList->C_FindObjects(session, found, 64, &cnt) != CKR_OK) {
+            total = COUNT_FAILED;
+            break;
+        }
+        total += cnt;
+    } while (cnt == 64);
+    funcList->C_FindObjectsFinal(session);
+    return total;
+}
+
+static CK_RV tls12_key_derive(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE base,
+                              CK_KEY_TYPE keyType, CK_ULONG keyBits,
+                              CK_BBOOL* token, CK_SSL3_KEY_MAT_OUT* out)
+{
+    CK_BYTE clientRandom[32];
+    CK_BYTE serverRandom[32];
+    CK_TLS12_KEY_MAT_PARAMS params;
+    CK_MECHANISM mech = { CKM_TLS12_KEY_AND_MAC_DERIVE, &params,
+                          sizeof(params) };
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &keyType,        sizeof(keyType)        },
+        { CKA_TOKEN,       token,           sizeof(CK_BBOOL)       },
+        { CKA_ENCRYPT,     &ckTrue,         sizeof(ckTrue)         },
+    };
+
+    XMEMSET(clientRandom, 0x11, sizeof(clientRandom));
+    XMEMSET(serverRandom, 0x22, sizeof(serverRandom));
+    XMEMSET(&params, 0, sizeof(params));
+    params.ulMacSizeInBits = 256;
+    params.ulKeySizeInBits = keyBits;
+    params.ulIVSizeInBits = 0;
+    params.bIsExport = CK_FALSE;
+    params.RandomInfo.pClientRandom = clientRandom;
+    params.RandomInfo.ulClientRandomLen = sizeof(clientRandom);
+    params.RandomInfo.pServerRandom = serverRandom;
+    params.RandomInfo.ulServerRandomLen = sizeof(serverRandom);
+    params.pReturnedKeyMaterial = out;
+    params.prfHashMechanism = CKM_SHA256;
+    XMEMSET(out, 0, sizeof(*out));
+
+    return funcList->C_DeriveKey(session, &mech, base, tmpl,
+                                 sizeof(tmpl) / sizeof(*tmpl), NULL);
+}
+
+static int no_handles(CK_SSL3_KEY_MAT_OUT* out)
+{
+    return out->hClientMacSecret == CK_INVALID_HANDLE &&
+           out->hServerMacSecret == CK_INVALID_HANDLE &&
+           out->hClientKey == CK_INVALID_HANDLE &&
+           out->hServerKey == CK_INVALID_HANDLE;
+}
+
+static void destroy_key_mat(CK_SESSION_HANDLE session, CK_SSL3_KEY_MAT_OUT* out)
+{
+    destroy_obj(session, &out->hClientMacSecret);
+    destroy_obj(session, &out->hServerMacSecret);
+    destroy_obj(session, &out->hClientKey);
+    destroy_obj(session, &out->hServerKey);
+}
+
+static void empty_objects(CK_SESSION_HANDLE session, CK_ULONG n)
+{
+    while (n > 0)
+        destroy_obj(session, &fill[--n]);
+}
+
+/* Creates data objects until `room' are left before the session or token
+ * limit. Returns the number created, 0 when no limit was reached. */
+static CK_ULONG fill_objects(CK_SESSION_HANDLE session, CK_BBOOL* token,
+                             CK_ULONG room)
+{
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS, &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN, token,      sizeof(CK_BBOOL)  },
+    };
+    CK_ULONG n = 0;
+
+    while (n < MAX_TEST_OBJECTS && funcList->C_CreateObject(session, tmpl,
+            sizeof(tmpl) / sizeof(*tmpl), &fill[n]) == CKR_OK) {
+        n++;
+    }
+    if (n == MAX_TEST_OBJECTS || n < room) {
+        empty_objects(session, n);
+        return 0;
+    }
+    while (room-- > 0)
+        destroy_obj(session, &fill[--n]);
+    return n;
+}
+
+static void test_tls12_rollback(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_SSL3_KEY_MAT_OUT out;
+    CK_ULONG before;
+    CK_ULONG n;
+    byte master[48];
+    CK_ATTRIBUTE baseTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_DERIVE,      &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VALUE,       master,          sizeof(master)         },
+    };
+
+    printf("\n--- TLS 1.2 key and MAC derive rollback ---\n");
+    XMEMSET(master, 0x33, sizeof(master));
+    rv = funcList->C_CreateObject(session, baseTmpl,
+                                  sizeof(baseTmpl) / sizeof(*baseTmpl), &base);
+    check_rv(rv, CKR_OK, "create TLS master secret");
+    if (rv != CKR_OK)
+        return;
+
+    rv = tls12_key_derive(session, base, CKK_GENERIC_SECRET, 128, &ckFalse,
+                          &out);
+    check_rv(rv, CKR_OK, "TLS 1.2 key and MAC derive");
+    check(rv != CKR_OK || (out.hClientMacSecret != CK_INVALID_HANDLE &&
+          out.hServerKey != CK_INVALID_HANDLE), "four keys returned");
+    destroy_key_mat(session, &out);
+
+#if !defined(WOLFPKCS11_NSS) && !defined(NO_AES)
+    before = count_secret_keys(session, 0);
+    rv = tls12_key_derive(session, base, CKK_AES, 160, &ckFalse, &out);
+    check(rv != CKR_OK, "TLS 1.2 derive with a bad client key fails");
+    check(no_handles(&out), "no handles returned after a client key failure");
+    check(before != COUNT_FAILED && count_secret_keys(session, 0) == before,
+          "no keys left after a client key failure");
+    destroy_key_mat(session, &out);
+#endif
+
+    /* Leave room for three keys so the server key fails to be added. */
+    n = fill_objects(session, &ckFalse, 3);
+    if (n == 0) {
+        printf("SKIP: object limit not reached\n");
+    }
+    else {
+        before = count_secret_keys(session, 0);
+        rv = tls12_key_derive(session, base, CKK_GENERIC_SECRET, 128,
+                              &ckFalse, &out);
+        check(rv != CKR_OK, "TLS 1.2 derive past the object limit fails");
+        check(no_handles(&out), "no handles returned past the object limit");
+        check(before != COUNT_FAILED &&
+              count_secret_keys(session, 0) == before,
+              "keys removed after a failed add");
+        destroy_key_mat(session, &out);
+        empty_objects(session, n);
+    }
+
+    destroy_obj(session, &base);
+}
+
+#ifdef TEST_TOKEN_RELOAD
+/* Replaces the files in `to' with copies of those in `from'. */
+static int copy_dir(const char* from, const char* to)
+{
+    DIR* d;
+    struct dirent* e;
+    char src[256];
+    char dst[256];
+    byte buf[4096];
+    size_t len;
+    FILE* in;
+    FILE* out;
+    int ret = 0;
+
+    if (mkdir(to, 0700) != 0 && errno != EEXIST)
+        return -1;
+    d = opendir(to);
+    if (d == NULL)
+        return -1;
+    while ((e = readdir(d)) != NULL) {
+        if (e->d_name[0] != '.' &&
+                snprintf(dst, sizeof(dst), "%s/%s", to, e->d_name) <
+                (int)sizeof(dst)) {
+            (void)unlink(dst);
+        }
+    }
+    closedir(d);
+
+    d = opendir(from);
+    if (d == NULL)
+        return -1;
+    while (ret == 0 && (e = readdir(d)) != NULL) {
+        if (e->d_name[0] == '.')
+            continue;
+        if (snprintf(src, sizeof(src), "%s/%s", from, e->d_name) >=
+                (int)sizeof(src) ||
+                snprintf(dst, sizeof(dst), "%s/%s", to, e->d_name) >=
+                (int)sizeof(dst)) {
+            ret = -1;
+            break;
+        }
+        in = fopen(src, "rb");
+        out = (in != NULL) ? fopen(dst, "wb") : NULL;
+        if (out == NULL)
+            ret = -1;
+        while (ret == 0 && (len = fread(buf, 1, sizeof(buf), in)) > 0) {
+            if (fwrite(buf, 1, len, out) != len)
+                ret = -1;
+        }
+        if (in != NULL)
+            fclose(in);
+        if (out != NULL && fclose(out) != 0)
+            ret = -1;
+    }
+    closedir(d);
+    return ret;
+}
+
+/* Token MAC keys removed after the client key fails to be added are gone
+ * from the store the failed derive left behind. */
+static void test_tls12_token_rollback(CK_SESSION_HANDLE* session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_SSL3_KEY_MAT_OUT out;
+    CK_ULONG before;
+    CK_ULONG n;
+    CK_C_INITIALIZE_ARGS args;
+    byte master[48];
+    CK_ATTRIBUTE baseTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_DERIVE,      &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VALUE,       master,          sizeof(master)         },
+    };
+
+    printf("\n--- TLS 1.2 key and MAC derive rollback of token keys ---\n");
+    XMEMSET(master, 0x77, sizeof(master));
+    rv = funcList->C_CreateObject(*session, baseTmpl,
+                                  sizeof(baseTmpl) / sizeof(*baseTmpl), &base);
+    check_rv(rv, CKR_OK, "create TLS master secret");
+    if (rv != CKR_OK)
+        return;
+
+    n = fill_objects(*session, &ckTrue, 2);
+    if (n == 0) {
+        printf("SKIP: token object limit not reached\n");
+        destroy_obj(*session, &base);
+        return;
+    }
+    before = count_secret_keys(*session, 1);
+    rv = tls12_key_derive(*session, base, CKK_GENERIC_SECRET, 128, &ckTrue,
+                          &out);
+    check(rv != CKR_OK, "TLS 1.2 derive past the token object limit fails");
+    check(no_handles(&out), "no token handles returned");
+    check(before != COUNT_FAILED && count_secret_keys(*session, 1) == before,
+          "token MAC keys removed");
+    /* Later store passes rewrite the token, so reload this state. */
+    check(copy_dir(TEST_DIR, SNAP_DIR) == 0, "snapshot the token store");
+    destroy_key_mat(*session, &out);
+    empty_objects(*session, n);
+    destroy_obj(*session, &base);
+
+    funcList->C_Logout(*session);
+    funcList->C_CloseSession(*session);
+    *session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    rv = (copy_dir(SNAP_DIR, TEST_DIR) == 0) ? CKR_OK : CKR_GENERAL_ERROR;
+    check_rv(rv, CKR_OK, "restore the token store");
+    XMEMSET(&args, 0, sizeof(args));
+    args.flags = CKF_OS_LOCKING_OK;
+    if (rv == CKR_OK)
+        rv = funcList->C_Initialize(&args);
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, session);
+    }
+    if (rv == CKR_OK)
+        rv = funcList->C_Login(*session, CKU_USER, userPin, userPinLen);
+    check_rv(rv, CKR_OK, "reload the token");
+    check(rv == CKR_OK && before != COUNT_FAILED &&
+          count_secret_keys(*session, 1) == before,
+          "token MAC keys still gone after a reload");
+}
+#endif
+#endif
+
 static CK_RV pkcs11_init(void)
 {
     CK_RV ret;
@@ -443,6 +756,12 @@ int main(int argc, char* argv[])
 #endif
 #ifndef NO_DH
         test_dh_secret_length(session);
+#endif
+#ifdef WOLFSSL_HAVE_PRF
+        test_tls12_rollback(session);
+#ifdef TEST_TOKEN_RELOAD
+        test_tls12_token_rollback(&session);
+#endif
 #endif
     }
     if (session != CK_INVALID_HANDLE) {

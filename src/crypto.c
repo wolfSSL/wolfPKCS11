@@ -10289,8 +10289,7 @@ static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
                          CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulAttributeCount,
                          CK_BBOOL isMac, CK_BBOOL baseSensitive,
                          CK_BBOOL baseExtractable, CK_BBOOL baseAlwaysSensitive,
-                         CK_BBOOL baseNeverExtractable,
-                         CK_OBJECT_HANDLE* handle)
+                         CK_BBOOL baseNeverExtractable, WP11_Object** key)
 {
     WP11_Object* secret = NULL;
     int ret;
@@ -10364,12 +10363,19 @@ static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
         }
     }
 
-    /* Add only once the key is complete so a failure leaves no object. */
-    ret = (int)AddObject(session, secret, pTemplate, ulAttributeCount, handle);
-    if (ret != CKR_OK)
-        WP11_Object_Free(secret);
+    *key = secret;
+    return CKR_OK;
+}
 
-    return ret;
+static void RemoveExtractedKey(WP11_Session* session, WP11_Object* obj,
+                               CK_OBJECT_HANDLE* handle)
+{
+    if (WP11_Session_RemoveObjectByHandle(session, obj, *handle, 0) !=
+            WP11_OBJECT_ALREADY_REMOVED) {
+        WP11_Slot_ClearActiveObject(WP11_Session_GetSlot(session), obj);
+        WP11_Slot_DiscardObject(WP11_Session_GetSlot(session), obj);
+    }
+    *handle = CK_INVALID_HANDLE;
 }
 
 static int Tls12_Extract_Keys(WP11_Session* session,
@@ -10381,51 +10387,46 @@ static int Tls12_Extract_Keys(WP11_Session* session,
                             CK_BBOOL baseNeverExtractable)
 {
     int ret = 0;
+    int i;
     unsigned char* ptr = derivedKey;
-    CK_ULONG length;
+    CK_ULONG length = 0;
+    CK_OBJECT_HANDLE* handles[4];
+    WP11_Object* keys[4] = { NULL, NULL, NULL, NULL };
+    int added = 0;
 
     if (tlsParams == NULL) {
         return CKR_FUNCTION_FAILED;
     }
 
-    /* Client MAC key */
-    length = tlsParams->ulMacSizeInBits / 8;
-    ret = SetKeyExtract(session, ptr, length, pTemplate,
-            ulAttributeCount, CK_TRUE, baseSensitive, baseExtractable,
-            baseAlwaysSensitive, baseNeverExtractable,
-            &tlsParams->pReturnedKeyMaterial->hClientMacSecret);
+    handles[0] = &tlsParams->pReturnedKeyMaterial->hClientMacSecret;
+    handles[1] = &tlsParams->pReturnedKeyMaterial->hServerMacSecret;
+    handles[2] = &tlsParams->pReturnedKeyMaterial->hClientKey;
+    handles[3] = &tlsParams->pReturnedKeyMaterial->hServerKey;
+
+    for (i = 0; i < 4 && ret == 0; i++) {
+        length = (i < 2) ? tlsParams->ulMacSizeInBits / 8 :
+                           tlsParams->ulKeySizeInBits / 8;
+        ret = SetKeyExtract(session, ptr, length, pTemplate,
+                ulAttributeCount, (i < 2) ? CK_TRUE : CK_FALSE,
+                baseSensitive, baseExtractable, baseAlwaysSensitive,
+                baseNeverExtractable, &keys[i]);
+        ptr += length;
+    }
+    while (ret == 0 && added < 4) {
+        ret = (int)AddObject(session, keys[added], pTemplate, ulAttributeCount,
+                             handles[added]);
+        if (ret == 0)
+            added++;
+    }
     if (ret != 0) {
+        for (i = 0; i < 4; i++) {
+            if (i < added)
+                RemoveExtractedKey(session, keys[i], handles[i]);
+            else if (keys[i] != NULL)
+                WP11_Object_Free(keys[i]);
+        }
         return ret;
     }
-    ptr += length;
-    /* Server MAC key */
-    ret = SetKeyExtract(session, ptr, length, pTemplate,
-            ulAttributeCount, CK_TRUE, baseSensitive, baseExtractable,
-            baseAlwaysSensitive, baseNeverExtractable,
-            &tlsParams->pReturnedKeyMaterial->hServerMacSecret);
-    if (ret != 0) {
-        return ret;
-    }
-    ptr += length;
-    /* Client key */
-    length = tlsParams->ulKeySizeInBits / 8;
-    ret = SetKeyExtract(session, ptr, length, pTemplate,
-            ulAttributeCount, CK_FALSE, baseSensitive, baseExtractable,
-            baseAlwaysSensitive, baseNeverExtractable,
-            &tlsParams->pReturnedKeyMaterial->hClientKey);
-    if (ret != 0) {
-        return ret;
-    }
-    ptr += length;
-    /* Server key */
-    ret = SetKeyExtract(session, ptr, length, pTemplate,
-            ulAttributeCount, CK_FALSE, baseSensitive, baseExtractable,
-            baseAlwaysSensitive, baseNeverExtractable,
-            &tlsParams->pReturnedKeyMaterial->hServerKey);
-    if (ret != 0) {
-        return ret;
-    }
-    ptr += length;
     /* Client IV */
     length = tlsParams->ulIVSizeInBits / 8;
     if (tlsParams->pReturnedKeyMaterial->pIVClient != NULL) {
@@ -10814,6 +10815,12 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                 tlsParams->RandomInfo.pClientRandom == NULL ||
                 tlsParams->RandomInfo.pServerRandom == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
+            tlsParams->pReturnedKeyMaterial->hClientMacSecret =
+                CK_INVALID_HANDLE;
+            tlsParams->pReturnedKeyMaterial->hServerMacSecret =
+                CK_INVALID_HANDLE;
+            tlsParams->pReturnedKeyMaterial->hClientKey = CK_INVALID_HANDLE;
+            tlsParams->pReturnedKeyMaterial->hServerKey = CK_INVALID_HANDLE;
 #ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
             GetBaseProtection(obj, &baseSensitive, &baseExtractable);
             rv = CheckDeriveProtection(pTemplate, ulAttributeCount,

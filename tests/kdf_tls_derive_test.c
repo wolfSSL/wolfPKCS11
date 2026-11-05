@@ -562,6 +562,8 @@ static int test_tls_key_mat_weaker_template(CK_SESSION_HANDLE session)
                                    sizeof(tmpl) / sizeof(*tmpl), &base);
     CHECK_CKR(ret, "create protected TLS master secret");
 
+    out.hClientMacSecret = base;
+    out.hServerKey = base;
     ret = tls_key_mat_derive(session, base, &params, NULL, 0);
     CHECK_RV(ret, CKR_TEMPLATE_INCONSISTENT,
              "TLS key and MAC derive into a weaker template refused");
