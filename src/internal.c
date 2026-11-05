@@ -15545,6 +15545,10 @@ static int RsaObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
     if (mp_iszero(&object->data.rsaKey->d))
         noPriv = 1;
 
+    if (object->objClass == CKO_PUBLIC_KEY && type != CKA_MODULUS &&
+            type != CKA_PUBLIC_EXPONENT && type != CKA_MODULUS_BITS)
+        return NOT_AVAILABLE_E;
+
     switch (type) {
         case CKA_MODULUS:
             if (noKey) {
@@ -15707,8 +15711,6 @@ static int GetEcPoint(ecc_key* key, byte* data, CK_ULONG* len)
     if (data == NULL)
         *len = dataLen + 2 + longLen;
     else if (*len < (CK_ULONG)(dataLen + 2 + longLen)) {
-        /* Report the required size so the caller can resize and retry. */
-        *len = dataLen + 2 + longLen;
         ret = BUFFER_E;
     }
     else {
@@ -15762,7 +15764,9 @@ static int EcObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
                 ret = GetEcParams(object->data.ecKey, data, len);
             break;
         case CKA_VALUE:
-            if (noPriv || noKey) {
+            if (object->objClass == CKO_PUBLIC_KEY)
+                ret = NOT_AVAILABLE_E;
+            else if (noPriv || noKey) {
                 *len = CK_UNAVAILABLE_INFORMATION;
                 ret = CKR_ATTRIBUTE_SENSITIVE;
             }

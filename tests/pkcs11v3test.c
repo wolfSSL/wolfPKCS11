@@ -2116,6 +2116,20 @@ static CK_RV test_mlkem_key_validation(void* args)
         CHECK_CKR_FAIL(ret, CKR_KEY_HANDLE_INVALID,
                        "ML-KEM Decapsulate wrong key class");
     }
+    if (ret == CKR_OK) {
+        ret = funcListExt->C_EncapsulateKey(session, &mech, 0x0DEADBEE,
+                                            secretTmpl, secretTmplCnt, NULL,
+                                            &ctLen, &secret);
+        CHECK_CKR_FAIL(ret, CKR_KEY_HANDLE_INVALID,
+                       "ML-KEM Encapsulate unresolved key handle");
+    }
+    if (ret == CKR_OK) {
+        ret = funcListExt->C_DecapsulateKey(session, &mech, 0x0DEADBEE,
+                                            secretTmpl, secretTmplCnt, dummyCt,
+                                            sizeof(dummyCt), &secret);
+        CHECK_CKR_FAIL(ret, CKR_KEY_HANDLE_INVALID,
+                       "ML-KEM Decapsulate unresolved key handle");
+    }
 
 #ifdef WOLFPKCS11_MLDSA
     if (ret == CKR_OK) {

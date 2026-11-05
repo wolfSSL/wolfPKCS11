@@ -515,8 +515,8 @@ static CK_RV CheckPrivateLogin(WP11_Session* session,
  * @param  set        [in]  Whether attributes are being used to set or get
  *                          value.
  * @return  CKR_ATTRIBUTE_TYPE_INVALID if the attribute type is not supported.
- *          CKR_ATTRIBUTE_VALUE_INVALID if value is not valid for data type.
- *          CKR_BUFFER_TOO_SMALL if length is too short for data type.
+ *          CKR_ATTRIBUTE_VALUE_INVALID if value or length is not valid for
+ *          data type.
  *          CKR_OK on success.
  */
 static CK_RV CheckAttributes(CK_ATTRIBUTE* pTemplate, CK_ULONG ulCount, int set)
@@ -539,19 +539,14 @@ static CK_RV CheckAttributes(CK_ATTRIBUTE* pTemplate, CK_ULONG ulCount, int set)
                 return CKR_ATTRIBUTE_VALUE_INVALID;
             if ((attr->pValue != NULL) &&
                 (attr->ulValueLen != sizeof(CK_ULONG)))
-                return CKR_BUFFER_TOO_SMALL;
+                return CKR_ATTRIBUTE_VALUE_INVALID;
         }
         else if (attrType[j].type == ATTR_TYPE_BOOL) {
             if (attr->pValue == NULL && set)
                 return CKR_ATTRIBUTE_VALUE_INVALID;
             if ((attr->pValue != NULL) &&
-                (attr->ulValueLen != sizeof(CK_BBOOL))) {
-                /* Object creation reports a malformed CKA_TOKEN as invalid. */
-                if (attr->type != CKA_TOKEN)
-                    return CKR_BUFFER_TOO_SMALL;
-                if (set)
-                    return CKR_ATTRIBUTE_VALUE_INVALID;
-            }
+                (attr->ulValueLen != sizeof(CK_BBOOL)))
+                return CKR_ATTRIBUTE_VALUE_INVALID;
             if (set && *(CK_BBOOL*)attr->pValue != CK_TRUE &&
                                          *(CK_BBOOL*)attr->pValue != CK_FALSE) {
                 return CKR_ATTRIBUTE_VALUE_INVALID;
@@ -565,7 +560,7 @@ static CK_RV CheckAttributes(CK_ATTRIBUTE* pTemplate, CK_ULONG ulCount, int set)
                 return CKR_ATTRIBUTE_VALUE_INVALID;
             if ((attr->pValue != NULL) &&
                 (attr->ulValueLen != sizeof(CK_DATE)))
-                return CKR_BUFFER_TOO_SMALL;
+                return CKR_ATTRIBUTE_VALUE_INVALID;
         }
         else if (attrType[j].type == ATTR_TYPE_DATA) {
             if (set && attr->ulValueLen == CK_UNAVAILABLE_INFORMATION)
@@ -1076,8 +1071,8 @@ static CK_RV CheckAttributeUpdate(WP11_Session* session, WP11_Object* obj,
  * @return  CKR_ARGUMENTS_BAD when pTemplate is NULL or ulCount is too large.
  *          CKR_SESSION_READ_ONLY when the session cannot modify objects.
  *          CKR_ATTRIBUTE_TYPE_INVALID if the attribute type is not supported.
- *          CKR_ATTRIBUTE_VALUE_INVALID if value is not valid for data type.
- *          CKR_BUFFER_TOO_SMALL if an attribute length is too short.
+ *          CKR_ATTRIBUTE_VALUE_INVALID if value or length is not valid for
+ *          data type.
  *          CK_UNAVAILABLE_INFORMATION when an attribute type is not supported
  *          for modification.
  *          CKR_DEVICE_MEMORY when dynamic memory allocation fails.
@@ -1357,10 +1352,8 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
                                                               attr->ulValueLen);
         if (ret == MEMORY_E)
             return CKR_DEVICE_MEMORY;
-        else if (ret == BAD_FUNC_ARG)
+        else if (ret == BAD_FUNC_ARG || ret == BUFFER_E)
             return CKR_ATTRIBUTE_VALUE_INVALID;
-        else if (ret == BUFFER_E)
-            return CKR_BUFFER_TOO_SMALL;
         else if (ret == BAD_STATE_E)
             return UndecodedKeyRv(WP11_Session_GetSlot(session));
         else if (ret != 0)
@@ -2048,8 +2041,6 @@ CK_RV C_CreateObject(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate,
  *          length.
  *          CKR_DEVICE_MEMORY when dynamic memory allocation fails.
  *          CKR_FUNCTION_FAILED when creating the object fails.
- *          CKR_BUFFER_TOO_SMALL when an attributes length is too small for the
- *          value.
  *          CK_UNAVAILABLE_INFORMATION when an attribute type is not supported.
  *          CKR_OK on success.
  */
@@ -2418,7 +2409,8 @@ CK_RV C_GetObjectSize(CK_SESSION_HANDLE hSession,
  *          CKR_ATTRIBUTE_TYPE_INVALID if the attribute type is not supported
  *          or not valid for the object.
  *          CKR_ATTRIBUTE_SENSITIVE if an attribute value cannot be revealed.
- *          CKR_BUFFER_TOO_SMALL if an attribute length is too short.
+ *          CKR_BUFFER_TOO_SMALL if an attribute buffer is too short; its
+ *          ulValueLen is set to CK_UNAVAILABLE_INFORMATION.
  *          CKR_FUNCTION_FAILED when getting a value fails.
  *          CKR_OK on success.
  */
@@ -2488,6 +2480,7 @@ static CK_RV wp11_C_GetAttributeValue(CK_SESSION_HANDLE hSession,
                 rv = CKR_ATTRIBUTE_TYPE_INVALID;
         }
         else if (ret == BUFFER_E) {
+            attr->ulValueLen = CK_UNAVAILABLE_INFORMATION;
             if (rv == CKR_OK)
                 rv = CKR_BUFFER_TOO_SMALL;
         }
@@ -2567,8 +2560,8 @@ static CK_RV CheckCopyOnlyAttributes(WP11_Object* obj,
  *          CKR_SESSION_READ_ONLY when the session cannot modify objects.
  *          CKR_OBJECT_HANDLE_INVALID when handle is not to a valid object.
  *          CKR_ATTRIBUTE_TYPE_INVALID if the attribute type is not supported.
- *          CKR_ATTRIBUTE_VALUE_INVALID if value is not valid for data type.
- *          CKR_BUFFER_TOO_SMALL if an attribute length is too short.
+ *          CKR_ATTRIBUTE_VALUE_INVALID if value or length is not valid for
+ *          data type.
  *          CK_UNAVAILABLE_INFORMATION when an attribute type is not supported
  *          for modification.
  *          CKR_DEVICE_MEMORY when dynamic memory allocation fails.
@@ -2922,7 +2915,7 @@ static CK_RV EncryptInit(CK_SESSION_HANDLE hSession,
 
     ret = WP11_Object_Find(session, hKey, &obj);
     if (ret != 0) {
-        rv = CKR_OBJECT_HANDLE_INVALID;
+        rv = CKR_KEY_HANDLE_INVALID;
         WOLFPKCS11_LEAVE("C_EncryptInit", rv);
         return rv;
     }
@@ -3185,7 +3178,7 @@ static CK_RV EncryptInit(CK_SESSION_HANDLE hSession,
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pMechanism is NULL; PKCS#11 v3.0 builds
  *          instead cancel the active operation and return CKR_OK.
- *          CKR_OBJECT_HANDLE_INVALID when key object handle is not valid.
+ *          CKR_KEY_HANDLE_INVALID when key object handle is not valid.
  *          CKR_KEY_TYPE_INCONSISTENT when the key type is not valid for the
  *          mechanism (operation).
  *          CKR_MECHANISM_PARAM_INVALID when mechanism's parameters are not
@@ -4130,7 +4123,7 @@ static CK_RV DecryptInit(CK_SESSION_HANDLE hSession,
 
     ret = WP11_Object_Find(session, hKey, &obj);
     if (ret != 0)
-        return CKR_OBJECT_HANDLE_INVALID;
+        return CKR_KEY_HANDLE_INVALID;
 
     if (!skipOpCheck) {
         ret = CheckOpSupported(obj, CKA_DECRYPT);
@@ -4382,7 +4375,7 @@ static CK_RV DecryptInit(CK_SESSION_HANDLE hSession,
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pMechanism is NULL; PKCS#11 v3.0 builds
  *          instead cancel the active operation and return CKR_OK.
- *          CKR_OBJECT_HANDLE_INVALID when key object handle is not valid.
+ *          CKR_KEY_HANDLE_INVALID when key object handle is not valid.
  *          CKR_KEY_TYPE_INCONSISTENT when the key type is not valid for the
  *          mechanism (operation).
  *          CKR_MECHANISM_PARAM_INVALID when mechanism's parameters are not
@@ -5510,7 +5503,7 @@ CK_RV C_DigestUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
  * @param  hKey      [in]  Handle of a key object.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_OBJECT_HANDLE_INVALID when key object handle is not valid.
+ *          CKR_KEY_HANDLE_INVALID when key object handle is not valid.
  *          CKR_OPERATION_NOT_INITIALIZED when C_DigestInit has not been
  *          successfully called.
  */
@@ -5541,7 +5534,7 @@ static CK_RV wp11_C_DigestKey(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hKey)
     ret = WP11_Object_Find(session, hKey, &obj);
     if (ret != 0) {
         WP11_Session_AbortOp(session);
-        return CKR_OBJECT_HANDLE_INVALID;
+        return CKR_KEY_HANDLE_INVALID;
     }
 
     ret = WP11_Digest_Key(obj, session);
@@ -5805,7 +5798,7 @@ static CK_RV CheckPssMechParams(CK_MECHANISM_TYPE mechanism,
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pMechanism is NULL; PKCS#11 v3.0 builds
  *          instead cancel the active operation and return CKR_OK.
- *          CKR_OBJECT_HANDLE_INVALID when key object handle is not valid.
+ *          CKR_KEY_HANDLE_INVALID when key object handle is not valid.
  *          CKR_KEY_TYPE_INCONSISTENT when the key type is not valid for the
  *          mechanism (operation).
  *          CKR_MECHANISM_PARAM_INVALID when mechanism's parameters are not
@@ -5875,7 +5868,7 @@ static CK_RV wp11_C_SignInit(CK_SESSION_HANDLE hSession,
     else
 #endif
     if (ret != 0) {
-        return CKR_OBJECT_HANDLE_INVALID;
+        return CKR_KEY_HANDLE_INVALID;
     }
 
     ret = CheckOpSupported(obj, CKA_SIGN);
@@ -6922,7 +6915,7 @@ CK_RV C_SignFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature,
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pMechanism is NULL.
- *          CKR_OBJECT_HANDLE_INVALID when key object handle is not valid.
+ *          CKR_KEY_HANDLE_INVALID when key object handle is not valid.
  *          CKR_MECHANISM_INVALID when the mechanism is not supported with this
  *          type of operation.
  */
@@ -6960,7 +6953,7 @@ static CK_RV wp11_C_SignRecoverInit(CK_SESSION_HANDLE hSession,
 
     ret = WP11_Object_Find(session, hKey, &obj);
     if (ret != 0) {
-        rv = CKR_OBJECT_HANDLE_INVALID;
+        rv = CKR_KEY_HANDLE_INVALID;
         WOLFPKCS11_LEAVE("C_SignRecoverInit", rv);
         return rv;
     }
@@ -7047,7 +7040,7 @@ CK_RV C_SignRecover(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pMechanism is NULL; PKCS#11 v3.0 builds
  *          instead cancel the active operation and return CKR_OK.
- *          CKR_OBJECT_HANDLE_INVALID when key object handle is not valid.
+ *          CKR_KEY_HANDLE_INVALID when key object handle is not valid.
  *          CKR_KEY_TYPE_INCONSISTENT when the key type is not valid for the
  *          mechanism (operation).
  *          CKR_MECHANISM_PARAM_INVALID when mechanism's parameters are not
@@ -7097,7 +7090,7 @@ static CK_RV wp11_C_VerifyInit(CK_SESSION_HANDLE hSession,
 
     ret = WP11_Object_Find(session, hKey, &obj);
     if (ret != 0) {
-        rv = CKR_OBJECT_HANDLE_INVALID;
+        rv = CKR_KEY_HANDLE_INVALID;
         WOLFPKCS11_LEAVE("C_VerifyInit", rv);
         return rv;
     }
@@ -8115,7 +8108,7 @@ CK_RV C_VerifyFinal(CK_SESSION_HANDLE hSession,
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pMechanism is NULL; PKCS#11 v3.0 builds
  *          instead cancel the active operation and return CKR_OK.
- *          CKR_OBJECT_HANDLE_INVALID when key object handle is not valid.
+ *          CKR_KEY_HANDLE_INVALID when key object handle is not valid.
  *          CKR_MECHANISM_INVALID when the mechanism is not supported with this
  *          type of operation.
  */
@@ -8156,7 +8149,7 @@ static CK_RV wp11_C_VerifyRecoverInit(CK_SESSION_HANDLE hSession,
         return rv;
     }
     if (hKey == 0) {
-        rv = CKR_OBJECT_HANDLE_INVALID;
+        rv = CKR_KEY_HANDLE_INVALID;
         WOLFPKCS11_LEAVE("C_VerifyRecoverInit", rv);
         return rv;
     }
@@ -8180,7 +8173,7 @@ static CK_RV wp11_C_VerifyRecoverInit(CK_SESSION_HANDLE hSession,
 
     ret = WP11_Object_Find(session, hKey, &obj);
     if (ret != 0) {
-        rv = CKR_OBJECT_HANDLE_INVALID;
+        rv = CKR_KEY_HANDLE_INVALID;
         WOLFPKCS11_LEAVE("C_VerifyRecoverInit", rv);
         return rv;
     }
@@ -9565,7 +9558,7 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pMechanism or pulWrappedKeyLen is NULL.
- *          CKR_OBJECT_HANDLE_INVALID when hKey object handle is not valid.
+ *          CKR_KEY_HANDLE_INVALID when hKey object handle is not valid.
  *          CKR_WRAPPING_KEY_HANDLE_INVALID when hWrappingKey handle is not
  *          valid.
  *          CKR_KEY_UNEXTRACTABLE when hKey has CKA_EXTRACTABLE set to
@@ -9625,7 +9618,7 @@ static CK_RV wp11_C_WrapKey(CK_SESSION_HANDLE hSession,
 
     ret = WP11_Object_Find(session, hKey, &key);
     if (ret != 0)
-        return CKR_OBJECT_HANDLE_INVALID;
+        return CKR_KEY_HANDLE_INVALID;
 
     ret = WP11_Object_GetAttr(key, CKA_EXTRACTABLE, &getVar, &getVarLen);
     if (ret != 0) {
@@ -10420,7 +10413,7 @@ static int ConcatCutsProtectedKey(WP11_Object* key, CK_ULONG off,
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pMechanism, pTemplate or phKey is NULL.
- *          CKR_OBJECT_HANDLE_INVALID when key object handle is not valid.
+ *          CKR_KEY_HANDLE_INVALID when key object handle is not valid.
  *          CKR_MECHANISM_PARAM_INVALID when mechanism's parameters are not
  *          valid for the operation.
  *          CKR_ATTRIBUTE_VALUE_INVALID when attribute value is not valid for
@@ -10532,7 +10525,7 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
 
     ret = WP11_Object_Find(session, hBaseKey, &obj);
     if (ret != 0)
-        return CKR_OBJECT_HANDLE_INVALID;
+        return CKR_KEY_HANDLE_INVALID;
 
     /* F-4064: spec-compliance gate - reject keys whose CKA_DERIVE is CK_FALSE.
      * Skipped for NSS, which generates ephemeral EC keys for TLS ECDHE without
@@ -11703,7 +11696,7 @@ static CK_RV wp11_C_EncapsulateKey(CK_SESSION_HANDLE hSession,
 
     ret = WP11_Object_Find(session, hPublicKey, &pubObj);
     if (ret != 0)
-        return CKR_OBJECT_HANDLE_INVALID;
+        return CKR_KEY_HANDLE_INVALID;
     if (WP11_Object_GetClass(pubObj) != CKO_PUBLIC_KEY)
         return CKR_KEY_HANDLE_INVALID;
 
@@ -11849,7 +11842,7 @@ static CK_RV wp11_C_DecapsulateKey(CK_SESSION_HANDLE hSession,
 
     ret = WP11_Object_Find(session, hPrivateKey, &privObj);
     if (ret != 0)
-        return CKR_OBJECT_HANDLE_INVALID;
+        return CKR_KEY_HANDLE_INVALID;
     if (WP11_Object_GetClass(privObj) != CKO_PRIVATE_KEY)
         return CKR_KEY_HANDLE_INVALID;
 

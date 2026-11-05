@@ -3402,7 +3402,7 @@ static CK_RV test_attribute(void* args)
         count = sizeof(tmplLongLenBad) / sizeof(*tmplLongLenBad);
         ret = funcList->C_SetAttributeValue(session, obj, tmplLongLenBad,
                                                                          count);
-        CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
                          "Set Attribute Value small length for data type long");
     }
     if (ret == CKR_OK) {
@@ -3415,7 +3415,7 @@ static CK_RV test_attribute(void* args)
         count = sizeof(tmplBoolLenBad) / sizeof(*tmplBoolLenBad);
         ret = funcList->C_SetAttributeValue(session, obj, tmplBoolLenBad,
                                                                          count);
-        CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
                          "Set Attribute Value small length for data type bool");
     }
     if (ret == CKR_OK) {
@@ -3434,7 +3434,7 @@ static CK_RV test_attribute(void* args)
         count = sizeof(tmplDateLenBad) / sizeof(*tmplDateLenBad);
         ret = funcList->C_SetAttributeValue(session, obj, tmplDateLenBad,
                                                                          count);
-        CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
                          "Set Attribute Value small length for data type date");
     }
     if (ret == CKR_OK) {
@@ -4882,7 +4882,7 @@ static CK_RV test_encrypt_decrypt(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_EncryptInit(session, &mech, CK_INVALID_HANDLE);
-        CHECK_CKR_FAIL(ret, CKR_OBJECT_HANDLE_INVALID,
+        CHECK_CKR_FAIL(ret, CKR_KEY_HANDLE_INVALID,
                                      "AES-CBC Encrypt Init invalid key handle");
     }
     if (ret == CKR_OK) {
@@ -4956,7 +4956,7 @@ static CK_RV test_encrypt_decrypt(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_DecryptInit(session, &mech, CK_INVALID_HANDLE);
-        CHECK_CKR_FAIL(ret, CKR_OBJECT_HANDLE_INVALID,
+        CHECK_CKR_FAIL(ret, CKR_KEY_HANDLE_INVALID,
                                      "AES-CBC Decrypt Init invalid key handle");
     }
     if (ret == CKR_OK) {
@@ -5483,7 +5483,7 @@ static CK_RV test_digest_fail(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_DigestKey(session, CK_INVALID_HANDLE);
-        CHECK_CKR_FAIL(ret, CKR_OBJECT_HANDLE_INVALID,
+        CHECK_CKR_FAIL(ret, CKR_KEY_HANDLE_INVALID,
                                             "Digest Key invalid object handle");
     }
     if (ret == CKR_OK) {
@@ -5578,7 +5578,7 @@ static CK_RV test_sign_verify(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_SignInit(session, &mech, CK_INVALID_HANDLE);
-        CHECK_CKR_FAIL(ret, CKR_OBJECT_HANDLE_INVALID,
+        CHECK_CKR_FAIL(ret, CKR_KEY_HANDLE_INVALID,
                                            "HMAC Sign Init invalid key handle");
     }
     if (ret == CKR_OK) {
@@ -5648,7 +5648,7 @@ static CK_RV test_sign_verify(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyInit(session, &mech, CK_INVALID_HANDLE);
-        CHECK_CKR_FAIL(ret, CKR_OBJECT_HANDLE_INVALID,
+        CHECK_CKR_FAIL(ret, CKR_KEY_HANDLE_INVALID,
                                          "HMAC Verify Init invalid key handle");
     }
     if (ret == CKR_OK) {
@@ -5796,7 +5796,7 @@ static CK_RV test_recover(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_SignRecoverInit(session, &mech, CK_INVALID_HANDLE);
-        CHECK_CKR_FAIL(ret, CKR_OBJECT_HANDLE_INVALID,
+        CHECK_CKR_FAIL(ret, CKR_KEY_HANDLE_INVALID,
                                      "Sign Recover Init invalid object handle");
     }
     if (ret == CKR_OK) {
@@ -5846,7 +5846,7 @@ static CK_RV test_recover(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyRecoverInit(session, &mech, CK_INVALID_HANDLE);
-        CHECK_CKR_FAIL(ret, CKR_OBJECT_HANDLE_INVALID,
+        CHECK_CKR_FAIL(ret, CKR_KEY_HANDLE_INVALID,
                                    "Verify Recover Init invalid object handle");
     }
     if (ret == CKR_OK) {
@@ -6472,7 +6472,7 @@ static CK_RV test_wrap_unwrap_key(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_WrapKey(session, &mech, wrappingKey,
                                  CK_INVALID_HANDLE, wrappedKey, &wrappedKeyLen);
-        CHECK_CKR_FAIL(ret, CKR_OBJECT_HANDLE_INVALID,
+        CHECK_CKR_FAIL(ret, CKR_KEY_HANDLE_INVALID,
                                                  "Wrap Key invalid key handle");
     }
     if (ret == CKR_OK) {
@@ -6920,7 +6920,7 @@ static CK_RV test_derive_key(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_DeriveKey(session, &mech, CK_INVALID_HANDLE, tmpl,
                                                               tmplCnt, &secret);
-        CHECK_CKR_FAIL(ret, CKR_OBJECT_HANDLE_INVALID,
+        CHECK_CKR_FAIL(ret, CKR_KEY_HANDLE_INVALID,
                                           "Unwrap Key invalid base key handle");
     }
     if (ret == CKR_OK) {
@@ -17940,7 +17940,7 @@ static CK_RV test_ecdh_derive_aes_no_value_len(void* args)
     if (ret == CKR_OK) {
         tmpl[2].ulValueLen = sizeof(valueLen) - 1;
         ret = funcList->C_DeriveKey(session, &mech, hPriv, tmpl, cnt, &hKey);
-        CHECK_CKR_FAIL(ret, CKR_BUFFER_TOO_SMALL,
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
                        "AES key with short length from P-384 secret");
         tmpl[2].ulValueLen = sizeof(valueLen);
     }
@@ -19735,7 +19735,7 @@ static CK_RV test_private_object_handle_access(void* args)
     /* Try direct handle access via C_SignInit — should fail */
     if (ret == CKR_OK) {
         ret = funcList->C_SignInit(session, &mech, obj);
-        CHECK_CKR_FAIL(ret, CKR_OBJECT_HANDLE_INVALID,
+        CHECK_CKR_FAIL(ret, CKR_KEY_HANDLE_INVALID,
                         "SignInit on private obj when not logged in");
     }
 
@@ -20630,10 +20630,9 @@ static CK_RV test_op_active_after_digest_key_failure(void* args)
     CHECK_CKR(ret, "DigestInit for DigestKey recovery test");
 
     if (ret == CKR_OK) {
-        /* Invalid object handle -> CKR_OBJECT_HANDLE_INVALID. The fix must
-         * also terminate the active digest. */
+        /* Invalid key handle -> CKR_KEY_HANDLE_INVALID; the digest ends. */
         ret = funcList->C_DigestKey(session, CK_INVALID_HANDLE);
-        CHECK_CKR_FAIL(ret, CKR_OBJECT_HANDLE_INVALID,
+        CHECK_CKR_FAIL(ret, CKR_KEY_HANDLE_INVALID,
                        "DigestKey rejects invalid handle");
     }
     if (ret == CKR_OK) {

@@ -1,0 +1,373 @@
+/* object_template_codes_test.c
+ *
+ * Copyright (C) 2026 wolfSSL Inc.
+ *
+ * This file is part of wolfPKCS11.
+ *
+ * wolfPKCS11 is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * wolfPKCS11 is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
+ *
+ * Return codes for bad key handles and attribute templates.
+ */
+
+#ifdef HAVE_CONFIG_H
+    #include <wolfpkcs11/config.h>
+#endif
+
+#include <stdio.h>
+#include <string.h>
+
+#ifndef WOLFSSL_USER_SETTINGS
+    #include <wolfssl/options.h>
+#endif
+#include <wolfssl/wolfcrypt/settings.h>
+#include <wolfssl/wolfcrypt/misc.h>
+#ifndef NO_RSA
+    #include <wolfssl/wolfcrypt/rsa.h>
+#endif
+
+#ifndef WOLFPKCS11_USER_SETTINGS
+    #include <wolfpkcs11/options.h>
+#endif
+#include <wolfpkcs11/pkcs11.h>
+
+#ifndef HAVE_PKCS11_STATIC
+#include <dlfcn.h>
+#endif
+
+#include "testdata.h"
+#include "pkcs11_test_util.h"
+
+#define TEST_DIR "./store/object_template_codes_test"
+
+#define BAD_HANDLE ((CK_OBJECT_HANDLE)0x0DEADBEE)
+
+static CK_BBOOL ckTrue = CK_TRUE;
+static CK_BBOOL ckFalse = CK_FALSE;
+static CK_OBJECT_CLASS secretClass = CKO_SECRET_KEY;
+static CK_OBJECT_CLASS pubClass = CKO_PUBLIC_KEY;
+static CK_OBJECT_CLASS privClass = CKO_PRIVATE_KEY;
+static CK_OBJECT_CLASS dataClass = CKO_DATA;
+static CK_KEY_TYPE genericType = CKK_GENERIC_SECRET;
+static CK_BYTE keyBytes[32] = {
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+    0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+    0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F
+};
+
+#define TMPL_CNT(t) (sizeof(t) / sizeof(*(t)))
+
+static void create_expect(CK_SESSION_HANDLE session, CK_ATTRIBUTE* tmpl,
+                          CK_ULONG cnt, CK_RV expected, const char* what)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+
+    rv = funcList->C_CreateObject(session, tmpl, cnt, &obj);
+    CHECK_RV(rv, what, expected);
+    if (rv == CKR_OK)
+        funcList->C_DestroyObject(session, obj);
+}
+
+static CK_RV create_generic_key(CK_SESSION_HANDLE session,
+                                CK_OBJECT_HANDLE* key)
+{
+    CK_RV rv;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &genericType, sizeof(genericType) },
+        { CKA_TOKEN,    &ckFalse,     sizeof(ckFalse)     },
+        { CKA_PRIVATE,  &ckFalse,     sizeof(ckFalse)     },
+        { CKA_DERIVE,   &ckTrue,      sizeof(ckTrue)      },
+        { CKA_SIGN,     &ckTrue,      sizeof(ckTrue)      },
+        { CKA_VALUE,    keyBytes,     sizeof(keyBytes)    },
+    };
+
+    rv = funcList->C_CreateObject(session, tmpl, TMPL_CNT(tmpl), key);
+    CHECK_RV(rv, "create generic secret key", CKR_OK);
+    return rv;
+}
+
+static void test_key_handles(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_MECHANISM mech = { CKM_RSA_PKCS, NULL, 0 };
+    CK_MECHANISM digest = { CKM_SHA256, NULL, 0 };
+    CK_MECHANISM wrap = { CKM_AES_KEY_WRAP, NULL, 0 };
+    CK_MECHANISM derive = { CKM_ECDH1_DERIVE, NULL, 0 };
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE out;
+    CK_ULONG len = 0;
+    CK_ULONG valueLen = 16;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,     &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE,  &genericType, sizeof(genericType) },
+        { CKA_VALUE_LEN, &valueLen,    sizeof(valueLen)    },
+    };
+
+    printf("\n--- unresolved key handles ---\n");
+
+    rv = funcList->C_EncryptInit(session, &mech, BAD_HANDLE);
+    CHECK_RV(rv, "C_EncryptInit", CKR_KEY_HANDLE_INVALID);
+    rv = funcList->C_DecryptInit(session, &mech, BAD_HANDLE);
+    CHECK_RV(rv, "C_DecryptInit", CKR_KEY_HANDLE_INVALID);
+    rv = funcList->C_SignInit(session, &mech, BAD_HANDLE);
+    CHECK_RV(rv, "C_SignInit", CKR_KEY_HANDLE_INVALID);
+    rv = funcList->C_VerifyInit(session, &mech, BAD_HANDLE);
+    CHECK_RV(rv, "C_VerifyInit", CKR_KEY_HANDLE_INVALID);
+    rv = funcList->C_SignRecoverInit(session, &mech, BAD_HANDLE);
+    CHECK_RV(rv, "C_SignRecoverInit", CKR_KEY_HANDLE_INVALID);
+#ifndef NO_RSA
+    rv = funcList->C_VerifyRecoverInit(session, &mech, BAD_HANDLE);
+    CHECK_RV(rv, "C_VerifyRecoverInit", CKR_KEY_HANDLE_INVALID);
+#endif
+#ifndef NO_SHA256
+    rv = funcList->C_DigestInit(session, &digest);
+    CHECK_RV(rv, "C_DigestInit", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_DigestKey(session, BAD_HANDLE);
+        CHECK_RV(rv, "C_DigestKey", CKR_KEY_HANDLE_INVALID);
+    }
+#else
+    (void)digest;
+#endif
+
+    if (create_generic_key(session, &key) != CKR_OK)
+        return;
+    rv = funcList->C_WrapKey(session, &wrap, key, BAD_HANDLE, NULL, &len);
+    CHECK_RV(rv, "C_WrapKey key to wrap", CKR_KEY_HANDLE_INVALID);
+    rv = funcList->C_DeriveKey(session, &derive, BAD_HANDLE, tmpl,
+                               TMPL_CNT(tmpl), &out);
+    CHECK_RV(rv, "C_DeriveKey base key", CKR_KEY_HANDLE_INVALID);
+    funcList->C_DestroyObject(session, key);
+}
+
+#ifndef NO_AES
+static void test_fixed_size_attrs(CK_SESSION_HANDLE session)
+{
+    CK_KEY_TYPE aesType = CKK_AES;
+    CK_BYTE wide[sizeof(CK_ULONG) * 2];
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &aesType,     sizeof(aesType)     },
+        { CKA_TOKEN,    &ckFalse,     sizeof(ckFalse)     },
+        { CKA_PRIVATE,  &ckFalse,     sizeof(ckFalse)     },
+        { CKA_VALUE,    keyBytes,     16                  },
+        { CKA_ENCRYPT,  &ckTrue,      sizeof(ckTrue)      },
+    };
+    CK_ULONG cnt = TMPL_CNT(tmpl);
+
+    printf("\n--- fixed-size attribute lengths ---\n");
+    XMEMSET(wide, 0, sizeof(wide));
+
+    create_expect(session, tmpl, cnt, CKR_OK, "AES key (control)");
+
+    tmpl[5].type = CKA_ENCRYPT;
+    tmpl[5].pValue = wide;
+    tmpl[5].ulValueLen = 4;
+    create_expect(session, tmpl, cnt, CKR_ATTRIBUTE_VALUE_INVALID,
+                  "CKA_ENCRYPT of 4 bytes");
+    tmpl[5].type = CKA_VALUE_LEN;
+    tmpl[5].ulValueLen = sizeof(CK_ULONG) * 2;
+    create_expect(session, tmpl, cnt, CKR_ATTRIBUTE_VALUE_INVALID,
+                  "CKA_VALUE_LEN of two CK_ULONGs");
+    tmpl[5].type = CKA_START_DATE;
+    tmpl[5].ulValueLen = 4;
+    create_expect(session, tmpl, cnt, CKR_ATTRIBUTE_VALUE_INVALID,
+                  "CKA_START_DATE of 4 bytes");
+}
+#endif
+
+static void test_get_attr_short_buffer(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    char label[] = "0123456789";
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS, &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN, &ckFalse,   sizeof(ckFalse)   },
+        { CKA_LABEL, label,      sizeof(label) - 1 },
+    };
+    CK_OBJECT_CLASS cls = 0;
+    char buf[4];
+    CK_ATTRIBUTE get[] = {
+        { CKA_CLASS, &cls, sizeof(cls) },
+        { CKA_LABEL, buf,  sizeof(buf) },
+    };
+
+    printf("\n--- C_GetAttributeValue short buffer ---\n");
+
+    rv = funcList->C_CreateObject(session, tmpl, TMPL_CNT(tmpl), &obj);
+    CHECK_RV(rv, "create data object", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    rv = funcList->C_GetAttributeValue(session, obj, get, TMPL_CNT(get));
+    CHECK_RV(rv, "label in a 4-byte buffer", CKR_BUFFER_TOO_SMALL);
+    CHECK_TRUE(get[0].ulValueLen == sizeof(cls) && cls == CKO_DATA,
+               "class still returned");
+    CHECK_TRUE(get[1].ulValueLen == CK_UNAVAILABLE_INFORMATION,
+               "short label length is CK_UNAVAILABLE_INFORMATION");
+    funcList->C_DestroyObject(session, obj);
+}
+
+#if !defined(NO_RSA) || defined(HAVE_ECC)
+static void check_get_attr(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE obj,
+                           CK_ATTRIBUTE_TYPE type, CK_RV expected,
+                           const char* what)
+{
+    CK_RV rv;
+    CK_BYTE buf[512];
+    CK_ATTRIBUTE get = { type, buf, sizeof(buf) };
+
+    rv = funcList->C_GetAttributeValue(session, obj, &get, 1);
+    CHECK_RV(rv, what, expected);
+    if (expected != CKR_OK) {
+        CHECK_TRUE(get.ulValueLen == CK_UNAVAILABLE_INFORMATION,
+                   "length is CK_UNAVAILABLE_INFORMATION");
+    }
+}
+#endif
+
+#ifndef NO_RSA
+static void test_rsa_public_attrs(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_KEY_TYPE rsaType = CKK_RSA;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_CLASS,           &pubClass,        sizeof(pubClass)         },
+        { CKA_KEY_TYPE,        &rsaType,         sizeof(rsaType)          },
+        { CKA_TOKEN,           &ckFalse,         sizeof(ckFalse)          },
+        { CKA_MODULUS,         rsa_2048_modulus, sizeof(rsa_2048_modulus) },
+        { CKA_PUBLIC_EXPONENT, rsa_2048_pub_exp, sizeof(rsa_2048_pub_exp) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_CLASS,            &privClass,        sizeof(privClass)         },
+        { CKA_KEY_TYPE,         &rsaType,          sizeof(rsaType)           },
+        { CKA_TOKEN,            &ckFalse,          sizeof(ckFalse)           },
+        { CKA_PRIVATE,          &ckFalse,          sizeof(ckFalse)           },
+        { CKA_SENSITIVE,        &ckTrue,           sizeof(ckTrue)            },
+        { CKA_MODULUS,          rsa_2048_modulus,  sizeof(rsa_2048_modulus)  },
+        { CKA_PRIVATE_EXPONENT, rsa_2048_priv_exp, sizeof(rsa_2048_priv_exp) },
+        { CKA_PRIME_1,          rsa_2048_p,        sizeof(rsa_2048_p)        },
+        { CKA_PRIME_2,          rsa_2048_q,        sizeof(rsa_2048_q)        },
+        { CKA_EXPONENT_1,       rsa_2048_dP,       sizeof(rsa_2048_dP)       },
+        { CKA_EXPONENT_2,       rsa_2048_dQ,       sizeof(rsa_2048_dQ)       },
+        { CKA_COEFFICIENT,      rsa_2048_u,        sizeof(rsa_2048_u)        },
+        { CKA_PUBLIC_EXPONENT,  rsa_2048_pub_exp,  sizeof(rsa_2048_pub_exp)  },
+    };
+
+    printf("\n--- RSA public key private attributes ---\n");
+
+    rv = funcList->C_CreateObject(session, pubTmpl, TMPL_CNT(pubTmpl), &pub);
+    CHECK_RV(rv, "create RSA public key", CKR_OK);
+    if (rv == CKR_OK) {
+        check_get_attr(session, pub, CKA_MODULUS, CKR_OK, "modulus");
+        check_get_attr(session, pub, CKA_PRIVATE_EXPONENT,
+                       CKR_ATTRIBUTE_TYPE_INVALID, "public key d");
+        check_get_attr(session, pub, CKA_PRIME_1, CKR_ATTRIBUTE_TYPE_INVALID,
+                       "public key p");
+        check_get_attr(session, pub, CKA_COEFFICIENT,
+                       CKR_ATTRIBUTE_TYPE_INVALID, "public key u");
+        funcList->C_DestroyObject(session, pub);
+    }
+
+    rv = funcList->C_CreateObject(session, privTmpl, TMPL_CNT(privTmpl),
+                                  &priv);
+    CHECK_RV(rv, "create sensitive RSA private key", CKR_OK);
+    if (rv == CKR_OK) {
+        check_get_attr(session, priv, CKA_PRIVATE_EXPONENT,
+                       CKR_ATTRIBUTE_SENSITIVE, "sensitive private key d");
+        funcList->C_DestroyObject(session, priv);
+    }
+}
+#endif
+
+#ifdef HAVE_ECC
+static void test_ec_public_attrs(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_KEY_TYPE ecType = CKK_EC;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,     &pubClass,       sizeof(pubClass)        },
+        { CKA_KEY_TYPE,  &ecType,         sizeof(ecType)          },
+        { CKA_TOKEN,     &ckFalse,        sizeof(ckFalse)         },
+        { CKA_EC_PARAMS, ecc_p256_params, sizeof(ecc_p256_params) },
+        { CKA_EC_POINT,  ecc_p256_pub,    sizeof(ecc_p256_pub)    },
+    };
+
+    printf("\n--- EC public key CKA_VALUE ---\n");
+
+    rv = funcList->C_CreateObject(session, tmpl, TMPL_CNT(tmpl), &pub);
+    CHECK_RV(rv, "create EC public key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    check_get_attr(session, pub, CKA_EC_POINT, CKR_OK, "EC point");
+    check_get_attr(session, pub, CKA_VALUE, CKR_ATTRIBUTE_TYPE_INVALID,
+                   "public key CKA_VALUE");
+    funcList->C_DestroyObject(session, pub);
+}
+#endif
+
+static int run_test(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = 0;
+
+    rv = pkcs11_load();
+    CHECK_RV(rv, "load library", CKR_OK);
+    if (rv != CKR_OK)
+        return -1;
+
+    rv = pkcs11_open_session(&session);
+    CHECK_RV(rv, "open session", CKR_OK);
+    if (rv != CKR_OK)
+        goto out;
+
+    test_key_handles(session);
+#ifndef NO_AES
+    test_fixed_size_attrs(session);
+#endif
+    test_get_attr_short_buffer(session);
+#ifndef NO_RSA
+    test_rsa_public_attrs(session);
+#endif
+#ifdef HAVE_ECC
+    test_ec_public_attrs(session);
+#endif
+
+out:
+    if (session != 0)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+    pkcs11_unload();
+    return 0;
+}
+
+int main(int argc, char* argv[])
+{
+    (void)argc;
+    (void)argv;
+
+#ifndef WOLFPKCS11_NO_ENV
+    XSETENV("WOLFPKCS11_TOKEN_PATH", TEST_DIR, 1);
+#endif
+
+    printf("=== wolfPKCS11 object and template return code test ===\n");
+    run_test();
+    return pkcs11_test_summary();
+}
