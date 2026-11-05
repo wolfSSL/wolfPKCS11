@@ -10748,17 +10748,23 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
             if (WP11_Object_GetAttr(obj, CKA_PRIME, NULL, &dhPrimeLen) != 0 ||
                     dhPrimeLen > WP11_MAX_DH_KEY_SZ)
                 return CKR_FUNCTION_FAILED;
-            keyLen = (word32)pMechanism->ulParameterLen;
-            if (dhPrimeLen > keyLen)
-                keyLen = (word32)dhPrimeLen;
+            keyLen = (word32)dhPrimeLen;
             derivedKey = (byte*)XMALLOC(keyLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             if (derivedKey == NULL)
                 return CKR_DEVICE_MEMORY;
             XMEMSET(derivedKey, 0, keyLen);
 
+            /* Without a CKA_VALUE_LEN the secret drops its leading zero
+             * bytes, as TLS 1.2 (RFC 5246 8.1.2) uses it. */
+            FindAttributeType(pTemplate, ulAttributeCount, CKA_VALUE_LEN,
+                              &valueLenAttr);
+            if ((valueLenAttr != NULL) && (valueLenAttr->pValue != NULL) &&
+                    (valueLenAttr->ulValueLen == sizeof(CK_ULONG))) {
+                XMEMCPY(&reqValueLen, valueLenAttr->pValue, sizeof(CK_ULONG));
+            }
             ret = WP11_Dh_Derive((unsigned char*)pMechanism->pParameter,
                                     (int)pMechanism->ulParameterLen, derivedKey,
-                                    &keyLen, obj);
+                                    &keyLen, reqValueLen == 0, obj);
             if (ret != 0)
                 rv = CKR_FUNCTION_FAILED;
             break;
@@ -11127,16 +11133,6 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                 (valueLenAttr->ulValueLen == sizeof(CK_ULONG))) {
             XMEMCPY(&reqValueLen, valueLenAttr->pValue, sizeof(CK_ULONG));
         }
-#ifndef NO_DH
-        /* DH agreement drops leading zero bytes; restore up to the prime
-         * length on request. */
-        if ((pMechanism->mechanism == CKM_DH_PKCS_DERIVE) &&
-                (reqValueLen > keyLen) && (reqValueLen <= dhPrimeLen)) {
-            XMEMMOVE(derivedKey + (reqValueLen - keyLen), derivedKey, keyLen);
-            XMEMSET(derivedKey, 0, reqValueLen - keyLen);
-            keyLen = (word32)reqValueLen;
-        }
-#endif
         if (reqValueLen > keyLen)
             rv = CKR_ATTRIBUTE_VALUE_INVALID;
 #ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT

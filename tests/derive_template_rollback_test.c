@@ -18,7 +18,8 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  *
- * Tests C_DeriveKey templates weaker than the base key.
+ * Tests C_DeriveKey templates weaker than the base key and the DH secret
+ * length.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -225,6 +226,104 @@ cleanup:
 }
 #endif
 
+#ifndef NO_DH
+/* With private value 1000 and peer value 2, the secret is 2^1000: 126 bytes
+ * without its leading zeros, 256 as long as the prime. */
+static void test_dh_secret_length(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS privClass = CKO_PRIVATE_KEY;
+    CK_KEY_TYPE dhType = CKK_DH;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    byte priv[] = { 0x03, 0xE8 };
+    byte peer[] = { 0x02 };
+    byte value[sizeof(dh_ffdhe2048_p)];
+    byte expected[sizeof(dh_ffdhe2048_p)];
+    CK_ULONG valueLen = 0;
+    CK_ULONG reqLen = sizeof(dh_ffdhe2048_p);
+    CK_MECHANISM mech = { CKM_DH_PKCS_DERIVE, peer, sizeof(peer) };
+    CK_ATTRIBUTE baseTmpl[] = {
+        { CKA_CLASS,       &privClass,     sizeof(privClass)      },
+        { CKA_KEY_TYPE,    &dhType,        sizeof(dhType)         },
+        { CKA_PRIVATE,     &ckFalse,       sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckFalse,       sizeof(ckFalse)        },
+        { CKA_EXTRACTABLE, &ckTrue,        sizeof(ckTrue)         },
+        { CKA_DERIVE,      &ckTrue,        sizeof(ckTrue)         },
+        { CKA_PRIME,       dh_ffdhe2048_p, sizeof(dh_ffdhe2048_p) },
+        { CKA_BASE,        dh_ffdhe2048_g, sizeof(dh_ffdhe2048_g) },
+        { CKA_VALUE,       priv,           sizeof(priv)           },
+    };
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_SENSITIVE,   &ckFalse,        sizeof(ckFalse)        },
+        { CKA_EXTRACTABLE, &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VALUE_LEN,   &reqLen,         sizeof(reqLen)         },
+    };
+    CK_ULONG keyCnt = sizeof(keyTmpl) / sizeof(*keyTmpl);
+    CK_ATTRIBUTE get[] = {
+        { CKA_VALUE,     value,     sizeof(value)    },
+        { CKA_VALUE_LEN, &valueLen, sizeof(valueLen) },
+    };
+
+    printf("\n--- DH derive secret length ---\n");
+    XMEMSET(expected, 0, sizeof(expected));
+    expected[sizeof(expected) - 126] = 0x01;
+
+    rv = funcList->C_CreateObject(session, baseTmpl,
+                                  sizeof(baseTmpl) / sizeof(*baseTmpl), &base);
+    check_rv(rv, CKR_OK, "create DH private key");
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_DeriveKey(session, &mech, base, keyTmpl, keyCnt - 1,
+                               &key);
+    check_rv(rv, CKR_OK, "DH derive without CKA_VALUE_LEN");
+    if (rv == CKR_OK) {
+        rv = funcList->C_GetAttributeValue(session, key, get, 2);
+        check_rv(rv, CKR_OK, "read derived DH secret");
+        check(rv == CKR_OK && valueLen == 126 && get[0].ulValueLen == 126 &&
+              XMEMCMP(value, expected + sizeof(expected) - 126, 126) == 0,
+              "DH secret without CKA_VALUE_LEN drops its leading zeros");
+    }
+    destroy_obj(session, &key);
+
+    reqLen = 0;
+    rv = funcList->C_DeriveKey(session, &mech, base, keyTmpl, keyCnt, &key);
+    check_rv(rv, CKR_OK, "DH derive with a zero CKA_VALUE_LEN");
+    if (rv == CKR_OK) {
+        get[0].ulValueLen = sizeof(value);
+        rv = funcList->C_GetAttributeValue(session, key, get, 1);
+        check(rv == CKR_OK && get[0].ulValueLen == 126 &&
+              XMEMCMP(value, expected + sizeof(expected) - 126, 126) == 0,
+              "DH secret with a zero CKA_VALUE_LEN drops its leading zeros");
+    }
+    destroy_obj(session, &key);
+
+    reqLen = sizeof(dh_ffdhe2048_p);
+    rv = funcList->C_DeriveKey(session, &mech, base, keyTmpl, keyCnt, &key);
+    check_rv(rv, CKR_OK, "DH derive with CKA_VALUE_LEN of the prime");
+    if (rv == CKR_OK) {
+        get[0].ulValueLen = sizeof(value);
+        rv = funcList->C_GetAttributeValue(session, key, get, 1);
+        check(rv == CKR_OK && get[0].ulValueLen == sizeof(expected) &&
+              XMEMCMP(value, expected, sizeof(expected)) == 0,
+              "DH secret of the prime length");
+    }
+    destroy_obj(session, &key);
+
+    reqLen = sizeof(dh_ffdhe2048_p) + 1;
+    rv = funcList->C_DeriveKey(session, &mech, base, keyTmpl, keyCnt, &key);
+    check_rv(rv, CKR_ATTRIBUTE_VALUE_INVALID,
+             "DH derive longer than the prime refused");
+    destroy_obj(session, &key);
+
+    destroy_obj(session, &base);
+}
+
+#endif
+
 static CK_RV pkcs11_init(void)
 {
     CK_RV ret;
@@ -341,6 +440,9 @@ int main(int argc, char* argv[])
 #if defined(HAVE_ECC) && !defined(WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT) && \
     !defined(WOLFPKCS11_NSS)
         test_ecdh_weaker_template(session);
+#endif
+#ifndef NO_DH
+        test_dh_secret_length(session);
 #endif
     }
     if (session != CK_INVALID_HANDLE) {
