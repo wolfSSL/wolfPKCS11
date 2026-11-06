@@ -17,6 +17,8 @@ Depends:
  ${shlibs:Depends},
  ${misc:Depends},
  libwolfssl
+Breaks: libwolfpkcs11-dev (<< ${binary:Version})
+Replaces: libwolfpkcs11-dev (<< ${binary:Version})
 Description: wolfPKCS11 cryptographic library
  PKCS#11 library that implements cryptographic algorithms using wolfSSL.
  This library provides a PKCS#11 interface for applications requiring
