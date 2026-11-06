@@ -11,6 +11,7 @@ env:
   # apk.static comes from dl-cdn, as gitlab.alpinelinux.org is often
   # unreachable; x86_64 is the runner's arch, not the target's.
   APK_TOOLS_REPO: https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64
+  APK_TOOLS_KEY: alpine-devel@lists.alpinelinux.org-6165ee59.rsa.pub
 
 jobs:
   alpine-architecture-tests:
@@ -35,8 +36,8 @@ jobs:
     - name: Checkout wolfPKCS11
       uses: actions/checkout@v4
 
-    # Alpine keeps only the newest package, so look its version up. The
-    # action only takes an http(s) URL, so serve the binary from localhost.
+    # Alpine keeps only the newest package, so look it up and check it against
+    # Alpine's key. setup-alpine only takes an http(s) URL, so serve it locally.
     - name: Fetch static apk-tools
       id: apk-tools
       run: |
@@ -49,7 +50,11 @@ jobs:
         version=$(tar -xzOf APKINDEX.tar.gz APKINDEX | awk '/^P:apk-tools-static$/ { f = 1 } f && /^V:/ && v == "" { v = substr($0, 3) } END { print v }')
         [ -n "$version" ] || { echo "apk-tools-static missing from APKINDEX"; exit 1; }
         fetch "apk-tools-static-$version.apk"
-        tar -xzf "apk-tools-static-$version.apk" sbin/apk.static
+        python3 "$GITHUB_WORKSPACE/.github/scripts/split-apk.py" \
+            "apk-tools-static-$version.apk" "$APK_TOOLS_KEY" apk
+        openssl dgst -sha1 -verify "$GITHUB_WORKSPACE/.github/keys/$APK_TOOLS_KEY" \
+            -signature apk.sig apk.control.gz
+        tar -xzf apk.data.tar.gz sbin/apk.static
         echo "sha256=$(sha256sum sbin/apk.static | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
         nohup python3 -m http.server 8099 --bind 127.0.0.1 --directory sbin \
             > http-server.log 2>&1 &
