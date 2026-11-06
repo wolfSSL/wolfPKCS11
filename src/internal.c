@@ -7285,6 +7285,28 @@ int WP11_Object_SetHssKey(WP11_Object* object, unsigned char** data,
     return ret;
 }
 
+/**
+ * Return the length of an HSS signature in bytes.
+ *
+ * @param  pub  [in]  HSS public key object.
+ * @return  Length of HSS signature in bytes, 0 when it cannot be determined.
+ */
+word32 WP11_Hss_SigLen(WP11_Object* pub)
+{
+    word32 len = 0;
+
+    if (pub->onToken)
+        WP11_Lock_LockRO(pub->lock);
+    if (pub->data.lmsKey == NULL ||
+            wc_LmsKey_GetSigLen(pub->data.lmsKey, &len) != 0) {
+        len = 0;
+    }
+    if (pub->onToken)
+        WP11_Lock_UnlockRO(pub->lock);
+
+    return len;
+}
+
 /* Verify an HSS signature over a raw message. Stateless on the verifier. */
 int WP11_Hss_Verify(unsigned char* sig, word32 sigLen, unsigned char* data,
                     word32 dataLen, int* stat, WP11_Object* pub)
@@ -7301,10 +7323,6 @@ int WP11_Hss_Verify(unsigned char* sig, word32 sigLen, unsigned char* data,
     if (pub->onToken)
         WP11_Lock_LockRO(pub->lock);
 
-    /* A signature whose length does not match the key's parameter set cannot
-     * be valid; report it as an invalid signature (stat = 0 ->
-     * CKR_SIGNATURE_INVALID) rather than letting wolfSSL's length check
-     * surface as a function failure. */
     if (wc_LmsKey_GetSigLen(pub->data.lmsKey, &expSigLen) == 0 &&
             sigLen != expSigLen) {
         *stat = 0;
@@ -7715,6 +7733,28 @@ int WP11_Object_SetXmssKey(WP11_Object* object, unsigned char** data,
     return ret;
 }
 
+/**
+ * Return the length of an XMSS/XMSS^MT signature in bytes.
+ *
+ * @param  pub  [in]  XMSS public key object.
+ * @return  Length of XMSS signature in bytes, 0 when it cannot be determined.
+ */
+word32 WP11_Xmss_SigLen(WP11_Object* pub)
+{
+    word32 len = 0;
+
+    if (pub->onToken)
+        WP11_Lock_LockRO(pub->lock);
+    if (pub->data.xmssKey == NULL ||
+            wc_XmssKey_GetSigLen(pub->data.xmssKey, &len) != 0) {
+        len = 0;
+    }
+    if (pub->onToken)
+        WP11_Lock_UnlockRO(pub->lock);
+
+    return len;
+}
+
 /* Verify an XMSS/XMSS^MT signature over a raw message. Stateless. */
 int WP11_Xmss_Verify(unsigned char* sig, word32 sigLen, unsigned char* data,
                      word32 dataLen, int* stat, WP11_Object* pub)
@@ -7731,15 +7771,12 @@ int WP11_Xmss_Verify(unsigned char* sig, word32 sigLen, unsigned char* data,
     if (pub->onToken)
         WP11_Lock_LockRO(pub->lock);
 
-    /* A wrong-length signature cannot be valid for this key; report it as an
-     * invalid signature rather than a function failure. wolfSSL's XMSS verify
-     * also rejects a zero-length message with BAD_FUNC_ARG; treat that the same
-     * way (an invalid verification, not an internal failure). */
     if (wc_XmssKey_GetSigLen(pub->data.xmssKey, &expSigLen) == 0 &&
             sigLen != expSigLen) {
         *stat = 0;
         ret = 0;
     }
+    /* wolfSSL's XMSS verify rejects an empty message with BAD_FUNC_ARG. */
     else if (dataLen == 0) {
         *stat = 0;
         ret = 0;
@@ -12703,6 +12740,17 @@ int WP11_Session_SetPssParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
 
     return ret;
 }
+
+/**
+ * Return the length of the PSS hash in bytes.
+ *
+ * @param  session  [in]  Session object.
+ * @return  Length of the hash in bytes, negative when the hash is unknown.
+ */
+int WP11_Session_GetPssHashLen(WP11_Session* session)
+{
+    return wc_HashGetDigestSize(session->params.pss.hashType);
+}
 #endif /* WC_RSA_PSS */
 #endif /* !NO_RSA */
 
@@ -17633,6 +17681,44 @@ word32 WP11_Rsa_KeyLen(WP11_Object* key)
 }
 
 /**
+ * Check whether a wolfCrypt RSA error means the signature does not verify.
+ *
+ * @param  ret  [in]  Return value of a wolfCrypt RSA verify call.
+ * @return  1 when the signature is invalid, otherwise 0.
+ */
+static int wp11_Rsa_SigInvalid(int ret)
+{
+    return ret == RSA_PAD_E || ret == BAD_PADDING_E || ret == PSS_SALTLEN_E ||
+           ret == RSA_OUT_OF_RANGE_E;
+}
+
+/**
+ * Check that a raw RSA input is below the modulus.
+ *
+ * @param  in     [in]  Big-endian input.
+ * @param  inLen  [in]  Length of input in bytes.
+ * @param  key    [in]  RSA key.
+ * @return  RSA_OUT_OF_RANGE_E when the input is not below the modulus.
+ *          Other -ve when the input cannot be read.
+ *          0 on success.
+ */
+static int wp11_Rsa_CheckRange(const unsigned char* in, word32 inLen,
+                               RsaKey* key)
+{
+    mp_int c;
+    int ret;
+
+    ret = mp_init(&c);
+    if (ret == MP_OKAY) {
+        ret = mp_read_unsigned_bin(&c, in, inLen);
+        if (ret == MP_OKAY && mp_cmp(&c, &key->n) != MP_LT)
+            ret = RSA_OUT_OF_RANGE_E;
+        mp_clear(&c);
+    }
+    return ret;
+}
+
+/**
  * Encrypt data with public key.
  * Raw encryption - exponentiate with public exponent.
  *
@@ -18007,78 +18093,84 @@ int WP11_Rsa_Sign(unsigned char* in, word32 inLen, unsigned char* sig,
 /**
  * RSA verify the signature where the data is recovered from the signature.
  *
- * @param  sig     [in]   Signature data.
- * @param  sigLen  [in]   Length of buffer.
- * @param  in      [in]   Data to verify.
- * @param  inLen   [in]   Length of data.
- * @param  stat    [out]  Status of verification. 1 on success, otherwise 0.
- * @param  pub     [in]   Public key object.
- * @return  -ve when verifying fails.
- *          0 on success.
+ * @param  mechanism  [in]      CKM_RSA_PKCS or CKM_RSA_X_509.
+ * @param  sig        [in]      Signature data.
+ * @param  sigLen     [in]      Length of signature.
+ * @param  out        [out]     Buffer to hold recovered data.
+ * @param  outLen     [in,out]  On in, length of buffer.
+ *                              On out, length of recovered data.
+ * @param  pub        [in]      Public key object.
+ * @return  CKR_BUFFER_TOO_SMALL when the buffer is too small, *outLen is set
+ *          to the recovered data length.
+ *          CKR_SIGNATURE_INVALID when the signature does not verify.
+ *          CKR_FUNCTION_FAILED when the key is larger than RSA_MAX_SIZE or on
+ *          other failures.
+ *          CKR_OK on success.
  */
 int WP11_Rsa_Verify_Recover(CK_MECHANISM_TYPE mechanism, unsigned char* sig,
                             word32 sigLen, unsigned char* out,
                             CK_ULONG_PTR outLen, WP11_Object* pub)
 {
+    byte dec[RSA_MAX_SIZE / 8];
+    word32 decLen = sizeof(dec);
+    word32 i = 0;
+    byte* data = dec;
     int ret;
+
+    if (sigLen > sizeof(dec))
+        return CKR_FUNCTION_FAILED;
 
     if (pub->onToken)
         WP11_Lock_LockRO(pub->lock);
 
     switch (mechanism) {
         case CKM_RSA_PKCS:
-            ret = wc_RsaSSL_Verify(sig, sigLen, out, (word32)*outLen,
-                                         pub->data.rsaKey);
-            if (ret == RSA_BUFFER_E) {
-                ret = CKR_BUFFER_TOO_SMALL;
-            }
-            else if (ret < 0) {
-                ret = CKR_FUNCTION_FAILED;
-            }
-            else {
-                *outLen = ret;
-                ret = CKR_OK;
+            ret = wc_RsaSSL_Verify(sig, sigLen, dec, decLen, pub->data.rsaKey);
+            if (ret >= 0) {
+                decLen = (word32)ret;
+                ret = 0;
             }
             break;
-
-        case CKM_RSA_X_509: {
-            byte* data_out = NULL;
-            byte* pos;
-            /* wc_RsaDirect writes a word32 through the length pointer. Use a
-             * local word32 rather than casting the CK_ULONG_PTR so that only
-             * the low word of *outLen is not partially updated; assign the
-             * result back on success. */
-            word32 tmpLen = (word32)*outLen;
-            ret =  wc_RsaDirect(sig, sigLen, out, &tmpLen,
-                                pub->data.rsaKey, RSA_PUBLIC_DECRYPT, NULL);
-            if (ret < 0) {
-                ret = CKR_FUNCTION_FAILED;
+        case CKM_RSA_X_509:
+            decLen = sigLen;
+            /* Older wolfSSL releases accept an input above the modulus. */
+            ret = wp11_Rsa_CheckRange(sig, sigLen, pub->data.rsaKey);
+            if (ret == 0) {
+                ret = wc_RsaDirect(sig, sigLen, dec, &decLen, pub->data.rsaKey,
+                                   RSA_PUBLIC_DECRYPT, NULL);
             }
-            else {
-                *outLen = tmpLen;
-                ret = CKR_OK;
+            if (ret >= 0) {
+                ret = 0;
                 /* Result is front padded with 0x00 */
-                for (pos = out; pos < out + *outLen; pos++) {
-                    if (*pos != 0x00) {
-                        data_out = pos;
-                        break;
-                    }
-                }
-                if (data_out != NULL) {
-                    *outLen = (CK_ULONG)((out + *outLen) - data_out);
-                    XMEMMOVE(out, data_out, *outLen);
+                while (i < decLen && dec[i] == 0x00)
+                    i++;
+                if (i < decLen) {
+                    data = dec + i;
+                    decLen -= i;
                 }
             }
             break;
-        }
         default:
-            /* Should never happen */
-            ret = CKR_FUNCTION_FAILED;
+            ret = BAD_FUNC_ARG;
             break;
     }
 
     if (pub->onToken)
         WP11_Lock_UnlockRO(pub->lock);
+
+    if (wp11_Rsa_SigInvalid(ret))
+        ret = CKR_SIGNATURE_INVALID;
+    else if (ret != 0)
+        ret = CKR_FUNCTION_FAILED;
+    else if ((CK_ULONG)decLen > *outLen) {
+        *outLen = decLen;
+        ret = CKR_BUFFER_TOO_SMALL;
+    }
+    else {
+        XMEMCPY(out, data, decLen);
+        *outLen = decLen;
+        ret = CKR_OK;
+    }
 
     return ret;
 }
@@ -18130,6 +18222,8 @@ int WP11_Rsa_Verify(unsigned char* sig, word32 sigLen, unsigned char* in,
         *stat = WP11_ConstantCompare(in, decSig + (decSigLen - inLen), inLen) &
                 (lead == 0);
     }
+    else if (wp11_Rsa_SigInvalid(ret))
+        ret = 0;
 
     return ret;
 }
@@ -18220,6 +18314,8 @@ int WP11_RsaPkcs15_Verify(unsigned char* sig, word32 sigLen,
         *stat = encHashLen == decSigLen &&
                 WP11_ConstantCompare(encHash, decSig, decSigLen);
     }
+    else if (wp11_Rsa_SigInvalid(ret))
+        ret = 0;
 
     return ret;
 }
@@ -18317,9 +18413,7 @@ int WP11_RsaPKCSPSS_Verify(unsigned char* sig, word32 sigLen,
         if (ret == 0)
             *stat = 1;
     }
-    /* Make sure bad padding/salt length returns success, but verify failed.
-     * Calling code expects this. */
-    if (ret == BAD_PADDING_E || ret == PSS_SALTLEN_E) {
+    if (wp11_Rsa_SigInvalid(ret)) {
         ret = 0;
         *stat = 0;
     }
@@ -18765,6 +18859,11 @@ int WP11_Ec_Verify(unsigned char* sig, word32 sigLen, unsigned char* hash,
         encSigLen = Pkcs11ECDSASig_Encode(sig, sigLen, encSig);
         ret = wc_ecc_verify_hash(encSig, encSigLen, hash, hashLen, stat,
                                                               pub->data.ecKey);
+        /* r or s outside [1, n-1] fails the range check. */
+        if (ret == MP_VAL || ret == MP_ZERO_E) {
+            *stat = 0;
+            ret = 0;
+        }
     }
     if (pub->onToken)
         WP11_Lock_UnlockRO(pub->lock);
@@ -19119,6 +19218,10 @@ int WP11_Mldsa_Verify(unsigned char* sig, word32 sigLen, unsigned char* data,
             ret = wc_MlDsaKey_VerifyCtxHash(pub->data.mldsaKey, sig, sigLen,
                     params->ctx, params->ctxSz, data, dataLen,
                     params->preHashType, stat);
+        }
+        if (ret == SIG_VERIFY_E) {
+            *stat = 0;
+            ret = 0;
         }
     }
 
@@ -21666,6 +21769,17 @@ int WP11_Aes_Cmac_Init(WP11_Object* secret, WP11_Session* session,
         WP11_Lock_UnlockRO(secret->lock);
 
     return ret;
+}
+
+/**
+ * Return the length of a CMAC signature in bytes.
+ *
+ * @param  session  [in]  Session object.
+ * @return  Length of CMAC signature in bytes.
+ */
+word32 WP11_Aes_Cmac_SigLen(WP11_Session* session)
+{
+    return session->params.cmac.sigLen;
 }
 
 int WP11_Aes_Cmac_Check_Len(CK_BYTE_PTR pSignature,

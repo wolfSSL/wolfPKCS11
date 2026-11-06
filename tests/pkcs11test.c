@@ -8745,7 +8745,7 @@ static CK_RV test_rsa_x_509_fail(void* args)
 }
 
 #ifdef WC_RSA_DIRECT
-/* Regression test for WP11_Rsa_Verify early return when inLen > key size. */
+/* Raw RSA verify of data one byte longer than the modulus. */
 static CK_RV test_rsa_x_509_verify_lock(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -8767,7 +8767,6 @@ static CK_RV test_rsa_x_509_verify_lock(void* args)
     /* Token-based key so pub->onToken=1 and the lock path is active */
     ret = get_rsa_pub_key(session, NULL, 0, &pub);
 
-    /* inLen > decSigLen triggers the early return path in WP11_Rsa_Verify */
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyInit(session, &mech, pub);
         CHECK_CKR(ret, "RSA X_509 Verify Init token key");
@@ -8775,7 +8774,7 @@ static CK_RV test_rsa_x_509_verify_lock(void* args)
     if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, overData, sizeof(overData),
                                  sig, sigSz);
-        CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED,
+        CHECK_CKR_FAIL(ret, CKR_DATA_LEN_RANGE,
                        "RSA X_509 Verify oversized data");
     }
 
@@ -14130,7 +14129,7 @@ static CK_RV test_hmac_sha256_truncated_sig(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, data, dataSz, sig, 1);
-        CHECK_CKR_FAIL(ret, CKR_SIGNATURE_INVALID,
+        CHECK_CKR_FAIL(ret, CKR_SIGNATURE_LEN_RANGE,
                         "Verify with 1-byte truncated HMAC should fail");
     }
 
@@ -14141,7 +14140,7 @@ static CK_RV test_hmac_sha256_truncated_sig(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, data, dataSz, sig, sigSz - 1);
-        CHECK_CKR_FAIL(ret, CKR_SIGNATURE_INVALID,
+        CHECK_CKR_FAIL(ret, CKR_SIGNATURE_LEN_RANGE,
                         "Verify with sigSz-1 truncated HMAC should fail");
     }
 
@@ -14156,7 +14155,7 @@ static CK_RV test_hmac_sha256_truncated_sig(void* args)
     }
     if (ret == CKR_OK) {
         ret = funcList->C_VerifyFinal(session, sig, 1);
-        CHECK_CKR_FAIL(ret, CKR_SIGNATURE_INVALID,
+        CHECK_CKR_FAIL(ret, CKR_SIGNATURE_LEN_RANGE,
                         "VerifyFinal with 1-byte truncated HMAC should fail");
     }
 

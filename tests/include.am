@@ -413,6 +413,11 @@ noinst_PROGRAMS += tests/token_partial_store_test
 tests_token_partial_store_test_SOURCES = tests/token_partial_store_test.c
 tests_token_partial_store_test_LDADD =
 
+check_PROGRAMS += tests/verify_return_codes_test
+noinst_PROGRAMS += tests/verify_return_codes_test
+tests_verify_return_codes_test_SOURCES = tests/verify_return_codes_test.c
+tests_verify_return_codes_test_LDADD =
+
 # The custom store tests build the library sources in, with the store in the
 # test, so they are built for make check only. See BUILD_CUSTOM_STORE_TEST in
 # configure.ac for when they are built.
@@ -536,6 +541,7 @@ tests_secret_scrub_test_LDADD += src/libwolfpkcs11.la
 tests_legacy_class_load_test_LDADD += src/libwolfpkcs11.la
 tests_unwrap_keygen_test_LDADD += src/libwolfpkcs11.la
 tests_token_partial_store_test_LDADD += src/libwolfpkcs11.la
+tests_verify_return_codes_test_LDADD += src/libwolfpkcs11.la
 else
 tests_object_id_uniqueness_test_LDADD += src/libwolfpkcs11.la
 tests_empty_pin_store_test_LDADD += src/libwolfpkcs11.la
@@ -614,6 +620,7 @@ tests_secret_scrub_test_LDADD += src/libwolfpkcs11.la
 tests_legacy_class_load_test_LDADD += src/libwolfpkcs11.la
 tests_unwrap_keygen_test_LDADD += src/libwolfpkcs11.la
 tests_token_partial_store_test_LDADD += src/libwolfpkcs11.la
+tests_verify_return_codes_test_LDADD += src/libwolfpkcs11.la
 endif
 
 EXTRA_DIST += tests/unit.h \

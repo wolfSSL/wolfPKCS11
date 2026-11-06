@@ -3290,11 +3290,8 @@ static void pkcs11_close_session(int flags, void* args)
  * verify-only feature imports the raw public key and checks the signature. */
 #include "hbs_kat.h"
 
-/* Import a raw HBS public key, verify a known-good signature (expect OK),
- * flip one signature byte (expect CKR_SIGNATURE_INVALID), verify a
- * wrong-length signature (expect CKR_SIGNATURE_INVALID, not a function
- * failure), confirm C_CopyObject on the key is rejected, and confirm a second
- * C_VerifyInit with no intervening C_Verify returns CKR_OPERATION_ACTIVE. */
+/* Verify good, tampered and wrong-length signatures with a raw HBS public key,
+ * then check that C_CopyObject and a repeated C_VerifyInit are refused. */
 static CK_RV hbs_verify_kat(CK_SESSION_HANDLE session, CK_KEY_TYPE keyType,
     CK_MECHANISM_TYPE mechType, const CK_BYTE* pub, CK_ULONG pubLen,
     const CK_BYTE* sig, CK_ULONG sigLen)
@@ -3343,15 +3340,13 @@ static CK_RV hbs_verify_kat(CK_SESSION_HANDLE session, CK_KEY_TYPE keyType,
             "HBS tampered-signature verify");
     }
     if (ret == CKR_OK) {
-        /* A wrong-length signature must be reported as an invalid signature,
-         * not a function failure. */
         ret = funcList->C_VerifyInit(session, &mech, obj);
         CHECK_CKR(ret, "HBS C_VerifyInit (wrong length)");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_Verify(session, hbs_kat_msg, HBS_KAT_MSG_LEN,
             (CK_BYTE*)sig, sigLen - 1);
-        CHECK_CKR_FAIL(ret, CKR_SIGNATURE_INVALID,
+        CHECK_CKR_FAIL(ret, CKR_SIGNATURE_LEN_RANGE,
             "HBS wrong-length-signature verify");
     }
     if (ret == CKR_OK) {
