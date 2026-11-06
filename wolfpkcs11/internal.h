@@ -498,6 +498,10 @@ WP11_LOCAL enum wc_HashType WP11_Session_ToHashType(WP11_Session* session);
 WP11_LOCAL void WP11_Session_SetOpInitialized(WP11_Session* session, int init);
 WP11_LOCAL void WP11_Session_SetOpUpdated(WP11_Session* session);
 WP11_LOCAL int WP11_Session_IsOpUpdated(WP11_Session* session);
+WP11_LOCAL int WP11_Session_SignHashUpdate(WP11_Session* session,
+    unsigned char* data, word32 dataLen);
+WP11_LOCAL int WP11_Session_SignHashFinal(WP11_Session* session,
+    unsigned char* digest, int* digestSz);
 WP11_LOCAL void WP11_Session_AbortOp(WP11_Session* session);
 WP11_LOCAL WP11_Slot* WP11_Session_GetSlot(WP11_Session* session);
 WP11_LOCAL CK_SLOT_ID WP11_Session_GetSlotId(WP11_Session* session);
@@ -827,6 +831,11 @@ WP11_LOCAL int WP11_AesEcb_Encrypt(unsigned char* plain, word32 plainSz,
 WP11_LOCAL int WP11_AesEcb_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
                         word32* decSz, WP11_Object* secret,
                         WP11_Session* session);
+WP11_LOCAL void WP11_Session_SetEcbParams(WP11_Session* session);
+WP11_LOCAL int WP11_AesEcb_PartLen(WP11_Session* session);
+WP11_LOCAL int WP11_AesEcb_Update(unsigned char* in, word32 inSz,
+                        unsigned char* out, word32* outSz, int enc,
+                        WP11_Object* secret, WP11_Session* session);
 
 WP11_LOCAL int WP11_AesKeyWrap_Encrypt(unsigned char* plain, word32 plainSz,
         unsigned char* enc, word32* encSz, WP11_Session* session);
