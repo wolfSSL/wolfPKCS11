@@ -39,9 +39,6 @@ deb:
 	fi
 # Clear lib folder
 	@rm -rf debian/libwolfpkcs11-dev/usr/lib
-	@mkdir -p debian/libwolfpkcs11-dev/usr/lib
-# Move the top level .so into the dev pkg
-	@mv debian/libwolfpkcs11/usr/lib/libwolfpkcs11.so debian/libwolfpkcs11-dev/usr/lib
 # Create correct pkg doc dir
 	@rm -rf debian/libwolfpkcs11/usr/share/doc/libwolfpkcs11
 	@mkdir -p debian/libwolfpkcs11/usr/share/doc/libwolfpkcs11
@@ -79,8 +76,9 @@ deb:
 # Check that everything is correct with lintian
 # - we don't provide a manual page for wolfpkcs11-config
 # - we don't care about matching the soname for our debs
+# - the runtime package ships the unversioned .so because NSS dlopens it
 	lintian *.deb --fail-on error,warning --tag-display-limit 0 \
-		--suppress-tags no-manual-page,package-name-doesnt-match-sonames
+		--suppress-tags no-manual-page,package-name-doesnt-match-sonames,link-to-shared-library-in-wrong-package,lacks-unversioned-link-to-shared-library
 # Clean up the working dirs
 	make deb-clean
 
