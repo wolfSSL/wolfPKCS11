@@ -288,6 +288,7 @@ static int test_dh_public_length_bound(CK_SESSION_HANDLE session)
         { CKA_KEY_TYPE,    &dhType,        sizeof(dhType)         },
         { CKA_PRIVATE,     &ckFalse,       sizeof(ckFalse)        },
         { CKA_SENSITIVE,   &ckFalse,       sizeof(ckFalse)        },
+        { CKA_EXTRACTABLE, &ckTrue,        sizeof(ckTrue)         },
         { CKA_DERIVE,      &ckTrue,        sizeof(ckTrue)         },
         { CKA_PRIME,       dh_ffdhe2048_p, sizeof(dh_ffdhe2048_p) },
         { CKA_BASE,        dh_ffdhe2048_g, sizeof(dh_ffdhe2048_g) },
@@ -523,6 +524,84 @@ cleanup:
 #endif
 
 #ifdef WOLFSSL_HAVE_PRF
+#if !defined(WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT) && !defined(WOLFPKCS11_NSS)
+/* Key expansion refuses keys less protected than the master secret. */
+static int test_tls_key_mat_weaker_template(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_TLS12_KEY_MAT_PARAMS params;
+    CK_SSL3_KEY_MAT_OUT out;
+    byte master[48];
+    CK_BBOOL sensitive = CK_FALSE;
+    CK_BBOOL extractable = CK_TRUE;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckTrue,         sizeof(ckTrue)         },
+        { CKA_EXTRACTABLE, &ckFalse,        sizeof(ckFalse)        },
+        { CKA_DERIVE,      &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VALUE,       master,          sizeof(master)         },
+    };
+    CK_ATTRIBUTE dupTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_EXTRACTABLE, &ckFalse,        sizeof(ckFalse)        },
+        { CKA_EXTRACTABLE, &ckTrue,         sizeof(ckTrue)         },
+    };
+    CK_ATTRIBUTE get[] = {
+        { CKA_SENSITIVE,   &sensitive,      sizeof(sensitive)      },
+        { CKA_EXTRACTABLE, &extractable,    sizeof(extractable)    },
+    };
+    int result = 0;
+
+    XMEMSET(master, 0x5c, sizeof(master));
+    tls_key_mat_init(&params, &out, 256, 128, 0);
+    ret = funcList->C_CreateObject(session, tmpl,
+                                   sizeof(tmpl) / sizeof(*tmpl), &base);
+    CHECK_CKR(ret, "create protected TLS master secret");
+
+    out.hClientMacSecret = base;
+    out.hServerKey = base;
+    ret = tls_key_mat_derive(session, base, &params, NULL, 0);
+    CHECK_RV(ret, CKR_TEMPLATE_INCONSISTENT,
+             "TLS key and MAC derive into a weaker template refused");
+    if (out.hClientMacSecret != CK_INVALID_HANDLE ||
+            out.hServerKey != CK_INVALID_HANDLE)
+        ret = CKR_GENERAL_ERROR;
+    else
+        ret = CKR_OK;
+    CHECK_CKR(ret, "no keys from the refused template");
+
+    ret = tls_key_mat_derive(session, base, &params, dupTmpl,
+                             sizeof(dupTmpl) / sizeof(*dupTmpl));
+    CHECK_RV(ret, CKR_TEMPLATE_INCONSISTENT,
+             "TLS key and MAC derive with a repeated weaker attribute refused");
+    if (out.hClientMacSecret != CK_INVALID_HANDLE ||
+            out.hServerMacSecret != CK_INVALID_HANDLE ||
+            out.hClientKey != CK_INVALID_HANDLE ||
+            out.hServerKey != CK_INVALID_HANDLE)
+        ret = CKR_GENERAL_ERROR;
+    else
+        ret = CKR_OK;
+    CHECK_CKR(ret, "no keys from the repeated weaker attribute");
+
+    ret = tls_key_mat_derive(session, base, &params, tmpl, 2);
+    CHECK_CKR(ret, "TLS key and MAC derive with protection left out");
+    ret = funcList->C_GetAttributeValue(session, out.hClientKey, get, 2);
+    CHECK_CKR(ret, "read client key protection");
+    if (sensitive != CK_TRUE || extractable != CK_FALSE)
+        ret = CKR_GENERAL_ERROR;
+    CHECK_CKR(ret, "client key takes the master secret's protection");
+
+cleanup:
+    destroy_key_mat(session, &out);
+    destroy_obj(session, &base);
+    return result;
+}
+#endif
+
 /* TLS key expansion requires both client and server random data. */
 static int test_tls_randoms_required(CK_SESSION_HANDLE session)
 {
@@ -1080,6 +1159,10 @@ static int kdf_tls_derive_test(void)
 #ifdef WOLFSSL_HAVE_PRF
     if (test_tls_randoms_required(session) != 0)
         result = -1;
+#if !defined(WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT) && !defined(WOLFPKCS11_NSS)
+    if (test_tls_key_mat_weaker_template(session) != 0)
+        result = -1;
+#endif
 #endif
 #ifdef WOLFSSL_HAVE_PRF
     if (test_tls_master_version_param(session) != 0)

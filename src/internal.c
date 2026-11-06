@@ -19701,30 +19701,80 @@ int WP11_Dh_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
     return ret;
 }
 
-/**
- * Derive the secret from the private key and peer's public value with DH.
- *
- * @param  point     [in]  Peer's point data.
- * @param  pointLen  [in]  Length of point data in bytes.
- * @param  key       [in]  Buffer to hold secret key.
- * @param  keyLen    [in]  Length of buffer in bytes.
- * @param  priv      [in]  The private key.
- * @return  -ve when derivation fails.
- *          0 on success.
- */
-int WP11_Dh_Derive(unsigned char* pub, word32 pubLen, unsigned char* key,
-                   word32* keyLen, WP11_Object* priv)
+#if (!defined(HAVE_FIPS) || FIPS_VERSION_GE(7,0)) && \
+    !defined(HAVE_SELFTEST) && defined(LIBWOLFSSL_VERSION_HEX) && \
+    LIBWOLFSSL_VERSION_HEX >= 0x05007004
+    #define WP11_HAVE_DH_AGREE_CT
+#endif
+
+#ifndef WP11_HAVE_DH_AGREE_CT
+/* wc_DhAgree with the secret left-padded to padLen bytes. */
+static int wp11_DhAgreePadded(WP11_Object* priv, unsigned char* pub,
+                              word32 pubLen, unsigned char* key,
+                              word32* keyLen, word32 padLen)
 {
     int ret;
 
+    ret = wc_DhAgree(&priv->data.dhKey->params, key, keyLen,
+                   priv->data.dhKey->key, priv->data.dhKey->len, pub, pubLen);
+    if (ret == 0 && *keyLen < padLen) {
+        XMEMMOVE(key + (padLen - *keyLen), key, *keyLen);
+        XMEMSET(key, 0, padLen - *keyLen);
+        *keyLen = padLen;
+    }
+    return ret;
+}
+#endif
+
+/**
+ * Derive the secret from the private key and peer's public value with DH.
+ *
+ * @param  pub       [in]      Peer's public value.
+ * @param  pubLen    [in]      Length of public value in bytes.
+ * @param  key       [in]      Buffer to hold secret key.
+ * @param  keyLen    [in,out]  On in, length of buffer in bytes.
+ *                             On out, length of secret in bytes.
+ * @param  strip     [in]      Non-zero to drop the secret's leading zero
+ *                             bytes, otherwise it is as long as the prime.
+ * @param  priv      [in]      The private key.
+ * @return  BUFFER_E when the buffer is shorter than the prime.
+ *          Other -ve when derivation fails.
+ *          0 on success.
+ */
+int WP11_Dh_Derive(unsigned char* pub, word32 pubLen, unsigned char* key,
+                   word32* keyLen, int strip, WP11_Object* priv)
+{
+    int ret = 0;
+    word32 primeLen;
+    word32 i = 0;
+
     if (priv->onToken)
         WP11_Lock_LockRO(priv->lock);
-    PRIVATE_KEY_UNLOCK();
-    ret = wc_DhAgree(&priv->data.dhKey->params, key, keyLen,
-                       priv->data.dhKey->key, priv->data.dhKey->len, pub, pubLen);
-    PRIVATE_KEY_LOCK();
+    primeLen = (word32)mp_unsigned_bin_size(&priv->data.dhKey->params.p);
+    if (primeLen > *keyLen)
+        ret = BUFFER_E;
+    if (ret == 0) {
+        *keyLen = primeLen;
+        PRIVATE_KEY_UNLOCK();
+#ifdef WP11_HAVE_DH_AGREE_CT
+        ret = wc_DhAgree_ct(&priv->data.dhKey->params, key, keyLen,
+                   priv->data.dhKey->key, priv->data.dhKey->len, pub, pubLen);
+#else
+        ret = wp11_DhAgreePadded(priv, pub, pubLen, key, keyLen,
+                                 strip ? 0 : primeLen);
+#endif
+        PRIVATE_KEY_LOCK();
+    }
     if (priv->onToken)
         WP11_Lock_UnlockRO(priv->lock);
+
+    if (ret == 0 && strip) {
+        while (i < *keyLen && key[i] == 0)
+            i++;
+        XMEMMOVE(key, key + i, *keyLen - i);
+        *keyLen -= i;
+        wc_ForceZero(key + *keyLen, primeLen - *keyLen);
+    }
 
     return ret;
 }

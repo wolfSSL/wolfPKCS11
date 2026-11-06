@@ -714,7 +714,7 @@ WP11_LOCAL int WP11_Xmss_Verify(unsigned char* sig, word32 sigLen,
 WP11_LOCAL int WP11_Dh_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
                             WP11_Slot* slot);
 WP11_LOCAL int WP11_Dh_Derive(unsigned char* pub, word32 pubLen, unsigned char* key,
-                   word32* keyLen, WP11_Object* priv);
+                   word32* keyLen, int strip, WP11_Object* priv);
 
 #ifdef WOLFPKCS11_MLKEM
 WP11_LOCAL int WP11_Object_SetMlKemKey(WP11_Object* object, unsigned char** data,

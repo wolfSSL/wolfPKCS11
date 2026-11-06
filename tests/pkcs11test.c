@@ -16089,25 +16089,43 @@ static CK_RV concat_create_key(CK_SESSION_HANDLE session, CK_BYTE* value,
                                     sizeof(tmpl) / sizeof(*tmpl), key);
 }
 
-static CK_RV concat_derive(CK_SESSION_HANDLE session, CK_MECHANISM* mech,
-                           CK_OBJECT_HANDLE base, CK_KEY_TYPE keyType,
-                           CK_ULONG valueLen, CK_OBJECT_HANDLE* key)
+static CK_RV concat_derive_ex(CK_SESSION_HANDLE session, CK_MECHANISM* mech,
+                              CK_OBJECT_HANDLE base, CK_KEY_TYPE keyType,
+                              CK_ULONG valueLen, int weak,
+                              CK_OBJECT_HANDLE* key)
 {
     CK_ATTRIBUTE tmpl[] = {
         {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
         {CKA_KEY_TYPE, &keyType, sizeof(keyType)},
-        {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
-        {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
         {CKA_DERIVE, &ckTrue, sizeof(ckTrue)},
         {CKA_SIGN, &ckTrue, sizeof(ckTrue)},
         {CKA_VALUE_LEN, &valueLen, sizeof(valueLen)},
+        {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
+        {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
     };
     CK_ULONG cnt = sizeof(tmpl) / sizeof(*tmpl);
 
+    if (!weak)
+        cnt -= 2;
     if (valueLen == 0)
-        cnt--;
+        tmpl[4] = tmpl[--cnt];
     *key = CK_INVALID_HANDLE;
     return funcList->C_DeriveKey(session, mech, base, tmpl, cnt, key);
+}
+
+static CK_RV concat_derive(CK_SESSION_HANDLE session, CK_MECHANISM* mech,
+                           CK_OBJECT_HANDLE base, CK_KEY_TYPE keyType,
+                           CK_ULONG valueLen, CK_OBJECT_HANDLE* key)
+{
+    return concat_derive_ex(session, mech, base, keyType, valueLen, 1, key);
+}
+
+static CK_RV concat_derive_default(CK_SESSION_HANDLE session,
+                                   CK_MECHANISM* mech, CK_OBJECT_HANDLE base,
+                                   CK_ULONG valueLen, CK_OBJECT_HANDLE* key)
+{
+    return concat_derive_ex(session, mech, base, CKK_GENERIC_SECRET, valueLen,
+                            0, key);
 }
 
 static CK_RV concat_check_value(CK_SESSION_HANDLE session,
@@ -16387,16 +16405,25 @@ static CK_RV test_concatenate_protection(void* args)
     }
     if (ret == CKR_OK) {
         hOther = hG1;
-        ret = concat_derive(session, &mech, hA, CKK_GENERIC_SECRET, 0, &hKey);
+        ret = concat_derive_default(session, &mech, hA, 0, &hKey);
         CHECK_CKR(ret, "Concatenate plain base and protected key");
     }
     if (ret == CKR_OK) {
         ret = concat_check_bools(session, hKey, CK_TRUE, CK_FALSE, CK_FALSE,
                                  CK_FALSE);
     }
+#if !defined(WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT) && !defined(WOLFPKCS11_NSS)
+    if (ret == CKR_OK) {
+        ret = concat_derive(session, &mech, hA, CKK_GENERIC_SECRET, 0, &hKey);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+                       "Concatenate protected key into a weaker template");
+        CHECK_COND(hKey == CK_INVALID_HANDLE, ret,
+                   "No key from a weaker template");
+    }
+#endif
     if (ret == CKR_OK) {
         hOther = hA;
-        ret = concat_derive(session, &mech, hG1, CKK_GENERIC_SECRET, 0, &hKey);
+        ret = concat_derive_default(session, &mech, hG1, 0, &hKey);
         CHECK_CKR(ret, "Concatenate protected base and plain key");
     }
     if (ret == CKR_OK) {
@@ -16405,7 +16432,7 @@ static CK_RV test_concatenate_protection(void* args)
     }
     if (ret == CKR_OK) {
         hOther = hG2;
-        ret = concat_derive(session, &mech, hG1, CKK_GENERIC_SECRET, 0, &hKey);
+        ret = concat_derive_default(session, &mech, hG1, 0, &hKey);
         CHECK_CKR(ret, "Concatenate two protected keys");
     }
     if (ret == CKR_OK) {
@@ -16413,8 +16440,7 @@ static CK_RV test_concatenate_protection(void* args)
                                  CK_TRUE);
     }
     if (ret == CKR_OK) {
-        ret = concat_derive(session, &dataMech, hG1, CKK_GENERIC_SECRET, 0,
-                            &hKey);
+        ret = concat_derive_default(session, &dataMech, hG1, 0, &hKey);
         CHECK_CKR(ret, "Concatenate protected base and data");
     }
     if (ret == CKR_OK) {
@@ -16423,37 +16449,43 @@ static CK_RV test_concatenate_protection(void* args)
     }
     if (ret == CKR_OK) {
         dataMech.mechanism = CKM_CONCATENATE_DATA_AND_BASE;
-        ret = concat_derive(session, &dataMech, hG1, CKK_GENERIC_SECRET,
-                            sizeof(a), &hKey);
+        ret = concat_derive_default(session, &dataMech, hG1, sizeof(a),
+                                    &hKey);
         CHECK_CKR(ret, "Concatenate data and protected base, data only");
     }
     if (ret == CKR_OK) {
         ret = concat_check_bools(session, hKey, CK_TRUE, CK_FALSE, CK_FALSE,
                                  CK_FALSE);
     }
+#if !defined(WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT) && !defined(WOLFPKCS11_NSS)
     if (ret == CKR_OK) {
         ret = concat_derive(session, &dataMech, hG1, CKK_GENERIC_SECRET,
-                            sizeof(a) + 1, &hKey);
+                            sizeof(a), &hKey);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+                       "Concatenate data only into a weaker template");
+    }
+#endif
+    if (ret == CKR_OK) {
+        ret = concat_derive_default(session, &dataMech, hG1, sizeof(a) + 1,
+                                    &hKey);
         CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
                        "Concatenate data and one protected base byte");
     }
     if (ret == CKR_OK) {
         dataMech.mechanism = CKM_CONCATENATE_BASE_AND_DATA;
-        ret = concat_derive(session, &dataMech, hG1, CKK_GENERIC_SECRET,
-                            genLen - 1, &hKey);
+        ret = concat_derive_default(session, &dataMech, hG1, genLen - 1,
+                                    &hKey);
         CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
                        "Concatenate truncated protected base and data");
     }
     if (ret == CKR_OK) {
         hOther = hG1;
-        ret = concat_derive(session, &mech, hA, CKK_GENERIC_SECRET,
-                            sizeof(a) + 1, &hKey);
+        ret = concat_derive_default(session, &mech, hA, sizeof(a) + 1, &hKey);
         CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
                        "Concatenate plain base and one protected key byte");
     }
     if (ret == CKR_OK) {
-        ret = concat_derive(session, &mech, hA, CKK_GENERIC_SECRET,
-                            sizeof(a) - 1, &hKey);
+        ret = concat_derive_default(session, &mech, hA, sizeof(a) - 1, &hKey);
         CHECK_CKR(ret, "Concatenate truncated plain base, protected key "
                        "dropped");
     }
@@ -16718,6 +16750,7 @@ static CK_RV test_concatenate_wrap_with_trusted(void* args)
     CK_ATTRIBUTE tmpl[] = {
         {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
         {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
+        {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
         {CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue)},
         {CKA_DERIVE, &ckTrue, sizeof(ckTrue)},
         {CKA_WRAP_WITH_TRUSTED, &ckTrue, sizeof(ckTrue)},
@@ -18496,6 +18529,8 @@ static CK_RV test_derive_tls12_key_and_mac(void *args) {
         {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
         {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
         {CKA_VALUE, test_premaster_secret, sizeof(test_premaster_secret)},
+        {CKA_SENSITIVE, &falseValue, sizeof(falseValue)},
+        {CKA_EXTRACTABLE, &trueValue, sizeof(trueValue)},
         {CKA_DERIVE, &trueValue, sizeof(trueValue)}
     };
 
@@ -18663,6 +18698,7 @@ static CK_RV test_derive_tls12_key_and_mac_class(void* args)
         {CKA_CLASS, &secretKeyClass, sizeof(secretKeyClass)},
         {CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType)},
         {CKA_VALUE, secret, sizeof(secret)},
+        {CKA_SENSITIVE, &ckFalse, sizeof(ckFalse)},
         {CKA_DERIVE, &ckTrue, sizeof(ckTrue)}
     };
     CK_SSL3_KEY_MAT_OUT keyMat = {
