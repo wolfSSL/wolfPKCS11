@@ -18,8 +18,8 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  *
- * Multi-part hash-and-sign (RSA PKCS #1 v1.5, RSA-PSS, ECDSA) and AES-ECB
- * operations against their single-part results.
+ * Multi-part hash-and-sign (RSA PKCS #1 v1.5, RSA-PSS, ECDSA), AES-ECB and
+ * in-place AES-CBC operations against their single-part results.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -575,8 +575,66 @@ static void test_ecdsa(CK_SESSION_HANDLE session)
 }
 #endif
 
+#if !defined(NO_AES) && (defined(HAVE_AESECB) || defined(HAVE_AES_CBC))
+/* In place, with a block cached from the part before. */
+static void check_in_place(CK_SESSION_HANDLE session, CK_MECHANISM* mech,
+                           CK_OBJECT_HANDLE key, int enc, CK_BYTE* in,
+                           const CK_ULONG* parts, size_t partCnt,
+                           CK_BYTE* expected, CK_ULONG expectedLen,
+                           const char* name)
+{
+    CK_RV rv;
+    CK_BYTE work[MSG_LEN];
+    CK_BYTE out[MSG_LEN];
+    CK_ULONG workLen;
+    CK_ULONG total = 0;
+    CK_ULONG off = 0;
+    char what[96];
+    size_t i;
+
+    if (enc)
+        rv = funcList->C_EncryptInit(session, mech, key);
+    else
+        rv = funcList->C_DecryptInit(session, mech, key);
+    for (i = 0; rv == CKR_OK && i < partCnt; i++) {
+        XMEMCPY(work, in + off, parts[i]);
+        workLen = sizeof(work);
+        if (enc)
+            rv = funcList->C_EncryptUpdate(session, work, parts[i], work,
+                                           &workLen);
+        else
+            rv = funcList->C_DecryptUpdate(session, work, parts[i], work,
+                                           &workLen);
+        if (rv == CKR_OK) {
+            XMEMCPY(out + total, work, workLen);
+            total += workLen;
+            off += parts[i];
+        }
+    }
+    if (rv == CKR_OK) {
+        workLen = sizeof(work);
+        if (enc)
+            rv = funcList->C_EncryptFinal(session, work, &workLen);
+        else
+            rv = funcList->C_DecryptFinal(session, work, &workLen);
+        if (rv == CKR_OK) {
+            XMEMCPY(out + total, work, workLen);
+            total += workLen;
+        }
+    }
+    snprintf(what, sizeof(what), "%s: %s in place", name,
+             enc ? "encrypt" : "decrypt");
+    CHECK_RV(rv, what, CKR_OK);
+    snprintf(what, sizeof(what), "%s: %s in place gives the one-shot result",
+             name, enc ? "encrypt" : "decrypt");
+    CHECK_TRUE(total == expectedLen &&
+               XMEMCMP(out, expected, expectedLen) == 0, what);
+}
+#endif
+
 #if !defined(NO_AES) && defined(HAVE_AESECB)
 #define ECB_LEN 64
+#define ECB_PARTS 3
 
 /* Run C_EncryptUpdate or C_DecryptUpdate over in, split-sized parts. */
 static CK_RV ecb_multi(CK_SESSION_HANDLE session, int enc, CK_BYTE* in,
@@ -625,52 +683,6 @@ static CK_RV ecb_multi(CK_SESSION_HANDLE session, int enc, CK_BYTE* in,
     return rv;
 }
 
-/* In place, with a block cached from the part before. */
-static void check_ecb_in_place(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE key,
-                               int enc, CK_BYTE* in, CK_BYTE* expected)
-{
-    CK_RV rv;
-    CK_MECHANISM mech = { CKM_AES_ECB, NULL, 0 };
-    static const CK_ULONG parts[] = { 5, 30, 29 };
-    CK_BYTE work[ECB_LEN];
-    CK_BYTE out[ECB_LEN];
-    CK_ULONG workLen;
-    CK_ULONG total = 0;
-    CK_ULONG off = 0;
-    size_t i;
-
-    if (enc)
-        rv = funcList->C_EncryptInit(session, &mech, key);
-    else
-        rv = funcList->C_DecryptInit(session, &mech, key);
-    for (i = 0; rv == CKR_OK && i < sizeof(parts) / sizeof(*parts); i++) {
-        XMEMCPY(work, in + off, parts[i]);
-        workLen = sizeof(work);
-        if (enc)
-            rv = funcList->C_EncryptUpdate(session, work, parts[i], work,
-                                           &workLen);
-        else
-            rv = funcList->C_DecryptUpdate(session, work, parts[i], work,
-                                           &workLen);
-        if (rv == CKR_OK) {
-            XMEMCPY(out + total, work, workLen);
-            total += workLen;
-            off += parts[i];
-        }
-    }
-    if (rv == CKR_OK) {
-        workLen = sizeof(work);
-        if (enc)
-            rv = funcList->C_EncryptFinal(session, work, &workLen);
-        else
-            rv = funcList->C_DecryptFinal(session, work, &workLen);
-    }
-    CHECK_RV(rv, enc ? "encrypt in place" : "decrypt in place", CKR_OK);
-    CHECK_TRUE(total == ECB_LEN && XMEMCMP(out, expected, ECB_LEN) == 0,
-               enc ? "encrypt in place gives the C_Encrypt output" :
-                     "decrypt in place gives the plaintext");
-}
-
 static void test_aes_ecb(CK_SESSION_HANDLE session)
 {
     CK_RV rv;
@@ -687,6 +699,7 @@ static void test_aes_ecb(CK_SESSION_HANDLE session)
     };
     CK_MECHANISM mech = { CKM_AES_ECB, NULL, 0 };
     static const CK_ULONG ecbSplits[] = { 1, 7, 15, 16, 17, ECB_LEN };
+    static const CK_ULONG ecbParts[] = { 5, 30, 29 };
     CK_BYTE ref[ECB_LEN];
     CK_BYTE out[ECB_LEN];
     CK_ULONG refLen = sizeof(ref);
@@ -782,10 +795,66 @@ static void test_aes_ecb(CK_SESSION_HANDLE session)
         CHECK_TRUE(outLen == 0, "C_EncryptFinal returns no data");
     }
 
-    check_ecb_in_place(session, key, 1, msg, ref);
-    check_ecb_in_place(session, key, 0, ref, msg);
+    check_in_place(session, &mech, key, 1, msg, ecbParts, ECB_PARTS, ref,
+                   refLen, "CKM_AES_ECB");
+    check_in_place(session, &mech, key, 0, ref, ecbParts, ECB_PARTS, msg,
+                   ECB_LEN, "CKM_AES_ECB");
 
 done:
+    funcList->C_DestroyObject(session, key);
+}
+#endif
+
+#if !defined(NO_AES) && defined(HAVE_AES_CBC)
+static void test_aes_cbc_in_place(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS secretClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE aesType = CKK_AES;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &aesType,     sizeof(aesType)     },
+        { CKA_VALUE,    aes_128_key,  sizeof(aes_128_key) },
+        { CKA_ENCRYPT,  &ckTrue,      sizeof(ckTrue)      },
+        { CKA_DECRYPT,  &ckTrue,      sizeof(ckTrue)      },
+        { CKA_PRIVATE,  &ckFalse,     sizeof(ckFalse)     },
+    };
+    CK_BYTE iv[16];
+    CK_MECHANISM mech;
+    static const CK_ULONG encParts[] = { 5, 30, 29 };
+    static const CK_ULONG padDecParts[] = { 5, 30, 45 };
+    CK_BYTE ref[96];
+    CK_ULONG refLen;
+    size_t i;
+
+    printf("--- AES-CBC in place ---\n");
+    rv = funcList->C_CreateObject(session, tmpl, sizeof(tmpl) / sizeof(*tmpl),
+                                  &key);
+    CHECK_RV(rv, "C_CreateObject(AES key)", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    XMEMSET(iv, 0x3C, sizeof(iv));
+    mech.pParameter = iv;
+    mech.ulParameterLen = sizeof(iv);
+    for (i = 0; i < 2; i++) {
+        mech.mechanism = (i == 0) ? CKM_AES_CBC : CKM_AES_CBC_PAD;
+        refLen = sizeof(ref);
+        rv = funcList->C_EncryptInit(session, &mech, key);
+        if (rv == CKR_OK)
+            rv = funcList->C_Encrypt(session, msg, 64, ref, &refLen);
+        CHECK_RV(rv, "C_Encrypt", CKR_OK);
+        if (rv != CKR_OK)
+            break;
+
+        check_in_place(session, &mech, key, 1, msg, encParts, 3, ref, refLen,
+                       i == 0 ? "CKM_AES_CBC" : "CKM_AES_CBC_PAD");
+        check_in_place(session, &mech, key, 0, ref,
+                       i == 0 ? encParts : padDecParts, 3, msg, 64,
+                       i == 0 ? "CKM_AES_CBC" : "CKM_AES_CBC_PAD");
+    }
+
     funcList->C_DestroyObject(session, key);
 }
 #endif
@@ -817,6 +886,9 @@ static int run_test(void)
 #endif
 #if !defined(NO_AES) && defined(HAVE_AESECB)
     test_aes_ecb(session);
+#endif
+#if !defined(NO_AES) && defined(HAVE_AES_CBC)
+    test_aes_cbc_in_place(session);
 #endif
 
 out:

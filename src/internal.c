@@ -20228,8 +20228,13 @@ int WP11_AesCbc_EncryptUpdate(unsigned char* plain, word32 plainSz,
 {
     int ret = 0;
     WP11_CbcParams* cbc = &session->params.cbc;
-    int sz = 0;
-    int outSz = 0;
+    unsigned char* in = plain;
+    word32 sz = 0;
+    word32 outSz = 0;
+    word32 tailSz;
+    unsigned char* bulk;
+    unsigned char block[AES_BLOCK_SIZE];
+    unsigned char tail[AES_BLOCK_SIZE];
 
     /* Serialize the read-modify-write of cbc->partial/partialSz. Without this
      * two threads sharing one session handle can both read partialSz, both
@@ -20240,38 +20245,44 @@ int WP11_AesCbc_EncryptUpdate(unsigned char* plain, word32 plainSz,
 
     if (cbc->partialSz > 0) {
         sz = AES_BLOCK_SIZE - cbc->partialSz;
-        if (sz > (int)plainSz)
+        if (sz > plainSz)
             sz = plainSz;
         XMEMCPY(cbc->partial + cbc->partialSz, plain, sz);
         cbc->partialSz += sz;
         plain += sz;
         plainSz -= sz;
         if (cbc->partialSz == AES_BLOCK_SIZE) {
-            ret = wc_AesCbcEncrypt(&cbc->aes, enc, cbc->partial,
+            ret = wc_AesCbcEncrypt(&cbc->aes, block, cbc->partial,
                                                                 AES_BLOCK_SIZE);
-            enc += AES_BLOCK_SIZE;
             outSz += AES_BLOCK_SIZE;
             cbc->partialSz = 0;
             XMEMSET(cbc->partial, 0, AES_BLOCK_SIZE);
         }
     }
-    if (ret == 0 && plainSz > 0) {
-        sz = plainSz & (~(AES_BLOCK_SIZE - 1));
-        if (sz > 0) {
-            ret = wc_AesCbcEncrypt(&cbc->aes, enc, plain, sz);
-            outSz += sz;
-            plain += sz;
-            plainSz -= sz;
+    sz = plainSz & ~(word32)(AES_BLOCK_SIZE - 1);
+    tailSz = plainSz - sz;
+    XMEMCPY(tail, plain + sz, tailSz);
+    if (ret == 0 && sz > 0) {
+        bulk = plain;
+        if (outSz > 0 && enc == in) {
+            XMEMMOVE(enc + outSz, plain, sz);
+            bulk = enc + outSz;
         }
+        ret = wc_AesCbcEncrypt(&cbc->aes, enc + outSz, bulk, sz);
+        if (ret != 0 && bulk != plain)
+            wc_ForceZero(enc + outSz, sz);
     }
-    if (ret == 0 && plainSz > 0) {
-        XMEMCPY(cbc->partial, plain, plainSz);
-        cbc->partialSz = plainSz;
+    if (ret == 0 && outSz > 0)
+        XMEMCPY(enc, block, AES_BLOCK_SIZE);
+    if (ret == 0 && tailSz > 0) {
+        XMEMCPY(cbc->partial, tail, tailSz);
+        cbc->partialSz = (byte)tailSz;
     }
     if (ret == 0)
-        *encSz = outSz;
+        *encSz = outSz + sz;
 
     WP11_Lock_UnlockRW(&session->slot->lock);
+    wc_ForceZero(tail, sizeof(tail));
     return ret;
 }
 
@@ -20344,8 +20355,13 @@ int WP11_AesCbc_DecryptUpdate(unsigned char* enc, word32 encSz,
 {
     int ret = 0;
     WP11_CbcParams* cbc = &session->params.cbc;
-    int sz = 0;
-    int outSz = 0;
+    unsigned char* in = enc;
+    word32 sz = 0;
+    word32 outSz = 0;
+    word32 tailSz;
+    unsigned char* bulk;
+    unsigned char block[AES_BLOCK_SIZE];
+    unsigned char tail[AES_BLOCK_SIZE];
 
     /* Serialize the partial-block read-modify-write against a concurrent
      * update on the same session (F-5764); see WP11_AesCbc_EncryptUpdate. */
@@ -20353,37 +20369,41 @@ int WP11_AesCbc_DecryptUpdate(unsigned char* enc, word32 encSz,
 
     if (cbc->partialSz > 0) {
         sz = AES_BLOCK_SIZE - cbc->partialSz;
-        if (sz > (int)encSz)
+        if (sz > encSz)
             sz = encSz;
         XMEMCPY(cbc->partial + cbc->partialSz, enc, sz);
         cbc->partialSz += sz;
         enc += sz;
         encSz -= sz;
         if (cbc->partialSz == AES_BLOCK_SIZE) {
-            ret = wc_AesCbcDecrypt(&cbc->aes, dec, cbc->partial,
+            ret = wc_AesCbcDecrypt(&cbc->aes, block, cbc->partial,
                                                                 AES_BLOCK_SIZE);
-            dec += AES_BLOCK_SIZE;
             outSz += AES_BLOCK_SIZE;
             cbc->partialSz = 0;
         }
     }
-    if (ret == 0 && encSz > 0) {
-        sz = encSz & (~(AES_BLOCK_SIZE - 1));
-        if (sz > 0) {
-            ret = wc_AesCbcDecrypt(&cbc->aes, dec, enc, sz);
-            outSz += sz;
-            enc += sz;
-            encSz -= sz;
+    sz = encSz & ~(word32)(AES_BLOCK_SIZE - 1);
+    tailSz = encSz - sz;
+    XMEMCPY(tail, enc + sz, tailSz);
+    if (ret == 0 && sz > 0) {
+        bulk = enc;
+        if (outSz > 0 && dec == in) {
+            XMEMMOVE(dec + outSz, enc, sz);
+            bulk = dec + outSz;
         }
+        ret = wc_AesCbcDecrypt(&cbc->aes, dec + outSz, bulk, sz);
     }
-    if (ret == 0 && encSz > 0) {
-        XMEMCPY(cbc->partial, enc, encSz);
-        cbc->partialSz = encSz;
+    if (ret == 0 && outSz > 0)
+        XMEMCPY(dec, block, AES_BLOCK_SIZE);
+    if (ret == 0 && tailSz > 0) {
+        XMEMCPY(cbc->partial, tail, tailSz);
+        cbc->partialSz = (byte)tailSz;
     }
     if (ret == 0)
-        *decSz = outSz;
+        *decSz = outSz + sz;
 
     WP11_Lock_UnlockRW(&session->slot->lock);
+    wc_ForceZero(block, sizeof(block));
     return ret;
 }
 
@@ -20627,59 +20647,73 @@ int WP11_AesCbcPad_DecryptUpdate(unsigned char* enc, word32 encSz,
 {
     int ret = 0;
     WP11_CbcParams* cbc = &session->params.cbc;
-    word32 bufSz = *decSz;
-    int sz = 0;
-    int outSz = 0;
+    unsigned char* in = enc;
+    word32 take = 0;
+    word32 rest;
+    word32 need;
+    int complete;
+    word32 sz = 0;
+    word32 outSz = 0;
+    word32 tailSz;
+    unsigned char* bulk;
+    unsigned char block[AES_BLOCK_SIZE];
+    unsigned char tail[AES_BLOCK_SIZE];
 
     /* Serialize the partial-block read-modify-write against a concurrent
      * update on the same session (F-5764); see WP11_AesCbc_EncryptUpdate. */
     WP11_Lock_LockRW(&session->slot->lock);
 
     if (cbc->partialSz > 0) {
-        sz = AES_BLOCK_SIZE - cbc->partialSz;
-        if (sz > (int)encSz)
-            sz = encSz;
-        XMEMCPY(cbc->partial + cbc->partialSz, enc, sz);
-        cbc->partialSz += sz;
-        enc += sz;
-        encSz -= sz;
-        if (cbc->partialSz == AES_BLOCK_SIZE && encSz > 0) {
-            /* Refuse to overflow caller's buffer; report the size needed so
-             * far and leave the operation active (CKR_BUFFER_TOO_SMALL). */
-            if ((word32)(outSz + AES_BLOCK_SIZE) > bufSz) {
-                *decSz = (word32)outSz + AES_BLOCK_SIZE;
-                WP11_Lock_UnlockRW(&session->slot->lock);
-                return BUFFER_E;
-            }
-            ret = wc_AesCbcDecrypt(&cbc->aes, dec, cbc->partial,
-                                                                AES_BLOCK_SIZE);
-            dec += AES_BLOCK_SIZE;
-            outSz += AES_BLOCK_SIZE;
-            cbc->partialSz = 0;
-        }
+        take = AES_BLOCK_SIZE - cbc->partialSz;
+        if (take > encSz)
+            take = encSz;
     }
-    if (ret == 0 && encSz > AES_BLOCK_SIZE) {
-        sz = encSz - (encSz & (AES_BLOCK_SIZE - 1));
-        if (sz == (int)encSz)
+    rest = encSz - take;
+    complete = cbc->partialSz > 0 &&
+               cbc->partialSz + take == AES_BLOCK_SIZE && rest > 0;
+    if (rest > AES_BLOCK_SIZE) {
+        sz = rest - (rest & (AES_BLOCK_SIZE - 1));
+        if (sz == rest)
             sz -= AES_BLOCK_SIZE;
-        if ((word32)(outSz + sz) > bufSz) {
-            *decSz = (word32)(outSz + sz);
-            WP11_Lock_UnlockRW(&session->slot->lock);
-            return BUFFER_E;
-        }
-        ret = wc_AesCbcDecrypt(&cbc->aes, dec, enc, sz);
-        outSz += sz;
-        enc += sz;
-        encSz -= sz;
     }
-    if (ret == 0 && encSz > 0) {
-        XMEMCPY(cbc->partial, enc, encSz);
-        cbc->partialSz = encSz;
+    /* Check the output size before changing any state, so a retry works. */
+    need = (complete ? AES_BLOCK_SIZE : 0) + sz;
+    if (need > *decSz) {
+        *decSz = need;
+        WP11_Lock_UnlockRW(&session->slot->lock);
+        return BUFFER_E;
+    }
+
+    XMEMCPY(cbc->partial + cbc->partialSz, enc, take);
+    cbc->partialSz += (byte)take;
+    enc += take;
+    if (complete) {
+        ret = wc_AesCbcDecrypt(&cbc->aes, block, cbc->partial,
+                                                                AES_BLOCK_SIZE);
+        outSz = AES_BLOCK_SIZE;
+        cbc->partialSz = 0;
+    }
+    tailSz = rest - sz;
+    XMEMCPY(tail, enc + sz, tailSz);
+    if (ret == 0 && sz > 0) {
+        bulk = enc;
+        if (outSz > 0 && dec == in) {
+            XMEMMOVE(dec + outSz, enc, sz);
+            bulk = dec + outSz;
+        }
+        ret = wc_AesCbcDecrypt(&cbc->aes, dec + outSz, bulk, sz);
+    }
+    if (ret == 0 && outSz > 0)
+        XMEMCPY(dec, block, AES_BLOCK_SIZE);
+    if (ret == 0 && tailSz > 0) {
+        XMEMCPY(cbc->partial, tail, tailSz);
+        cbc->partialSz = (byte)tailSz;
     }
     if (ret == 0)
-        *decSz = outSz;
+        *decSz = outSz + sz;
 
     WP11_Lock_UnlockRW(&session->slot->lock);
+    wc_ForceZero(block, sizeof(block));
     return ret;
 }
 
