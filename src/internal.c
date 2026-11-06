@@ -21914,12 +21914,14 @@ int WP11_Digest_Single(unsigned char* data, word32 dataLen,
     return ret;
 }
 
+#ifndef NO_HMAC
 int WP11_PBKDF2(byte* output, const byte* passwd, int pLen,
     const byte* salt, int sLen, int iterations, int kLen, int hashType)
 {
     return wc_PBKDF2(output, passwd, pLen, salt, sLen, iterations, kLen,
         hashType);
 }
+#endif
 
 int WP11_PKCS12_PBKDF(byte* output, const byte* passwd, int pLen,
     const byte* salt, int sLen, int iterations, int kLen, int hashType)

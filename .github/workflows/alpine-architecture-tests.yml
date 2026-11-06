@@ -8,13 +8,10 @@ on:
 
 env:
   WOLFSSL_VERSION: v5.8.4-stable
-  # setup-alpine fetches apk.static from gitlab.alpinelinux.org by default,
-  # which is often unreachable. Take it from the apk-tools-static package on
-  # dl-cdn instead (x86_64 is the runner's arch, not the target's). If this
-  # URL starts to 404, Alpine has replaced the package: update the URL and
-  # the SHA-256 of sbin/apk.static from the new package.
-  APK_TOOLS_STATIC_URL: https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/apk-tools-static-2.14.12-r0.apk
-  APK_STATIC_SHA256: 034d28bbf3d97d90fd76e572ab8ae74a038da0e7593e9d412eabccf69ccd3553
+  # apk.static comes from dl-cdn, as gitlab.alpinelinux.org is often
+  # unreachable; x86_64 is the runner's arch, not the target's.
+  APK_TOOLS_REPO: https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64
+  APK_TOOLS_KEY: alpine-devel@lists.alpinelinux.org-6165ee59.rsa.pub
 
 jobs:
   alpine-architecture-tests:
@@ -39,14 +36,26 @@ jobs:
     - name: Checkout wolfPKCS11
       uses: actions/checkout@v4
 
-    # setup-alpine only accepts an http(s) URL for apk-tools, so serve the
-    # binary from localhost. The action verifies it against APK_STATIC_SHA256.
+    # Alpine keeps only the newest package, so look it up and check it against
+    # Alpine's key. setup-alpine only takes an http(s) URL, so serve it locally.
     - name: Fetch static apk-tools
+      id: apk-tools
       run: |
         mkdir -p "$RUNNER_TEMP/apk-tools"
         cd "$RUNNER_TEMP/apk-tools"
-        curl -fsSL --retry 3 --retry-all-errors --connect-timeout 10 --max-time 120 -o apk-tools-static.apk "$APK_TOOLS_STATIC_URL"
-        tar -xzf apk-tools-static.apk sbin/apk.static
+        fetch() {
+          curl -fsSL --retry 3 --retry-all-errors --connect-timeout 10 --max-time 120 -o "$1" "$APK_TOOLS_REPO/$1"
+        }
+        fetch APKINDEX.tar.gz
+        version=$(tar -xzOf APKINDEX.tar.gz APKINDEX | awk '/^P:apk-tools-static$/ { f = 1 } f && /^V:/ && v == "" { v = substr($0, 3) } END { print v }')
+        [ -n "$version" ] || { echo "apk-tools-static missing from APKINDEX"; exit 1; }
+        fetch "apk-tools-static-$version.apk"
+        python3 "$GITHUB_WORKSPACE/.github/scripts/split-apk.py" \
+            "apk-tools-static-$version.apk" "$APK_TOOLS_KEY" apk
+        openssl dgst -sha1 -verify "$GITHUB_WORKSPACE/.github/keys/$APK_TOOLS_KEY" \
+            -signature apk.sig apk.control.gz
+        tar -xzf apk.data.tar.gz sbin/apk.static
+        echo "sha256=$(sha256sum sbin/apk.static | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
         nohup python3 -m http.server 8099 --bind 127.0.0.1 --directory sbin \
             > http-server.log 2>&1 &
         for _ in 1 2 3 4 5; do
@@ -59,7 +68,7 @@ jobs:
     - name: Setup Alpine Linux ${{ matrix.alpine_arch }}
       uses: jirutka/setup-alpine@v1
       with:
-        apk-tools-url: http://127.0.0.1:8099/apk.static#!sha256!${{ env.APK_STATIC_SHA256 }}
+        apk-tools-url: http://127.0.0.1:8099/apk.static#!sha256!${{ steps.apk-tools.outputs.sha256 }}
         arch: ${{ matrix.alpine_arch }}
         branch: latest-stable
         packages: >
