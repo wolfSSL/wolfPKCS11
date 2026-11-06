@@ -463,6 +463,14 @@ typedef struct WP11_CcmParams {
 } WP11_CcmParams;
 #endif
 
+#ifdef HAVE_AESECB
+typedef struct WP11_EcbParams {
+    unsigned char partial[AES_BLOCK_SIZE];
+                                       /* Partial block when streaming        */
+    byte partialSz;                    /* Size of partial block data          */
+} WP11_EcbParams;
+#endif
+
 #ifdef HAVE_AES_KEYWRAP
 typedef struct WP11_KeyWrapParams {
     Aes aes;                           /* AES object from wolfCrypt           */
@@ -549,6 +557,9 @@ struct WP11_Session {
     #ifdef HAVE_AES_KEYWRAP
         WP11_KeyWrapParams kw;         /* AES-KW parameters                   */
     #endif
+    #ifdef HAVE_AESECB
+        WP11_EcbParams ecb;            /* AES-ECB parameters                  */
+    #endif
 #endif
 #ifndef NO_HMAC
         WP11_Hmac hmac;                /* HMAC parameters                     */
@@ -569,6 +580,8 @@ struct WP11_Session {
     WP11_Object* retired;              /* Private objects invalidated by logout
                                         * and freed once nothing uses them    */
     byte opUpdated;                    /* Multi-part update called on op      */
+    wc_HashAlg signHash;               /* Running hash for hash-and-sign      */
+    enum wc_HashType signHashType;     /* Type of signHash, NONE when unused  */
 };
 
 typedef struct WP11_Token {
@@ -1110,6 +1123,7 @@ static int wp11_Session_New(WP11_Slot* slot, CK_OBJECT_HANDLE handle,
         sess->slot = slot;
         sess->handle = handle;
         sess->devId = slot->devId;
+        sess->signHashType = WC_HASH_TYPE_NONE;
         *session = sess;
     }
 
@@ -1269,6 +1283,20 @@ static void wp11_Session_Final(WP11_Session* session)
 }
 
 /**
+ * Free the running hash of a multi-part hash-and-sign or verify operation.
+ *
+ * @param  session  [in]  Session object.
+ */
+static void wp11_Session_FreeSignHash(WP11_Session* session)
+{
+    if (session->signHashType != WC_HASH_TYPE_NONE) {
+        wc_HashFree(&session->signHash, session->signHashType);
+        wc_ForceZero(&session->signHash, sizeof(session->signHash));
+        session->signHashType = WC_HASH_TYPE_NONE;
+    }
+}
+
+/**
  * Release the resources owned by the session's current operation and mark no
  * operation as initialized.
  *
@@ -1276,6 +1304,7 @@ static void wp11_Session_Final(WP11_Session* session)
  */
 static void wp11_Session_FreeOp(WP11_Session* session)
 {
+    wp11_Session_FreeSignHash(session);
 #if !defined(NO_RSA) && !defined(WC_NO_RSA_OAEP)
     if (session->mechanism == CKM_RSA_PKCS_OAEP &&
                                            session->params.oaep.label != NULL) {
@@ -12474,8 +12503,81 @@ enum wc_HashType WP11_Session_ToHashType(WP11_Session* session)
  */
 void WP11_Session_SetOpInitialized(WP11_Session* session, int init)
 {
+    wp11_Session_FreeSignHash(session);
     session->init = init;
     session->opUpdated = 0;
+}
+
+/**
+ * Start the running hash of a hash-and-sign or verify operation if not started.
+ *
+ * @param  session   [in]  Session object.
+ * @param  hashType  [in]  Hash type of the operation.
+ * @return  0 on success.
+ *          Other value on hash failure.
+ */
+static int wp11_Session_StartSignHash(WP11_Session* session,
+                                      enum wc_HashType hashType)
+{
+    int ret = 0;
+
+    if (session->signHashType == WC_HASH_TYPE_NONE) {
+        ret = wc_HashInit(&session->signHash, hashType);
+        if (ret == 0)
+            session->signHashType = hashType;
+    }
+    return ret;
+}
+
+/**
+ * Hash data for a multi-part hash-and-sign or verify operation.
+ *
+ * @param  session  [in]  Session object.
+ * @param  data     [in]  Data to hash.
+ * @param  dataLen  [in]  Length of data in bytes.
+ * @return  0 on success.
+ *          Other value on hash failure.
+ */
+int WP11_Session_SignHashUpdate(WP11_Session* session, unsigned char* data,
+                                word32 dataLen)
+{
+    int ret;
+    enum wc_HashType hashType = WP11_Session_ToHashType(session);
+
+    ret = wp11_Session_StartSignHash(session, hashType);
+    if (ret == 0)
+        ret = wc_HashUpdate(&session->signHash, hashType, data, dataLen);
+
+    return ret;
+}
+
+/**
+ * Finish the hash of a multi-part hash-and-sign or verify operation.
+ * The hash is released whether or not this succeeds.
+ *
+ * @param  session   [in]   Session object.
+ * @param  digest    [out]  Buffer of at least WC_MAX_DIGEST_SIZE bytes.
+ * @param  digestSz  [out]  Length of digest in bytes.
+ * @return  0 on success.
+ *          Other value on hash failure.
+ */
+int WP11_Session_SignHashFinal(WP11_Session* session, unsigned char* digest,
+                               int* digestSz)
+{
+    int ret;
+    enum wc_HashType hashType = WP11_Session_ToHashType(session);
+
+    ret = wp11_Session_StartSignHash(session, hashType);
+    if (ret == 0)
+        ret = wc_HashFinal(&session->signHash, hashType, digest);
+    if (ret == 0) {
+        *digestSz = wc_HashGetDigestSize(hashType);
+        if (*digestSz < 0)
+            ret = *digestSz;
+    }
+    wp11_Session_FreeSignHash(session);
+
+    return ret;
 }
 
 /**
@@ -21392,6 +21494,45 @@ int WP11_AesCcm_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
 
 #ifdef HAVE_AESECB
 /**
+ * Initialize an AES object with the key of an AES-ECB operation.
+ *
+ * @param  aes     [in]  AES object.
+ * @param  secret  [in]  Secret key object.
+ * @param  dir     [in]  AES_ENCRYPTION or AES_DECRYPTION.
+ * @return  0 on success.
+ *          Other value on failure, with the AES object freed and zeroized.
+ */
+static int wp11_AesEcb_SetKey(Aes* aes, WP11_Object* secret, int dir)
+{
+    int ret;
+    WP11_Data* key;
+
+    ret = wc_AesInit(aes, NULL, secret->devId);
+    if (ret != 0) {
+        wc_ForceZero(aes, sizeof(*aes));
+        return ret;
+    }
+#ifdef WOLFSSL_STM32U5_DHUK
+    if (secret->dhukIvLen > 0)
+        ret = wc_Stm32_Aes_SetDHUK_IV(aes, secret->dhukIv, secret->dhukIvLen);
+#endif
+    if (ret == 0) {
+        if (secret->onToken)
+            WP11_Lock_LockRO(secret->lock);
+        key = secret->data.symmKey;
+        ret = wc_AesSetKey(aes, key->data, key->len, NULL, dir);
+        if (secret->onToken)
+            WP11_Lock_UnlockRO(secret->lock);
+    }
+    if (ret != 0) {
+        wc_AesFree(aes);
+        wc_ForceZero(aes, sizeof(*aes));
+    }
+
+    return ret;
+}
+
+/**
  * Encrypt plain text with AES-ECB.
  * Output buffer must be large enough to hold all data.
  *
@@ -21412,29 +21553,16 @@ int WP11_AesEcb_Encrypt(unsigned char* plain, word32 plainSz,
 {
     int ret;
     Aes aes;
-    WP11_Data* key;
 
-    ret = wc_AesInit(&aes, NULL, secret->devId);
-#ifdef WOLFSSL_STM32U5_DHUK
-    if (ret == 0 && secret->dhukIvLen > 0) {
-        ret = wc_Stm32_Aes_SetDHUK_IV(&aes, secret->dhukIv, secret->dhukIvLen);
-    }
-#endif
+    ret = wp11_AesEcb_SetKey(&aes, secret, AES_ENCRYPTION);
     if (ret == 0) {
-        if (secret->onToken)
-            WP11_Lock_LockRO(secret->lock);
-        key = secret->data.symmKey;
-        ret = wc_AesSetKey(&aes, key->data, key->len, NULL, AES_ENCRYPTION);
-        if (secret->onToken)
-            WP11_Lock_UnlockRO(secret->lock);
-
-        if (ret == 0)
-            ret = wc_AesEcbEncrypt(&aes, enc, plain, plainSz);
+        ret = wc_AesEcbEncrypt(&aes, enc, plain, plainSz);
         if (ret == 0)
             *encSz = plainSz;
 
         wc_AesFree(&aes);
     }
+    wc_ForceZero(&aes, sizeof(aes));
 
     (void)session;
     return ret;
@@ -21459,24 +21587,10 @@ int WP11_AesEcb_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
 {
     int ret;
     Aes aes;
-    WP11_Data* key;
 
-    ret = wc_AesInit(&aes, NULL, secret->devId);
-#ifdef WOLFSSL_STM32U5_DHUK
-    if (ret == 0 && secret->dhukIvLen > 0) {
-        ret = wc_Stm32_Aes_SetDHUK_IV(&aes, secret->dhukIv, secret->dhukIvLen);
-    }
-#endif
+    ret = wp11_AesEcb_SetKey(&aes, secret, AES_DECRYPTION);
     if (ret == 0) {
-        if (secret->onToken)
-            WP11_Lock_LockRO(secret->lock);
-        key = secret->data.symmKey;
-        ret = wc_AesSetKey(&aes, key->data, key->len, NULL, AES_DECRYPTION);
-        if (secret->onToken)
-            WP11_Lock_UnlockRO(secret->lock);
-
-        if (ret == 0)
-            ret = wc_AesEcbDecrypt(&aes, dec, enc, encSz);
+        ret = wc_AesEcbDecrypt(&aes, dec, enc, encSz);
 
         if (ret == 0) {
             *decSz = encSz;
@@ -21484,8 +21598,115 @@ int WP11_AesEcb_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
 
         wc_AesFree(&aes);
     }
+    wc_ForceZero(&aes, sizeof(aes));
 
     (void)session;
+    return ret;
+}
+
+/**
+ * Clear the cached data of a multi-part AES-ECB operation.
+ *
+ * @param  session  [in]  Session object.
+ */
+void WP11_Session_SetEcbParams(WP11_Session* session)
+{
+    WP11_Session_AbortOp(session);
+    wc_ForceZero(&session->params.ecb, sizeof(session->params.ecb));
+}
+
+/**
+ * Return the amount of AES-ECB data not yet processed.
+ *
+ * @param  session  [in]  Session object.
+ * @return  Unprocessed amount in bytes.
+ */
+int WP11_AesEcb_PartLen(WP11_Session* session)
+{
+    return session->params.ecb.partialSz;
+}
+
+/**
+ * Encrypt or decrypt more data with AES-ECB.
+ * Data not filling a block is cached.
+ *
+ * @param  in       [in]      Input data.
+ * @param  inSz     [in]      Length of input data in bytes.
+ * @param  out      [in]      Buffer to hold output data.
+ * @param  outSz    [out]     Length of output data in bytes.
+ * @param  enc      [in]      1 to encrypt, 0 to decrypt.
+ * @param  secret   [in]      Secret key object.
+ * @param  session  [in]      Session object.
+ * @return  -ve on failure.
+ *          0 on success.
+ */
+int WP11_AesEcb_Update(unsigned char* in, word32 inSz, unsigned char* out,
+                       word32* outSz, int enc, WP11_Object* secret,
+                       WP11_Session* session)
+{
+    int ret;
+    Aes aes;
+    WP11_EcbParams* ecb = &session->params.ecb;
+    word32 sz;
+    word32 total = 0;
+    word32 tailSz;
+    unsigned char* src = in;
+    unsigned char* bulk;
+    unsigned char tail[AES_BLOCK_SIZE];
+
+    ret = wp11_AesEcb_SetKey(&aes, secret,
+                             enc ? AES_ENCRYPTION : AES_DECRYPTION);
+    if (ret != 0)
+        return ret;
+
+    WP11_Lock_LockRW(&session->slot->lock);
+    if (ecb->partialSz > 0) {
+        sz = AES_BLOCK_SIZE - ecb->partialSz;
+        if (sz > inSz)
+            sz = inSz;
+        XMEMCPY(ecb->partial + ecb->partialSz, src, sz);
+        ecb->partialSz += (byte)sz;
+        src += sz;
+        inSz -= sz;
+        if (ecb->partialSz == AES_BLOCK_SIZE)
+            total = AES_BLOCK_SIZE;
+    }
+    sz = inSz & ~(word32)(AES_BLOCK_SIZE - 1);
+    tailSz = inSz - sz;
+    XMEMCPY(tail, src + sz, tailSz);
+    /* The output may overlap the input, so write the cached block last. */
+    if (sz > 0) {
+        bulk = src;
+        if (total > 0 && out == in) {
+            XMEMMOVE(out + total, src, sz);
+            bulk = out + total;
+        }
+        if (enc)
+            ret = wc_AesEcbEncrypt(&aes, out + total, bulk, sz);
+        else
+            ret = wc_AesEcbDecrypt(&aes, out + total, bulk, sz);
+        if (ret != 0 && bulk != src)
+            wc_ForceZero(out + total, sz);
+    }
+    if (ret == 0 && total > 0) {
+        if (enc)
+            ret = wc_AesEcbEncrypt(&aes, out, ecb->partial, AES_BLOCK_SIZE);
+        else
+            ret = wc_AesEcbDecrypt(&aes, out, ecb->partial, AES_BLOCK_SIZE);
+        ecb->partialSz = 0;
+        wc_ForceZero(ecb->partial, AES_BLOCK_SIZE);
+    }
+    if (ret == 0 && tailSz > 0) {
+        XMEMCPY(ecb->partial, tail, tailSz);
+        ecb->partialSz = (byte)tailSz;
+    }
+    if (ret == 0)
+        *outSz = total + sz;
+    WP11_Lock_UnlockRW(&session->slot->lock);
+    wc_AesFree(&aes);
+    wc_ForceZero(&aes, sizeof(aes));
+    wc_ForceZero(tail, sizeof(tail));
+
     return ret;
 }
 #endif /* HAVE_AESECB */
