@@ -594,37 +594,37 @@ CK_RV C_GetMechanismList(CK_SLOT_ID slotID,
 #ifdef WOLFSSL_KEY_GEN
 /* Info on RSA key generation mechanism. */
 static CK_MECHANISM_INFO rsaKgMechInfo = {
-    1024, 4096, CKF_GENERATE_KEY_PAIR
+    RSA_MIN_SIZE, RSA_MAX_SIZE, CKF_GENERATE_KEY_PAIR
 };
 #endif
 /* Info on RSA X.509 mechanism. */
 static CK_MECHANISM_INFO rsaX509MechInfo = {
 #ifdef WC_RSA_DIRECT
-    1024, 4096, CKF_ENCRYPT | CKF_DECRYPT | CKF_SIGN | CKF_VERIFY |
+    1024, RSA_MAX_SIZE, CKF_ENCRYPT | CKF_DECRYPT | CKF_SIGN | CKF_VERIFY |
     CKF_VERIFY_RECOVER
 #else
-    1024, 4096, CKF_ENCRYPT | CKF_DECRYPT
+    1024, RSA_MAX_SIZE, CKF_ENCRYPT | CKF_DECRYPT
 #endif
 };
 /* Info on RSA PKCS#1.5 mechanism. */
 static CK_MECHANISM_INFO rsaPkcsMechInfo = {
-    1024, 4096, CKF_ENCRYPT | CKF_DECRYPT | CKF_SIGN | CKF_VERIFY |
+    1024, RSA_MAX_SIZE, CKF_ENCRYPT | CKF_DECRYPT | CKF_SIGN | CKF_VERIFY |
     CKF_VERIFY_RECOVER | WP11_MECH_WRAP_FLAG | CKF_UNWRAP
 };
 #ifndef WC_NO_RSA_OAEP
 /* Info on RSA PKCS#1 OAEP mechanism. */
 static CK_MECHANISM_INFO rsaOaepMechInfo = {
-    1024, 4096, CKF_ENCRYPT | CKF_DECRYPT
+    1024, RSA_MAX_SIZE, CKF_ENCRYPT | CKF_DECRYPT
 };
 #endif
 #ifdef WC_RSA_PSS
 /* Info on RSA PKCS#1 PSS mechanism. */
 static CK_MECHANISM_INFO rsaPssMechInfo = {
-    1024, 4096, CKF_SIGN | CKF_VERIFY
+    1024, RSA_MAX_SIZE, CKF_SIGN | CKF_VERIFY
 };
 #endif
 static CK_MECHANISM_INFO shaRsaPkcsMechInfo = {
-    1024, 4096, CKF_SIGN | CKF_VERIFY
+    1024, RSA_MAX_SIZE, CKF_SIGN | CKF_VERIFY
 };
 #endif
 #ifdef HAVE_ECC
@@ -699,10 +699,10 @@ static CK_MECHANISM_INFO xmssMechInfo = {
 #endif
 #ifdef WOLFPKCS11_HKDF
 static CK_MECHANISM_INFO hkdfMechInfo = {
-    1, 16320, CKF_DERIVE
+    1, WP11_MAX_SYM_KEY_SZ, CKF_DERIVE
 };
 static CK_MECHANISM_INFO hkdfDatMechInfo = {
-    1, 16320, CKF_DERIVE
+    1, WP11_MAX_SYM_KEY_SZ, CKF_DERIVE
 };
 static CK_MECHANISM_INFO hkdfKeyGenMechInfo = {
     20, 64, CKF_GENERATE

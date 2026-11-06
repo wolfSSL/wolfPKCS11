@@ -19,7 +19,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  *
  * Regression test for issue F-3833: C_VerifyRecoverInit must report
- * CKR_OBJECT_HANDLE_INVALID for a key handle that does not resolve to an
+ * CKR_KEY_HANDLE_INVALID for a key handle that does not resolve to an
  * object, matching the other C_*Init functions.
  */
 
@@ -74,10 +74,10 @@ static int run_test(void)
     /* Non-zero handle that does not resolve to any object. */
     rv = funcList->C_VerifyRecoverInit(session, &mech,
                                        (CK_OBJECT_HANDLE)0x7fffffffUL);
-    CHECK_RV(rv, "C_VerifyRecoverInit(bad handle)", CKR_OBJECT_HANDLE_INVALID);
+    CHECK_RV(rv, "C_VerifyRecoverInit(bad handle)", CKR_KEY_HANDLE_INVALID);
 
     rv = funcList->C_VerifyRecoverInit(session, &mech, (CK_OBJECT_HANDLE)0);
-    CHECK_RV(rv, "C_VerifyRecoverInit(zero handle)", CKR_OBJECT_HANDLE_INVALID);
+    CHECK_RV(rv, "C_VerifyRecoverInit(zero handle)", CKR_KEY_HANDLE_INVALID);
 
 out:
     if (session != 0)

@@ -826,7 +826,7 @@ static void test_rsa_keygen_exponent_range(CK_SESSION_HANDLE session)
              sizeof(pubTmpl) / sizeof(*pubTmpl), privTmpl,
              sizeof(privTmpl) / sizeof(*privTmpl), &pub, &priv);
     CHECK_RV(rv, "RSA key generation with an out of range public exponent",
-             CKR_FUNCTION_FAILED);
+             CKR_TEMPLATE_INCONSISTENT);
     if (rv == CKR_OK) {
         funcList->C_DestroyObject(session, pub);
         funcList->C_DestroyObject(session, priv);

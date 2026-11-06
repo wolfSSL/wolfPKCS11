@@ -408,6 +408,11 @@ noinst_PROGRAMS += tests/unwrap_keygen_test
 tests_unwrap_keygen_test_SOURCES = tests/unwrap_keygen_test.c
 tests_unwrap_keygen_test_LDADD =
 
+check_PROGRAMS += tests/object_template_codes_test
+noinst_PROGRAMS += tests/object_template_codes_test
+tests_object_template_codes_test_SOURCES = tests/object_template_codes_test.c
+tests_object_template_codes_test_LDADD =
+
 check_PROGRAMS += tests/token_partial_store_test
 noinst_PROGRAMS += tests/token_partial_store_test
 tests_token_partial_store_test_SOURCES = tests/token_partial_store_test.c
@@ -540,6 +545,7 @@ tests_digest_length_test_LDADD += src/libwolfpkcs11.la
 tests_secret_scrub_test_LDADD += src/libwolfpkcs11.la
 tests_legacy_class_load_test_LDADD += src/libwolfpkcs11.la
 tests_unwrap_keygen_test_LDADD += src/libwolfpkcs11.la
+tests_object_template_codes_test_LDADD += src/libwolfpkcs11.la
 tests_token_partial_store_test_LDADD += src/libwolfpkcs11.la
 tests_verify_return_codes_test_LDADD += src/libwolfpkcs11.la
 else
@@ -619,6 +625,7 @@ tests_digest_length_test_LDADD += src/libwolfpkcs11.la
 tests_secret_scrub_test_LDADD += src/libwolfpkcs11.la
 tests_legacy_class_load_test_LDADD += src/libwolfpkcs11.la
 tests_unwrap_keygen_test_LDADD += src/libwolfpkcs11.la
+tests_object_template_codes_test_LDADD += src/libwolfpkcs11.la
 tests_token_partial_store_test_LDADD += src/libwolfpkcs11.la
 tests_verify_return_codes_test_LDADD += src/libwolfpkcs11.la
 endif

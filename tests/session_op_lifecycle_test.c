@@ -555,7 +555,7 @@ static void test_failed_operation_scrubs_state(void)
     CHECK_RV(rv, "C_DigestUpdate", CKR_OK);
     watch_start(plainMarker, sizeof(plainMarker));
     rv = funcList->C_DigestKey(session, CK_INVALID_HANDLE);
-    CHECK_RV(rv, "C_DigestKey(invalid handle)", CKR_OBJECT_HANDLE_INVALID);
+    CHECK_RV(rv, "C_DigestKey(invalid handle)", CKR_KEY_HANDLE_INVALID);
     CHECK_TRUE(!finalize_watched(session),
                "failed digest leaves no buffered input behind");
     session = CK_INVALID_HANDLE;

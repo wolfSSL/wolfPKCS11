@@ -208,6 +208,35 @@ versions may need to update templates or error-handling:
   `CKA_KEY_TYPE` in the template no longer matches non-key objects, and
   `C_SetAttributeValue` of `CKA_KEY_TYPE` on them returns
   `CKR_ATTRIBUTE_TYPE_INVALID`.
+- A key handle that does not resolve returns `CKR_KEY_HANDLE_INVALID`
+  instead of `CKR_OBJECT_HANDLE_INVALID` from the operation init functions,
+  `C_DigestKey`, `C_DeriveKey`, `C_EncapsulateKey`, `C_DecapsulateKey` and
+  for the key to wrap in `C_WrapKey`.
+- A `CK_ULONG`, `CK_BBOOL` or `CK_DATE` attribute of the wrong length in a
+  template returns `CKR_ATTRIBUTE_VALUE_INVALID` instead of
+  `CKR_BUFFER_TOO_SMALL`. When `C_GetAttributeValue` returns
+  `CKR_BUFFER_TOO_SMALL`, the short attribute's `ulValueLen` is
+  `CK_UNAVAILABLE_INFORMATION`. Private components of RSA and EC public keys
+  return `CKR_ATTRIBUTE_TYPE_INVALID` instead of `CKR_ATTRIBUTE_SENSITIVE`.
+- `CKM_RSA_PKCS_KEY_PAIR_GEN` reports wolfSSL's `RSA_MIN_SIZE` and
+  `RSA_MAX_SIZE` as its key sizes (2048 to 4096 bits by default) and refuses
+  other sizes with `CKR_ATTRIBUTE_VALUE_INVALID`. Outside the NSS build, an
+  AES `CKA_VALUE` that is not 16, 24 or 32 bytes is refused with
+  `CKR_ATTRIBUTE_VALUE_INVALID`. An RSA public exponent that cannot be used
+  returns `CKR_TEMPLATE_INCONSISTENT`.
+- A malformed `CKA_EC_PARAMS`, `CKA_EC_POINT` or EC `CKA_VALUE` returns
+  `CKR_ATTRIBUTE_VALUE_INVALID` instead of `CKR_FUNCTION_FAILED`, and an
+  unsupported curve returns `CKR_CURVE_NOT_SUPPORTED`. An ECDH peer value
+  that is not a point on the curve returns `CKR_MECHANISM_PARAM_INVALID`.
+- `C_UnwrapKey` returns `CKR_TEMPLATE_INCONSISTENT` instead of
+  `CKR_KEY_NOT_WRAPPABLE` for a key type it cannot unwrap, and
+  `CKR_WRAPPED_KEY_INVALID` or `CKR_WRAPPED_KEY_LEN_RANGE` for an unwrapped
+  value the key cannot take.
+- `CKM_HKDF_DERIVE` and `CKM_HKDF_DATA` report the largest secret key the
+  token can store (512 bytes by default) as their maximum, instead of 16320.
+- `CKA_WRAP_TEMPLATE`, `CKA_UNWRAP_TEMPLATE` and `CKA_DERIVE_TEMPLATE` are not
+  supported. A template that sets one returns `CKR_TEMPLATE_INCONSISTENT`
+  instead of `CKR_ATTRIBUTE_VALUE_INVALID`.
 
 One known gap remains: `CKM_RSA_PKCS_OAEP` does not support an empty message,
 although PKCS#11 and RFC 8017 allow one. wolfCrypt rejects it on both sides, so
