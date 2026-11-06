@@ -568,6 +568,7 @@ struct WP11_Session {
     WP11_Session* next;                /* Next session for slot               */
     WP11_Object* retired;              /* Private objects invalidated by logout
                                         * and freed once nothing uses them    */
+    byte opUpdated;                    /* Multi-part update called on op      */
 };
 
 typedef struct WP11_Token {
@@ -1370,6 +1371,7 @@ static void wp11_Session_FreeOp(WP11_Session* session)
     wc_ForceZero(&session->params, sizeof(session->params));
     /* Ensure no stale bits remain after all cleanup. */
     session->init = 0;
+    session->opUpdated = 0;
 }
 
 /**
@@ -12436,6 +12438,29 @@ enum wc_HashType WP11_Session_ToHashType(WP11_Session* session)
 void WP11_Session_SetOpInitialized(WP11_Session* session, int init)
 {
     session->init = init;
+    session->opUpdated = 0;
+}
+
+/**
+ * Record that a multi-part update was called on the active operation.
+ *
+ * @param  session  [in]  Session object.
+ */
+void WP11_Session_SetOpUpdated(WP11_Session* session)
+{
+    session->opUpdated = 1;
+}
+
+/**
+ * Return whether a multi-part update was called on the active operation.
+ *
+ * @param  session  [in]  Session object.
+ * @return  1 when an update was called.
+ *          0 otherwise.
+ */
+int WP11_Session_IsOpUpdated(WP11_Session* session)
+{
+    return session->opUpdated;
 }
 
 /**
@@ -12813,6 +12838,8 @@ int WP11_Session_SetCbcParams(WP11_Session* session, unsigned char* iv,
         key = object->data.symmKey;
         ret = wc_AesSetKey(&cbc->aes, key->data, key->len, iv,
                                          enc ? AES_ENCRYPTION : AES_DECRYPTION);
+        if (ret == 0)
+            XMEMCPY(cbc->iv, iv, AES_IV_SIZE);
         if (object->onToken)
             WP11_Lock_UnlockRO(object->lock);
     }
@@ -20089,41 +20116,114 @@ int WP11_AesCbcPad_EncryptFinal(unsigned char* enc, word32* encSz,
 }
 
 /**
+ * Check the PKCS#7 padding of a decrypted final block in constant time.
+ *
+ * @param  block  [in]  Decrypted final block.
+ * @return  Non-zero when the padding is invalid.
+ *          0 when the padding is valid.
+ */
+static byte wp11_AesCbcPad_Bad(const unsigned char* block)
+{
+    int i;
+    byte padCnt = block[AES_BLOCK_SIZE - 1];
+    byte padBad;
+
+    padBad = (byte)(0 - (padCnt == 0));
+    padBad |= (byte)(0 - (padCnt > AES_BLOCK_SIZE));
+    for (i = 0; i < AES_BLOCK_SIZE; i++) {
+        /* inPad is 0xFF when i is in the padding region, 0x00 otherwise */
+        byte inPad = (byte)(0 -
+            ((unsigned)(AES_BLOCK_SIZE - 1 - i) < (unsigned)padCnt));
+        padBad |= inPad & (block[i] ^ padCnt);
+    }
+
+    return padBad;
+}
+
+/**
+ * Get the plaintext length of a one-shot AES-CBC decryption with PKCS#5/7
+ * padding without changing the operation's state.
+ *
+ * @param  enc      [in]   Encrypted data, a multiple of the block size.
+ * @param  encSz    [in]   Length of encrypted data in bytes.
+ * @param  decSz    [out]  Length of the plaintext in bytes.
+ * @param  session  [in]   Session object holding Aes object.
+ * @return  BAD_PADDING_E when the padding is invalid.
+ *          -ve on decryption failure.
+ *          0 on success.
+ */
+static int wp11_AesCbcPad_DecryptLen(unsigned char* enc, word32 encSz,
+                                     word32* decSz, WP11_Session* session)
+{
+    int ret;
+    int ivRet;
+    WP11_CbcParams* cbc = &session->params.cbc;
+    unsigned char* prev = cbc->iv;
+    unsigned char block[AES_BLOCK_SIZE];
+
+    if (encSz > AES_BLOCK_SIZE)
+        prev = enc + encSz - 2 * AES_BLOCK_SIZE;
+
+    WP11_Lock_LockRW(&session->slot->lock);
+    ret = wc_AesSetIV(&cbc->aes, prev);
+    if (ret == 0) {
+        ret = wc_AesCbcDecrypt(&cbc->aes, block, enc + encSz - AES_BLOCK_SIZE,
+                               AES_BLOCK_SIZE);
+    }
+    ivRet = wc_AesSetIV(&cbc->aes, cbc->iv);
+    WP11_Lock_UnlockRW(&session->slot->lock);
+    if (ret == 0)
+        ret = ivRet;
+    if (ret == 0 && wp11_AesCbcPad_Bad(block))
+        ret = BAD_PADDING_E;
+    if (ret == 0)
+        *decSz = encSz - block[AES_BLOCK_SIZE - 1];
+
+    wc_ForceZero(block, sizeof(block));
+    return ret;
+}
+
+/**
  * Decrypt data with AES-CBC that has PKCS#5/7 padding.
- * Output buffer must be large enough to hold all decrypted data.
  * Padding is removed.
  *
- * @param  enc      [in]      Encrypted data.
+ * @param  enc      [in]      Encrypted data, a multiple of the block size.
  * @param  encSz    [in]      Length of encrypted data in bytes.
  * @param  dec      [in]      Buffer to hold decrypted data.
  * @param  decSz    [in,out]  On in, length of buffer in bytes.
  *                            On out, length of decrypted data in bytes.
  * @param  session  [in]      Session object holding Aes object.
- * @return  -ve on encryption failure.
+ * @return  BUFFER_E when the buffer is too small, with *decSz set to the
+ *          plaintext length and the operation unchanged.
+ *          -ve on decryption failure.
  *          0 on success.
  */
 int WP11_AesCbcPad_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
                            word32* decSz, WP11_Session* session)
 {
-    int ret;
+    int ret = 0;
     word32 sz = *decSz;
-    word32 finalSz;
+    word32 finalSz = 0;
+    word32 need = 0;
 
-    ret = WP11_AesCbcPad_DecryptUpdate(enc, encSz, dec, &sz, session);
+    if (encSz == 0 || (encSz % AES_BLOCK_SIZE) != 0)
+        return BAD_FUNC_ARG;
+
+    if (*decSz < encSz - 1) {
+        ret = wp11_AesCbcPad_DecryptLen(enc, encSz, &need, session);
+        if (ret == 0 && need > *decSz) {
+            *decSz = need;
+            ret = BUFFER_E;
+        }
+    }
+    if (ret == 0)
+        ret = WP11_AesCbcPad_DecryptUpdate(enc, encSz, dec, &sz, session);
     if (ret == 0) {
         finalSz = *decSz - sz;
         ret = WP11_AesCbcPad_DecryptFinal(dec + sz, &finalSz, session);
-        if (ret == 0 || ret == BUFFER_E) {
-            /* On success this is the plaintext length; on BUFFER_E it is the
-             * total required size (data already produced plus the final
-             * block's need) for the caller to resize and retry. */
-            *decSz = sz + finalSz;
-        }
     }
-    else if (ret == BUFFER_E) {
-        /* Update set sz to the size it needs. */
-        *decSz = sz;
-    }
+    if (ret == 0)
+        *decSz = sz + finalSz;
 
     return ret;
 }
@@ -20230,22 +20330,7 @@ int WP11_AesCbcPad_DecryptFinal(unsigned char* dec, word32* decSz,
                                cbc->partialSz);
     }
     if (ret == 0 && !cbc->finalReady) {
-        byte padBad;
-
-        padCnt = cbc->final[AES_BLOCK_SIZE-1];
-
-        /* Validate PKCS#7 padding in constant time:
-         * padCnt must be 1..AES_BLOCK_SIZE and all padding bytes must equal
-         * padCnt. */
-        padBad = (byte)(0 - (padCnt == 0));
-        padBad |= (byte)(0 - (padCnt > AES_BLOCK_SIZE));
-        for (i = 0; i < AES_BLOCK_SIZE; i++) {
-            /* inPad is 0xFF when i is in the padding region, 0x00 otherwise */
-            byte inPad = (byte)(0 -
-                ((unsigned)(AES_BLOCK_SIZE - 1 - i) < (unsigned)padCnt));
-            padBad |= inPad & (cbc->final[i] ^ padCnt);
-        }
-        if (padBad) {
+        if (wp11_AesCbcPad_Bad(cbc->final)) {
             ret = BAD_PADDING_E;
         }
         else {
@@ -22380,7 +22465,7 @@ int WP11_GetOperationState(WP11_Session* session, unsigned char* stateData,
         default:
             return CKR_STATE_UNSAVEABLE;
     }
-    *stateDataLen = sizeof(session->mechanism) + mechSize;
+    *stateDataLen = sizeof(session->mechanism) + mechSize + 1;
 
     if (stateData == NULL)
         return CKR_OK;
@@ -22430,6 +22515,7 @@ int WP11_GetOperationState(WP11_Session* session, unsigned char* stateData,
             break;
 #endif
     }
+    stateData[mechSize] = session->opUpdated;
 
     return CKR_OK;
 }
@@ -22440,6 +22526,7 @@ int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
     unsigned long mechSize = 0;
     int hashType = WC_HASH_TYPE_NONE;
     int ret;
+    byte updated = 1;
     CK_MECHANISM_TYPE mechanism;
 #if defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX < 0x05007004
     wc_HashAlg* hashAlg;
@@ -22488,6 +22575,8 @@ int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
 
     if (stateDataLen < (sizeof(mechanism) + mechSize))
         return CKR_SAVED_STATE_INVALID;
+    if (stateDataLen > (sizeof(mechanism) + mechSize))
+        updated = stateData[sizeof(mechanism) + mechSize];
 
     stateData += sizeof(mechanism);
 
@@ -22514,7 +22603,9 @@ int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
         hashAlg = &session->params.digest.hash.alg;
     #endif
 
-    session->init = WP11_INIT_DIGEST;
+    WP11_Session_SetOpInitialized(session, WP11_INIT_DIGEST);
+    if (updated)
+        WP11_Session_SetOpUpdated(session);
 
     switch (session->mechanism) {
 #ifndef NO_MD5
