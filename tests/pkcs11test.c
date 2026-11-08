@@ -3229,13 +3229,12 @@ static CK_RV test_copy_object_ecc_key(void* args)
 }
 #endif /* HAVE_ECC */
 
-#if ((defined(WOLFPKCS11_NSS)) && ((WP11_SESSION_CNT_MAX != 1) || \
-    (WP11_SESSION_CNT_MIN != 1)))
+#if (WP11_SESSION_CNT_MAX != 1) || (WP11_SESSION_CNT_MIN != 1)
 static CK_RV test_cross_session_object(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_RV ret = CKR_OK;
-    CK_SESSION_HANDLE sessionRO;
+    CK_SESSION_HANDLE sessionRO = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE obj;
     CK_ULONG size;
     static byte keyData[] = { 0x00 };
@@ -3270,6 +3269,8 @@ static CK_RV test_cross_session_object(void* args)
         ret = funcList->C_DestroyObject(sessionRO, obj);
         CHECK_CKR(ret, "Cross-session deletion");
     }
+    if (sessionRO != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(sessionRO);
 
     return ret;
 }
@@ -21135,8 +21136,7 @@ static TEST_FUNC testFunc[] = {
 #ifdef HAVE_ECC
     PKCS11TEST_FUNC_SESS_DECL(test_copy_object_ecc_key),
 #endif
-#if ((defined(WOLFPKCS11_NSS)) && ((WP11_SESSION_CNT_MAX != 1) || \
-    (WP11_SESSION_CNT_MIN != 1)))
+#if (WP11_SESSION_CNT_MAX != 1) || (WP11_SESSION_CNT_MIN != 1)
     PKCS11TEST_FUNC_SESS_DECL(test_cross_session_object),
 #endif
     PKCS11TEST_FUNC_SESS_DECL(test_attribute),

@@ -1318,6 +1318,7 @@ static void wp11_Session_FreeOp(WP11_Session* session);
 static void wp11_Slot_UnlinkObject(WP11_Slot* slot, WP11_Object* object,
                                    WP11_Object** list);
 static void wp11_Slot_FreeUnlinkedObjects(WP11_Slot* slot);
+static void wp11_Slot_ClearObjectOps(WP11_Slot* slot, WP11_Object* object);
 
 /**
  * Finalize a session - clean-up but don't clear out.
@@ -1331,26 +1332,26 @@ static void wp11_Session_Final(WP11_Session* session)
     WP11_Object* obj;
     WP11_Slot* slot = session->slot;
 
-    if (session->inUse) {
-        /* Free objects in session. */
-        while ((obj = session->object) != NULL) {
-            /* ignore return value, logged in function */
-            WP11_Session_RemoveObject(session, obj);
-            WP11_Object_Free(obj);
-        }
-        session->inUse = 0;
-    }
     session->curr = NULL;
-    /* Rollback paths unlink retired objects under the token lock, and a call
-     * that found one before logout may still be running. */
-    if (session->retired != NULL) {
+    /* Calls on other sessions may be using the objects, so they are freed
+     * like destroyed objects. A closed session's lists are normally empty. */
+    if (session->inUse || session->object != NULL ||
+            session->retired != NULL) {
         WP11_Lock_LockRW(&slot->token.lock);
-        while ((obj = session->retired) != NULL) {
-            session->retired = obj->next;
+        while ((obj = session->object) != NULL) {
+            session->object = obj->next;
+            session->objCnt--;
+            obj->session = NULL;
+            wp11_Slot_ClearObjectOps(slot, obj);
             wp11_Slot_UnlinkObject(slot, obj, &slot->discarded);
         }
-        wp11_Slot_FreeUnlinkedObjects(slot);
+        while ((obj = session->retired) != NULL) {
+            session->retired = obj->next;
+            obj->session = NULL;
+            wp11_Slot_UnlinkObject(slot, obj, &slot->discarded);
+        }
         WP11_Lock_UnlockRW(&slot->token.lock);
+        session->inUse = 0;
     }
     /* Finalize any find. */
     WP11_Session_FindFinal(session);
@@ -10435,9 +10436,6 @@ int WP11_Slot_OpenSession(WP11_Slot* slot, unsigned long flags, void* app,
 }
 
 static void wp11_Slot_Logout(WP11_Slot* slot);
-#ifndef WOLFPKCS11_NO_STORE
-static void wp11_Slot_ClearKeyOps(WP11_Slot* slot, WP11_Object* object);
-#endif
 
 /**
  * Close a session associated with a slot.
@@ -10477,7 +10475,7 @@ void WP11_Slot_CloseSession(WP11_Slot* slot, WP11_Session* session)
         wp11_Slot_FreeSession(slot, session);
     else
         wp11_Session_Final(session);
-    /* Its operation no longer holds objects destroyed while it ran. */
+    /* Free the session's objects and those its operation no longer holds. */
     WP11_Lock_LockRW(&slot->token.lock);
     wp11_Slot_FreeUnlinkedObjects(slot);
     WP11_Lock_UnlockRW(&slot->token.lock);
@@ -10517,6 +10515,9 @@ void WP11_Slot_CloseSessions(WP11_Slot* slot)
     /* Finalize the rest. */
     for (curr = slot->session; curr != NULL; curr = curr->next)
         wp11_Session_Final(curr);
+    WP11_Lock_LockRW(&slot->token.lock);
+    wp11_Slot_FreeUnlinkedObjects(slot);
+    WP11_Lock_UnlockRW(&slot->token.lock);
     /* PKCS#11: closing an application's last session with a token logs the
      * application out. Done under the same lock as the close. */
     wp11_Slot_Logout(slot);
@@ -11921,7 +11922,7 @@ static void wp11_Slot_Logout(WP11_Slot* slot)
         for (object = slot->token.object; object != NULL;
                 object = object->next) {
             if (object->encoded)
-                wp11_Slot_ClearKeyOps(slot, object);
+                wp11_Slot_ClearObjectOps(slot, object);
         }
     }
 #endif
@@ -13490,30 +13491,17 @@ int WP11_Session_AddObject(WP11_Session* session, int onToken,
 }
 
 /**
- * Remove an object from its session or token list, addressing it by the handle
- * the caller resolved it from rather than by dereferencing the object.
- *
- * A list node matches only when it is the same pointer AND carries the same
- * handle. The handle field of a linked node is safe to read under the lock, so
- * *object itself is never dereferenced until it is confirmed still linked (and
- * therefore still alive). Matching the handle as well as the pointer guards
- * against address reuse: if a concurrent caller freed the object and a new
- * object was then allocated at the same address, the new object has a
- * different handle (handles are never reused) and is left alone. Whether the
- * object is on the token is derived from the handle too, so it stays valid even
- * after a concurrent caller frees the object. This is the entry point for
- * C_DestroyObject, where a second thread may be destroying the same shared
- * token-object handle at the same time.
- *
- * Callers that hold the only reference to a live object should use the simpler
- * WP11_Session_RemoveObject() wrapper instead: it takes the handle from the
- * object itself.
+ * Remove an object from its session or token list. A list node matches only on
+ * both pointer and handle, so an object a concurrent destroy already removed,
+ * or a new object at its address, is left alone.
  *
  * @param  session          [in]  Session performing the removal.
  * @param  object           [in]  Object to remove, as resolved from handle.
  * @param  handle           [in]  Handle the object was resolved from.
- * @param  checkDestroyable [in]  Non-zero to honor CKA_DESTROYABLE and refuse to
- *                                remove an object marked not destroyable.
+ * @param  checkDestroyable [in]  Non-zero for C_DestroyObject: honor
+ *                                CKA_DESTROYABLE and look in the owning
+ *                                session's list too. That reads *object, which
+ *                                is only safe inside an object call.
  * @return  WP11_OBJECT_ALREADY_REMOVED if the object was no longer linked, i.e.
  *          a concurrent caller already removed it; the caller must not free it.
  *          WP11_OBJECT_NOT_DESTROYABLE if checkDestroyable is set and the object
@@ -13558,26 +13546,17 @@ int WP11_Session_RemoveObjectByHandle(WP11_Session* session,
         }
     }
     else {
-        /* Session objects live on their owning session's list. Check the
-         * caller's own list first: it is the only possibility in the standard
-         * build and the common case under NSS, and needs no dereference of
-         * *object. */
+        /* The caller's own list is checked first, without reading *object. */
         for (curr = &owner->object; *curr != NULL; curr = &(*curr)->next) {
             if (*curr == object && (*curr)->handle == handle) {
                 found = 1;
                 break;
             }
         }
-#ifdef WOLFPKCS11_NSS
-        /* NSS makes objects visible across sessions, so the object may belong
-         * to a different session. Fall back to its recorded owner. This reads
-         * object->session before linkage is confirmed, so it can touch freed
-         * memory if a concurrent destroy has already freed the object; the
-         * pointer and handle match below still rejects a stale or reused
-         * object. Walking every session instead would need the slot lock,
-         * which cannot be taken here: wp11_Session_Final calls this with the
-         * slot lock already held. */
-        if (!found && object->session != NULL && object->session != session) {
+        /* Only a destroy, inside an object call, removes another session's
+         * object; object->session is cleared under this lock as it leaves. */
+        if (!found && checkDestroyable && object->session != NULL &&
+                object->session != session) {
             owner = object->session;
             for (curr = &owner->object; *curr != NULL; curr = &(*curr)->next) {
                 if (*curr == object && (*curr)->handle == handle) {
@@ -13586,7 +13565,6 @@ int WP11_Session_RemoveObjectByHandle(WP11_Session* session,
                 }
             }
         }
-#endif
 #ifndef WOLFPKCS11_NSS
         /* Give cleanup back an object it added that logout then retired. */
         for (curr = &owner->retired; !found && !checkDestroyable &&
@@ -13594,6 +13572,7 @@ int WP11_Session_RemoveObjectByHandle(WP11_Session* session,
             if (*curr == object) {
                 *curr = object->next;
                 object->next = NULL;
+                object->session = NULL;
                 WP11_Lock_UnlockRW(&token->lock);
                 return 0;
             }
@@ -13709,29 +13688,12 @@ int WP11_Session_RemoveObjectByHandle(WP11_Session* session,
                 break;
             }
         }
+        object->session = NULL;
     }
 
     WP11_Lock_UnlockRW(&token->lock);
     (void)id; /* set but not used with WOLFPKCS11_NO_STORE */
     return ret;
-}
-
-/**
- * Remove a live, exclusively-owned object from its session or token list.
- *
- * Thin wrapper over WP11_Session_RemoveObjectByHandle() for cleanup paths that
- * hold the only reference to the object (object-creation rollback, keygen
- * failure). The handle is read from the object itself, which is safe because no
- * other thread can be removing it. CKA_DESTROYABLE is not enforced (internal
- * cleanup is not a user destroy) and any store error is logged in the callee,
- * so the return value is intentionally discarded.
- *
- * @param  session  [in]  Session performing the removal.
- * @param  object   [in]  Object to remove; must be live and owned by the caller.
- */
-void WP11_Session_RemoveObject(WP11_Session* session, WP11_Object* object)
-{
-    (void)WP11_Session_RemoveObjectByHandle(session, object, object->handle, 0);
 }
 
 #ifdef DEBUG_WOLFPKCS11
@@ -13756,20 +13718,23 @@ WP11_API int WP11_Test_RemoveObjectStale(CK_SESSION_HANDLE hSession,
 {
     WP11_Session* session;
     WP11_Object* object;
-    int ret;
+    WP11_ObjectCalls* calls;
+    int ret = BAD_FUNC_ARG;
 
-    if (WP11_Session_Get(hSession, &session) != 0)
-        return BAD_FUNC_ARG;
-    if (WP11_Object_Find(session, liveHandle, &object) != 0)
-        return BAD_FUNC_ARG;
-
-    ret = WP11_Session_RemoveObjectByHandle(session, object, staleHandle, 1);
-    if (ret != WP11_OBJECT_ALREADY_REMOVED &&
-            ret != WP11_OBJECT_NOT_DESTROYABLE) {
-        /* Removed: this caller now owns the object, as C_DestroyObject would. */
-        WP11_Slot_ClearActiveObject(session->slot, object);
-        WP11_Object_Free(object);
+    calls = WP11_Slot_ObjectCallEnter(hSession);
+    if (WP11_Session_Get(hSession, &session) == 0 &&
+            WP11_Object_Find(session, liveHandle, &object) == 0) {
+        ret = WP11_Session_RemoveObjectByHandle(session, object, staleHandle,
+                                                1);
+        if (ret != WP11_OBJECT_ALREADY_REMOVED &&
+                ret != WP11_OBJECT_NOT_DESTROYABLE) {
+            /* Removed: this caller now owns the object, as C_DestroyObject
+             * would. */
+            WP11_Slot_ClearActiveObject(session->slot, object);
+            WP11_Slot_DiscardObject(session->slot, object);
+        }
     }
+    WP11_Slot_ObjectCallLeave(calls);
 
     return ret;
 }
@@ -13856,15 +13821,15 @@ static void wp11_Session_ClearActive(WP11_Session* session, int symmetric)
         session->curr = NULL;
 }
 
-#ifndef WOLFPKCS11_NO_STORE
 /**
- * Clear the running operations that use a key whose value logout scrubbed.
+ * Clear the running operations of the slot's sessions that use the object as
+ * their key, as when it is freed or logout scrubs its value.
  * Caller holds the slot lock for writing.
  *
  * @param  slot    [in]  Slot whose sessions are scanned.
- * @param  object  [in]  Token object that is now encoded.
+ * @param  object  [in]  Object whose key is going away.
  */
-static void wp11_Slot_ClearKeyOps(WP11_Slot* slot, WP11_Object* object)
+static void wp11_Slot_ClearObjectOps(WP11_Slot* slot, WP11_Object* object)
 {
     WP11_Session* sess;
     int symmetric = WP11_KeyType_IsSecret(object->type);
@@ -13874,7 +13839,6 @@ static void wp11_Slot_ClearKeyOps(WP11_Slot* slot, WP11_Object* object)
             wp11_Session_ClearActive(sess, symmetric);
     }
 }
-#endif
 
 /**
  * Drop any session reference to an object that is about to be freed.
@@ -13884,19 +13848,11 @@ static void wp11_Slot_ClearKeyOps(WP11_Slot* slot, WP11_Object* object)
  */
 void WP11_Slot_ClearActiveObject(WP11_Slot* slot, WP11_Object* object)
 {
-    WP11_Session* curr;
-    int symmetric;
-
     if (slot == NULL || object == NULL)
         return;
 
-    symmetric = WP11_KeyType_IsSecret(WP11_Object_GetType(object));
-
     WP11_Lock_LockRW(&slot->lock);
-    for (curr = slot->session; curr != NULL; curr = curr->next) {
-        if (curr->curr == object)
-            wp11_Session_ClearActive(curr, symmetric);
-    }
+    wp11_Slot_ClearObjectOps(slot, object);
     WP11_Lock_UnlockRW(&slot->lock);
 }
 
@@ -13960,7 +13916,39 @@ int WP11_Session_FindInit(WP11_Session* session)
 }
 
 /**
- * Find the next object on the session or token.
+ * Get the session whose objects a find walks after those of sess: the caller's
+ * first, or last for NSS, which returns the matches in reverse.
+ *
+ * @param  session  [in]  Session doing the find.
+ * @param  sess     [in]  Session whose objects were walked last, or NULL to
+ *                        start the walk.
+ * @return  The next session, or NULL when all were walked.
+ */
+static WP11_Session* wp11_Session_FindNextSession(WP11_Session* session,
+                                                  WP11_Session* sess)
+{
+    WP11_Session* next;
+
+#ifndef WOLFPKCS11_NSS
+    if (sess == NULL)
+        return session;
+    next = (sess == session) ? session->slot->session : sess->next;
+    if (next == session)
+        next = next->next;
+#else
+    if (sess == session)
+        return NULL;
+    next = (sess == NULL) ? session->slot->session : sess->next;
+    if (next == session)
+        next = next->next;
+    if (next == NULL)
+        next = session;
+#endif
+    return next;
+}
+
+/**
+ * Find the next object of the application's sessions or on the token.
  *
  * @param  session  [in]  Session object.
  * @param  onToken  [in]  Whether to look on token.
@@ -13971,20 +13959,25 @@ static WP11_Object* wp11_Session_FindNext(WP11_Session* session, int onToken,
                                           WP11_Object* object, int userLoggedIn)
 {
     WP11_Object* ret = NULL;
+    WP11_Session* sess = NULL;
 
     while (ret == NULL) {
         if (object == NULL) {
-            ret = session->object;
-            if (ret == NULL && onToken) {
-                ret = session->slot->token.object;
-            }
+            sess = wp11_Session_FindNextSession(session, NULL);
+            ret = sess->object;
         }
-        else if (object != NULL) {
-            if (object->next != NULL)
-                ret = object->next;
-            else if (!object->onToken && onToken) {
-                ret = object->slot->token.object;
-            }
+        else if (object->next != NULL)
+            ret = object->next;
+        else if (!object->onToken)
+            sess = object->session;
+        else
+            break;
+        while (ret == NULL && sess != NULL) {
+            sess = wp11_Session_FindNextSession(session, sess);
+            if (sess != NULL)
+                ret = sess->object;
+            else if (onToken)
+                ret = session->slot->token.object;
         }
 
         if (ret == NULL)
@@ -15545,6 +15538,21 @@ WP11_API void WP11_Object_SetFindHook(void (*hook)(void))
 #endif
 
 /**
+ * Find an object by handle on an object list. Caller holds the token lock.
+ *
+ * @param  list    [in]  First object of the list.
+ * @param  handle  [in]  Handle of the object.
+ * @return  The object, or NULL when not on the list.
+ */
+static WP11_Object* wp11_Object_FindOnList(WP11_Object* list,
+                                           CK_OBJECT_HANDLE handle)
+{
+    while (list != NULL && list->handle != handle)
+        list = list->next;
+    return list;
+}
+
+/**
  * Find an object based on the handle.
  *
  * @param  session    [in]   Session object.
@@ -15561,67 +15569,44 @@ int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,
 #ifndef WOLFPKCS11_NSS
     word32 opFlag = 0;
 #endif
-#ifdef WOLFPKCS11_NSS
     WP11_Session* scan;
-#endif
+    int slotLocked = 0;
     int onToken = OBJ_HANDLE_ON_TOKEN(objHandle);
 
     if (!onToken) {
-#ifdef WOLFPKCS11_NSS
-        /* The NSS cross-session walk below needs the slot lock so a concurrent
-         * remove-session can't reclaim a session node. Acquire it before the
-         * token lock to match the global lock order (slot then token) used by
-         * WP11_Session_RemoveObjectByHandle / WP11_Slot_CloseSessions; acquiring
-         * them in the opposite order would risk an AB-BA deadlock. */
-        WP11_Lock_LockRO(&session->slot->lock);
-#endif
-        /* Hold the token lock across the session->object walk so a concurrent
-         * WP11_Session_RemoveObjectByHandle (which holds the same lock around
-         * the unlink) can't free a node we're stepping through. */
+        /* The token lock guards the object lists. */
         WP11_Lock_LockRO(&session->slot->token.lock);
-        obj = session->object;
-        while (obj != NULL) {
-            if (obj->handle == objHandle) {
-            #ifndef WOLFPKCS11_NSS
-                opFlag = wp11_Object_ListFlags(obj);
-            #endif
-                ret = 0;
-                break;
-            }
-            obj = obj->next;
-        }
-#ifdef WOLFPKCS11_NSS
-        if (ret == BAD_FUNC_ARG) {
-            for (scan = session->slot->session; scan != NULL && ret != 0;
+        obj = wp11_Object_FindOnList(session->object, objHandle);
+        if (obj == NULL) {
+            /* Session objects belong to every session of the application. The
+             * slot lock, taken before the token lock, keeps the sessions. */
+            WP11_Lock_UnlockRO(&session->slot->token.lock);
+            WP11_Lock_LockRO(&session->slot->lock);
+            WP11_Lock_LockRO(&session->slot->token.lock);
+            slotLocked = 1;
+            for (scan = session->slot->session; scan != NULL && obj == NULL;
                  scan = scan->next) {
-                if (scan == session)
-                    continue;
-                for (obj = scan->object; obj != NULL; obj = obj->next) {
-                    if (obj->handle == objHandle) {
-                        ret = 0;
-                        break;
-                    }
-                }
+                obj = wp11_Object_FindOnList(scan->object, objHandle);
             }
         }
-#endif
+        if (obj != NULL) {
+        #ifndef WOLFPKCS11_NSS
+            opFlag = wp11_Object_ListFlags(obj);
+        #endif
+            ret = 0;
+        }
         WP11_Lock_UnlockRO(&session->slot->token.lock);
-#ifdef WOLFPKCS11_NSS
-        WP11_Lock_UnlockRO(&session->slot->lock);
-#endif
+        if (slotLocked)
+            WP11_Lock_UnlockRO(&session->slot->lock);
     }
     else {
         WP11_Lock_LockRO(&session->slot->token.lock);
-        obj = session->slot->token.object;
-        while (obj != NULL) {
-            if (obj->handle == objHandle) {
-            #ifndef WOLFPKCS11_NSS
-                opFlag = obj->opFlag;
-            #endif
-                ret = 0;
-                break;
-            }
-            obj = obj->next;
+        obj = wp11_Object_FindOnList(session->slot->token.object, objHandle);
+        if (obj != NULL) {
+        #ifndef WOLFPKCS11_NSS
+            opFlag = obj->opFlag;
+        #endif
+            ret = 0;
         }
         WP11_Lock_UnlockRO(&session->slot->token.lock);
     }
@@ -16696,7 +16681,7 @@ static int GetEcbCheckValue(WP11_Object* secret, byte* dataOut,
 
     XMEMSET(zero, 0, sizeof(zero));
     ret = WP11_AesEcb_Encrypt(zero, (word32)sizeof(zero), enc, &encLen, secret,
-        secret->session);
+        NULL);
     if (ret == 0) {
         XMEMCPY(dataOut, enc, PKCS11_CHECK_VALUE_SIZE);
         *outLen = PKCS11_CHECK_VALUE_SIZE;
