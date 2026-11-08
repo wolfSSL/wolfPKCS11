@@ -34,7 +34,7 @@ jobs:
     - name: wolfssl configure
       working-directory: ./wolfssl
       run: |
-        ./configure --enable-aescfb --enable-aesctr  --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt --enable-md5 --enable-cmac \
+        ./configure --enable-aescfb --enable-aesctr --enable-aesccm --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt --enable-md5 --enable-cmac \
             C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT -DHAVE_AES_ECB -DHAVE_AES_KEYWRAP"
     - name: wolfssl make and install
       working-directory: ./wolfssl
@@ -60,6 +60,13 @@ jobs:
       run: |
         make deb
         ls -la *.deb
+
+    # NSS dlopens the unversioned name, so the runtime package alone must ship it
+    - name: Test runtime-only package installation
+      run: |
+        sudo dpkg -i libwolfpkcs11_*.deb
+        test -L /usr/lib/libwolfpkcs11.so
+        python3 -c 'import ctypes; ctypes.CDLL("libwolfpkcs11.so").C_GetFunctionList'
 
     # Test debian package installation
     - name: Test debian package installation

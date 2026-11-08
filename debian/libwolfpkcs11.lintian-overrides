@@ -5,3 +5,8 @@ libwolfpkcs11: package-name-doesnt-match-sonames
 # Override for missing manual page - wolfpkcs11-config is a simple script
 # and doesn't warrant a full manual page
 libwolfpkcs11: binary-without-manpage usr/bin/wolfpkcs11-config
+
+# NSS and other PKCS#11 consumers dlopen the unversioned libwolfpkcs11.so, so
+# the runtime package ships it, as libnss3 does with libsoftokn3.so
+libwolfpkcs11: link-to-shared-library-in-wrong-package
+libwolfpkcs11: lacks-unversioned-link-to-shared-library
