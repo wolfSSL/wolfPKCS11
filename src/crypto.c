@@ -1463,7 +1463,8 @@ static CK_RV NewObject(WP11_Session* session, CK_KEY_TYPE keyType,
  * @return  CKR_ATTRIBUTE_VALUE_INVALID when attribute value is not valid for
  *          data type.
  *          CKR_USER_NOT_LOGGED_IN when a private object needs a login.
- *          CKR_DEVICE_MEMORY when the object table is full.
+ *          CKR_DEVICE_MEMORY when the object table is full or memory
+ *          allocation fails.
  *          CKR_FUNCTION_FAILED when setting an attribute fails.
  *          CKR_OK on success.
  */
@@ -1487,7 +1488,7 @@ static CK_RV AddObject(WP11_Session* session, WP11_Object* object,
     ret = WP11_Session_AddObject(session, onToken, object);
     if (ret == PIN_INVALID_E)
         return CKR_USER_NOT_LOGGED_IN;
-    if (ret == OBJ_COUNT_E)
+    if (ret == OBJ_COUNT_E || ret == MEMORY_E)
         return CKR_DEVICE_MEMORY;
     if (ret != 0)
         return CKR_FUNCTION_FAILED;
@@ -2227,7 +2228,7 @@ static CK_RV wp11_C_CopyObject(CK_SESSION_HANDLE hSession,
         WP11_Object_Free(newObj);
         if (ret == PIN_INVALID_E)
             return CKR_USER_NOT_LOGGED_IN;
-        if (ret == OBJ_COUNT_E)
+        if (ret == OBJ_COUNT_E || ret == MEMORY_E)
             return CKR_DEVICE_MEMORY;
         return CKR_FUNCTION_FAILED;
     }
