@@ -281,6 +281,17 @@ typedef struct WP11_DhKey {
 } WP11_DhKey;
 #endif
 
+#ifdef WOLFSSL_HAVE_PRF
+/* Sizes of the TLS 1.2 key material a secret was first derived into. */
+typedef struct WP11_Tls12KeyMatSizes {
+    CK_MECHANISM_TYPE prf;             /* PRF hash mechanism                  */
+    CK_ULONG macBits;                  /* MAC secret size in bits             */
+    CK_ULONG keyBits;                  /* Cipher key size in bits             */
+    CK_ULONG ivBits;                   /* IV size in bits                     */
+    byte set:1;                        /* Sizes have been recorded            */
+} WP11_Tls12KeyMatSizes;
+#endif
+
 /* When adding/modifying new members, add support in WP11_Object_Copy */
 struct WP11_Object {
     union {
@@ -360,6 +371,9 @@ struct WP11_Object {
 #endif
 
     word32 category;                   /* Category of certificate             */
+#ifdef WOLFSSL_HAVE_PRF
+    WP11_Tls12KeyMatSizes tlsKeyMat;   /* TLS 1.2 key material sizes in use   */
+#endif
 
     WP11_Lock* lock;                   /* Object specific lock                */
 
@@ -4402,6 +4416,10 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
 
     dest->category = src->category;
     dest->devId    = src->devId;
+#ifdef WOLFSSL_HAVE_PRF
+    /* A copy must not escape the sizes the secret is tied to. */
+    dest->tlsKeyMat = src->tlsKeyMat;
+#endif
 
     if (ret == 0 && src->objClass == CKO_DATA) {
         ret = wp11_Object_CopyBuffer(src->data.genericData.data,
@@ -20297,6 +20315,50 @@ int WP11_Tls12_Master_Key_Derive(CK_SSL3_RANDOM_DATA* random,
         pSeed = NULL;
     }
 
+
+    return ret;
+}
+
+/**
+ * Tie a TLS 1.2 master secret to the key material sizes of its first key and
+ * MAC derive. The key block is the same byte stream whatever sizes are asked
+ * for, so other sizes would return, as IVs, bytes the first derive made into
+ * keys.
+ *
+ * The sizes stay recorded even when that derive fails, so they never change
+ * while keys made with them may exist. They are held in memory only and are
+ * not stored with token objects.
+ *
+ * @param  object   [in]  Master secret object.
+ * @param  prf      [in]  PRF hash mechanism.
+ * @param  macBits  [in]  MAC secret size in bits.
+ * @param  keyBits  [in]  Cipher key size in bits.
+ * @param  ivBits   [in]  IV size in bits.
+ * @return  BAD_STATE_E when the secret is tied to other sizes.
+ *          0 on success.
+ */
+int WP11_Object_LockTls12KeyMat(WP11_Object* object, CK_MECHANISM_TYPE prf,
+                                CK_ULONG macBits, CK_ULONG keyBits,
+                                CK_ULONG ivBits)
+{
+    WP11_Tls12KeyMatSizes* sizes = &object->tlsKeyMat;
+    int ret = 0;
+
+    if (object->onToken)
+        WP11_Lock_LockRW(object->lock);
+    if (!sizes->set) {
+        sizes->prf = prf;
+        sizes->macBits = macBits;
+        sizes->keyBits = keyBits;
+        sizes->ivBits = ivBits;
+        sizes->set = 1;
+    }
+    else if (sizes->prf != prf || sizes->macBits != macBits ||
+             sizes->keyBits != keyBits || sizes->ivBits != ivBits) {
+        ret = BAD_STATE_E;
+    }
+    if (object->onToken)
+        WP11_Lock_UnlockRW(object->lock);
 
     return ret;
 }

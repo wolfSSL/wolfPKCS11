@@ -480,13 +480,27 @@ static void test_tls12_rollback(CK_SESSION_HANDLE session)
     destroy_key_mat(session, &out);
 
 #if !defined(WOLFPKCS11_NSS) && !defined(NO_AES)
-    before = count_secret_keys(session, 0);
-    rv = tls12_key_derive(session, base, CKK_AES, 160, &ckFalse, &out);
-    check(rv != CKR_OK, "TLS 1.2 derive with a bad client key fails");
-    check(no_handles(&out), "no handles returned after a client key failure");
-    check(before != COUNT_FAILED && count_secret_keys(session, 0) == before,
-          "no keys left after a client key failure");
-    destroy_key_mat(session, &out);
+    {
+        /* Other sizes need another master, as the first is tied to the
+         * sizes it derived. */
+        CK_OBJECT_HANDLE aesBase = CK_INVALID_HANDLE;
+
+        rv = funcList->C_CreateObject(session, baseTmpl,
+                                      sizeof(baseTmpl) / sizeof(*baseTmpl),
+                                      &aesBase);
+        check_rv(rv, CKR_OK, "create TLS master secret for AES keys");
+        before = count_secret_keys(session, 0);
+        rv = tls12_key_derive(session, aesBase, CKK_AES, 160, &ckFalse, &out);
+        check(rv != CKR_OK && rv != CKR_KEY_FUNCTION_NOT_PERMITTED,
+              "TLS 1.2 derive with a bad client key fails");
+        check(no_handles(&out),
+              "no handles returned after a client key failure");
+        check(before != COUNT_FAILED &&
+              count_secret_keys(session, 0) == before,
+              "no keys left after a client key failure");
+        destroy_key_mat(session, &out);
+        destroy_obj(session, &aesBase);
+    }
 #endif
 
     /* Leave room for three keys so the server key fails to be added. */

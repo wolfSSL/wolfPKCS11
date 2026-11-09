@@ -54,6 +54,16 @@
 
 #define PRF_KEY_SIZE            48
 
+/* Largest MAC secret and cipher key a TLS 1.2 key and MAC derive accepts. No
+ * cipher suite uses more than a 48 byte MAC secret or a 32 byte key. */
+#define TLS12_KEY_MAT_MAX_MAC_BITS      512
+#define TLS12_KEY_MAT_MAX_KEY_BITS      512
+/* Largest IV a TLS 1.2 cipher suite takes from the key block (AES block). */
+#define TLS12_KEY_MAT_MAX_IV_BITS       128
+/* Smallest key of a TLS 1.2 cipher suite that takes an IV from the key
+ * block. */
+#define TLS12_KEY_MAT_MIN_IV_KEY_BITS   128
+
 /* Derive mechanisms that build their output into a secret key object. */
 #if defined(HAVE_ECC) || !defined(NO_DH) || defined(WOLFPKCS11_HKDF) || \
     (!defined(NO_AES) && defined(HAVE_AES_CBC)) || \
@@ -11196,6 +11206,9 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
         case CKM_TLS12_KEY_AND_MAC_DERIVE:
         {
             CK_TLS12_KEY_MAT_PARAMS* tlsParams = NULL;
+            CK_ULONG macBits;
+            CK_ULONG keyBits;
+            CK_ULONG ivBits;
             if (WP11_Object_GetType(obj) != CKK_GENERIC_SECRET)
                 return CKR_KEY_TYPE_INCONSISTENT;
             if (pMechanism->pParameter == NULL)
@@ -11222,40 +11235,31 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                 return rv;
 #endif
 
-            {
-                CK_ULONG totalBits;
-                CK_ULONG a = 2 * tlsParams->ulMacSizeInBits;
-                CK_ULONG b = 2 * tlsParams->ulKeySizeInBits;
-                CK_ULONG c = 2 * tlsParams->ulIVSizeInBits;
-                /* Validate individual fields won't overflow when doubled */
-                if (tlsParams->ulMacSizeInBits > ((CK_ULONG)0xFFFFFFFF / 2) ||
-                    tlsParams->ulKeySizeInBits > ((CK_ULONG)0xFFFFFFFF / 2) ||
-                    tlsParams->ulIVSizeInBits  > ((CK_ULONG)0xFFFFFFFF / 2)) {
-                    return CKR_MECHANISM_PARAM_INVALID;
-                }
-                /* Each field is extracted separately in whole bytes */
-                if ((tlsParams->ulMacSizeInBits % 8) != 0 ||
-                    (tlsParams->ulKeySizeInBits % 8) != 0 ||
-                    (tlsParams->ulIVSizeInBits % 8) != 0) {
-                    return CKR_MECHANISM_PARAM_INVALID;
-                }
-                /* Check sum won't overflow on 32-bit */
-                if (a > (CK_ULONG)0xFFFFFFFF - b)
-                    return CKR_MECHANISM_PARAM_INVALID;
-                totalBits = a + b;
-                if (totalBits > (CK_ULONG)0xFFFFFFFF - c)
-                    return CKR_MECHANISM_PARAM_INVALID;
-                totalBits += c;
-                if (totalBits == 0)
-                    return CKR_MECHANISM_PARAM_INVALID;
-                if ((totalBits % 8) != 0)
-                    return CKR_MECHANISM_PARAM_INVALID;
-                totalBits /= 8;
-                /* On 64-bit, CK_ULONG may exceed word32 range */
-                if (totalBits > (CK_ULONG)0xFFFFFFFF)
-                    return CKR_MECHANISM_PARAM_INVALID;
-                keyLen = (word32)totalBits;
+            macBits = tlsParams->ulMacSizeInBits;
+            keyBits = tlsParams->ulKeySizeInBits;
+            ivBits = tlsParams->ulIVSizeInBits;
+            /* Each field is extracted separately in whole bytes */
+            if ((macBits % 8) != 0 || (keyBits % 8) != 0 ||
+                    (ivBits % 8) != 0) {
+                return CKR_MECHANISM_PARAM_INVALID;
             }
+            /* The caps also keep the key block length far below word32. */
+            if (macBits > TLS12_KEY_MAT_MAX_MAC_BITS ||
+                    keyBits > TLS12_KEY_MAT_MAX_KEY_BITS) {
+                return CKR_MECHANISM_PARAM_INVALID;
+            }
+            /* The IVs are returned in the clear and the key block is the same
+             * byte stream whatever sizes are asked for. Allow only a cipher
+             * sized IV after a cipher sized key, as every TLS 1.2 cipher suite
+             * has, so the IVs can't be used to read out the key block from its
+             * start. */
+            if (ivBits > TLS12_KEY_MAT_MAX_IV_BITS)
+                return CKR_MECHANISM_PARAM_INVALID;
+            if (ivBits != 0 && keyBits < TLS12_KEY_MAT_MIN_IV_KEY_BITS)
+                return CKR_MECHANISM_PARAM_INVALID;
+            keyLen = (word32)((2 * (macBits + keyBits + ivBits)) / 8);
+            if (keyLen == 0)
+                return CKR_MECHANISM_PARAM_INVALID;
 
             derivedKey = (byte*)XMALLOC(keyLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             if (derivedKey == NULL)
@@ -11275,11 +11279,25 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                 if (WP11_Object_GetAttr(obj, CKA_NEVER_EXTRACTABLE,
                                         &baseNeverExtractable, &histLen) != 0)
                     baseNeverExtractable = CK_FALSE;
-                ret = Tls12_Extract_Keys(session, tlsParams, pTemplate,
-                                         ulAttributeCount, derivedKey,
-                                         baseSensitive, baseExtractable,
-                                         baseAlwaysSensitive,
-                                         baseNeverExtractable);
+#ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
+                /* The keys of a protected master secret come out protected,
+                 * so tie the secret to one set of sizes. Other sizes would
+                 * return those keys' bytes as IVs. */
+                if ((baseSensitive == CK_TRUE ||
+                        baseExtractable == CK_FALSE) &&
+                        WP11_Object_LockTls12KeyMat(obj,
+                            tlsParams->prfHashMechanism, macBits, keyBits,
+                            ivBits) != 0) {
+                    ret = (int)CKR_KEY_FUNCTION_NOT_PERMITTED;
+                }
+#endif
+                if (ret == 0) {
+                    ret = Tls12_Extract_Keys(session, tlsParams, pTemplate,
+                                             ulAttributeCount, derivedKey,
+                                             baseSensitive, baseExtractable,
+                                             baseAlwaysSensitive,
+                                             baseNeverExtractable);
+                }
             }
 
             /* Freeing here so that we don't attempt to generate a key at the
