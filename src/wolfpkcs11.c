@@ -589,8 +589,10 @@ CK_RV C_Initialize(CK_VOID_PTR pInitArgs)
 /**
  * Finalize the Crypto-Ki library.
  *
- * @param  pReserved  [out]  Ignored.
- * @return  CKR_FUNCTION_FAILED when token state could not be stored, in which
+ * @param  pReserved  [in]  Reserved; must be NULL.
+ * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
+ *          CKR_ARGUMENTS_BAD when pReserved is not NULL.
+ *          CKR_FUNCTION_FAILED when token state could not be stored, in which
  *          case the library is finalized all the same, or when the
  *          initialization lock could not be taken, in which case it stays
  *          initialized and the call can be retried.
