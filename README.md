@@ -156,6 +156,15 @@ this macro does not change which objects can be copied; objects created with
 with `CKA_COPYABLE=CK_FALSE` are still rejected by `C_CopyObject` with
 `CKR_ACTION_PROHIBITED`.
 
+#### Define WOLFPKCS11_NO_DERIVE_LENGTH_GUARD
+
+Allows `C_DeriveKey` to create sensitive or non-extractable keys shorter than
+16 bytes from protected keys, and `CKM_CONCATENATE_*` results that end inside
+a protected key, as PKCS#11 permits. Such keys let a caller recover a secret
+one byte at a time, so define this only where strict specification
+compliance is required. `--disable-derive-length-guard` and the CMake option
+`WOLFPKCS11_DERIVE_LENGTH_GUARD=no` define it.
+
 ### Behavior changes for PKCS#11 spec compliance
 
 Several pre-existing gaps were closed; applications upgrading from earlier
@@ -181,6 +190,23 @@ versions may need to update templates or error-handling:
   `CKM_TLS12_KEY_AND_MAC_DERIVE` this is new, as its keys used the defaults
   before. NSS builds and builds with `WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT`
   are unchanged.
+- `C_DeriveKey` returns `CKR_ATTRIBUTE_VALUE_INVALID` and creates no key when
+  a key derived from a sensitive or non-extractable key would be shorter than
+  16 bytes. A `CKM_TLS12_KEY_AND_MAC_DERIVE` MAC or key size that short
+  returns `CKR_MECHANISM_PARAM_INVALID`. The `CKM_CONCATENATE_*` mechanisms
+  refuse a `CKA_VALUE_LEN` that ends inside a sensitive or non-extractable
+  input key. PKCS#11 allows both, but a caller could then recover the secret
+  a byte at a time, for example from `CKA_CHECK_VALUE`. Only the
+  concatenation check applies to NSS builds and builds with
+  `WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT`, where other derived keys can be made
+  readable anyway. 16 bytes of a protected derived secret stay unknown, but
+  with `CKM_CONCATENATE_*` enabled a caller can still find its other bytes
+  by comparing a longer derived key with a shorter one plus a guessed byte.
+  Build with `--disable-concatenate` where that matters. See
+  `WOLFPKCS11_NO_DERIVE_LENGTH_GUARD` to restore the specification behavior.
+- `C_DeriveKey` returns `CKR_TEMPLATE_INCONSISTENT` for a template with
+  `CKA_VALUE`, which PKCS#11 does not allow for a derived key. Its length was
+  used to truncate the derived value.
 - `C_CopyObject` enforces `CKA_COPYABLE` (returns `CKR_ACTION_PROHIBITED`
   on `CK_FALSE`).
 - `C_DestroyObject` enforces `CKA_DESTROYABLE` (returns
@@ -362,6 +388,7 @@ cmake -DCMAKE_PREFIX_PATH=/path/to/wolfssl/install ..
 | `WOLFPKCS11_HMAC` | `yes` | HMAC support |
 | `WOLFPKCS11_HKDF` | `yes` | HKDF support |
 | `WOLFPKCS11_CONCATENATE` | `yes` | `CKM_CONCATENATE_*` key derivation |
+| `WOLFPKCS11_DERIVE_LENGTH_GUARD` | `yes` | Refuse protected derived keys shorter than 16 bytes |
 | `WOLFPKCS11_PBKDF2` | `no` | PBKDF2 for PIN hashing |
 | `PBKDF2_ITERATIONS` | `600000` | PBKDF2 iteration count (used when `WOLFPKCS11_PBKDF2=yes`) |
 | `WOLFPKCS11_MD5` | `yes` | MD5 support |

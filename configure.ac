@@ -346,6 +346,16 @@ then
     AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_CONCATENATE"
 fi
 
+AC_ARG_ENABLE([derive-length-guard],
+    [AS_HELP_STRING([--enable-derive-length-guard],[Refuse protected derived keys shorter than 16 bytes (default: enabled)])],
+    [ ENABLED_DERIVE_LENGTH_GUARD=$enableval ],
+    [ ENABLED_DERIVE_LENGTH_GUARD=yes ]
+    )
+if test "$ENABLED_DERIVE_LENGTH_GUARD" = "no"
+then
+    AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_NO_DERIVE_LENGTH_GUARD"
+fi
+
 AC_ARG_ENABLE([pbkdf2],
     [AS_HELP_STRING([--enable-pbkdf2],[Enable internal PBKDF2 for PIN hashing (default: disabled)])],
     [ ENABLED_PBKDF2=$enableval ],
@@ -874,6 +884,7 @@ echo "   * DH:                         $ENABLED_DH"
 echo "   * ECC:                        $ENABLED_ECC"
 echo "   * HKDF:                       $ENABLED_HKDF"
 echo "   * Concatenate derive:         $ENABLED_CONCATENATE"
+echo "   * Derive length guard:        $ENABLED_DERIVE_LENGTH_GUARD"
 echo "   * ML-DSA:                     $ENABLED_MLDSA"
 echo "   * ML-KEM:                     $ENABLED_MLKEM"
 echo "   * LMS/HSS verify:             $ENABLED_LMS"

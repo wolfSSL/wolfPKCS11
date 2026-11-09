@@ -71,6 +71,9 @@
     #define WP11_DERIVE_SECRET_KEY
 #endif
 
+/* Shortest protected key a derive may create. */
+#define WP11_DERIVE_MIN_KEY_SZ  16
+
 /* Check that a CK_ULONG value fits in word32 with room for overhead such as
  * authentication tags, key wrap blocks, or padding. On LP64 platforms CK_ULONG
  * is 64-bit but wolfCrypt functions use word32/int for lengths. */
@@ -10723,6 +10726,15 @@ static int SymmKeyLen(WP11_Object* obj, word32 len, CK_ULONG* symmKeyLen)
 
     return ret;
 }
+
+#ifndef WOLFPKCS11_NO_DERIVE_LENGTH_GUARD
+static int DerivedKeyTooShort(CK_BBOOL baseSensitive, CK_BBOOL baseExtractable,
+                              CK_ULONG len)
+{
+    return (baseSensitive == CK_TRUE || baseExtractable == CK_FALSE) &&
+           len > 0 && len < WP11_DERIVE_MIN_KEY_SZ;
+}
+#endif
 #endif
 
 #ifdef WOLFSSL_HAVE_PRF
@@ -10752,6 +10764,14 @@ static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
     }
 
     ret = SymmKeyLen(secret, (word32)length, &symmKeyLen);
+#ifndef WOLFPKCS11_NO_DERIVE_LENGTH_GUARD
+    if (ret == 0 && DerivedKeyTooShort(baseSensitive, baseExtractable,
+                                       symmKeyLen)) {
+        WP11_Object_Free(secret);
+        return (length < WP11_DERIVE_MIN_KEY_SZ) ? CKR_MECHANISM_PARAM_INVALID :
+                                                   CKR_ATTRIBUTE_VALUE_INVALID;
+    }
+#endif
     if (ret == 0) {
         /* Only use the bottom part of the secret for the key. */
         secretKeyData[0] = (unsigned char*)&symmKeyLen;
@@ -10891,6 +10911,10 @@ static CK_RV ConcatKeyRv(WP11_Session* session, int ret)
     return CKR_FUNCTION_FAILED;
 }
 
+#endif
+
+#if defined(WOLFPKCS11_CONCATENATE) && \
+    !defined(WOLFPKCS11_NO_DERIVE_LENGTH_GUARD)
 /* A result that ends inside a protected key lets each of its bytes be found
  * by brute force, so it must hold all or none of such a key. */
 static int ConcatCutsProtectedKey(WP11_Object* key, CK_ULONG off,
@@ -10955,6 +10979,7 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
     CK_RV rv = CKR_OK;
     WP11_Session* session;
     WP11_Object* obj = NULL;
+    CK_ATTRIBUTE* valueAttr = NULL;
 #ifdef WP11_DERIVE_SECRET_KEY
     WP11_Object* otherKey = NULL;
     byte* derivedKey = NULL;
@@ -10972,6 +10997,9 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
     int inherit = 1;
 #endif
     int dataOnly = 0;
+#ifndef WOLFPKCS11_NO_DERIVE_LENGTH_GUARD
+    int concat = 0;
+#endif
     CK_BBOOL wrapTrusted = CK_FALSE;
     CK_BBOOL baseAlwaysSensitive = CK_FALSE;
     CK_BBOOL baseNeverExtractable = CK_FALSE;
@@ -11063,6 +11091,11 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                            CKO_SECRET_KEY);
     if (rv == CKR_OK)
         rv = CheckSecretKeyTemplate(pTemplate, ulAttributeCount);
+    if (rv == CKR_OK) {
+        FindAttributeType(pTemplate, ulAttributeCount, CKA_VALUE, &valueAttr);
+        if (valueAttr != NULL)
+            rv = CKR_TEMPLATE_INCONSISTENT;
+    }
     if (rv != CKR_OK)
         return rv;
 
@@ -11517,12 +11550,14 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                 XMEMCPY(&reqLen, lenAttr->pValue, sizeof(CK_ULONG));
                 if (reqLen == 0 || reqLen > totalLen)
                     return CKR_ATTRIBUTE_VALUE_INVALID;
+#ifndef WOLFPKCS11_NO_DERIVE_LENGTH_GUARD
                 if (ConcatCutsProtectedKey(obj, (pMechanism->mechanism ==
                         CKM_CONCATENATE_DATA_AND_BASE) ? addLen : 0, baseLen,
                         reqLen) || (otherKey != NULL &&
                         ConcatCutsProtectedKey(otherKey, baseLen, addLen,
                                                reqLen)))
                     return CKR_ATTRIBUTE_VALUE_INVALID;
+#endif
             }
             else {
                 FindAttributeType(pTemplate, ulAttributeCount, CKA_KEY_TYPE,
@@ -11534,6 +11569,9 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
             if (reqLen == 0 || reqLen > WP11_MAX_SYM_KEY_SZ)
                 return CKR_KEY_SIZE_RANGE;
             inherit = 1;
+#ifndef WOLFPKCS11_NO_DERIVE_LENGTH_GUARD
+            concat = 1;
+#endif
             dataOnly = pMechanism->mechanism == CKM_CONCATENATE_DATA_AND_BASE &&
                        reqLen <= addLen;
             bLen = sizeof(CK_BBOOL);
@@ -11615,6 +11653,12 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
         }
         if (reqValueLen > keyLen)
             rv = CKR_ATTRIBUTE_VALUE_INVALID;
+#ifndef WOLFPKCS11_NO_DERIVE_LENGTH_GUARD
+        if (rv == CKR_OK && !concat && WP11_Object_GetClass(obj) != CKO_DATA &&
+                DerivedKeyTooShort(baseSensitive, baseExtractable,
+                                   (reqValueLen > 0) ? reqValueLen : keyLen))
+            rv = CKR_ATTRIBUTE_VALUE_INVALID;
+#endif
 #ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
         if (rv == CKR_OK) {
             rv = CheckDeriveProtection(pTemplate, ulAttributeCount,

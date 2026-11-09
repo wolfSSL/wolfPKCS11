@@ -339,6 +339,16 @@ if(WOLFPKCS11_CONCATENATE)
     list(APPEND WOLFPKCS11_DEFINITIONS "-DWOLFPKCS11_CONCATENATE")
 endif()
 
+# Derive length guard
+add_option("WOLFPKCS11_DERIVE_LENGTH_GUARD"
+    "Refuse protected derived keys shorter than 16 bytes (default: enabled)"
+    "yes" "yes;no")
+
+if(NOT WOLFPKCS11_DERIVE_LENGTH_GUARD)
+    set(WOLFPKCS11_NO_DERIVE_LENGTH_GUARD 1)
+    list(APPEND WOLFPKCS11_DEFINITIONS "-DWOLFPKCS11_NO_DERIVE_LENGTH_GUARD")
+endif()
+
 
 # PBKDF2
 add_option("WOLFPKCS11_PBKDF2"
