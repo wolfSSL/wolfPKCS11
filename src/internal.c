@@ -20327,6 +20327,26 @@ int WP11_Tls12_Master_Key_Derive(CK_SSL3_RANDOM_DATA* random,
 }
 
 /**
+ * End the running operations of the slot's sessions that use the secret as
+ * their key, other than CKM_TLS_MAC, as a destroy or a logout does. The next
+ * call of such a session releases the operation.
+ *
+ * @param  slot    [in]  Slot whose sessions are scanned.
+ * @param  object  [in]  Secret now kept to the TLS mechanisms.
+ */
+static void wp11_Slot_EndNonTlsOps(WP11_Slot* slot, WP11_Object* object)
+{
+    WP11_Session* sess;
+
+    WP11_Lock_LockRW(&slot->lock);
+    for (sess = slot->session; sess != NULL; sess = sess->next) {
+        if (sess->curr == object && sess->mechanism != CKM_TLS_MAC)
+            sess->curr = NULL;
+    }
+    WP11_Lock_UnlockRW(&slot->lock);
+}
+
+/**
  * Keep a secret to the TLS mechanisms: the base of CKM_TLS12_KEY_AND_MAC_DERIVE
  * and the key of CKM_TLS_MAC. HMAC or HKDF with it would compute its key block
  * with the HMAC key the TLS PRF uses, and copying or concatenating it would
@@ -20368,7 +20388,8 @@ int WP11_Object_IsTls12Only(WP11_Object* object)
  * The key block is the same byte stream whatever sizes are asked for, so other
  * sizes would return, as IVs, bytes another derive made into keys. The secret
  * is tied to the PRF hash and sizes of its first derive and kept to the TLS
- * mechanisms.
+ * mechanisms, which ends the operations other than CKM_TLS_MAC already using
+ * it.
  *
  * The sizes are dropped again when every derive that used them failed before
  * returning keys or IVs, and kept once one did. Keeping to the TLS mechanisms
@@ -20391,6 +20412,7 @@ int WP11_Object_StartTls12KeyMat(WP11_Object* object, CK_MECHANISM_TYPE prf,
 {
     WP11_Tls12KeyMat* tie = &object->tlsKeyMat;
     enum wc_MACAlgorithm mac = MechToMac(prf);
+    int newlyTied = 0;
     int ret = 0;
 
     if (mac == no_mac)
@@ -20410,11 +20432,16 @@ int WP11_Object_StartTls12KeyMat(WP11_Object* object, CK_MECHANISM_TYPE prf,
         ret = BAD_STATE_E;
     }
     if (ret == 0) {
+        newlyTied = !tie->tlsOnly;
         tie->tlsOnly = 1;
         tie->running++;
     }
     if (object->lock != NULL)
         WP11_Lock_UnlockRW(object->lock);
+
+    /* The object lock is released first: the slot lock is taken before it. */
+    if (newlyTied)
+        wp11_Slot_EndNonTlsOps(object->slot, object);
 
     return ret;
 }

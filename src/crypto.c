@@ -767,20 +767,8 @@ static CK_RV SetIfNotFound(WP11_Object* obj, CK_ATTRIBUTE_TYPE type,
  * WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT, so there is nothing to keep. */
 #if defined(WOLFSSL_HAVE_PRF) && !defined(WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT)
     #define TLS12_ONLY(obj) ((obj) != NULL && WP11_Object_IsTls12Only(obj))
-    #define TLS12_ONLY_OP_ENDED(session, obj) Tls12OnlyOpEnded(session, obj)
-
-/* An operation started on a secret before it was kept to the TLS mechanisms
- * ends at its next call, as one whose key was destroyed does. */
-static int Tls12OnlyOpEnded(WP11_Session* session, WP11_Object* obj)
-{
-    if (WP11_Session_GetMechanism(session) == CKM_TLS_MAC || !TLS12_ONLY(obj))
-        return 0;
-    WP11_Session_AbortOp(session);
-    return 1;
-}
 #else
-    #define TLS12_ONLY(obj)                     0
-    #define TLS12_ONLY_OP_ENDED(session, obj)   0
+    #define TLS12_ONLY(obj)     0
 #endif
 
 static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
@@ -6530,6 +6518,12 @@ static CK_RV wp11_C_SignInit(CK_SESSION_HANDLE hSession,
     WP11_Session_SetMechanism(session, pMechanism->mechanism);
     WP11_Session_SetObject(session, obj);
     WP11_Session_SetOpInitialized(session, init);
+    /* Tying the key to TLS since the check above ends the operations already
+     * set on it, so check again now that this one is. */
+    if (pMechanism->mechanism != CKM_TLS_MAC && TLS12_ONLY(obj)) {
+        WP11_Session_AbortOp(session);
+        return CKR_KEY_FUNCTION_NOT_PERMITTED;
+    }
 
     return CKR_OK;
 }
@@ -6597,8 +6591,6 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 
     WP11_Session_GetObject(session, &obj);
     if (obj == NULL || !WP11_Session_IsOpCategoryInit(session, WP11_OP_SIGN))
-        return CKR_OPERATION_NOT_INITIALIZED;
-    if (TLS12_ONLY_OP_ENDED(session, obj))
         return CKR_OPERATION_NOT_INITIALIZED;
     if (WP11_Session_IsOpUpdated(session)) {
         WP11_Session_AbortOp(session);
@@ -6986,8 +6978,6 @@ static CK_RV wp11_C_SignUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
     WP11_Session_GetObject(session, &obj);
     if (obj == NULL || !WP11_Session_IsOpCategoryInit(session, WP11_OP_SIGN))
         return CKR_OPERATION_NOT_INITIALIZED;
-    if (TLS12_ONLY_OP_ENDED(session, obj))
-        return CKR_OPERATION_NOT_INITIALIZED;
     if (!CK_ULONG_FITS_WORD32(ulPartLen)) {
         WP11_Session_AbortOp(session);
         return CKR_DATA_LEN_RANGE;
@@ -7146,8 +7136,6 @@ static CK_RV wp11_C_SignFinal(CK_SESSION_HANDLE hSession,
 
     WP11_Session_GetObject(session, &obj);
     if (obj == NULL || !WP11_Session_IsOpCategoryInit(session, WP11_OP_SIGN))
-        return CKR_OPERATION_NOT_INITIALIZED;
-    if (TLS12_ONLY_OP_ENDED(session, obj))
         return CKR_OPERATION_NOT_INITIALIZED;
 
     mechanism = WP11_Session_GetMechanism(session);
@@ -7764,6 +7752,12 @@ static CK_RV wp11_C_VerifyInit(CK_SESSION_HANDLE hSession,
     WP11_Session_SetMechanism(session, pMechanism->mechanism);
     WP11_Session_SetObject(session, obj);
     WP11_Session_SetOpInitialized(session, init);
+    /* Tying the key to TLS since the check above ends the operations already
+     * set on it, so check again now that this one is. */
+    if (pMechanism->mechanism != CKM_TLS_MAC && TLS12_ONLY(obj)) {
+        WP11_Session_AbortOp(session);
+        return CKR_KEY_FUNCTION_NOT_PERMITTED;
+    }
 
     return CKR_OK;
 }
@@ -7848,8 +7842,6 @@ static CK_RV wp11_C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 
     WP11_Session_GetObject(session, &obj);
     if (obj == NULL || !IsVerifyOpInit(session))
-        return CKR_OPERATION_NOT_INITIALIZED;
-    if (TLS12_ONLY_OP_ENDED(session, obj))
         return CKR_OPERATION_NOT_INITIALIZED;
     if (WP11_Session_IsOpUpdated(session)) {
         WP11_Session_AbortOp(session);
@@ -8244,8 +8236,6 @@ static CK_RV wp11_C_VerifyUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
     WP11_Session_GetObject(session, &obj);
     if (obj == NULL || !IsVerifyOpInit(session))
         return CKR_OPERATION_NOT_INITIALIZED;
-    if (TLS12_ONLY_OP_ENDED(session, obj))
-        return CKR_OPERATION_NOT_INITIALIZED;
     if (!CK_ULONG_FITS_WORD32(ulPartLen)) {
         WP11_Session_AbortOp(session);
         return CKR_DATA_LEN_RANGE;
@@ -8410,8 +8400,6 @@ static CK_RV wp11_C_VerifyFinal(CK_SESSION_HANDLE hSession,
 
     WP11_Session_GetObject(session, &obj);
     if (obj == NULL || !IsVerifyOpInit(session))
-        return CKR_OPERATION_NOT_INITIALIZED;
-    if (TLS12_ONLY_OP_ENDED(session, obj))
         return CKR_OPERATION_NOT_INITIALIZED;
     if (!CK_ULONG_FITS_WORD32(ulSignatureLen)) {
         WP11_Session_AbortOp(session);
