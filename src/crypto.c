@@ -1453,6 +1453,25 @@ static CK_RV NewObject(WP11_Session* session, CK_KEY_TYPE keyType,
 }
 
 /**
+ * Take back an object that a failing call added. Other sessions may already
+ * use it, so it is discarded like a destroyed object.
+ *
+ * @param  session  [in]      Session the call is made on.
+ * @param  obj      [in]      Object the call added.
+ * @param  handle   [in,out]  Handle of the object; set to CK_INVALID_HANDLE.
+ */
+static void RemoveAddedObject(WP11_Session* session, WP11_Object* obj,
+                              CK_OBJECT_HANDLE* handle)
+{
+    if (WP11_Session_RemoveObjectByHandle(session, obj, *handle, 0) !=
+            WP11_OBJECT_ALREADY_REMOVED) {
+        WP11_Slot_ClearActiveObject(WP11_Session_GetSlot(session), obj);
+        WP11_Slot_DiscardObject(WP11_Session_GetSlot(session), obj);
+    }
+    *handle = CK_INVALID_HANDLE;
+}
+
+/**
  * Add an object to the session.
  *
  * @param  session    [in]   Session object.
@@ -1463,7 +1482,8 @@ static CK_RV NewObject(WP11_Session* session, CK_KEY_TYPE keyType,
  * @return  CKR_ATTRIBUTE_VALUE_INVALID when attribute value is not valid for
  *          data type.
  *          CKR_USER_NOT_LOGGED_IN when a private object needs a login.
- *          CKR_DEVICE_MEMORY when the object table is full.
+ *          CKR_DEVICE_MEMORY when the object table is full or memory
+ *          allocation fails.
  *          CKR_FUNCTION_FAILED when setting an attribute fails.
  *          CKR_OK on success.
  */
@@ -1487,7 +1507,7 @@ static CK_RV AddObject(WP11_Session* session, WP11_Object* object,
     ret = WP11_Session_AddObject(session, onToken, object);
     if (ret == PIN_INVALID_E)
         return CKR_USER_NOT_LOGGED_IN;
-    if (ret == OBJ_COUNT_E)
+    if (ret == OBJ_COUNT_E || ret == MEMORY_E)
         return CKR_DEVICE_MEMORY;
     if (ret != 0)
         return CKR_FUNCTION_FAILED;
@@ -1605,13 +1625,10 @@ static CK_RV AddRSAPrivateKeyObject(WP11_Session* session,
 
 err_out:
     if (rv != CKR_OK) {
-        if (*phKey != CK_INVALID_HANDLE) {
-            WP11_Session_RemoveObject(session, privKeyObject);
-            *phKey = CK_INVALID_HANDLE;
-        }
-        if (privKeyObject != NULL) {
+        if (*phKey != CK_INVALID_HANDLE)
+            RemoveAddedObject(session, privKeyObject, phKey);
+        else if (privKeyObject != NULL)
             WP11_Object_Free(privKeyObject);
-        }
     }
 
     return rv;
@@ -2029,10 +2046,8 @@ static CK_RV wp11_C_CreateObject(CK_SESSION_HANDLE hSession,
         return rv;
     }
     rv = AddObject(session, object, pTemplate, ulCount, phObject);
-    if (rv != CKR_OK) {
-        WP11_Session_RemoveObject(session, object);
+    if (rv != CKR_OK)
         WP11_Object_Free(object);
-    }
 
     WOLFPKCS11_LEAVE("C_CreateObject", rv);
     return rv;
@@ -2227,7 +2242,7 @@ static CK_RV wp11_C_CopyObject(CK_SESSION_HANDLE hSession,
         WP11_Object_Free(newObj);
         if (ret == PIN_INVALID_E)
             return CKR_USER_NOT_LOGGED_IN;
-        if (ret == OBJ_COUNT_E)
+        if (ret == OBJ_COUNT_E || ret == MEMORY_E)
             return CKR_DEVICE_MEMORY;
         return CKR_FUNCTION_FAILED;
     }
@@ -9897,13 +9912,15 @@ static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
 
     if (rv != CKR_OK && pub != NULL) {
         if (*phPublicKey != CK_INVALID_HANDLE)
-            WP11_Session_RemoveObject(session, pub);
-        WP11_Object_Free(pub);
+            RemoveAddedObject(session, pub, phPublicKey);
+        else
+            WP11_Object_Free(pub);
     }
     if (rv != CKR_OK && priv != NULL) {
         if (*phPrivateKey != CK_INVALID_HANDLE)
-            WP11_Session_RemoveObject(session, priv);
-        WP11_Object_Free(priv);
+            RemoveAddedObject(session, priv, phPrivateKey);
+        else
+            WP11_Object_Free(priv);
     }
 
     return rv;
@@ -10517,13 +10534,10 @@ static CK_RV wp11_C_UnwrapKey(CK_SESSION_HANDLE hSession,
                                phKey);
             }
             if (rv != CKR_OK) {
-                if (*phKey != CK_INVALID_HANDLE) {
-                    WP11_Session_RemoveObject(session, keyObj);
-                    *phKey = CK_INVALID_HANDLE;
-                }
-                if (keyObj != NULL) {
+                if (*phKey != CK_INVALID_HANDLE)
+                    RemoveAddedObject(session, keyObj, phKey);
+                else if (keyObj != NULL)
                     WP11_Object_Free(keyObj);
-                }
             }
             break;
         }
@@ -10755,17 +10769,6 @@ static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
     return CKR_OK;
 }
 
-static void RemoveExtractedKey(WP11_Session* session, WP11_Object* obj,
-                               CK_OBJECT_HANDLE* handle)
-{
-    if (WP11_Session_RemoveObjectByHandle(session, obj, *handle, 0) !=
-            WP11_OBJECT_ALREADY_REMOVED) {
-        WP11_Slot_ClearActiveObject(WP11_Session_GetSlot(session), obj);
-        WP11_Slot_DiscardObject(WP11_Session_GetSlot(session), obj);
-    }
-    *handle = CK_INVALID_HANDLE;
-}
-
 static int Tls12_Extract_Keys(WP11_Session* session,
                             CK_TLS12_KEY_MAT_PARAMS* tlsParams,
                             CK_ATTRIBUTE_PTR pTemplate,
@@ -10809,7 +10812,7 @@ static int Tls12_Extract_Keys(WP11_Session* session,
     if (ret != 0) {
         for (i = 0; i < 4; i++) {
             if (i < added)
-                RemoveExtractedKey(session, keys[i], handles[i]);
+                RemoveAddedObject(session, keys[i], handles[i]);
             else if (keys[i] != NULL)
                 WP11_Object_Free(keys[i]);
         }
