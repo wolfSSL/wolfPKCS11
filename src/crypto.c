@@ -54,25 +54,15 @@
 
 #define PRF_KEY_SIZE            48
 
-/* Largest MAC secret and cipher key a TLS 1.2 key and MAC derive accepts. No
- * cipher suite uses more than a 48 byte MAC secret or a 32 byte key. */
-#define TLS12_KEY_MAT_MAX_MAC_BITS      512
-#define TLS12_KEY_MAT_MAX_KEY_BITS      512
+/* Largest MAC secret and cipher key a TLS 1.2 key and MAC derive accepts: the
+ * 48 byte HMAC-SHA384 secret and the 32 byte AES-256 or ChaCha20 key. */
+#define TLS12_KEY_MAT_MAX_MAC_BITS      384
+#define TLS12_KEY_MAT_MAX_KEY_BITS      256
 /* Largest IV a TLS 1.2 cipher suite takes from the key block (AES block). */
 #define TLS12_KEY_MAT_MAX_IV_BITS       128
 /* Smallest key of a TLS 1.2 cipher suite that takes an IV from the key
  * block. */
 #define TLS12_KEY_MAT_MIN_IV_KEY_BITS   128
-
-/* A master secret tied to TLS 1.2 key material sizes is kept to the TLS
- * mechanisms. HMAC or HKDF with it would compute its key block, and
- * concatenation would make an equal secret without the tie. */
-#if defined(WOLFSSL_HAVE_PRF) && !defined(WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT)
-    #define TLS12_KEY_MAT_LOCKED(obj) \
-        ((obj) != NULL && WP11_Object_IsTls12KeyMatLocked(obj))
-#else
-    #define TLS12_KEY_MAT_LOCKED(obj)   0
-#endif
 
 /* Derive mechanisms that build their output into a secret key object. */
 #if defined(HAVE_ECC) || !defined(NO_DH) || defined(WOLFPKCS11_HKDF) || \
@@ -770,6 +760,27 @@ static CK_RV SetIfNotFound(WP11_Object* obj, CK_ATTRIBUTE_TYPE type,
     #ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
         #define WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT     /* F-4533 */
     #endif
+#endif
+
+/* A protected TLS 1.2 master secret is kept to the TLS mechanisms (see
+ * WP11_Object_SetTls12Only()). Its keys don't take its protection with
+ * WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT, so there is nothing to keep. */
+#if defined(WOLFSSL_HAVE_PRF) && !defined(WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT)
+    #define TLS12_ONLY(obj) ((obj) != NULL && WP11_Object_IsTls12Only(obj))
+    #define TLS12_ONLY_OP_ENDED(session, obj) Tls12OnlyOpEnded(session, obj)
+
+/* An operation started on a secret before it was kept to the TLS mechanisms
+ * ends at its next call, as one whose key was destroyed does. */
+static int Tls12OnlyOpEnded(WP11_Session* session, WP11_Object* obj)
+{
+    if (WP11_Session_GetMechanism(session) == CKM_TLS_MAC || !TLS12_ONLY(obj))
+        return 0;
+    WP11_Session_AbortOp(session);
+    return 1;
+}
+#else
+    #define TLS12_ONLY(obj)                     0
+    #define TLS12_ONLY_OP_ENDED(session, obj)   0
 #endif
 
 static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
@@ -2104,6 +2115,7 @@ CK_RV C_CreateObject(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate,
  *          CKR_DEVICE_MEMORY when dynamic memory allocation fails.
  *          CKR_FUNCTION_FAILED when creating the object fails.
  *          CK_UNAVAILABLE_INFORMATION when an attribute type is not supported.
+ *          CKR_ACTION_PROHIBITED when the object may not be copied.
  *          CKR_OK on success.
  */
 static CK_RV wp11_C_CopyObject(CK_SESSION_HANDLE hSession,
@@ -2246,6 +2258,9 @@ static CK_RV wp11_C_CopyObject(CK_SESSION_HANDLE hSession,
         WP11_Object_Free(newObj);
         if (ret == MEMORY_E)
             return CKR_DEVICE_MEMORY;
+        /* A TLS master secret not yet tied to its key material sizes. */
+        if (ret == NOT_AVAILABLE_E)
+            return CKR_ACTION_PROHIBITED;
         return CKR_FUNCTION_FAILED;
     }
 
@@ -6243,7 +6258,7 @@ static CK_RV wp11_C_SignInit(CK_SESSION_HANDLE hSession,
     ret = CheckOpSupported(obj, CKA_SIGN);
     if (ret != CKR_OK)
         return ret;
-    if (pMechanism->mechanism != CKM_TLS_MAC && TLS12_KEY_MAT_LOCKED(obj))
+    if (pMechanism->mechanism != CKM_TLS_MAC && TLS12_ONLY(obj))
         return CKR_KEY_FUNCTION_NOT_PERMITTED;
 
     if (WP11_Session_IsOpCategoryActive(session, WP11_OP_SIGN)) {
@@ -6582,6 +6597,8 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 
     WP11_Session_GetObject(session, &obj);
     if (obj == NULL || !WP11_Session_IsOpCategoryInit(session, WP11_OP_SIGN))
+        return CKR_OPERATION_NOT_INITIALIZED;
+    if (TLS12_ONLY_OP_ENDED(session, obj))
         return CKR_OPERATION_NOT_INITIALIZED;
     if (WP11_Session_IsOpUpdated(session)) {
         WP11_Session_AbortOp(session);
@@ -6969,6 +6986,8 @@ static CK_RV wp11_C_SignUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
     WP11_Session_GetObject(session, &obj);
     if (obj == NULL || !WP11_Session_IsOpCategoryInit(session, WP11_OP_SIGN))
         return CKR_OPERATION_NOT_INITIALIZED;
+    if (TLS12_ONLY_OP_ENDED(session, obj))
+        return CKR_OPERATION_NOT_INITIALIZED;
     if (!CK_ULONG_FITS_WORD32(ulPartLen)) {
         WP11_Session_AbortOp(session);
         return CKR_DATA_LEN_RANGE;
@@ -7127,6 +7146,8 @@ static CK_RV wp11_C_SignFinal(CK_SESSION_HANDLE hSession,
 
     WP11_Session_GetObject(session, &obj);
     if (obj == NULL || !WP11_Session_IsOpCategoryInit(session, WP11_OP_SIGN))
+        return CKR_OPERATION_NOT_INITIALIZED;
+    if (TLS12_ONLY_OP_ENDED(session, obj))
         return CKR_OPERATION_NOT_INITIALIZED;
 
     mechanism = WP11_Session_GetMechanism(session);
@@ -7455,7 +7476,7 @@ static CK_RV wp11_C_VerifyInit(CK_SESSION_HANDLE hSession,
     ret = CheckOpSupported(obj, CKA_VERIFY);
     if (ret != CKR_OK)
         return ret;
-    if (pMechanism->mechanism != CKM_TLS_MAC && TLS12_KEY_MAT_LOCKED(obj))
+    if (pMechanism->mechanism != CKM_TLS_MAC && TLS12_ONLY(obj))
         return CKR_KEY_FUNCTION_NOT_PERMITTED;
 
     if (WP11_Session_IsOpCategoryActive(session, WP11_OP_VERIFY)) {
@@ -7827,6 +7848,8 @@ static CK_RV wp11_C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 
     WP11_Session_GetObject(session, &obj);
     if (obj == NULL || !IsVerifyOpInit(session))
+        return CKR_OPERATION_NOT_INITIALIZED;
+    if (TLS12_ONLY_OP_ENDED(session, obj))
         return CKR_OPERATION_NOT_INITIALIZED;
     if (WP11_Session_IsOpUpdated(session)) {
         WP11_Session_AbortOp(session);
@@ -8221,6 +8244,8 @@ static CK_RV wp11_C_VerifyUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
     WP11_Session_GetObject(session, &obj);
     if (obj == NULL || !IsVerifyOpInit(session))
         return CKR_OPERATION_NOT_INITIALIZED;
+    if (TLS12_ONLY_OP_ENDED(session, obj))
+        return CKR_OPERATION_NOT_INITIALIZED;
     if (!CK_ULONG_FITS_WORD32(ulPartLen)) {
         WP11_Session_AbortOp(session);
         return CKR_DATA_LEN_RANGE;
@@ -8385,6 +8410,8 @@ static CK_RV wp11_C_VerifyFinal(CK_SESSION_HANDLE hSession,
 
     WP11_Session_GetObject(session, &obj);
     if (obj == NULL || !IsVerifyOpInit(session))
+        return CKR_OPERATION_NOT_INITIALIZED;
+    if (TLS12_ONLY_OP_ENDED(session, obj))
         return CKR_OPERATION_NOT_INITIALIZED;
     if (!CK_ULONG_FITS_WORD32(ulSignatureLen)) {
         WP11_Session_AbortOp(session);
@@ -10793,13 +10820,17 @@ static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
     return CKR_OK;
 }
 
+/* The sizes are passed in bytes, as checked by the caller, and not read from
+ * the caller's parameters again. used is set when keys or IVs were returned,
+ * even briefly. */
 static int Tls12_Extract_Keys(WP11_Session* session,
-                            CK_TLS12_KEY_MAT_PARAMS* tlsParams,
+                            CK_SSL3_KEY_MAT_OUT* keyMat, CK_ULONG macSz,
+                            CK_ULONG keySz, CK_ULONG ivSz,
                             CK_ATTRIBUTE_PTR pTemplate,
                             CK_ULONG ulAttributeCount, byte* derivedKey,
                             CK_BBOOL baseSensitive, CK_BBOOL baseExtractable,
                             CK_BBOOL baseAlwaysSensitive,
-                            CK_BBOOL baseNeverExtractable)
+                            CK_BBOOL baseNeverExtractable, int* used)
 {
     int ret = 0;
     int i;
@@ -10807,20 +10838,22 @@ static int Tls12_Extract_Keys(WP11_Session* session,
     CK_ULONG length = 0;
     CK_OBJECT_HANDLE* handles[4];
     WP11_Object* keys[4] = { NULL, NULL, NULL, NULL };
+    CK_BYTE_PTR ivClient;
+    CK_BYTE_PTR ivServer;
     int added = 0;
 
-    if (tlsParams == NULL) {
+    *used = 0;
+    if (keyMat == NULL) {
         return CKR_FUNCTION_FAILED;
     }
 
-    handles[0] = &tlsParams->pReturnedKeyMaterial->hClientMacSecret;
-    handles[1] = &tlsParams->pReturnedKeyMaterial->hServerMacSecret;
-    handles[2] = &tlsParams->pReturnedKeyMaterial->hClientKey;
-    handles[3] = &tlsParams->pReturnedKeyMaterial->hServerKey;
+    handles[0] = &keyMat->hClientMacSecret;
+    handles[1] = &keyMat->hServerMacSecret;
+    handles[2] = &keyMat->hClientKey;
+    handles[3] = &keyMat->hServerKey;
 
     for (i = 0; i < 4 && ret == 0; i++) {
-        length = (i < 2) ? tlsParams->ulMacSizeInBits / 8 :
-                           tlsParams->ulKeySizeInBits / 8;
+        length = (i < 2) ? macSz : keySz;
         ret = SetKeyExtract(session, ptr, length, pTemplate,
                 ulAttributeCount, (i < 2) ? CK_TRUE : CK_FALSE,
                 baseSensitive, baseExtractable, baseAlwaysSensitive,
@@ -10833,6 +10866,9 @@ static int Tls12_Extract_Keys(WP11_Session* session,
         if (ret == 0)
             added++;
     }
+    /* Another session can use an added key until it is removed. */
+    if (added > 0)
+        *used = 1;
     if (ret != 0) {
         for (i = 0; i < 4; i++) {
             if (i < added)
@@ -10842,17 +10878,14 @@ static int Tls12_Extract_Keys(WP11_Session* session,
         }
         return ret;
     }
-    /* Client IV */
-    length = tlsParams->ulIVSizeInBits / 8;
-    if (tlsParams->pReturnedKeyMaterial->pIVClient != NULL) {
-        XMEMCPY(tlsParams->pReturnedKeyMaterial->pIVClient, ptr,
-                length);
+    ivClient = keyMat->pIVClient;
+    ivServer = keyMat->pIVServer;
+    if (ivClient != NULL) {
+        XMEMCPY(ivClient, ptr, ivSz);
     }
-    ptr += length;
-    /* Server IV */
-    if (tlsParams->pReturnedKeyMaterial->pIVServer != NULL) {
-        XMEMCPY(tlsParams->pReturnedKeyMaterial->pIVServer, ptr,
-                length);
+    ptr += ivSz;
+    if (ivServer != NULL) {
+        XMEMCPY(ivServer, ptr, ivSz);
     }
     return ret;
 }
@@ -10961,6 +10994,9 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
 #if !defined(NO_AES) && !defined(WOLFPKCS11_NSS)
     CK_ATTRIBUTE* keyTypeAttr = NULL;
 #endif
+#if defined(WOLFSSL_HAVE_PRF) && !defined(WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT)
+    int tlsMaster = 0;
+#endif
 #endif
 #ifndef NO_DH
     CK_ULONG dhPrimeLen = 0;
@@ -11032,7 +11068,7 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
     if (ret != CKR_OK)
         return ret;
     if (pMechanism->mechanism != CKM_TLS12_KEY_AND_MAC_DERIVE &&
-            TLS12_KEY_MAT_LOCKED(obj))
+            TLS12_ONLY(obj))
         return CKR_KEY_FUNCTION_NOT_PERMITTED;
 
     rv = CheckPrivateLogin(session, pTemplate, ulAttributeCount,
@@ -11119,7 +11155,7 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                 rv = CheckKeyDecoded(saltObj);
                 if (rv != CKR_OK)
                     return rv;
-                if (TLS12_KEY_MAT_LOCKED(saltObj))
+                if (TLS12_ONLY(saltObj))
                     return CKR_KEY_FUNCTION_NOT_PERMITTED;
             }
 
@@ -11225,9 +11261,15 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
         case CKM_TLS12_KEY_AND_MAC_DERIVE:
         {
             CK_TLS12_KEY_MAT_PARAMS* tlsParams = NULL;
+            CK_SSL3_KEY_MAT_OUT* keyMat;
+            CK_MECHANISM_TYPE prf;
             CK_ULONG macBits;
             CK_ULONG keyBits;
             CK_ULONG ivBits;
+            int used = 0;
+#ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
+            int tied = 0;
+#endif
             if (WP11_Object_GetType(obj) != CKK_GENERIC_SECRET)
                 return CKR_KEY_TYPE_INCONSISTENT;
             if (pMechanism->pParameter == NULL)
@@ -11236,16 +11278,20 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                 sizeof(CK_TLS12_KEY_MAT_PARAMS))
                 return CKR_MECHANISM_PARAM_INVALID;
             tlsParams = (CK_TLS12_KEY_MAT_PARAMS*) pMechanism->pParameter;
-            if (tlsParams->pReturnedKeyMaterial == NULL ||
+            /* Read once: the checks below must hold for what is used. */
+            keyMat = tlsParams->pReturnedKeyMaterial;
+            prf = tlsParams->prfHashMechanism;
+            macBits = tlsParams->ulMacSizeInBits;
+            keyBits = tlsParams->ulKeySizeInBits;
+            ivBits = tlsParams->ulIVSizeInBits;
+            if (keyMat == NULL ||
                 tlsParams->RandomInfo.pClientRandom == NULL ||
                 tlsParams->RandomInfo.pServerRandom == NULL)
                 return CKR_MECHANISM_PARAM_INVALID;
-            tlsParams->pReturnedKeyMaterial->hClientMacSecret =
-                CK_INVALID_HANDLE;
-            tlsParams->pReturnedKeyMaterial->hServerMacSecret =
-                CK_INVALID_HANDLE;
-            tlsParams->pReturnedKeyMaterial->hClientKey = CK_INVALID_HANDLE;
-            tlsParams->pReturnedKeyMaterial->hServerKey = CK_INVALID_HANDLE;
+            keyMat->hClientMacSecret = CK_INVALID_HANDLE;
+            keyMat->hServerMacSecret = CK_INVALID_HANDLE;
+            keyMat->hClientKey = CK_INVALID_HANDLE;
+            keyMat->hServerKey = CK_INVALID_HANDLE;
 #ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
             GetBaseProtection(obj, &baseSensitive, &baseExtractable);
             rv = CheckDeriveProtection(pTemplate, ulAttributeCount,
@@ -11254,9 +11300,6 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                 return rv;
 #endif
 
-            macBits = tlsParams->ulMacSizeInBits;
-            keyBits = tlsParams->ulKeySizeInBits;
-            ivBits = tlsParams->ulIVSizeInBits;
             /* Each field is extracted separately in whole bytes */
             if ((macBits % 8) != 0 || (keyBits % 8) != 0 ||
                     (ivBits % 8) != 0) {
@@ -11284,11 +11327,25 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
             if (derivedKey == NULL)
                 return CKR_DEVICE_MEMORY;
             XMEMSET(derivedKey, 0, keyLen);
-            ret = WP11_Tls12_Master_Key_Derive(&tlsParams->RandomInfo,
-                                               tlsParams->prfHashMechanism,
-                                               "key expansion", 13,
-                                               derivedKey, keyLen, CK_FALSE,
-                                               obj);
+            ret = 0;
+#ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
+            /* The keys of a protected master secret come out protected, so
+             * tie the secret to one PRF hash and set of sizes before the PRF
+             * runs. Other sizes would return those keys' bytes as IVs. */
+            if (baseSensitive == CK_TRUE || baseExtractable == CK_FALSE) {
+                ret = WP11_Object_StartTls12KeyMat(obj, prf, macBits, keyBits,
+                                                   ivBits);
+                if (ret == BAD_STATE_E)
+                    ret = (int)CKR_KEY_FUNCTION_NOT_PERMITTED;
+                tied = (ret == 0);
+            }
+#endif
+            if (ret == 0) {
+                ret = WP11_Tls12_Master_Key_Derive(&tlsParams->RandomInfo,
+                                                   prf, "key expansion", 13,
+                                                   derivedKey, keyLen,
+                                                   CK_FALSE, obj);
+            }
             if (ret == 0) {
                 histLen = sizeof(CK_BBOOL);
                 if (WP11_Object_GetAttr(obj, CKA_ALWAYS_SENSITIVE,
@@ -11298,26 +11355,19 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                 if (WP11_Object_GetAttr(obj, CKA_NEVER_EXTRACTABLE,
                                         &baseNeverExtractable, &histLen) != 0)
                     baseNeverExtractable = CK_FALSE;
-#ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
-                /* The keys of a protected master secret come out protected,
-                 * so tie the secret to one set of sizes. Other sizes would
-                 * return those keys' bytes as IVs. */
-                if ((baseSensitive == CK_TRUE ||
-                        baseExtractable == CK_FALSE) &&
-                        WP11_Object_LockTls12KeyMat(obj,
-                            tlsParams->prfHashMechanism, macBits, keyBits,
-                            ivBits) != 0) {
-                    ret = (int)CKR_KEY_FUNCTION_NOT_PERMITTED;
-                }
-#endif
-                if (ret == 0) {
-                    ret = Tls12_Extract_Keys(session, tlsParams, pTemplate,
-                                             ulAttributeCount, derivedKey,
-                                             baseSensitive, baseExtractable,
-                                             baseAlwaysSensitive,
-                                             baseNeverExtractable);
-                }
+                ret = Tls12_Extract_Keys(session, keyMat, macBits / 8,
+                                         keyBits / 8, ivBits / 8, pTemplate,
+                                         ulAttributeCount, derivedKey,
+                                         baseSensitive, baseExtractable,
+                                         baseAlwaysSensitive,
+                                         baseNeverExtractable, &used);
             }
+#ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
+            if (tied)
+                WP11_Object_EndTls12KeyMat(obj, used);
+#else
+            (void)used;
+#endif
 
             /* Freeing here so that we don't attempt to generate a key at the
              * end of the function */
@@ -11371,6 +11421,9 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
 
             if (ret != 0)
                 rv = CKR_FUNCTION_FAILED;
+#ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
+            tlsMaster = 1;
+#endif
             break;
         }
 #ifdef WOLFPKCS11_NSS
@@ -11435,7 +11488,7 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                 if (WP11_Object_GetClass(otherKey) != CKO_SECRET_KEY ||
                         !WP11_KeyType_IsSecret(WP11_Object_GetType(otherKey)))
                     return CKR_KEY_TYPE_INCONSISTENT;
-                if (TLS12_KEY_MAT_LOCKED(otherKey))
+                if (TLS12_ONLY(otherKey))
                     return CKR_KEY_FUNCTION_NOT_PERMITTED;
 #ifndef WP11_NSS_PERMISSIVE_KEY_DEFAULTS
                 ret = CheckOpSupported(otherKey, CKA_DERIVE);
@@ -11624,6 +11677,21 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                     WP11_Object_Free(obj);
                     rv = CKR_FUNCTION_FAILED;
                 }
+#if defined(WOLFSSL_HAVE_PRF) && !defined(WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT)
+                /* Kept to the TLS mechanisms from the start, as its sizes
+                 * aren't known until the first key and MAC derive. Done before
+                 * AddObject, so no other call can use it first. */
+                if (ret == 0 && tlsMaster) {
+                    CK_BBOOL masterSensitive;
+                    CK_BBOOL masterExtractable;
+
+                    GetBaseProtection(obj, &masterSensitive,
+                                      &masterExtractable);
+                    if (masterSensitive == CK_TRUE ||
+                            masterExtractable == CK_FALSE)
+                        WP11_Object_SetTls12Only(obj);
+                }
+#endif
                 if (ret == 0) {
                     /* Set before AddObject so a token store has them. */
                     rv = SetDerivedStates(obj, baseAlwaysSensitive,

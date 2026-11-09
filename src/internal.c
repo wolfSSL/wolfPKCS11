@@ -282,14 +282,17 @@ typedef struct WP11_DhKey {
 #endif
 
 #ifdef WOLFSSL_HAVE_PRF
-/* Sizes of the TLS 1.2 key material a secret was first derived into. */
-typedef struct WP11_Tls12KeyMatSizes {
-    CK_MECHANISM_TYPE prf;             /* PRF hash mechanism                  */
+/* How a secret is tied to TLS 1.2 key material. */
+typedef struct WP11_Tls12KeyMat {
     CK_ULONG macBits;                  /* MAC secret size in bits             */
     CK_ULONG keyBits;                  /* Cipher key size in bits             */
     CK_ULONG ivBits;                   /* IV size in bits                     */
-    byte set:1;                        /* Sizes have been recorded            */
-} WP11_Tls12KeyMatSizes;
+    word32 running;                    /* Derives running with the sizes      */
+    int prf;                           /* MAC algorithm of the PRF hash       */
+    byte tlsOnly:1;                    /* Kept to the TLS mechanisms          */
+    byte sized:1;                      /* Sizes have been recorded            */
+    byte used:1;                       /* Keys or IVs were made with sizes    */
+} WP11_Tls12KeyMat;
 #endif
 
 /* When adding/modifying new members, add support in WP11_Object_Copy */
@@ -372,7 +375,7 @@ struct WP11_Object {
 
     word32 category;                   /* Category of certificate             */
 #ifdef WOLFSSL_HAVE_PRF
-    WP11_Tls12KeyMatSizes tlsKeyMat;   /* TLS 1.2 key material sizes in use   */
+    WP11_Tls12KeyMat tlsKeyMat;        /* TLS 1.2 key material tie            */
 #endif
 
     WP11_Lock* lock;                   /* Object specific lock                */
@@ -4417,8 +4420,12 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
     dest->category = src->category;
     dest->devId    = src->devId;
 #ifdef WOLFSSL_HAVE_PRF
-    /* A copy must not escape the sizes the secret is tied to. */
+    /* Until keys are made with its sizes, a copy could be tied to others. A
+     * copy made after keeps the tie. */
+    if (src->tlsKeyMat.tlsOnly && !src->tlsKeyMat.used)
+        ret = NOT_AVAILABLE_E;
     dest->tlsKeyMat = src->tlsKeyMat;
+    dest->tlsKeyMat.running = 0;
 #endif
 
     if (ret == 0 && src->objClass == CKO_DATA) {
@@ -20267,6 +20274,9 @@ int WP11_Tls12_Master_Key_Derive(CK_SSL3_RANDOM_DATA* random,
 {
     int ret = 0;
     CK_ULONG ulSeedLen = 0;
+    /* Read the lengths once, so the copies below match the allocation. */
+    CK_ULONG clientLen = random->ulClientRandomLen;
+    CK_ULONG serverLen = random->ulServerRandomLen;
     byte* pSeed = NULL;
     enum wc_MACAlgorithm macType;
 
@@ -20280,11 +20290,10 @@ int WP11_Tls12_Master_Key_Derive(CK_SSL3_RANDOM_DATA* random,
      * later passed to wc_PRF_TLS. TLS 1.2 random length is fixed at 32 bytes
      * per RFC 5246, but the PKCS#11 API accepts arbitrary CK_ULONG lengths
      * from the caller, so guard explicitly. */
-    if (random->ulClientRandomLen >
-            (CK_ULONG)0xFFFFFFFF - random->ulServerRandomLen) {
+    if (clientLen > (CK_ULONG)0xFFFFFFFF - serverLen) {
         return CKR_MECHANISM_PARAM_INVALID;
     }
-    ulSeedLen = random->ulClientRandomLen + random->ulServerRandomLen;
+    ulSeedLen = clientLen + serverLen;
     if (ulSeedLen == 0 || ulSeedLen > (CK_ULONG)0xFFFFFFFF) {
         return CKR_MECHANISM_PARAM_INVALID;
     }
@@ -20293,14 +20302,12 @@ int WP11_Tls12_Master_Key_Derive(CK_SSL3_RANDOM_DATA* random,
         return CKR_HOST_MEMORY;
     }
     if (clientFirst) {
-        XMEMCPY(pSeed, random->pClientRandom, random->ulClientRandomLen);
-        XMEMCPY(pSeed + random->ulClientRandomLen, random->pServerRandom,
-                random->ulServerRandomLen);
+        XMEMCPY(pSeed, random->pClientRandom, clientLen);
+        XMEMCPY(pSeed + clientLen, random->pServerRandom, serverLen);
     }
     else {
-        XMEMCPY(pSeed, random->pServerRandom, random->ulServerRandomLen);
-        XMEMCPY(pSeed + random->ulServerRandomLen, random->pClientRandom,
-                random->ulClientRandomLen);
+        XMEMCPY(pSeed, random->pServerRandom, serverLen);
+        XMEMCPY(pSeed + serverLen, random->pClientRandom, clientLen);
     }
 
     PRIVATE_KEY_UNLOCK();
@@ -20320,68 +20327,119 @@ int WP11_Tls12_Master_Key_Derive(CK_SSL3_RANDOM_DATA* random,
 }
 
 /**
- * Tie a TLS 1.2 master secret to the key material sizes of its first key and
- * MAC derive. The key block is the same byte stream whatever sizes are asked
- * for, so other sizes would return, as IVs, bytes the first derive made into
- * keys.
+ * Keep a secret to the TLS mechanisms: the base of CKM_TLS12_KEY_AND_MAC_DERIVE
+ * and the key of CKM_TLS_MAC. HMAC or HKDF with it would compute its key block
+ * with the HMAC key the TLS PRF uses, and copying or concatenating it would
+ * make an equal secret that is not kept to them.
  *
- * The sizes stay recorded even when that derive fails, so they never change
- * while keys made with them may exist. They are held in memory only and are
- * not stored with token objects.
+ * @param  object  [in]  Master secret object.
+ */
+void WP11_Object_SetTls12Only(WP11_Object* object)
+{
+    if (object->lock != NULL)
+        WP11_Lock_LockRW(object->lock);
+    object->tlsKeyMat.tlsOnly = 1;
+    if (object->lock != NULL)
+        WP11_Lock_UnlockRW(object->lock);
+}
+
+/**
+ * Check whether a secret is kept to the TLS mechanisms.
+ *
+ * @param  object  [in]  Object object.
+ * @return  1 when the secret is kept to the TLS mechanisms.
+ *          0 otherwise.
+ */
+int WP11_Object_IsTls12Only(WP11_Object* object)
+{
+    int tlsOnly;
+
+    if (object->lock != NULL)
+        WP11_Lock_LockRO(object->lock);
+    tlsOnly = object->tlsKeyMat.tlsOnly;
+    if (object->lock != NULL)
+        WP11_Lock_UnlockRO(object->lock);
+
+    return tlsOnly;
+}
+
+/**
+ * Start a TLS 1.2 key and MAC derive from a master secret, before the PRF runs.
+ * The key block is the same byte stream whatever sizes are asked for, so other
+ * sizes would return, as IVs, bytes another derive made into keys. The secret
+ * is tied to the PRF hash and sizes of its first derive and kept to the TLS
+ * mechanisms.
+ *
+ * The sizes are dropped again when every derive that used them failed before
+ * returning keys or IVs, and kept once one did. Keeping to the TLS mechanisms
+ * stays. Neither is stored with token objects. End each started derive with
+ * WP11_Object_EndTls12KeyMat().
  *
  * @param  object   [in]  Master secret object.
  * @param  prf      [in]  PRF hash mechanism.
  * @param  macBits  [in]  MAC secret size in bits.
  * @param  keyBits  [in]  Cipher key size in bits.
  * @param  ivBits   [in]  IV size in bits.
- * @return  BAD_STATE_E when the secret is tied to other sizes.
+ * @return  BAD_FUNC_ARG when the PRF hash is not supported.
+ *          BAD_STATE_E when the secret is tied to another PRF hash or other
+ *          sizes.
  *          0 on success.
  */
-int WP11_Object_LockTls12KeyMat(WP11_Object* object, CK_MECHANISM_TYPE prf,
-                                CK_ULONG macBits, CK_ULONG keyBits,
-                                CK_ULONG ivBits)
+int WP11_Object_StartTls12KeyMat(WP11_Object* object, CK_MECHANISM_TYPE prf,
+                                 CK_ULONG macBits, CK_ULONG keyBits,
+                                 CK_ULONG ivBits)
 {
-    WP11_Tls12KeyMatSizes* sizes = &object->tlsKeyMat;
+    WP11_Tls12KeyMat* tie = &object->tlsKeyMat;
+    enum wc_MACAlgorithm mac = MechToMac(prf);
     int ret = 0;
 
-    if (object->onToken)
+    if (mac == no_mac)
+        return BAD_FUNC_ARG;
+
+    if (object->lock != NULL)
         WP11_Lock_LockRW(object->lock);
-    if (!sizes->set) {
-        sizes->prf = prf;
-        sizes->macBits = macBits;
-        sizes->keyBits = keyBits;
-        sizes->ivBits = ivBits;
-        sizes->set = 1;
+    if (!tie->sized) {
+        tie->prf = (int)mac;
+        tie->macBits = macBits;
+        tie->keyBits = keyBits;
+        tie->ivBits = ivBits;
+        tie->sized = 1;
     }
-    else if (sizes->prf != prf || sizes->macBits != macBits ||
-             sizes->keyBits != keyBits || sizes->ivBits != ivBits) {
+    else if (tie->prf != (int)mac || tie->macBits != macBits ||
+             tie->keyBits != keyBits || tie->ivBits != ivBits) {
         ret = BAD_STATE_E;
     }
-    if (object->onToken)
+    if (ret == 0) {
+        tie->tlsOnly = 1;
+        tie->running++;
+    }
+    if (object->lock != NULL)
         WP11_Lock_UnlockRW(object->lock);
 
     return ret;
 }
 
 /**
- * Check whether a secret is tied to TLS 1.2 key material sizes.
+ * End a TLS 1.2 key and MAC derive started with WP11_Object_StartTls12KeyMat().
  *
- * @param  object  [in]  Object object.
- * @return  1 when the secret is tied to sizes.
- *          0 otherwise.
+ * @param  object  [in]  Master secret object.
+ * @param  used    [in]  Keys or IVs were returned, even briefly.
  */
-int WP11_Object_IsTls12KeyMatLocked(WP11_Object* object)
+void WP11_Object_EndTls12KeyMat(WP11_Object* object, int used)
 {
-    int locked;
+    WP11_Tls12KeyMat* tie = &object->tlsKeyMat;
 
-    if (object->onToken)
-        WP11_Lock_LockRO(object->lock);
-    locked = object->tlsKeyMat.set;
-    if (object->onToken)
-        WP11_Lock_UnlockRO(object->lock);
-
-    return locked;
+    if (object->lock != NULL)
+        WP11_Lock_LockRW(object->lock);
+    tie->running--;
+    if (used)
+        tie->used = 1;
+    if (tie->running == 0 && !tie->used)
+        tie->sized = 0;
+    if (object->lock != NULL)
+        WP11_Lock_UnlockRW(object->lock);
 }
+
 #ifdef WOLFPKCS11_NSS
 int WP11_Nss_Tls12_Master_Key_Derive(CK_BYTE_PTR pSessionHash,
                                      CK_ULONG ulSessionHashLen,
