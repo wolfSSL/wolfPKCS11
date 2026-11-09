@@ -480,6 +480,81 @@ cleanup:
     destroy_obj(session, &base);
     return result;
 }
+
+/* Key material sizes are capped, and the IVs, returned in the clear, must not
+ * read out the key block from its start (Fenrir 17781). */
+static int test_tls_key_mat_size_bounds(CK_SESSION_HANDLE session)
+{
+    static const struct {
+        CK_ULONG macBits;
+        CK_ULONG keyBits;
+        CK_ULONG ivBits;
+        CK_RV exp;
+        const char* desc;
+    } cases[] = {
+        /* Whole key block of a SHA-256 MAC, AES-128 derive as the IVs. */
+        { 0, 0, 2 * (256 + 128), CKR_MECHANISM_PARAM_INVALID,
+          "TLS IVs without MAC or key rejected" },
+        { 256, 0, 128, CKR_MECHANISM_PARAM_INVALID,
+          "TLS IVs without a cipher key rejected" },
+        { 0, 120, 96, CKR_MECHANISM_PARAM_INVALID,
+          "TLS IVs after a short cipher key rejected" },
+        { 256, 128, 136, CKR_MECHANISM_PARAM_INVALID,
+          "TLS IVs longer than a cipher block rejected" },
+        { 392, 128, 0, CKR_MECHANISM_PARAM_INVALID,
+          "TLS MAC secret over 48 bytes rejected" },
+        { 256, 264, 0, CKR_MECHANISM_PARAM_INVALID,
+          "TLS cipher key over 32 bytes rejected" },
+        { 384, 256, 128, CKR_OK, "TLS largest sizes accepted" },
+        { 0, 128, 32, CKR_OK, "TLS AES-128-GCM sizes accepted" },
+        { 0, 256, 96, CKR_OK, "TLS ChaCha20-Poly1305 sizes accepted" },
+        { 256, 128, 128, CKR_OK, "TLS IVs of a cipher block accepted" },
+        { 256, 0, 0, CKR_OK, "TLS MAC only sizes accepted" },
+    };
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_TLS12_KEY_MAT_PARAMS params;
+    CK_SSL3_KEY_MAT_OUT out;
+    /* Room for every IV asked for, so a regression can't overflow. */
+    byte ivClient[2 * (256 + 128) / 8];
+    byte ivServer[2 * (256 + 128) / 8];
+    byte zero[sizeof(ivClient)];
+    byte master[48];
+    size_t i;
+    int result = 0;
+
+    XMEMSET(master, 0x5c, sizeof(master));
+    XMEMSET(zero, 0, sizeof(zero));
+    tls_key_mat_init(&params, &out, 0, 0, 0);
+    ret = create_secret_base(session, CKK_GENERIC_SECRET, master,
+                             sizeof(master), &base);
+    CHECK_CKR(ret, "create TLS master secret");
+
+    for (i = 0; i < sizeof(cases) / sizeof(*cases); i++) {
+        tls_key_mat_init(&params, &out, cases[i].macBits, cases[i].keyBits,
+                         cases[i].ivBits);
+        XMEMSET(ivClient, 0, sizeof(ivClient));
+        XMEMSET(ivServer, 0, sizeof(ivServer));
+        out.pIVClient = ivClient;
+        out.pIVServer = ivServer;
+        ret = tls_key_mat_derive(session, base, &params, NULL, 0);
+        CHECK_RV(ret, cases[i].exp, cases[i].desc);
+        if (ret != CKR_OK) {
+            if (XMEMCMP(ivClient, zero, sizeof(zero)) != 0 ||
+                    XMEMCMP(ivServer, zero, sizeof(zero)) != 0)
+                ret = CKR_GENERAL_ERROR;
+            else
+                ret = CKR_OK;
+            CHECK_CKR(ret, "rejected TLS derive returns no IVs");
+        }
+        destroy_key_mat(session, &out);
+    }
+
+cleanup:
+    destroy_key_mat(session, &out);
+    destroy_obj(session, &base);
+    return result;
+}
 #endif
 
 #if !defined(NO_AES) && defined(HAVE_AES_CBC)
@@ -600,6 +675,652 @@ cleanup:
     destroy_obj(session, &base);
     return result;
 }
+
+/* Derive with the sizes given and check a refused derive returns nothing. */
+static CK_RV tls_key_mat_derive_sizes(CK_SESSION_HANDLE session,
+                                      CK_OBJECT_HANDLE base,
+                                      CK_TLS12_KEY_MAT_PARAMS* params,
+                                      CK_SSL3_KEY_MAT_OUT* out,
+                                      CK_ULONG keyBits, CK_ULONG ivBits,
+                                      CK_ATTRIBUTE* tmpl, CK_ULONG cnt)
+{
+    static byte ivClient[16];
+    static byte ivServer[16];
+    static const byte zero[16] = { 0 };
+    CK_RV ret;
+
+    params->ulMacSizeInBits = 0;
+    params->ulKeySizeInBits = keyBits;
+    params->ulIVSizeInBits = ivBits;
+    XMEMSET(ivClient, 0, sizeof(ivClient));
+    XMEMSET(ivServer, 0, sizeof(ivServer));
+    out->pIVClient = ivClient;
+    out->pIVServer = ivServer;
+    ret = tls_key_mat_derive(session, base, params, tmpl, cnt);
+    if (ret != CKR_OK && (out->hClientKey != CK_INVALID_HANDLE ||
+            XMEMCMP(ivClient, zero, sizeof(zero)) != 0 ||
+            XMEMCMP(ivServer, zero, sizeof(zero)) != 0)) {
+        ret = CKR_GENERAL_ERROR;
+    }
+    return ret;
+}
+
+/* A protected master secret is tied to the sizes of its first key and MAC
+ * derive, as other sizes would return its keys' bytes as IVs. With AES-128
+ * sizes the IVs are the AES-256-GCM server key (Fenrir 17781). */
+static int test_tls_key_mat_sizes_locked(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE copy = CK_INVALID_HANDLE;
+    CK_TLS12_KEY_MAT_PARAMS params;
+    CK_SSL3_KEY_MAT_OUT out;
+    byte master[48];
+    byte otherRandom[32];
+    CK_ATTRIBUTE baseTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckTrue,         sizeof(ckTrue)         },
+        { CKA_EXTRACTABLE, &ckFalse,        sizeof(ckFalse)        },
+        { CKA_DERIVE,      &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VALUE,       master,          sizeof(master)         },
+    };
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckTrue,         sizeof(ckTrue)         },
+        { CKA_EXTRACTABLE, &ckFalse,        sizeof(ckFalse)        },
+    };
+    CK_ULONG keyCnt = sizeof(keyTmpl) / sizeof(*keyTmpl);
+    int result = 0;
+
+    XMEMSET(master, 0x5c, sizeof(master));
+    XMEMSET(otherRandom, 0x2a, sizeof(otherRandom));
+    tls_key_mat_init(&params, &out, 0, 0, 0);
+    ret = funcList->C_CreateObject(session, baseTmpl,
+                                   sizeof(baseTmpl) / sizeof(*baseTmpl),
+                                   &base);
+    CHECK_CKR(ret, "create protected TLS master secret");
+
+    ret = tls_key_mat_derive_sizes(session, base, &params, &out, 256, 32,
+                                   keyTmpl, keyCnt);
+    CHECK_CKR(ret, "TLS derive with AES-256-GCM sizes");
+    destroy_key_mat(session, &out);
+
+    ret = tls_key_mat_derive_sizes(session, base, &params, &out, 128, 128,
+                                   keyTmpl, keyCnt);
+    CHECK_RV(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
+             "TLS derive with other sizes refused");
+
+#ifdef WOLFSSL_SHA384
+    params.prfHashMechanism = CKM_SHA384;
+    ret = tls_key_mat_derive_sizes(session, base, &params, &out, 256, 32,
+                                   keyTmpl, keyCnt);
+    CHECK_RV(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
+             "TLS derive with another PRF hash refused");
+#endif
+    /* The same PRF hash named by its HMAC mechanism. */
+    params.prfHashMechanism = CKM_SHA256_HMAC;
+    ret = tls_key_mat_derive_sizes(session, base, &params, &out, 256, 32,
+                                   keyTmpl, keyCnt);
+    CHECK_CKR(ret, "TLS derive with the PRF hash as an HMAC mechanism");
+    destroy_key_mat(session, &out);
+    params.prfHashMechanism = CKM_SHA256;
+
+    /* Resuming a session derives the same sizes from new randoms. */
+    params.RandomInfo.pClientRandom = otherRandom;
+    ret = tls_key_mat_derive_sizes(session, base, &params, &out, 256, 32,
+                                   keyTmpl, keyCnt);
+    CHECK_CKR(ret, "TLS derive with the same sizes and new randoms");
+    destroy_key_mat(session, &out);
+
+    ret = funcList->C_CopyObject(session, base, NULL, 0, &copy);
+    CHECK_CKR(ret, "copy protected TLS master secret");
+    ret = tls_key_mat_derive_sizes(session, copy, &params, &out, 128, 128,
+                                   keyTmpl, keyCnt);
+    CHECK_RV(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
+             "TLS derive from a copy with other sizes refused");
+    ret = tls_key_mat_derive_sizes(session, copy, &params, &out, 256, 32,
+                                   keyTmpl, keyCnt);
+    CHECK_CKR(ret, "TLS derive from a copy with the same sizes");
+
+cleanup:
+    destroy_key_mat(session, &out);
+    destroy_obj(session, &copy);
+    destroy_obj(session, &base);
+    return result;
+}
+
+/* A master secret tied to TLS key material sizes is kept to the TLS
+ * mechanisms, so no other mechanism can stand in for a derive with other
+ * sizes. */
+static int test_tls_key_mat_locked_mechanisms(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE other = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    CK_TLS12_KEY_MAT_PARAMS params;
+    CK_SSL3_KEY_MAT_OUT out;
+    CK_TLS_MAC_PARAMS macParams;
+    CK_MECHANISM tlsMac = { CKM_TLS_MAC, &macParams, sizeof(macParams) };
+#ifndef NO_SHA256
+    CK_MECHANISM hmac = { CKM_SHA256_HMAC, NULL, 0 };
+#endif
+#ifdef WOLFPKCS11_CONCATENATE
+    CK_KEY_DERIVATION_STRING_DATA strData;
+    CK_MECHANISM concatData = { CKM_CONCATENATE_BASE_AND_DATA, &strData,
+                                sizeof(strData) };
+    CK_MECHANISM concatKey = { CKM_CONCATENATE_BASE_AND_KEY, &base,
+                               sizeof(base) };
+#endif
+#ifdef WOLFPKCS11_HKDF
+    CK_HKDF_PARAMS hkdfParams;
+    CK_MECHANISM hkdf = { CKM_HKDF_DERIVE, &hkdfParams, sizeof(hkdfParams) };
+    CK_ULONG hkdfLen = 32;
+#endif
+    byte master[48];
+    byte data[32];
+    byte mac[12];
+    CK_ULONG macLen = sizeof(mac);
+    CK_ATTRIBUTE baseTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckTrue,         sizeof(ckTrue)         },
+        { CKA_EXTRACTABLE, &ckFalse,        sizeof(ckFalse)        },
+        { CKA_DERIVE,      &ckTrue,         sizeof(ckTrue)         },
+        { CKA_SIGN,        &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VERIFY,      &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VALUE,       master,          sizeof(master)         },
+    };
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckTrue,         sizeof(ckTrue)         },
+        { CKA_EXTRACTABLE, &ckFalse,        sizeof(ckFalse)        },
+    };
+    CK_ULONG keyCnt = sizeof(keyTmpl) / sizeof(*keyTmpl);
+#ifdef WOLFPKCS11_HKDF
+    CK_ATTRIBUTE hkdfTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckTrue,         sizeof(ckTrue)         },
+        { CKA_EXTRACTABLE, &ckFalse,        sizeof(ckFalse)        },
+        { CKA_VALUE_LEN,   &hkdfLen,        sizeof(hkdfLen)        },
+    };
+#endif
+    int result = 0;
+
+    XMEMSET(master, 0x5c, sizeof(master));
+    XMEMSET(data, 0x3c, sizeof(data));
+    tls_key_mat_init(&params, &out, 0, 0, 0);
+    ret = funcList->C_CreateObject(session, baseTmpl,
+                                   sizeof(baseTmpl) / sizeof(*baseTmpl),
+                                   &base);
+    CHECK_CKR(ret, "create protected TLS master secret");
+    ret = create_secret_base(session, CKK_GENERIC_SECRET, data, sizeof(data),
+                             &other);
+    CHECK_CKR(ret, "create other secret");
+    ret = tls_key_mat_derive_sizes(session, base, &params, &out, 256, 32,
+                                   keyTmpl, keyCnt);
+    CHECK_CKR(ret, "TLS derive ties the master secret to its sizes");
+    destroy_key_mat(session, &out);
+
+    macParams.prfHashMechanism = CKM_SHA256;
+    macParams.ulMacLength = sizeof(mac);
+    macParams.ulServerOrClient = 2;
+    ret = funcList->C_SignInit(session, &tlsMac, base);
+    CHECK_CKR(ret, "TLS MAC sign with a tied master secret");
+    ret = funcList->C_Sign(session, data, sizeof(data), mac, &macLen);
+    CHECK_CKR(ret, "TLS MAC with a tied master secret");
+
+#ifndef NO_SHA256
+    ret = funcList->C_SignInit(session, &hmac, base);
+    CHECK_RV(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
+             "HMAC sign with a tied master secret refused");
+    ret = funcList->C_VerifyInit(session, &hmac, base);
+    CHECK_RV(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
+             "HMAC verify with a tied master secret refused");
+#endif
+
+#ifdef WOLFPKCS11_CONCATENATE
+    strData.pData = NULL;
+    strData.ulLen = 0;
+    ret = funcList->C_DeriveKey(session, &concatData, base, keyTmpl, keyCnt,
+                                &derived);
+    CHECK_RV(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
+             "concatenating a tied master secret with data refused");
+    ret = funcList->C_DeriveKey(session, &concatKey, other, keyTmpl, keyCnt,
+                                &derived);
+    CHECK_RV(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
+             "concatenating a key with a tied master secret refused");
+#endif
+
+#ifdef WOLFPKCS11_HKDF
+    XMEMSET(&hkdfParams, 0, sizeof(hkdfParams));
+    hkdfParams.bExtract = CK_TRUE;
+    hkdfParams.bExpand = CK_TRUE;
+    hkdfParams.prfHashMechanism = CKM_SHA256;
+    hkdfParams.ulSaltType = CKF_HKDF_SALT_NULL;
+    ret = funcList->C_DeriveKey(session, &hkdf, base, hkdfTmpl,
+                                sizeof(hkdfTmpl) / sizeof(*hkdfTmpl),
+                                &derived);
+    CHECK_RV(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
+             "HKDF from a tied master secret refused");
+    hkdfParams.ulSaltType = CKF_HKDF_SALT_KEY;
+    hkdfParams.hSaltKey = base;
+    ret = funcList->C_DeriveKey(session, &hkdf, other, hkdfTmpl,
+                                sizeof(hkdfTmpl) / sizeof(*hkdfTmpl),
+                                &derived);
+    CHECK_RV(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
+             "HKDF salted with a tied master secret refused");
+#endif
+
+cleanup:
+    destroy_key_mat(session, &out);
+    destroy_obj(session, &derived);
+    destroy_obj(session, &other);
+    destroy_obj(session, &base);
+    return result;
+}
+
+#ifndef NO_AES
+/* A derive that fails before returning keys or IVs leaves the master secret
+ * free to be tied to other sizes. */
+static int test_tls_key_mat_failed_derive_unpinned(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_TLS12_KEY_MAT_PARAMS params;
+    CK_SSL3_KEY_MAT_OUT out;
+    CK_KEY_TYPE aesKeyType = CKK_AES;
+    byte master[48];
+    CK_ATTRIBUTE baseTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckTrue,         sizeof(ckTrue)         },
+        { CKA_EXTRACTABLE, &ckFalse,        sizeof(ckFalse)        },
+        { CKA_DERIVE,      &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VALUE,       master,          sizeof(master)         },
+    };
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckTrue,         sizeof(ckTrue)         },
+        { CKA_EXTRACTABLE, &ckFalse,        sizeof(ckFalse)        },
+    };
+    CK_ATTRIBUTE aesTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &aesKeyType,     sizeof(aesKeyType)     },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckTrue,         sizeof(ckTrue)         },
+        { CKA_EXTRACTABLE, &ckFalse,        sizeof(ckFalse)        },
+    };
+    CK_ULONG keyCnt = sizeof(keyTmpl) / sizeof(*keyTmpl);
+    int result = 0;
+
+    XMEMSET(master, 0x5c, sizeof(master));
+    tls_key_mat_init(&params, &out, 0, 0, 0);
+    ret = funcList->C_CreateObject(session, baseTmpl,
+                                   sizeof(baseTmpl) / sizeof(*baseTmpl),
+                                   &base);
+    CHECK_CKR(ret, "create protected TLS master secret");
+
+    /* The 32 byte MAC secrets make AES-256 keys, then the 20 byte client key
+     * fails, after the PRF ran and before any key was added. */
+    tls_key_mat_init(&params, &out, 256, 160, 0);
+    ret = tls_key_mat_derive(session, base, &params, aesTmpl,
+                             sizeof(aesTmpl) / sizeof(*aesTmpl));
+    if (ret == CKR_OK || ret == CKR_KEY_FUNCTION_NOT_PERMITTED ||
+            out.hClientMacSecret != CK_INVALID_HANDLE ||
+            out.hServerMacSecret != CK_INVALID_HANDLE)
+        ret = CKR_GENERAL_ERROR;
+    else
+        ret = CKR_OK;
+    CHECK_CKR(ret, "TLS derive into a bad AES key size fails");
+    destroy_key_mat(session, &out);
+
+    ret = tls_key_mat_derive_sizes(session, base, &params, &out, 256, 32,
+                                   keyTmpl, keyCnt);
+    CHECK_CKR(ret, "TLS derive with other sizes after a failed derive");
+    destroy_key_mat(session, &out);
+
+    tls_key_mat_init(&params, &out, 256, 160, 0);
+    ret = tls_key_mat_derive(session, base, &params, keyTmpl, keyCnt);
+    CHECK_RV(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
+             "TLS derive with the failed sizes refused once tied");
+
+cleanup:
+    destroy_key_mat(session, &out);
+    destroy_obj(session, &base);
+    return result;
+}
+#endif
+
+/* A derive that fails after adding some of its keys keeps the tie, as another
+ * session could use those keys until they were removed. */
+#define TLS_FILL_MAX    64
+static int test_tls_key_mat_partial_derive_tied(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_SESSION_HANDLE fillSession = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE fill[TLS_FILL_MAX];
+    CK_ULONG fillCnt = 0;
+    CK_TLS12_KEY_MAT_PARAMS params;
+    CK_SSL3_KEY_MAT_OUT out;
+    byte master[48];
+    byte fillValue[16];
+    CK_ATTRIBUTE baseTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckTrue,         sizeof(ckTrue)         },
+        { CKA_EXTRACTABLE, &ckFalse,        sizeof(ckFalse)        },
+        { CKA_DERIVE,      &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VALUE,       master,          sizeof(master)         },
+    };
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckTrue,         sizeof(ckTrue)         },
+        { CKA_EXTRACTABLE, &ckFalse,        sizeof(ckFalse)        },
+    };
+    CK_ULONG keyCnt = sizeof(keyTmpl) / sizeof(*keyTmpl);
+    CK_ULONG i;
+    int result = 0;
+
+    (void)session;
+    for (i = 0; i < TLS_FILL_MAX; i++)
+        fill[i] = CK_INVALID_HANDLE;
+    XMEMSET(master, 0x5c, sizeof(master));
+    XMEMSET(fillValue, 0x11, sizeof(fillValue));
+    tls_key_mat_init(&params, &out, 0, 0, 0);
+    /* A session of its own, so its object table holds only these. */
+    ret = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                  NULL, NULL, &fillSession);
+    CHECK_CKR(ret, "open session to fill");
+    ret = funcList->C_CreateObject(fillSession, baseTmpl,
+                                   sizeof(baseTmpl) / sizeof(*baseTmpl),
+                                   &base);
+    CHECK_CKR(ret, "create protected TLS master secret");
+
+    /* Fill the object table and free two places, so a derive of four keys
+     * adds two and fails on the third. */
+    while (fillCnt < TLS_FILL_MAX) {
+        ret = create_secret_base(fillSession, CKK_GENERIC_SECRET, fillValue,
+                                 sizeof(fillValue), &fill[fillCnt]);
+        if (ret != CKR_OK)
+            break;
+        fillCnt++;
+    }
+    if (ret != CKR_DEVICE_MEMORY || fillCnt < 2) {
+        printf("SKIP: session object table not full after %d objects\n",
+               TLS_FILL_MAX);
+        ret = CKR_OK;
+        goto cleanup;
+    }
+    destroy_obj(fillSession, &fill[--fillCnt]);
+    destroy_obj(fillSession, &fill[--fillCnt]);
+
+    ret = tls_key_mat_derive_sizes(fillSession, base, &params, &out, 256, 32,
+                                   keyTmpl, keyCnt);
+    CHECK_RV(ret, CKR_DEVICE_MEMORY,
+             "TLS derive with room for two of its keys fails");
+    while (fillCnt > 0)
+        destroy_obj(fillSession, &fill[--fillCnt]);
+
+    ret = tls_key_mat_derive_sizes(fillSession, base, &params, &out, 128, 128,
+                                   keyTmpl, keyCnt);
+    CHECK_RV(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
+             "TLS derive with other sizes after keys were added refused");
+    ret = tls_key_mat_derive_sizes(fillSession, base, &params, &out, 256, 32,
+                                   keyTmpl, keyCnt);
+    CHECK_CKR(ret, "TLS derive with the sizes of the partial derive");
+
+cleanup:
+    if (fillSession != CK_INVALID_HANDLE) {
+        destroy_key_mat(fillSession, &out);
+        while (fillCnt > 0)
+            destroy_obj(fillSession, &fill[--fillCnt]);
+        destroy_obj(fillSession, &base);
+        funcList->C_CloseSession(fillSession);
+    }
+    return result;
+}
+
+/* A protected master secret made by a TLS master derive is kept to the TLS
+ * mechanisms from the start, as its sizes are only known at its first key and
+ * MAC derive. Until then it can't be copied, as the copy could be tied to
+ * other sizes. */
+static int test_tls_master_tied_from_creation(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE preMasterKey = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE master = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE copy = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    CK_VERSION version = { 3, 3 };
+    CK_TLS12_MASTER_KEY_DERIVE_PARAMS masterParams;
+    CK_MECHANISM masterMech = { CKM_TLS12_MASTER_KEY_DERIVE, &masterParams,
+                                sizeof(masterParams) };
+    CK_TLS12_KEY_MAT_PARAMS params;
+    CK_SSL3_KEY_MAT_OUT out;
+    CK_TLS_MAC_PARAMS macParams;
+    CK_MECHANISM tlsMac = { CKM_TLS_MAC, &macParams, sizeof(macParams) };
+#ifndef NO_SHA256
+    CK_MECHANISM hmac = { CKM_SHA256_HMAC, NULL, 0 };
+#endif
+#ifdef WOLFPKCS11_CONCATENATE
+    CK_KEY_DERIVATION_STRING_DATA strData;
+    CK_MECHANISM concatData = { CKM_CONCATENATE_BASE_AND_DATA, &strData,
+                                sizeof(strData) };
+#endif
+    byte preMaster[48];
+    byte data[32];
+    byte mac[12];
+    CK_ULONG macLen = sizeof(mac);
+    CK_ATTRIBUTE preMasterTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckTrue,         sizeof(ckTrue)         },
+        { CKA_EXTRACTABLE, &ckFalse,        sizeof(ckFalse)        },
+        { CKA_DERIVE,      &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VALUE,       preMaster,       sizeof(preMaster)      },
+    };
+    CK_ATTRIBUTE masterTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckTrue,         sizeof(ckTrue)         },
+        { CKA_EXTRACTABLE, &ckFalse,        sizeof(ckFalse)        },
+        { CKA_DERIVE,      &ckTrue,         sizeof(ckTrue)         },
+        { CKA_SIGN,        &ckTrue,         sizeof(ckTrue)         },
+    };
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckTrue,         sizeof(ckTrue)         },
+        { CKA_EXTRACTABLE, &ckFalse,        sizeof(ckFalse)        },
+    };
+    CK_ULONG keyCnt = sizeof(keyTmpl) / sizeof(*keyTmpl);
+    int result = 0;
+
+    XMEMSET(preMaster, 0x33, sizeof(preMaster));
+    preMaster[0] = 3;
+    preMaster[1] = 3;
+    XMEMSET(data, 0x3c, sizeof(data));
+    tls_key_mat_init(&params, &out, 0, 0, 0);
+    ret = funcList->C_CreateObject(session, preMasterTmpl,
+                                   sizeof(preMasterTmpl) /
+                                   sizeof(*preMasterTmpl), &preMasterKey);
+    CHECK_CKR(ret, "create protected TLS pre-master secret");
+
+    XMEMSET(&masterParams, 0, sizeof(masterParams));
+    masterParams.RandomInfo.pClientRandom = clientRandom;
+    masterParams.RandomInfo.ulClientRandomLen = sizeof(clientRandom);
+    masterParams.RandomInfo.pServerRandom = serverRandom;
+    masterParams.RandomInfo.ulServerRandomLen = sizeof(serverRandom);
+    masterParams.pVersion = &version;
+    masterParams.prfHashMechanism = CKM_SHA256;
+    ret = funcList->C_DeriveKey(session, &masterMech, preMasterKey,
+                                masterTmpl,
+                                sizeof(masterTmpl) / sizeof(*masterTmpl),
+                                &master);
+    CHECK_CKR(ret, "TLS 1.2 master secret derive");
+
+#ifndef NO_SHA256
+    ret = funcList->C_SignInit(session, &hmac, master);
+    CHECK_RV(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
+             "HMAC sign with a new TLS master secret refused");
+#endif
+#ifdef WOLFPKCS11_CONCATENATE
+    strData.pData = NULL;
+    strData.ulLen = 0;
+    ret = funcList->C_DeriveKey(session, &concatData, master, keyTmpl, keyCnt,
+                                &derived);
+    CHECK_RV(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
+             "concatenating a new TLS master secret refused");
+#endif
+    ret = funcList->C_CopyObject(session, master, NULL, 0, &copy);
+    CHECK_RV(ret, CKR_ACTION_PROHIBITED,
+             "copy of a TLS master secret before its key derive refused");
+
+    macParams.prfHashMechanism = CKM_SHA256;
+    macParams.ulMacLength = sizeof(mac);
+    macParams.ulServerOrClient = 1;
+    ret = funcList->C_SignInit(session, &tlsMac, master);
+    CHECK_CKR(ret, "TLS MAC sign with a new TLS master secret");
+    ret = funcList->C_Sign(session, data, sizeof(data), mac, &macLen);
+    CHECK_CKR(ret, "TLS MAC with a new TLS master secret");
+
+    ret = tls_key_mat_derive_sizes(session, master, &params, &out, 256, 32,
+                                   keyTmpl, keyCnt);
+    CHECK_CKR(ret, "TLS key and MAC derive from the new master secret");
+    destroy_key_mat(session, &out);
+
+    ret = funcList->C_CopyObject(session, master, NULL, 0, &copy);
+    CHECK_CKR(ret, "copy of a TLS master secret after its key derive");
+    ret = tls_key_mat_derive_sizes(session, copy, &params, &out, 128, 128,
+                                   keyTmpl, keyCnt);
+    CHECK_RV(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
+             "TLS derive from the copy with other sizes refused");
+
+cleanup:
+    destroy_key_mat(session, &out);
+    destroy_obj(session, &derived);
+    destroy_obj(session, &copy);
+    destroy_obj(session, &master);
+    destroy_obj(session, &preMasterKey);
+    return result;
+}
+
+#ifndef NO_SHA256
+/* Tying a secret to TLS ends the HMAC operations already using it, as its key
+ * would compute the key block, in this session and others. */
+static int test_tls_key_mat_ends_running_ops(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_SESSION_HANDLE other = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE otherBase = CK_INVALID_HANDLE;
+    CK_TLS12_KEY_MAT_PARAMS params;
+    CK_SSL3_KEY_MAT_OUT out;
+    CK_MECHANISM hmac = { CKM_SHA256_HMAC, NULL, 0 };
+    CK_TLS_MAC_PARAMS macParams;
+    CK_MECHANISM tlsMac = { CKM_TLS_MAC, &macParams, sizeof(macParams) };
+    byte master[48];
+    byte data[32];
+    byte mac[32];
+    CK_ULONG macLen = sizeof(mac);
+    CK_ATTRIBUTE baseTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckTrue,         sizeof(ckTrue)         },
+        { CKA_EXTRACTABLE, &ckFalse,        sizeof(ckFalse)        },
+        { CKA_DERIVE,      &ckTrue,         sizeof(ckTrue)         },
+        { CKA_SIGN,        &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VALUE,       master,          sizeof(master)         },
+    };
+    CK_ULONG baseCnt = sizeof(baseTmpl) / sizeof(*baseTmpl);
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckTrue,         sizeof(ckTrue)         },
+        { CKA_EXTRACTABLE, &ckFalse,        sizeof(ckFalse)        },
+    };
+    CK_ULONG keyCnt = sizeof(keyTmpl) / sizeof(*keyTmpl);
+    int result = 0;
+
+    XMEMSET(master, 0x5c, sizeof(master));
+    XMEMSET(data, 0x3c, sizeof(data));
+    tls_key_mat_init(&params, &out, 0, 0, 0);
+    ret = funcList->C_CreateObject(session, baseTmpl, baseCnt, &base);
+    CHECK_CKR(ret, "create protected TLS master secret");
+    ret = funcList->C_CreateObject(session, baseTmpl, baseCnt, &otherBase);
+    CHECK_CKR(ret, "create second protected TLS master secret");
+    ret = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                  NULL, NULL, &other);
+    CHECK_CKR(ret, "open another session");
+
+    ret = funcList->C_SignInit(session, &hmac, base);
+    CHECK_CKR(ret, "HMAC sign before the secret is tied");
+    ret = funcList->C_SignUpdate(session, data, sizeof(data));
+    CHECK_CKR(ret, "HMAC update before the secret is tied");
+    ret = tls_key_mat_derive_sizes(session, base, &params, &out, 256, 32,
+                                   keyTmpl, keyCnt);
+    CHECK_CKR(ret, "TLS derive ties the master secret");
+    destroy_key_mat(session, &out);
+    ret = funcList->C_SignUpdate(session, data, sizeof(data));
+    CHECK_RV(ret, CKR_OPERATION_NOT_INITIALIZED,
+             "HMAC operation ended by the tie");
+    ret = funcList->C_SignFinal(session, mac, &macLen);
+    CHECK_RV(ret, CKR_OPERATION_NOT_INITIALIZED,
+             "HMAC operation stays ended");
+    ret = funcList->C_SignInit(session, &hmac, base);
+    CHECK_RV(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
+             "HMAC sign with the tied secret refused");
+
+    /* Ended when the tie is set, so the other session can start another
+     * operation without first calling the ended one. */
+    ret = funcList->C_SignInit(other, &hmac, otherBase);
+    CHECK_CKR(ret, "HMAC sign in another session before the tie");
+    ret = funcList->C_SignUpdate(other, data, sizeof(data));
+    CHECK_CKR(ret, "HMAC update in another session before the tie");
+    ret = tls_key_mat_derive_sizes(session, otherBase, &params, &out, 256, 32,
+                                   keyTmpl, keyCnt);
+    CHECK_CKR(ret, "TLS derive ties the second master secret");
+    destroy_key_mat(session, &out);
+    macParams.prfHashMechanism = CKM_SHA256;
+    macParams.ulMacLength = 12;
+    macParams.ulServerOrClient = 1;
+    ret = funcList->C_SignInit(other, &tlsMac, otherBase);
+    CHECK_CKR(ret, "TLS MAC sign in the other session after the tie");
+    macLen = 12;
+    ret = funcList->C_Sign(other, data, sizeof(data), mac, &macLen);
+    CHECK_CKR(ret, "TLS MAC in the other session after the tie");
+
+cleanup:
+    if (other != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(other);
+    destroy_key_mat(session, &out);
+    destroy_obj(session, &otherBase);
+    destroy_obj(session, &base);
+    return result;
+}
+#endif
 #endif
 
 /* TLS key expansion requires both client and server random data. */
@@ -1149,6 +1870,8 @@ static int kdf_tls_derive_test(void)
 #ifdef WOLFSSL_HAVE_PRF
     if (test_tls_key_sizes_byte_aligned(session) != 0)
         result = -1;
+    if (test_tls_key_mat_size_bounds(session) != 0)
+        result = -1;
 #endif
 
 #if !defined(NO_AES) && defined(HAVE_AES_CBC)
@@ -1162,6 +1885,22 @@ static int kdf_tls_derive_test(void)
 #if !defined(WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT) && !defined(WOLFPKCS11_NSS)
     if (test_tls_key_mat_weaker_template(session) != 0)
         result = -1;
+    if (test_tls_key_mat_sizes_locked(session) != 0)
+        result = -1;
+    if (test_tls_key_mat_locked_mechanisms(session) != 0)
+        result = -1;
+#ifndef NO_AES
+    if (test_tls_key_mat_failed_derive_unpinned(session) != 0)
+        result = -1;
+#endif
+    if (test_tls_key_mat_partial_derive_tied(session) != 0)
+        result = -1;
+    if (test_tls_master_tied_from_creation(session) != 0)
+        result = -1;
+#ifndef NO_SHA256
+    if (test_tls_key_mat_ends_running_ops(session) != 0)
+        result = -1;
+#endif
 #endif
 #endif
 #ifdef WOLFSSL_HAVE_PRF

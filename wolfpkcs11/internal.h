@@ -748,6 +748,14 @@ WP11_LOCAL int WP11_Tls12_Master_Key_Derive(CK_SSL3_RANDOM_DATA* random,
                                  CK_ULONG ulLabelLen, byte* enc,
                                  CK_ULONG encLen, CK_BBOOL clientFirst,
                                  WP11_Object* key);
+WP11_LOCAL void WP11_Object_SetTls12Only(WP11_Object* object);
+WP11_LOCAL int WP11_Object_IsTls12Only(WP11_Object* object);
+WP11_LOCAL int WP11_Object_StartTls12KeyMat(WP11_Object* object,
+                                            CK_MECHANISM_TYPE prf,
+                                            CK_ULONG macBits,
+                                            CK_ULONG keyBits,
+                                            CK_ULONG ivBits);
+WP11_LOCAL void WP11_Object_EndTls12KeyMat(WP11_Object* object, int used);
 
 WP11_LOCAL int WP11_Nss_Tls12_Master_Key_Derive(CK_BYTE_PTR pSessionHash,
                                      CK_ULONG ulSessionHashLen,
