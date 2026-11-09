@@ -752,6 +752,7 @@ WP11_LOCAL int WP11_Object_LockTls12KeyMat(WP11_Object* object,
                                            CK_MECHANISM_TYPE prf,
                                            CK_ULONG macBits, CK_ULONG keyBits,
                                            CK_ULONG ivBits);
+WP11_LOCAL int WP11_Object_IsTls12KeyMatLocked(WP11_Object* object);
 
 WP11_LOCAL int WP11_Nss_Tls12_Master_Key_Derive(CK_BYTE_PTR pSessionHash,
                                      CK_ULONG ulSessionHashLen,

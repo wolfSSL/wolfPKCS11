@@ -64,6 +64,16 @@
  * block. */
 #define TLS12_KEY_MAT_MIN_IV_KEY_BITS   128
 
+/* A master secret tied to TLS 1.2 key material sizes is kept to the TLS
+ * mechanisms. HMAC or HKDF with it would compute its key block, and
+ * concatenation would make an equal secret without the tie. */
+#if defined(WOLFSSL_HAVE_PRF) && !defined(WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT)
+    #define TLS12_KEY_MAT_LOCKED(obj) \
+        ((obj) != NULL && WP11_Object_IsTls12KeyMatLocked(obj))
+#else
+    #define TLS12_KEY_MAT_LOCKED(obj)   0
+#endif
+
 /* Derive mechanisms that build their output into a secret key object. */
 #if defined(HAVE_ECC) || !defined(NO_DH) || defined(WOLFPKCS11_HKDF) || \
     (!defined(NO_AES) && defined(HAVE_AES_CBC)) || \
@@ -6233,6 +6243,8 @@ static CK_RV wp11_C_SignInit(CK_SESSION_HANDLE hSession,
     ret = CheckOpSupported(obj, CKA_SIGN);
     if (ret != CKR_OK)
         return ret;
+    if (pMechanism->mechanism != CKM_TLS_MAC && TLS12_KEY_MAT_LOCKED(obj))
+        return CKR_KEY_FUNCTION_NOT_PERMITTED;
 
     if (WP11_Session_IsOpCategoryActive(session, WP11_OP_SIGN)) {
         rv = CKR_OPERATION_ACTIVE;
@@ -7443,6 +7455,8 @@ static CK_RV wp11_C_VerifyInit(CK_SESSION_HANDLE hSession,
     ret = CheckOpSupported(obj, CKA_VERIFY);
     if (ret != CKR_OK)
         return ret;
+    if (pMechanism->mechanism != CKM_TLS_MAC && TLS12_KEY_MAT_LOCKED(obj))
+        return CKR_KEY_FUNCTION_NOT_PERMITTED;
 
     if (WP11_Session_IsOpCategoryActive(session, WP11_OP_VERIFY)) {
         rv = CKR_OPERATION_ACTIVE;
@@ -11017,6 +11031,9 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
 #endif
     if (ret != CKR_OK)
         return ret;
+    if (pMechanism->mechanism != CKM_TLS12_KEY_AND_MAC_DERIVE &&
+            TLS12_KEY_MAT_LOCKED(obj))
+        return CKR_KEY_FUNCTION_NOT_PERMITTED;
 
     rv = CheckPrivateLogin(session, pTemplate, ulAttributeCount,
                            CKO_SECRET_KEY);
@@ -11102,6 +11119,8 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                 rv = CheckKeyDecoded(saltObj);
                 if (rv != CKR_OK)
                     return rv;
+                if (TLS12_KEY_MAT_LOCKED(saltObj))
+                    return CKR_KEY_FUNCTION_NOT_PERMITTED;
             }
 
             FindAttributeType(pTemplate, ulAttributeCount, CKA_VALUE_LEN,
@@ -11416,6 +11435,8 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                 if (WP11_Object_GetClass(otherKey) != CKO_SECRET_KEY ||
                         !WP11_KeyType_IsSecret(WP11_Object_GetType(otherKey)))
                     return CKR_KEY_TYPE_INCONSISTENT;
+                if (TLS12_KEY_MAT_LOCKED(otherKey))
+                    return CKR_KEY_FUNCTION_NOT_PERMITTED;
 #ifndef WP11_NSS_PERMISSIVE_KEY_DEFAULTS
                 ret = CheckOpSupported(otherKey, CKA_DERIVE);
                 if (ret != CKR_OK)

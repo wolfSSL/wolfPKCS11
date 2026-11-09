@@ -20362,6 +20362,26 @@ int WP11_Object_LockTls12KeyMat(WP11_Object* object, CK_MECHANISM_TYPE prf,
 
     return ret;
 }
+
+/**
+ * Check whether a secret is tied to TLS 1.2 key material sizes.
+ *
+ * @param  object  [in]  Object object.
+ * @return  1 when the secret is tied to sizes.
+ *          0 otherwise.
+ */
+int WP11_Object_IsTls12KeyMatLocked(WP11_Object* object)
+{
+    int locked;
+
+    if (object->onToken)
+        WP11_Lock_LockRO(object->lock);
+    locked = object->tlsKeyMat.set;
+    if (object->onToken)
+        WP11_Lock_UnlockRO(object->lock);
+
+    return locked;
+}
 #ifdef WOLFPKCS11_NSS
 int WP11_Nss_Tls12_Master_Key_Derive(CK_BYTE_PTR pSessionHash,
                                      CK_ULONG ulSessionHashLen,
