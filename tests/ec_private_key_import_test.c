@@ -102,15 +102,6 @@ static CK_KEY_TYPE ecKeyType = CKK_EC;
 static CK_BBOOL ckTrue = CK_TRUE;
 static CK_BBOOL ckFalse = CK_FALSE;
 
-/* P-384 curve OID, for a template that names the wrong curve. */
-static unsigned char ecc_p384_params[] = {
-    0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x22
-};
-/* id-ecPublicKey, the PKCS #8 algorithm of an EC key. */
-static const unsigned char ec_public_key_oid[] = {
-    0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01
-};
-
 static unsigned char hash[32] = {
     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
     0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
@@ -121,6 +112,15 @@ static unsigned char hash[32] = {
 #ifdef TEST_EC_WRAP
 static CK_OBJECT_CLASS secretKeyClass = CKO_SECRET_KEY;
 static CK_KEY_TYPE aesKeyType = CKK_AES;
+
+/* P-384 curve OID, for a template that names the wrong curve. */
+static unsigned char ecc_p384_params[] = {
+    0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x22
+};
+/* id-ecPublicKey, the PKCS #8 algorithm of an EC key. */
+static const unsigned char ec_public_key_oid[] = {
+    0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01
+};
 
 static unsigned char wrapKeyValue[32] = {
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
