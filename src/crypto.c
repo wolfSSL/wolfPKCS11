@@ -97,10 +97,16 @@
 #define CHECK_KEYCLASS(kc) \
     (kc == CKO_PRIVATE_KEY || kc == CKO_PUBLIC_KEY || kc == CKO_SECRET_KEY)? CKR_OK : CKR_ATTRIBUTE_VALUE_INVALID
 
+#ifdef HAVE_ECC
+    #define CHECK_WRAPPABLE_EC(kc, kt) (kc == CKO_PRIVATE_KEY && kt == CKK_EC)
+#else
+    #define CHECK_WRAPPABLE_EC(kc, kt) 0
+#endif
+
 #define CHECK_WRAPPABLE(kc, kt) \
     ( \
             (kc == CKO_PRIVATE_KEY && kt == CKK_RSA) || \
-            (kc == CKO_PRIVATE_KEY && kt == CKK_EC) || \
+            CHECK_WRAPPABLE_EC(kc, kt) || \
             (kc == CKO_SECRET_KEY && kt == CKK_AES) || \
             (kc == CKO_SECRET_KEY && kt == CKK_GENERIC_SECRET) || \
             (kc == CKO_SECRET_KEY && kt == CKK_HKDF) \

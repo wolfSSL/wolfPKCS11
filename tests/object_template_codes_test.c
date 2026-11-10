@@ -870,10 +870,16 @@ static void test_unwrap(CK_SESSION_HANDLE session)
     rv = funcList->C_SetAttributeValue(session, kek, &kekTmpl[kekCnt - 1], 1);
     CHECK_RV(rv, "set CKA_DERIVE_TEMPLATE", CKR_TEMPLATE_INCONSISTENT);
 
-    /* EC private keys can be unwrapped, but the blob is not a wrapped key. */
     rv = funcList->C_UnwrapKey(session, &cbcPad, kek, blob, 32, ecTmpl,
                                TMPL_CNT(ecTmpl), &key);
+#if defined(HAVE_ECC) && defined(HAVE_AES_CBC)
+    /* EC private keys can be unwrapped, but the blob is not a wrapped key. */
     CHECK_RV(rv, "EC private key unwrap", CKR_WRAPPED_KEY_INVALID);
+#elif defined(HAVE_ECC)
+    CHECK_RV(rv, "EC private key unwrap", CKR_MECHANISM_INVALID);
+#else
+    CHECK_RV(rv, "EC private key unwrap", CKR_TEMPLATE_INCONSISTENT);
+#endif
 #if defined(HAVE_AES_CBC) && !defined(WOLFPKCS11_NSS)
     rv = funcList->C_EncryptInit(session, &cbcPad, kek);
     if (rv == CKR_OK)
