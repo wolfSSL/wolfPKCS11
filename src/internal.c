@@ -14953,14 +14953,21 @@ static int wp11_Ec_PointOnCurve(ecc_key* key)
 /**
  * Set the EC Point, encoded in DER and X9.63, as the public key.
  *
- * @param  key  [in]  EC Key object.
- * @param  der  [in]  DER encoding of OID.
- * @param  len  [in]  Length of DER encoding.
- * @return  BAD_FUNC_ARG when the data is not a DER encoded point on the curve.
+ * With rawOk set, the X9.63 point without the DER OCTET STRING is accepted
+ * too. NSS passes that form for CKA_EC_POINT on private keys. The forms can't
+ * be confused: an uncompressed point is 2 * size + 1 bytes starting with 0x04,
+ * and its DER encoding is always longer. softokn tells them apart the same
+ * way.
+ *
+ * @param  key    [in]  EC Key object.
+ * @param  der    [in]  DER encoding of the point.
+ * @param  len    [in]  Length of DER encoding.
+ * @param  rawOk  [in]  Whether a raw uncompressed point is accepted.
+ * @return  BAD_FUNC_ARG when the data is not an encoded point on the curve.
  *          Other -ve on failure.
  *          0 on success.
  */
-static int EcSetPoint(ecc_key* key, byte* der, int len)
+static int EcSetPoint(ecc_key* key, byte* der, int len, int rawOk)
 {
     int ret = 0;
     int dataLen;
@@ -14968,18 +14975,24 @@ static int EcSetPoint(ecc_key* key, byte* der, int len)
 
     if (len < 3)
         ret = BAD_FUNC_ARG;
-    if (ret == 0 && der[i++] != ASN_OCTET_STRING)
-        ret = BAD_FUNC_ARG;
-    if (ret == 0 && der[i] >= ASN_LONG_LENGTH) {
-        if (der[i] != (ASN_LONG_LENGTH | 1))
-            ret = BAD_FUNC_ARG;
-        else
-            i++;
+    if (ret == 0 && rawOk && key->dp != NULL &&
+            len == 2 * key->dp->size + 1 && der[0] == ECC_POINT_UNCOMP) {
+        /* Raw point: no DER encoding to strip. */
     }
-    if (ret == 0) {
-        dataLen = der[i++];
-        if (dataLen != len - i)
+    else if (ret == 0) {
+        if (der[i++] != ASN_OCTET_STRING)
             ret = BAD_FUNC_ARG;
+        if (ret == 0 && der[i] >= ASN_LONG_LENGTH) {
+            if (der[i] != (ASN_LONG_LENGTH | 1))
+                ret = BAD_FUNC_ARG;
+            else
+                i++;
+        }
+        if (ret == 0) {
+            dataLen = der[i++];
+            if (dataLen != len - i)
+                ret = BAD_FUNC_ARG;
+        }
     }
     if (ret == 0) {
         /* Now stripped of DER encoding. */
@@ -15049,8 +15062,12 @@ int WP11_Object_SetEcKey(WP11_Object* object, unsigned char** data,
         }
         /* Importing the point resets the key, so it goes before the scalar. */
         if (ret == 0 && data[2] != NULL) {
+            /* PKCS#11 defines CKA_EC_POINT only for public keys, as DER. NSS
+             * also sets it on private keys, as the raw point (pk11pk12.c). */
+            int rawOk = (object->objClass == CKO_PRIVATE_KEY);
+
             key->type = ECC_PUBLICKEY;
-            ret = EcSetPoint(key, data[2], (int)len[2]);
+            ret = EcSetPoint(key, data[2], (int)len[2], rawOk);
         }
         if (ret == 0 && data[1] != NULL) {
 #if defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION <= 5)
@@ -16226,34 +16243,39 @@ static int GetEcParams(ecc_key* key, byte* data, CK_ULONG* len)
 }
 
 /**
- * Get the DER encoded EC public point.
+ * Get the EC public point, DER encoded or raw.
  *
  * @param  key   [in]      Elliptic curve key.
- * @param  data  [in]      Buffer to hold DER encoded point.
+ * @param  data  [in]      Buffer to hold the point.
  * @param  len   [in,out]  On in, the length of the buffer in bytes.
  *                         On out, the length of the data in bytes.
+ * @param  raw   [in]      Whether to give the X9.63 point without the DER
+ *                         OCTET STRING.
  * @return  BUFFER_E when buffer is too small for data.
  *          0 on success.
  */
-static int GetEcPoint(ecc_key* key, byte* data, CK_ULONG* len)
+static int GetEcPoint(ecc_key* key, byte* data, CK_ULONG* len, int raw)
 {
     int ret = 0;
     word32 dataLen = key->dp->size * 2 + 1;
     int longLen = dataLen >= ASN_LONG_LENGTH;
+    word32 hdrLen = raw ? 0 : (word32)(2 + longLen);
     int i;
 
     if (data == NULL)
-        *len = dataLen + 2 + longLen;
-    else if (*len < (CK_ULONG)(dataLen + 2 + longLen)) {
+        *len = dataLen + hdrLen;
+    else if (*len < (CK_ULONG)(dataLen + hdrLen)) {
         ret = BUFFER_E;
     }
     else {
-        *len = dataLen + 2 + longLen;
+        *len = dataLen + hdrLen;
         i = 0;
-        data[i++] = ASN_OCTET_STRING;
-        if (longLen)
-            data[i++] = ASN_LONG_LENGTH | 1;
-        data[i++] = dataLen;
+        if (!raw) {
+            data[i++] = ASN_OCTET_STRING;
+            if (longLen)
+                data[i++] = ASN_LONG_LENGTH | 1;
+            data[i++] = dataLen;
+        }
         PRIVATE_KEY_UNLOCK();
         ret = wc_ecc_export_x963(key, data + i, &dataLen);
         PRIVATE_KEY_LOCK();
@@ -16320,8 +16342,17 @@ static int EcObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
                 *len = CK_UNAVAILABLE_INFORMATION;
                 ret = CKR_ATTRIBUTE_SENSITIVE;
             }
-            else
-                ret = GetEcPoint(object->data.ecKey, data, len);
+            else {
+                /* NSS stores the raw point on a private key and reads it
+                 * back raw: PK11_ExportPrivKeyInfo puts it in the PKCS#8
+                 * as is. softokn returns what NSS stored. */
+            #ifdef WOLFPKCS11_NSS
+                int raw = (object->objClass == CKO_PRIVATE_KEY);
+            #else
+                int raw = 0;
+            #endif
+                ret = GetEcPoint(object->data.ecKey, data, len, raw);
+            }
             break;
         case CKA_WRAP_TEMPLATE:
         case CKA_UNWRAP_TEMPLATE:
@@ -19046,6 +19077,130 @@ static int EcGenerateTpmKey(WP11_Object* priv, WP11_Slot* slot, int* genOnTpm)
     return ret;
 }
 #endif /* WOLFPKCS11_TPM */
+
+#if defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION <= 5)
+    #define WP11_EC_PRIV(key)   (&(key)->k)
+#else
+    #define WP11_EC_PRIV(key)   ((key)->k)
+#endif
+
+/**
+ * Internalize an EC private key from DER form, as C_UnwrapKey gets it.
+ *
+ * The DER is a PKCS#8 PrivateKeyInfo or a bare ECPrivateKey (RFC 5915). A
+ * curve already set from the template's CKA_EC_PARAMS must match the key's.
+ * The key gets the checks C_CreateObject makes: the scalar is in [1, n-1] and
+ * a public point in the encoding is on the curve.
+ *
+ * @param  data     [in]      Buffer to parse.
+ * @param  dataLen  [in]      Size of buffer in bytes.
+ * @param  privKey  [in,out]  Private key object.
+ * @return  ECC_CURVE_OID_E when the curve differs from the template's.
+ *          ASN_PARSE_E when the key can't be parsed.
+ *          BAD_FUNC_ARG when the key fails a check.
+ *          MEMORY_E or MP_MEM when dynamic memory allocation fails.
+ *          Other -ve on failure.
+ *          0 on success.
+ */
+int WP11_Ec_ParsePrivKey(byte* data, word32 dataLen, WP11_Object* privKey)
+{
+    int ret;
+    word32 idx = 0;
+    int curveId = ECC_CURVE_INVALID;
+    ecc_key* key = privKey->data.ecKey;
+
+    if (privKey->lock != NULL)
+        WP11_Lock_LockRW(privKey->lock);
+
+    /* The template may have set a curve; the key is parsed into a fresh one. */
+    if (key->dp != NULL)
+        curveId = key->dp->id;
+    wc_ecc_free(key);
+    ret = wc_ecc_init_ex(key, NULL, privKey->devId);
+    if (ret == 0) {
+        ret = wc_EccPrivateKeyDecode(data, &idx, key, dataLen);
+        /* ECC_CURVE_OID_E is kept for a curve that differs from the
+         * template's. */
+        if (ret != 0 && ret != MEMORY_E && ret != MP_MEM)
+            ret = ASN_PARSE_E;
+    }
+    if (ret == 0 && key->dp == NULL)
+        ret = BAD_FUNC_ARG;
+    if (ret == 0 && curveId != ECC_CURVE_INVALID && key->dp->id != curveId)
+        ret = ECC_CURVE_OID_E;
+    if (ret == 0) {
+        ret = EcCheckPrivRange(key, WP11_EC_PRIV(key));
+        if (ret != 0 && ret != MP_MEM)
+            ret = BAD_FUNC_ARG;
+    }
+    if (ret == 0 && key->type == ECC_PRIVATEKEY) {
+        ret = wp11_Ec_PointOnCurve(key);
+        if (wp11_Ec_PointInvalid(ret))
+            ret = BAD_FUNC_ARG;
+    }
+#ifdef WOLFPKCS11_TPM
+    if (ret == 0)
+        ret = WP11_Object_WrapTpmKey(privKey);
+#endif
+    if (ret != 0)
+        wc_ecc_free(key);
+
+    if (privKey->lock != NULL)
+        WP11_Lock_UnlockRW(privKey->lock);
+
+    return ret;
+}
+
+#if defined(HAVE_PKCS8) && defined(HAVE_ECC_KEY_EXPORT)
+/**
+ * Export the EC private key in plain-text PKCS#8, as C_WrapKey wraps it.
+ *
+ * The ECPrivateKey (RFC 5915) includes the public point when the key has one,
+ * and the PKCS#8 algorithm parameters name the curve.
+ *
+ * @param  object  [in]      EC private key object.
+ * @param  output  [out]     Buffer for the encoding, or NULL for its length.
+ * @param  poutsz  [in,out]  In, size of the buffer. Out, encoding length.
+ * @return  BAD_STATE_E when the object holds no private scalar, as for a key
+ *          generated on a TPM.
+ *          Other -ve on failure.
+ *          0 on success.
+ */
+int WP11_Ec_SerializeKeyPTPKC8(WP11_Object* object, byte* output,
+                               word32* poutsz)
+{
+    int ret;
+    ecc_key* key;
+
+    if (object == NULL || poutsz == NULL)
+        return PARAM_E;
+    if (object->type != CKK_EC || object->objClass != CKO_PRIVATE_KEY)
+        return OBJ_TYPE_E;
+
+    key = object->data.ecKey;
+    if (object->lock != NULL)
+        WP11_Lock_LockRO(object->lock);
+    ret = wp11_Object_KeyStateLocked(object);
+    if (ret == 0 && key->type != ECC_PRIVATEKEY &&
+            key->type != ECC_PRIVATEKEY_ONLY) {
+        ret = BAD_STATE_E;
+    }
+    if (ret == 0 && mp_iszero(WP11_EC_PRIV(key)))
+        ret = BAD_STATE_E;
+    if (ret == 0) {
+        if (key->type == ECC_PRIVATEKEY)
+            ret = wc_EccKeyToPKCS8(key, output, poutsz);
+        else
+            ret = wc_EccPrivateKeyToPKCS8(key, output, poutsz);
+        if (ret == LENGTH_ONLY_E || ret > 0)
+            ret = 0;
+    }
+    if (object->lock != NULL)
+        WP11_Lock_UnlockRO(object->lock);
+
+    return ret;
+}
+#endif /* HAVE_PKCS8 && HAVE_ECC_KEY_EXPORT */
 
 /**
  * Generate an EC key pair.

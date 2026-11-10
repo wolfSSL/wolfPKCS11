@@ -692,6 +692,10 @@ WP11_LOCAL int WP11_Rsa_Verify_Recover(CK_MECHANISM_TYPE mechanism, unsigned cha
 WP11_LOCAL int WP11_Ec_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
                             WP11_Slot* slot);
 WP11_LOCAL int WP11_Ec_SigLen(WP11_Object* key);
+WP11_LOCAL int WP11_Ec_ParsePrivKey(byte* data, word32 dataLen,
+                                    WP11_Object* privKey);
+WP11_LOCAL int WP11_Ec_SerializeKeyPTPKC8(WP11_Object* object, byte* output,
+                                          word32* poutsz);
 WP11_LOCAL int WP11_Ec_Sign(unsigned char* hash, word32 hashLen, unsigned char* sig,
                  word32* sigLen, WP11_Object* priv, WP11_Slot* slot);
 WP11_LOCAL int WP11_Ec_Verify(unsigned char* sig, word32 sigLen, unsigned char* hash,
