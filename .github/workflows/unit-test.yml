@@ -72,6 +72,14 @@ jobs:
     uses: ./.github/workflows/build-workflow.yml
     with:
       config: CFLAGS="-DWOLFPKCS11_NO_STORE"
+  no_keystore_debug:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --enable-debug CFLAGS="-DWOLFPKCS11_NO_STORE"
+  no_keystore_nss:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --enable-nss CFLAGS="-DWOLFPKCS11_NO_STORE"
   no_keystore_pqc:
     uses: ./.github/workflows/build-workflow.yml
     with:

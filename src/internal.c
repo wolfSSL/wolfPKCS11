@@ -751,8 +751,7 @@ static wolfSSL_Mutex libraryInitLock
 #endif
 
 #if !defined(WP11_NO_LOCKING) && defined(WOLFSSL_MUTEX_INITIALIZER) && \
-    defined(WOLFSSL_MUTEX_INITIALIZER_CLAUSE) && \
-    !defined(WOLFPKCS11_TPM_STORE) && defined(WOLFPKCS11_NSS)
+    defined(WOLFSSL_MUTEX_INITIALIZER_CLAUSE) && defined(WP11_NSS_STORE_DIR)
 /* Permanently-live leaf mutex serializing the module-global storeDir, which
  * is set at C_Initialize (before globalLock exists), read in
  * wolfPKCS11_Store_Name, and freed in WP11_Library_Final after globalLock is
@@ -1699,7 +1698,7 @@ static word32 wolfPKCS11_Store_Handle(int type, CK_ULONG id1, CK_ULONG id2)
 }
 #else
 
-#ifdef WOLFPKCS11_NSS
+#ifdef WP11_NSS_STORE_DIR
 static char* storeDir = NULL;
 
 int WP11_SetStoreDir(const char *dir, size_t dirSz)
@@ -2062,7 +2061,7 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
     str = XGETENV("WOLFPKCS11_TOKEN_PATH");
 #endif
 
-#ifdef WOLFPKCS11_NSS
+#ifdef WP11_NSS_STORE_DIR
     if (str == NULL) {
 #ifdef WP11_HAVE_STORE_DIR_LOCK
         /* Copy storeDir into a local under storeDirLock so a concurrent
@@ -10270,7 +10269,7 @@ int WP11_Library_Final(void)
             if (ret == 0)
                 ret = storeRet;
         }
-#if !defined (WOLFPKCS11_CUSTOM_STORE) && defined(WOLFPKCS11_NSS)
+#ifdef WP11_NSS_STORE_DIR
         /* Serialize the free against a concurrent WP11_SetStoreDir /
          * wolfPKCS11_Store_Name (F-5868, F-5150). Nested inside libraryInitLock
          * (held here); storeDirLock is a leaf so the fixed order
@@ -11989,6 +11988,7 @@ void WP11_Slot_Logout(WP11_Slot* slot)
 }
 
 #ifdef DEBUG_WOLFPKCS11
+#ifndef WOLFPKCS11_NO_STORE
 /**
  * Test hook: report whether a slot's token object-encryption key is zeroized.
  * Exposed only in debug builds so a white-box test can observe the logout
@@ -12014,6 +12014,7 @@ WP11_API int WP11_Slot_TokenKeyIsZero(CK_SLOT_ID slotId)
 
     return acc == 0 ? 1 : 0;
 }
+#endif
 
 /**
  * Test hook: count the token objects whose encrypted key material is held
