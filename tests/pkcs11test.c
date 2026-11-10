@@ -16364,6 +16364,22 @@ static CK_RV test_concatenate_data(void* args)
     return ret;
 }
 
+/* A cut into a protected key is refused unless the length guard is off. */
+static CK_RV concat_check_cut(CK_SESSION_HANDLE session, CK_RV ret,
+                              CK_OBJECT_HANDLE key, const char* msg)
+{
+#ifdef WOLFPKCS11_NO_DERIVE_LENGTH_GUARD
+    CHECK_CKR(ret, msg);
+    if (ret == CKR_OK)
+        funcList->C_DestroyObject(session, key);
+#else
+    (void)session;
+    (void)key;
+    CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID, msg);
+#endif
+    return ret;
+}
+
 static CK_RV test_concatenate_protection(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -16469,21 +16485,21 @@ static CK_RV test_concatenate_protection(void* args)
     if (ret == CKR_OK) {
         ret = concat_derive_default(session, &dataMech, hG1, sizeof(a) + 1,
                                     &hKey);
-        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
-                       "Concatenate data and one protected base byte");
+        ret = concat_check_cut(session, ret, hKey,
+                               "Concatenate data and one protected base byte");
     }
     if (ret == CKR_OK) {
         dataMech.mechanism = CKM_CONCATENATE_BASE_AND_DATA;
         ret = concat_derive_default(session, &dataMech, hG1, genLen - 1,
                                     &hKey);
-        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
-                       "Concatenate truncated protected base and data");
+        ret = concat_check_cut(session, ret, hKey,
+                               "Concatenate truncated protected base and data");
     }
     if (ret == CKR_OK) {
         hOther = hG1;
         ret = concat_derive_default(session, &mech, hA, sizeof(a) + 1, &hKey);
-        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
-                       "Concatenate plain base and one protected key byte");
+        ret = concat_check_cut(session, ret, hKey,
+                        "Concatenate plain base and one protected key byte");
     }
     if (ret == CKR_OK) {
         ret = concat_derive_default(session, &mech, hA, sizeof(a) - 1, &hKey);
