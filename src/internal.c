@@ -751,8 +751,7 @@ static wolfSSL_Mutex libraryInitLock
 #endif
 
 #if !defined(WP11_NO_LOCKING) && defined(WOLFSSL_MUTEX_INITIALIZER) && \
-    defined(WOLFSSL_MUTEX_INITIALIZER_CLAUSE) && \
-    !defined(WOLFPKCS11_TPM_STORE) && defined(WOLFPKCS11_NSS)
+    defined(WOLFSSL_MUTEX_INITIALIZER_CLAUSE) && defined(WP11_NSS_STORE_DIR)
 /* Permanently-live leaf mutex serializing the module-global storeDir, which
  * is set at C_Initialize (before globalLock exists), read in
  * wolfPKCS11_Store_Name, and freed in WP11_Library_Final after globalLock is
@@ -1699,7 +1698,7 @@ static word32 wolfPKCS11_Store_Handle(int type, CK_ULONG id1, CK_ULONG id2)
 }
 #else
 
-#ifdef WOLFPKCS11_NSS
+#ifdef WP11_NSS_STORE_DIR
 static char* storeDir = NULL;
 
 int WP11_SetStoreDir(const char *dir, size_t dirSz)
@@ -2062,7 +2061,7 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
     str = XGETENV("WOLFPKCS11_TOKEN_PATH");
 #endif
 
-#ifdef WOLFPKCS11_NSS
+#ifdef WP11_NSS_STORE_DIR
     if (str == NULL) {
 #ifdef WP11_HAVE_STORE_DIR_LOCK
         /* Copy storeDir into a local under storeDirLock so a concurrent
@@ -7174,6 +7173,8 @@ static int wp11_Object_Store_MlKemKey(WP11_Object* object, int tokenId,
 }
 #endif /* WOLFPKCS11_MLKEM */
 
+#endif /* !WOLFPKCS11_NO_STORE */
+
 #ifdef WOLFPKCS11_LMS
 /* ===========================================================================
  * LMS/HSS (RFC 8554): verification and public-key import.
@@ -7269,6 +7270,7 @@ static int wp11_HssCheckParamAttrs(LmsKey* key,
     return 0;
 }
 
+#ifndef WOLFPKCS11_NO_STORE
 /* Serialize the public key: keyData holds the raw RFC 8554 HSS public key. */
 static int wp11_Object_Encode_HssKey(WP11_Object* object)
 {
@@ -7348,6 +7350,8 @@ static int wp11_Object_Store_HssKey(WP11_Object* object, int tokenId, int objId)
     return ret;
 }
 
+#endif /* !WOLFPKCS11_NO_STORE */
+
 /* Import an HSS public key from a C_CreateObject template. Following the
  * PKCS#11 v3.3 HSS profile the collected attributes are data[0]=CKA_HSS_LEVELS,
  * data[1]=CKA_HSS_LMS_TYPE, data[2]=CKA_HSS_LMOTS_TYPE (all optional CK_ULONG)
@@ -7395,16 +7399,20 @@ int WP11_Object_SetHssKey(WP11_Object* object, unsigned char** data,
         /* Replace the live key and drop the cached serialization so a later
          * store re-encodes from the new key instead of persisting stale bytes. */
         if (object->data.lmsKey != NULL) {
+        #ifndef WOLFPKCS11_NO_STORE
             if (!object->encoded)
+        #endif
                 wc_LmsKey_Free(object->data.lmsKey);
             XFREE(object->data.lmsKey, NULL, DYNAMIC_TYPE_KEY);
         }
         object->data.lmsKey = newKey;
-        object->encoded = 0;
         newKey = NULL;
+    #ifndef WOLFPKCS11_NO_STORE
+        object->encoded = 0;
         XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         object->keyData = NULL;
         object->keyDataLen = 0;
+    #endif
     }
     if (newKey != NULL) {
         wc_LmsKey_Free(newKey);
@@ -7725,6 +7733,7 @@ static int wp11_XmssImportPub(XmssKey* key, int is_xmssmt, int devId,
     return ret;
 }
 
+#ifndef WOLFPKCS11_NO_STORE
 /* Serialize the public key: keyData holds the raw RFC 8391 public key. */
 static int wp11_Object_Encode_XmssKey(WP11_Object* object)
 {
@@ -7805,6 +7814,8 @@ static int wp11_Object_Store_XmssKey(WP11_Object* object, int tokenId,
     return ret;
 }
 
+#endif /* !WOLFPKCS11_NO_STORE */
+
 /* Import an XMSS/XMSS^MT public key from a C_CreateObject template. data[1] is
  * the raw RFC 8391 public key; data[0] (CKA_PARAMETER_SET, the OID as a
  * CK_ULONG) is optional and, when present, is validated against the key.
@@ -7842,16 +7853,20 @@ int WP11_Object_SetXmssKey(WP11_Object* object, unsigned char** data,
         /* Replace the live key and drop the cached serialization so a later
          * store re-encodes from the new key. */
         if (object->data.xmssKey != NULL) {
+        #ifndef WOLFPKCS11_NO_STORE
             if (!object->encoded)
+        #endif
                 wc_XmssKey_Free(object->data.xmssKey);
             XFREE(object->data.xmssKey, NULL, DYNAMIC_TYPE_KEY);
         }
         object->data.xmssKey = newKey;
-        object->encoded = 0;
         newKey = NULL;
+    #ifndef WOLFPKCS11_NO_STORE
+        object->encoded = 0;
         XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         object->keyData = NULL;
         object->keyDataLen = 0;
+    #endif
     }
     if (newKey != NULL) {
         wc_XmssKey_Free(newKey);
@@ -8017,6 +8032,8 @@ static int XmssObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
     return ret;
 }
 #endif /* WOLFPKCS11_XMSS */
+
+#ifndef WOLFPKCS11_NO_STORE
 
 /**
  * Get the length of the secret in a stored symmetric key record.
@@ -10252,7 +10269,7 @@ int WP11_Library_Final(void)
             if (ret == 0)
                 ret = storeRet;
         }
-#if !defined (WOLFPKCS11_CUSTOM_STORE) && defined(WOLFPKCS11_NSS)
+#ifdef WP11_NSS_STORE_DIR
         /* Serialize the free against a concurrent WP11_SetStoreDir /
          * wolfPKCS11_Store_Name (F-5868, F-5150). Nested inside libraryInitLock
          * (held here); storeDirLock is a leaf so the fixed order
@@ -11971,6 +11988,7 @@ void WP11_Slot_Logout(WP11_Slot* slot)
 }
 
 #ifdef DEBUG_WOLFPKCS11
+#ifndef WOLFPKCS11_NO_STORE
 /**
  * Test hook: report whether a slot's token object-encryption key is zeroized.
  * Exposed only in debug builds so a white-box test can observe the logout
@@ -11996,6 +12014,7 @@ WP11_API int WP11_Slot_TokenKeyIsZero(CK_SLOT_ID slotId)
 
     return acc == 0 ? 1 : 0;
 }
+#endif
 
 /**
  * Test hook: count the token objects whose encrypted key material is held
@@ -14299,7 +14318,9 @@ void WP11_Object_Free(WP11_Object* object)
     #endif
     #ifdef WOLFPKCS11_MLKEM
         if (object->type == CKK_ML_KEM && object->data.mlKemKey != NULL) {
+        #ifndef WOLFPKCS11_NO_STORE
             if (!object->encoded)
+        #endif
                 wc_MlKemKey_Free(object->data.mlKemKey);
             XFREE(object->data.mlKemKey, NULL, DYNAMIC_TYPE_KEY);
             object->data.mlKemKey = NULL;
@@ -14307,7 +14328,9 @@ void WP11_Object_Free(WP11_Object* object)
     #endif
     #ifdef WOLFPKCS11_LMS
         if (object->type == CKK_HSS && object->data.lmsKey != NULL) {
+        #ifndef WOLFPKCS11_NO_STORE
             if (!object->encoded)
+        #endif
                 wc_LmsKey_Free(object->data.lmsKey);
             XFREE(object->data.lmsKey, NULL, DYNAMIC_TYPE_KEY);
             object->data.lmsKey = NULL;
@@ -14316,7 +14339,9 @@ void WP11_Object_Free(WP11_Object* object)
     #ifdef WOLFPKCS11_XMSS
         if ((object->type == CKK_XMSS || object->type == CKK_XMSSMT) &&
                 object->data.xmssKey != NULL) {
+        #ifndef WOLFPKCS11_NO_STORE
             if (!object->encoded)
+        #endif
                 wc_XmssKey_Free(object->data.xmssKey);
             XFREE(object->data.xmssKey, NULL, DYNAMIC_TYPE_KEY);
             object->data.xmssKey = NULL;
@@ -20207,46 +20232,6 @@ int WP11_MlKem_Decapsulate(WP11_Object* priv, unsigned char** sharedSecret,
 }
 #endif /* WOLFPKCS11_MLKEM */
 
-#ifndef NO_AES
-
-#ifdef HAVE_AES_CBC
-/**
- * Return the amount of data not yet processed.
- *
- * @param  session  [in]  Session object.
- * @return  Unprocessed amount in bytes.
- */
-int WP11_AesCbc_PartLen(WP11_Session* session)
-{
-    WP11_CbcParams* cbc = &session->params.cbc;
-
-    return cbc->partialSz;
-}
-
-
-int WP11_AesCbc_DeriveKey(unsigned char* plain, word32 plainSz,
-                        unsigned char* enc, byte* iv,
-                        WP11_Object* key)
-{
-    Aes aes;
-    int ret = 0;
-
-    if (key->type != CKK_AES && key->type != CKK_GENERIC_SECRET)
-        return BAD_FUNC_ARG;
-
-    XMEMSET(&aes, 0, sizeof(aes));
-    ret = wc_AesInit(&aes, NULL, key->devId);
-    if (ret == 0) {
-        ret = wc_AesSetKey(&aes, key->data.symmKey->data, key->data.symmKey->len,
-                iv, AES_ENCRYPTION);
-    }
-    if (ret == 0)
-        ret = wc_AesCbcEncrypt(&aes, enc, plain, plainSz);
-    wc_AesFree(&aes);
-
-    return ret;
-}
-
 #ifdef WOLFSSL_HAVE_PRF
 /* Used for wc_PRF_TLS, less than sha256_mac not possible */
 static enum wc_MACAlgorithm MechToMac(CK_MECHANISM_TYPE mech)
@@ -20495,6 +20480,46 @@ int WP11_Nss_Tls12_Master_Key_Derive(CK_BYTE_PTR pSessionHash,
 }
 #endif
 #endif /* WOLFSSL_HAVE_PRF */
+
+#ifndef NO_AES
+
+#ifdef HAVE_AES_CBC
+/**
+ * Return the amount of data not yet processed.
+ *
+ * @param  session  [in]  Session object.
+ * @return  Unprocessed amount in bytes.
+ */
+int WP11_AesCbc_PartLen(WP11_Session* session)
+{
+    WP11_CbcParams* cbc = &session->params.cbc;
+
+    return cbc->partialSz;
+}
+
+
+int WP11_AesCbc_DeriveKey(unsigned char* plain, word32 plainSz,
+                        unsigned char* enc, byte* iv,
+                        WP11_Object* key)
+{
+    Aes aes;
+    int ret = 0;
+
+    if (key->type != CKK_AES && key->type != CKK_GENERIC_SECRET)
+        return BAD_FUNC_ARG;
+
+    XMEMSET(&aes, 0, sizeof(aes));
+    ret = wc_AesInit(&aes, NULL, key->devId);
+    if (ret == 0) {
+        ret = wc_AesSetKey(&aes, key->data.symmKey->data, key->data.symmKey->len,
+                iv, AES_ENCRYPTION);
+    }
+    if (ret == 0)
+        ret = wc_AesCbcEncrypt(&aes, enc, plain, plainSz);
+    wc_AesFree(&aes);
+
+    return ret;
+}
 
 /**
  * Encrypt plain text with AES-CBC.

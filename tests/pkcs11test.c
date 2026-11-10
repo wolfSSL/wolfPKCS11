@@ -19626,10 +19626,17 @@ static CK_RV test_private_object_access(void* args)
             ret = funcList->C_FindObjects(session, &found, 1, &count);
             CHECK_CKR(ret, "Find Objects - not logged in");
         }
+#if !defined(WOLFPKCS11_NSS) || !defined(WOLFPKCS11_NO_STORE)
         if (ret == CKR_OK && count != 0) {
             ret = -1;
             CHECK_CKR(ret, "Private object should not be found when not logged in");
         }
+#else
+        if (ret == CKR_OK && (count != 1 || found != obj)) {
+            ret = -1;
+            CHECK_CKR(ret, "NSS should find the private object when not logged in");
+        }
+#endif
         if (ret == CKR_OK) {
             ret = funcList->C_FindObjectsFinal(session);
             CHECK_CKR(ret, "Find Objects Final - not logged in");

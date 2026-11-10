@@ -90,6 +90,12 @@ extern "C" {
     #endif
 #endif
 
+/* The NSS configdir is a file store path. */
+#if defined(WOLFPKCS11_NSS) && !defined(WOLFPKCS11_NO_STORE) && \
+    !defined(WOLFPKCS11_CUSTOM_STORE) && !defined(WOLFPKCS11_TPM_STORE)
+    #define WP11_NSS_STORE_DIR
+#endif
+
 #if !defined(WOLFSSL_PUBLIC_MP)
 #error Please build wolfSSL using recommended options: \
 ./configure --enable-aescfb --enable-rsapss --enable-keygen \
@@ -442,7 +448,9 @@ WP11_LOCAL WP11_ObjectCalls* WP11_Slot_ObjectCallEnter(
 WP11_LOCAL void WP11_Slot_ObjectCallLeave(WP11_ObjectCalls* calls);
 WP11_LOCAL void WP11_Slot_DiscardObject(WP11_Slot* slot, WP11_Object* object);
 #ifdef DEBUG_WOLFPKCS11
+#ifndef WOLFPKCS11_NO_STORE
 WP11_API int WP11_Slot_TokenKeyIsZero(CK_SLOT_ID slotId);
+#endif
 WP11_API int WP11_Slot_TokenDecodedObjectCount(CK_SLOT_ID slotId);
 WP11_API void WP11_Session_SetFindHook(void (*hook)(void));
 WP11_API void WP11_Object_SetFindHook(void (*hook)(void));
@@ -612,7 +620,9 @@ WP11_LOCAL int WP11_Object_IsModifiable(WP11_Object* object);
 #ifdef WOLFPKCS11_NSS
 WP11_LOCAL int WP11_Object_SetTrust(WP11_Object* object, unsigned char** data,
                          CK_ULONG* len);
+#ifdef WP11_NSS_STORE_DIR
 int WP11_SetStoreDir(const char *dir, size_t dirSz);
+#endif
 #endif
 
 WP11_LOCAL int WP11_Object_Find(WP11_Session* session, CK_OBJECT_HANDLE objHandle,

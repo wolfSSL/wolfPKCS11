@@ -356,7 +356,7 @@ CK_RV C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList)
     return ret;
 }
 
-#if (defined(WOLFPKCS11_NSS) && !defined(WOLFPKCS11_NO_STORE))
+#ifdef WP11_NSS_STORE_DIR
 /*
  * Parse a string of NSS configuration parameters. For now only the
  * configdir parameter is supported.
@@ -437,7 +437,7 @@ static CK_RV ParseNssConfigString(char *nssArgs,
 
     return CKR_OK;
 }
-#endif /* defined WOLFPKCS11_NSS && !defined WOLFPKCS11_NO_STORE */
+#endif /* WP11_NSS_STORE_DIR */
 
 #if defined (WOLFPKCS11_PKCS11_V3_0)
 
@@ -524,8 +524,9 @@ CK_RV C_GetInterface(CK_UTF8CHAR_PTR pInterfaceName, CK_VERSION_PTR pVersion,
  *
  * @param  pInitArgs  [in]  Optional CK_C_INITIALIZE_ARGS. The mutex callbacks
  *                          must be all set or all NULL and pReserved must be
- *                          NULL. NSS builds read the configdir from
- *                          LibraryParameters. The callbacks are not used.
+ *                          NULL. NSS builds with the file store read the
+ *                          configdir from LibraryParameters. The callbacks
+ *                          are not used.
  * @return  CKR_ARGUMENTS_BAD when pInitArgs is not valid.
  *          CKR_FUNCTION_FAILED when initializing fails.
  *          CKR_OK on success.
@@ -552,7 +553,7 @@ CK_RV C_Initialize(CK_VOID_PTR pInitArgs)
 
         WOLFPKCS11_MSG("Warning: C_Initialize called with arguments, but most "
                        "are ignored.");
-#if (defined(WOLFPKCS11_NSS) && !defined(WOLFPKCS11_NO_STORE))
+#ifdef WP11_NSS_STORE_DIR
         if (args->LibraryParameters != NULL) {
             char* configdir = NULL;
             size_t configdirLen = 0;

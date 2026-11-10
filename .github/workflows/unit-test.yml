@@ -72,11 +72,27 @@ jobs:
     uses: ./.github/workflows/build-workflow.yml
     with:
       config: CFLAGS="-DWOLFPKCS11_NO_STORE"
+  no_keystore_debug:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --enable-debug CFLAGS="-DWOLFPKCS11_NO_STORE"
+  no_keystore_nss:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --enable-nss CFLAGS="-DWOLFPKCS11_NO_STORE"
+  no_keystore_pqc:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --enable-mldsa --enable-mlkem --enable-lms --enable-xmss CFLAGS="-DWOLFPKCS11_NO_STORE"
   no_env:
     uses: ./.github/workflows/build-workflow.yml
     with:
       config: C_EXTRA_FLAGS="-DWOLFPKCS11_NO_ENV" --with-default-token-path=./store/default
       check: mkdir -p store && ./tests/pkcs11test
+  no_aescbc:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --disable-aescbc
   no_aesgcm:
     uses: ./.github/workflows/build-workflow.yml
     with:
@@ -198,5 +214,4 @@ jobs:
     uses: ./.github/workflows/wolfssl-v5.6.6-build-workflow.yml
 
   #TODO: --disable-aes            Enable AES (default: enabled)
-  #TODO: --disable-aescbc         Enable AES-CBC (default: enabled)
   #TODO: --disable-sha256         Enable SHA-256 (default: enabled)
