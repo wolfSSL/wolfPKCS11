@@ -374,6 +374,8 @@ struct WP11_Object {
     unsigned char* email;              /* Certificate email (NSS extension)   */
     int emailLen;                      /* Length of certificate email         */
 #endif
+    unsigned char* attrTmpl;           /* Encoded attribute-array templates   */
+    int attrTmplLen;                   /* Length of encoded templates         */
 
     word32 category;                   /* Category of certificate             */
 #ifdef WOLFSSL_HAVE_PRF
@@ -1675,9 +1677,10 @@ static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
 #ifdef WOLFPKCS11_NSS
                 sizeof(word32) + /* emailLen */
 #endif
+                sizeof(word32) + /* attrTmplLen */
                 FIELD_SIZE(WP11_Object, category) +
                 variableSz /* keyIdLen + labelLen + issuerLen + serialLen +
-                            * subjectLen + emailLen */
+                            * subjectLen + emailLen + attrTmplLen */
             ;
             break;
         case WOLFPKCS11_STORE_DATA:
@@ -4445,6 +4448,7 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
     OBJ_COPY_DATA(src, dest, issuer);
     OBJ_COPY_DATA(src, dest, serial);
     OBJ_COPY_DATA(src, dest, subject);
+    OBJ_COPY_DATA(src, dest, attrTmpl);
 
     dest->category = src->category;
     dest->devId    = src->devId;
@@ -4949,29 +4953,58 @@ static int wp11_DecryptData(byte* out, byte* data, int len, byte* key,
 
 /**
  * Serialize the object attributes that govern use of its key material.
+ * The encoded attribute-array templates are appended when there are any.
  *
  * @param [in]   object  Key object.
- * @param [out]  aad     Buffer of WP11_POLICY_AAD_SZ bytes.
+ * @param [in]   buf     Buffer of WP11_POLICY_AAD_SZ bytes.
+ * @param [out]  aad     Serialized attributes; buf, or allocated when the
+ *                       object has templates.
+ * @param [out]  aadSz   Length of serialized attributes.
+ * @return  0 on success.
+ * @return  MEMORY_E when dynamic memory allocation fails.
  */
-static void wp11_Object_PolicyAad(WP11_Object* object, byte* aad)
+static int wp11_Object_PolicyAad(WP11_Object* object, byte* buf, byte** aad,
+                                 word32* aadSz)
 {
     CK_ULONG vals[3];
     word32 flags = object->opFlag & ~(word32)WP11_FLAG_POLICY_EXCLUDED;
+    byte* out = buf;
     int idx = 0;
     int i;
     int j;
 
+    *aad = buf;
+    *aadSz = WP11_POLICY_AAD_SZ;
+    if (object->attrTmplLen > 0) {
+        out = (byte*)XMALLOC(WP11_POLICY_AAD_SZ + object->attrTmplLen, NULL,
+                             DYNAMIC_TYPE_TMP_BUFFER);
+        if (out == NULL)
+            return MEMORY_E;
+        XMEMCPY(out + WP11_POLICY_AAD_SZ, object->attrTmpl,
+                object->attrTmplLen);
+        *aad = out;
+        *aadSz += (word32)object->attrTmplLen;
+    }
+
     vals[0] = object->objClass;
     vals[1] = object->type;
     vals[2] = object->keyGenMech;
-    aad[idx++] = WP11_POLICY_AAD_VER;
+    out[idx++] = WP11_POLICY_AAD_VER;
     for (i = 0; i < 3; i++) {
         for (j = (int)sizeof(CK_ULONG) - 1; j >= 0; j--)
-            aad[idx++] = (byte)(vals[i] >> (j * 8));
+            out[idx++] = (byte)(vals[i] >> (j * 8));
     }
-    aad[idx++] = (byte)object->local;
+    out[idx++] = (byte)object->local;
     for (j = (int)sizeof(word32) - 1; j >= 0; j--)
-        aad[idx++] = (byte)(flags >> (j * 8));
+        out[idx++] = (byte)(flags >> (j * 8));
+
+    return 0;
+}
+
+static void wp11_Object_PolicyAadFree(byte* aad, byte* buf)
+{
+    if (aad != buf)
+        XFREE(aad, NULL, DYNAMIC_TYPE_TMP_BUFFER);
 }
 
 /**
@@ -4988,15 +5021,19 @@ static int wp11_Object_EncryptKeyData(WP11_Object* object, byte* out,
                                       byte* data, int len)
 {
     int ret;
-    byte aad[WP11_POLICY_AAD_SZ];
+    byte buf[WP11_POLICY_AAD_SZ];
+    byte* aad;
+    word32 aadSz;
 
-    wp11_Object_PolicyAad(object, aad);
-    ret = wp11_EncryptData(out, data, len, object->slot->token.key,
-                           sizeof(object->slot->token.key), object->iv,
-                           sizeof(object->iv), aad, sizeof(aad),
-                           object->devId);
+    ret = wp11_Object_PolicyAad(object, buf, &aad, &aadSz);
+    if (ret == 0) {
+        ret = wp11_EncryptData(out, data, len, object->slot->token.key,
+                               sizeof(object->slot->token.key), object->iv,
+                               sizeof(object->iv), aad, aadSz, object->devId);
+    }
     if (ret == 0)
         object->unbound = 0;
+    wp11_Object_PolicyAadFree(aad, buf);
 
     return ret;
 }
@@ -5018,14 +5055,19 @@ static int wp11_Object_DecryptKeyData(WP11_Object* object, byte* out,
                                       byte* data, int len)
 {
     int ret;
-    byte aad[WP11_POLICY_AAD_SZ];
+    byte buf[WP11_POLICY_AAD_SZ];
+    byte* aad;
+    word32 aadSz;
 
-    wp11_Object_PolicyAad(object, aad);
-    ret = wp11_DecryptData(out, data, len, object->slot->token.key,
-                           sizeof(object->slot->token.key), object->iv,
-                           sizeof(object->iv), aad, sizeof(aad),
-                           object->devId);
-    if (ret == AES_GCM_AUTH_E) {
+    ret = wp11_Object_PolicyAad(object, buf, &aad, &aadSz);
+    if (ret == 0) {
+        ret = wp11_DecryptData(out, data, len, object->slot->token.key,
+                               sizeof(object->slot->token.key), object->iv,
+                               sizeof(object->iv), aad, aadSz, object->devId);
+    }
+    wp11_Object_PolicyAadFree(aad, buf);
+    /* Records stored before policy binding carry no templates. */
+    if (ret == AES_GCM_AUTH_E && object->attrTmplLen == 0) {
         ret = wp11_DecryptData(out, data, len, object->slot->token.key,
                                sizeof(object->slot->token.key), object->iv,
                                sizeof(object->iv), NULL, 0, object->devId);
@@ -8214,11 +8256,15 @@ static int wp11_Object_Store_SymmKey(WP11_Object* object, int tokenId,
     return ret;
 }
 
+/* Object record flag: the attribute-array templates follow the category.
+ * Records before v2.0 stored WP11_FLAG_* bits 0x0001-0x0200 in this word. */
+#define WP11_OBJ_REC_TMPL  0x80000000U
+
 static int wp11_Object_Load_Object(WP11_Object* object, int tokenId, int objId)
 {
     int ret;
     void* storage = NULL;
-    word32 dummy = 0;
+    word32 recFlags = 0;
 
     /* Open access to key object. */
     ret = wp11_storage_open_readonly(WOLFPKCS11_STORE_OBJECT, tokenId, objId,
@@ -8256,8 +8302,8 @@ static int wp11_Object_Load_Object(WP11_Object* object, int tokenId, int objId)
             }
         }
         if (ret == 0) {
-            /* Unused word32. (4) */
-            ret = wp11_storage_read_word32(storage, &dummy);
+            /* Record format flags. (4) */
+            ret = wp11_storage_read_word32(storage, &recFlags);
         }
         if (ret == 0) {
             /* Read the operational flags of the object. (4) */
@@ -8311,6 +8357,18 @@ static int wp11_Object_Load_Object(WP11_Object* object, int tokenId, int objId)
                         ret = 0;
                 }
 #endif
+                if (ret == 0 && (recFlags & WP11_OBJ_REC_TMPL) != 0) {
+                    /* Read the attribute-array templates. (variable) */
+                    ret = wp11_storage_read_alloc_array(storage,
+                        &object->attrTmpl, &object->attrTmplLen);
+                    /* Only a record that ends before the length is older. */
+                    if (ret == BUFFER_E && object->attrTmplLen == 0)
+                        ret = 0;
+                    else if (ret == BUFFER_E) {
+                        object->attrTmplLen = 0;
+                        ret = ASN_PARSE_E;
+                    }
+                }
             }
             else if (ret == BUFFER_E) {
                 /* Older version of the storage format, doesn't have these, so
@@ -8420,13 +8478,13 @@ static int wp11_Object_Store_Object(WP11_Object* object, int tokenId, int objId)
 {
     int ret;
     void* storage = NULL;
-    word32 dummy = 0;
+    word32 recFlags = WP11_OBJ_REC_TMPL;
     int variableSz = (object->keyIdLen + object->labelLen +
         object->issuerLen + object->serialLen + object->subjectLen
 #ifdef WOLFPKCS11_NSS
         + object->emailLen
 #endif
-        );
+        + object->attrTmplLen);
 
     /* Open access to key object. */
     ret = wp11_storage_open(WOLFPKCS11_STORE_OBJECT, tokenId, objId, variableSz,
@@ -8456,8 +8514,8 @@ static int wp11_Object_Store_Object(WP11_Object* object, int tokenId, int objId)
             ret = wp11_storage_write_boolean(storage, object->local);
         }
         if (ret == 0) {
-            /* Unused word32. (4) */
-            ret = wp11_storage_write_word32(storage, dummy);
+            /* Record format flags. (4) */
+            ret = wp11_storage_write_word32(storage, recFlags);
         }
         if (ret == 0) {
             /* Write the operational flags of the object. (4) */
@@ -8510,6 +8568,11 @@ static int wp11_Object_Store_Object(WP11_Object* object, int tokenId, int objId)
                                             object->emailLen);
         }
 #endif
+        if (ret == 0) {
+            /* Write the attribute-array templates. (variable) */
+            ret = wp11_storage_write_array(storage, object->attrTmpl,
+                                           object->attrTmplLen);
+        }
 
         ret = wp11_storage_close_write(storage, ret);
     }
@@ -8899,7 +8962,9 @@ static int wp11_Object_ReKey(WP11_Object* object, byte* oldKey, byte* newKey,
     int ret = 0;
     int len = 0;
     byte* plain = NULL;
-    byte aad[WP11_POLICY_AAD_SZ];
+    byte buf[WP11_POLICY_AAD_SZ];
+    byte* aad = buf;
+    word32 aadSz = 0;
 
     /* Key data is the encrypted payload followed by the AES-GCM tag. */
     if (object->keyDataLen < AES_BLOCK_SIZE)
@@ -8913,14 +8978,14 @@ static int wp11_Object_ReKey(WP11_Object* object, byte* oldKey, byte* newKey,
         if (plain == NULL || reKey->keyData == NULL)
             ret = MEMORY_E;
     }
+    if (ret == 0)
+        ret = wp11_Object_PolicyAad(object, buf, &aad, &aadSz);
     if (ret == 0) {
-        wp11_Object_PolicyAad(object, aad);
         ret = wp11_DecryptData(plain, object->keyData, len, oldKey,
                                sizeof(object->slot->token.key), object->iv,
-                               sizeof(object->iv), aad, sizeof(aad),
-                               object->devId);
-        /* Key data stored before policy binding has no AAD. */
-        if (ret == AES_GCM_AUTH_E) {
+                               sizeof(object->iv), aad, aadSz, object->devId);
+        /* Key data stored before policy binding has no AAD or templates. */
+        if (ret == AES_GCM_AUTH_E && object->attrTmplLen == 0) {
             ret = wp11_DecryptData(plain, object->keyData, len, oldKey,
                                    sizeof(object->slot->token.key),
                                    object->iv, sizeof(object->iv), NULL, 0,
@@ -8936,9 +9001,9 @@ static int wp11_Object_ReKey(WP11_Object* object, byte* oldKey, byte* newKey,
     if (ret == 0) {
         ret = wp11_EncryptData(reKey->keyData, plain, len, newKey,
                                sizeof(object->slot->token.key), reKey->iv,
-                               sizeof(reKey->iv), aad, sizeof(aad),
-                               object->devId);
+                               sizeof(reKey->iv), aad, aadSz, object->devId);
     }
+    wp11_Object_PolicyAadFree(aad, buf);
 
     if (plain != NULL) {
         wc_ForceZero(plain, len + 1);
@@ -14356,6 +14421,8 @@ void WP11_Object_Free(WP11_Object* object)
     if (object->email != NULL)
         XFREE(object->email, NULL, DYNAMIC_TYPE_CERT);
 #endif
+    if (object->attrTmpl != NULL)
+        XFREE(object->attrTmpl, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     if (object->objClass == CKO_CERTIFICATE) {
         XFREE(object->data.cert.data, NULL, DYNAMIC_TYPE_CERT);
         certFreed = 1;
@@ -17805,6 +17872,75 @@ int WP11_Object_MatchAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
             XFREE(ptr, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         }
     }
+
+    return ret;
+}
+
+/**
+ * Set the encoded attribute-array templates of an object.
+ *
+ * @param  object  [in]  Object object.
+ * @param  data    [in]  Encoded templates.
+ * @param  len     [in]  Length of encoded templates.
+ * @return  0 on success.
+ * @return  MEMORY_E when dynamic memory allocation fails.
+ */
+int WP11_Object_SetAttrTemplates(WP11_Object* object, const byte* data,
+                                 int len)
+{
+    int ret = 0;
+    unsigned char* buf = NULL;
+
+    if (len > 0) {
+        buf = (unsigned char*)XMALLOC(len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (buf == NULL)
+            ret = MEMORY_E;
+        else
+            XMEMCPY(buf, data, len);
+    }
+    if (ret == 0) {
+        if (object->lock != NULL)
+            WP11_Lock_LockRW(object->lock);
+        if (object->attrTmpl != NULL)
+            XFREE(object->attrTmpl, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        object->attrTmpl = buf;
+        object->attrTmplLen = (buf != NULL) ? len : 0;
+        if (object->lock != NULL)
+            WP11_Lock_UnlockRW(object->lock);
+    }
+
+    return ret;
+}
+
+/**
+ * Get a copy of the encoded attribute-array templates of an object.
+ *
+ * @param  object  [in]   Object object.
+ * @param  data    [out]  Allocated copy, NULL when the object has none.
+ * @param  len     [out]  Length of encoded templates.
+ * @return  0 on success.
+ * @return  MEMORY_E when dynamic memory allocation fails.
+ */
+int WP11_Object_GetAttrTemplates(WP11_Object* object, byte** data, int* len)
+{
+    int ret = 0;
+
+    *data = NULL;
+    *len = 0;
+    if (object->lock != NULL)
+        WP11_Lock_LockRO(object->lock);
+    if (object->attrTmpl != NULL) {
+        *data = (byte*)XMALLOC(object->attrTmplLen, NULL,
+                               DYNAMIC_TYPE_TMP_BUFFER);
+        if (*data == NULL)
+            ret = MEMORY_E;
+        else {
+            XMEMCPY(*data, object->attrTmpl, object->attrTmplLen);
+            *len = object->attrTmplLen;
+        }
+    }
+    if (object->lock != NULL)
+        WP11_Lock_UnlockRO(object->lock);
 
     return ret;
 }
