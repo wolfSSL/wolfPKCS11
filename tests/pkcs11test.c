@@ -6725,12 +6725,15 @@ static CK_RV test_wrap_key_wrap_with_trusted(void* args)
     CK_ULONG untrustedWrapTmplCnt = sizeof(untrustedWrapTmpl) /
                                     sizeof(*untrustedWrapTmpl);
     /* CKA_TRUSTED may only be set by the SO, so the trusted wrapping key is
-     * provisioned as a public session object under an SO session. */
+     * provisioned as a public session object under an SO session.
+     * CKA_DERIVE lets the token key reach the key state check as an HKDF
+     * salt key below. */
     CK_ATTRIBUTE trustedWrapTmpl[] = {
         { CKA_CLASS,       &secretKeyClass,   sizeof(secretKeyClass)    },
         { CKA_KEY_TYPE,    &aesKeyType,       sizeof(aesKeyType)        },
         { CKA_VALUE,       aes_128_key,       sizeof(aes_128_key)       },
         { CKA_WRAP,        &ckTrue,           sizeof(ckTrue)            },
+        { CKA_DERIVE,      &ckTrue,           sizeof(ckTrue)            },
         { CKA_TRUSTED,     &ckTrusted,        sizeof(CK_BBOOL)          },
         { CKA_TOKEN,       &onToken,          sizeof(onToken)           },
         { CKA_PRIVATE,     &ckFalse,          sizeof(ckFalse)           },

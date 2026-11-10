@@ -80,6 +80,15 @@
     #define DERIVE_TESTS
 #endif
 
+/* An NSS build keeps the historical permissive derive behavior: a key need
+ * not have CKA_DERIVE and a derived key does not inherit protection. */
+#if defined(WOLFPKCS11_NSS) || defined(WP11_NSS_PERMISSIVE_KEY_DEFAULTS)
+    #define EXPECT_DERIVE_UNCHECKED
+#endif
+#if defined(WOLFPKCS11_NSS) || defined(WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT)
+    #define EXPECT_NO_INHERIT
+#endif
+
 static int test_passed = 0;
 static int test_failed = 0;
 
@@ -1737,7 +1746,369 @@ cleanup:
     destroy_obj(session, &base);
     return result;
 }
+
+/* At least the FIPS minimum HMAC key length, as the salt is the HMAC key. */
+#define HKDF_SALT_LEN 16
+
+/* Session generic secret for use as an HKDF salt key. */
+static CK_RV create_salt_key(CK_SESSION_HANDLE session, byte* value,
+                             CK_BBOOL derive, CK_BBOOL sensitive,
+                             CK_BBOOL extractable, CK_BBOOL wrapTrusted,
+                             CK_OBJECT_HANDLE* obj)
+{
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,             &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,          &genericKeyType, sizeof(genericKeyType) },
+        { CKA_PRIVATE,           &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SENSITIVE,         &sensitive,      sizeof(sensitive)      },
+        { CKA_EXTRACTABLE,       &extractable,    sizeof(extractable)    },
+        { CKA_DERIVE,            &derive,         sizeof(derive)         },
+        { CKA_WRAP_WITH_TRUSTED, &wrapTrusted,    sizeof(wrapTrusted)    },
+        { CKA_VALUE,             value,           HKDF_SALT_LEN          },
+    };
+    CK_ULONG cnt = sizeof(tmpl) / sizeof(*tmpl);
+
+    return funcList->C_CreateObject(session, tmpl, cnt, obj);
+}
+
+/* HKDF extract and expand with the salt in a key object. */
+static void hkdf_salt_key_params(CK_HKDF_PARAMS* params, CK_OBJECT_HANDLE salt)
+{
+    XMEMSET(params, 0, sizeof(*params));
+    params->bExtract = CK_TRUE;
+    params->bExpand = CK_TRUE;
+    params->prfHashMechanism = CKM_SHA256;
+    params->ulSaltType = CKF_HKDF_SALT_KEY;
+    params->hSaltKey = salt;
+}
+
+static CK_RV read_bool(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE obj,
+                       CK_ATTRIBUTE_TYPE type, CK_BBOOL* value)
+{
+    CK_ATTRIBUTE tmpl[] = { { type, value, sizeof(*value) } };
+
+    *value = 0xAA;
+    return funcList->C_GetAttributeValue(session, obj, tmpl, 1);
+}
+
+static CK_RV read_value(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE obj,
+                        byte* value, CK_ULONG* len)
+{
+    CK_ATTRIBUTE tmpl[] = { { CKA_VALUE, value, *len } };
+    CK_RV ret;
+
+    ret = funcList->C_GetAttributeValue(session, obj, tmpl, 1);
+    if (ret == CKR_OK)
+        *len = tmpl[0].ulValueLen;
+    return ret;
+}
+
+/* The salt is the HMAC key of HKDF-Extract, so it is a derive input and needs
+ * CKA_DERIVE. It is ignored, and so not checked, when there is no extract. */
+static int test_hkdf_salt_key_needs_derive(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE salt = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    byte saltValue[HKDF_SALT_LEN];
+    CK_HKDF_PARAMS params;
+    CK_MECHANISM mech = { CKM_HKDF_DERIVE, &params, sizeof(params) };
+    int result = 0;
+
+    XMEMSET(saltValue, 0x5a, sizeof(saltValue));
+    ret = create_secret_base(session, CKK_GENERIC_SECRET, baseSecret,
+                             sizeof(baseSecret), &base);
+    CHECK_CKR(ret, "create HKDF base key");
+    ret = create_salt_key(session, saltValue, CK_FALSE, CK_FALSE, CK_TRUE,
+                          CK_FALSE, &salt);
+    CHECK_CKR(ret, "create HKDF salt key without CKA_DERIVE");
+
+    hkdf_salt_key_params(&params, salt);
+    ret = derive_generic(session, &mech, base, 32, &derived);
+#ifndef EXPECT_DERIVE_UNCHECKED
+    CHECK_RV(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
+             "HKDF salt key without CKA_DERIVE rejected");
+#else
+    CHECK_CKR(ret, "NSS: HKDF salt key without CKA_DERIVE accepted");
+    destroy_obj(session, &derived);
 #endif
+
+    mech.mechanism = CKM_HKDF_DATA;
+    ret = derive_generic(session, &mech, base, 32, &derived);
+#ifndef EXPECT_DERIVE_UNCHECKED
+    CHECK_RV(ret, CKR_KEY_FUNCTION_NOT_PERMITTED,
+             "HKDF data salt key without CKA_DERIVE rejected");
+#else
+    CHECK_CKR(ret, "NSS: HKDF data salt key without CKA_DERIVE accepted");
+    destroy_obj(session, &derived);
+#endif
+    mech.mechanism = CKM_HKDF_DERIVE;
+
+    params.bExtract = CK_FALSE;
+    ret = derive_generic(session, &mech, base, 32, &derived);
+    CHECK_CKR(ret, "HKDF expand only ignores the salt key");
+
+cleanup:
+    destroy_obj(session, &derived);
+    destroy_obj(session, &salt);
+    destroy_obj(session, &base);
+    return result;
+}
+
+/* A salt key without protection gives the same key as the salt bytes. */
+static int test_hkdf_unprotected_salt_key(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE salt = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    byte saltValue[HKDF_SALT_LEN];
+    byte keyOut[32];
+    byte dataOut[32];
+    CK_ULONG keyOutLen = sizeof(keyOut);
+    CK_ULONG dataOutLen = sizeof(dataOut);
+    CK_BBOOL state;
+    CK_HKDF_PARAMS params;
+    CK_MECHANISM mech = { CKM_HKDF_DERIVE, &params, sizeof(params) };
+    int result = 0;
+
+    XMEMSET(saltValue, 0x3c, sizeof(saltValue));
+    ret = create_secret_base(session, CKK_GENERIC_SECRET, baseSecret,
+                             sizeof(baseSecret), &base);
+    CHECK_CKR(ret, "create HKDF base key");
+    ret = create_salt_key(session, saltValue, CK_TRUE, CK_FALSE, CK_TRUE,
+                          CK_FALSE, &salt);
+    CHECK_CKR(ret, "create unprotected HKDF salt key");
+
+    hkdf_salt_key_params(&params, salt);
+    ret = derive_generic(session, &mech, base, 32, &derived);
+    CHECK_CKR(ret, "HKDF with unprotected salt key and open template");
+    ret = read_bool(session, derived, CKA_SENSITIVE, &state);
+    CHECK_CKR(ret, "read CKA_SENSITIVE of key from unprotected salt");
+    CHECK_RV(state, CK_FALSE, "key from unprotected salt not sensitive");
+    ret = read_bool(session, derived, CKA_EXTRACTABLE, &state);
+    CHECK_CKR(ret, "read CKA_EXTRACTABLE of key from unprotected salt");
+    CHECK_RV(state, CK_TRUE, "key from unprotected salt extractable");
+    ret = read_bool(session, derived, CKA_WRAP_WITH_TRUSTED, &state);
+    CHECK_CKR(ret, "read CKA_WRAP_WITH_TRUSTED of key from unprotected salt");
+    CHECK_RV(state, CK_FALSE, "key from unprotected salt wraps with any key");
+    ret = read_value(session, derived, keyOut, &keyOutLen);
+    CHECK_CKR(ret, "read key derived with salt key");
+    destroy_obj(session, &derived);
+
+    params.ulSaltType = CKF_HKDF_SALT_DATA;
+    params.pSalt = saltValue;
+    params.ulSaltLen = sizeof(saltValue);
+    params.hSaltKey = CK_INVALID_HANDLE;
+    ret = derive_generic(session, &mech, base, 32, &derived);
+    CHECK_CKR(ret, "HKDF with the same salt as data");
+    ret = read_value(session, derived, dataOut, &dataOutLen);
+    CHECK_CKR(ret, "read key derived with salt data");
+    CHECK_RV(keyOutLen == dataOutLen &&
+             XMEMCMP(keyOut, dataOut, keyOutLen) == 0, 1,
+             "salt key and salt data derive the same key");
+
+cleanup:
+    destroy_obj(session, &derived);
+    destroy_obj(session, &salt);
+    destroy_obj(session, &base);
+    return result;
+}
+
+#ifndef EXPECT_NO_INHERIT
+/* Token-generated secret with CKA_ALWAYS_SENSITIVE and
+ * CKA_NEVER_EXTRACTABLE set. */
+static CK_RV generate_protected_key(CK_SESSION_HANDLE session,
+                                    CK_OBJECT_HANDLE* obj)
+{
+    CK_MECHANISM mech = { CKM_HKDF_KEY_GEN, NULL, 0 };
+    CK_KEY_TYPE hkdfKeyType = CKK_HKDF;
+    CK_ULONG len = 32;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &hkdfKeyType,    sizeof(hkdfKeyType)    },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckTrue,         sizeof(ckTrue)         },
+        { CKA_EXTRACTABLE, &ckFalse,        sizeof(ckFalse)        },
+        { CKA_DERIVE,      &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VALUE_LEN,   &len,            sizeof(len)            },
+    };
+    CK_ULONG cnt = sizeof(tmpl) / sizeof(*tmpl);
+
+    return funcList->C_GenerateKey(session, &mech, tmpl, cnt, obj);
+}
+
+/* Derive a 32 byte generic secret. A NULL protection attribute is left out
+ * of the template so the token chooses it. */
+static CK_RV derive_protected(CK_SESSION_HANDLE session, CK_MECHANISM* mech,
+                              CK_OBJECT_HANDLE base, CK_BBOOL* sensitive,
+                              CK_BBOOL* extractable, CK_OBJECT_HANDLE* derived)
+{
+    CK_ULONG len = 32;
+    CK_ATTRIBUTE tmpl[6] = {
+        { CKA_CLASS,     &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,  &genericKeyType, sizeof(genericKeyType) },
+        { CKA_PRIVATE,   &ckFalse,        sizeof(ckFalse)        },
+        { CKA_VALUE_LEN, &len,            sizeof(len)            },
+    };
+    CK_ULONG cnt = 4;
+
+    if (sensitive != NULL) {
+        tmpl[cnt].type = CKA_SENSITIVE;
+        tmpl[cnt].pValue = sensitive;
+        tmpl[cnt].ulValueLen = sizeof(*sensitive);
+        cnt++;
+    }
+    if (extractable != NULL) {
+        tmpl[cnt].type = CKA_EXTRACTABLE;
+        tmpl[cnt].pValue = extractable;
+        tmpl[cnt].ulValueLen = sizeof(*extractable);
+        cnt++;
+    }
+    *derived = CK_INVALID_HANDLE;
+    return funcList->C_DeriveKey(session, mech, base, tmpl, cnt, derived);
+}
+
+/* The derived key depends on the salt key's value, so it takes the salt key's
+ * protection even when the base key has none. */
+static int test_hkdf_salt_key_protection(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE salt = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    byte saltValue[HKDF_SALT_LEN];
+    byte value[64];
+    CK_ULONG valueLen = sizeof(value);
+    CK_BBOOL state;
+    CK_HKDF_PARAMS params;
+    CK_MECHANISM mech = { CKM_HKDF_DERIVE, &params, sizeof(params) };
+    int result = 0;
+
+    XMEMSET(saltValue, 0xc3, sizeof(saltValue));
+    ret = create_secret_base(session, CKK_GENERIC_SECRET, baseSecret,
+                             sizeof(baseSecret), &base);
+    CHECK_CKR(ret, "create unprotected HKDF base key");
+
+    /* Sensitive salt key. */
+    ret = create_salt_key(session, saltValue, CK_TRUE, CK_TRUE, CK_TRUE,
+                          CK_FALSE, &salt);
+    CHECK_CKR(ret, "create sensitive HKDF salt key");
+    hkdf_salt_key_params(&params, salt);
+    ret = derive_generic(session, &mech, base, 32, &derived);
+    CHECK_RV(ret, CKR_TEMPLATE_INCONSISTENT,
+             "non-sensitive key from sensitive salt key refused");
+    CHECK_RV(derived, CK_INVALID_HANDLE,
+             "no key from refused sensitive salt derive");
+    mech.mechanism = CKM_HKDF_DATA;
+    ret = derive_generic(session, &mech, base, 32, &derived);
+    CHECK_RV(ret, CKR_TEMPLATE_INCONSISTENT,
+             "HKDF data: non-sensitive key from sensitive salt key refused");
+    mech.mechanism = CKM_HKDF_DERIVE;
+    ret = derive_protected(session, &mech, base, NULL, &ckTrue, &derived);
+    CHECK_CKR(ret, "HKDF with sensitive salt key");
+    ret = read_bool(session, derived, CKA_SENSITIVE, &state);
+    CHECK_CKR(ret, "read CKA_SENSITIVE of key from sensitive salt");
+    CHECK_RV(state, CK_TRUE, "key from sensitive salt key is sensitive");
+    ret = read_value(session, derived, value, &valueLen);
+    CHECK_RV(ret, CKR_ATTRIBUTE_SENSITIVE,
+             "value of key from sensitive salt key not readable");
+    destroy_obj(session, &derived);
+    destroy_obj(session, &salt);
+
+    /* Non-extractable salt key. */
+    ret = create_salt_key(session, saltValue, CK_TRUE, CK_FALSE, CK_FALSE,
+                          CK_FALSE, &salt);
+    CHECK_CKR(ret, "create non-extractable HKDF salt key");
+    hkdf_salt_key_params(&params, salt);
+    ret = derive_generic(session, &mech, base, 32, &derived);
+    CHECK_RV(ret, CKR_TEMPLATE_INCONSISTENT,
+             "extractable key from non-extractable salt key refused");
+    CHECK_RV(derived, CK_INVALID_HANDLE,
+             "no key from refused non-extractable salt derive");
+    ret = derive_protected(session, &mech, base, &ckFalse, NULL, &derived);
+    CHECK_CKR(ret, "HKDF with non-extractable salt key");
+    ret = read_bool(session, derived, CKA_EXTRACTABLE, &state);
+    CHECK_CKR(ret, "read CKA_EXTRACTABLE of key from non-extractable salt");
+    CHECK_RV(state, CK_FALSE,
+             "key from non-extractable salt key not extractable");
+    destroy_obj(session, &derived);
+    destroy_obj(session, &salt);
+
+    /* Salt key that may only be wrapped with a trusted key. */
+    ret = create_salt_key(session, saltValue, CK_TRUE, CK_FALSE, CK_TRUE,
+                          CK_TRUE, &salt);
+    CHECK_CKR(ret, "create wrap-with-trusted HKDF salt key");
+    hkdf_salt_key_params(&params, salt);
+    ret = derive_generic(session, &mech, base, 32, &derived);
+    CHECK_CKR(ret, "HKDF with wrap-with-trusted salt key");
+    ret = read_bool(session, derived, CKA_WRAP_WITH_TRUSTED, &state);
+    CHECK_CKR(ret, "read CKA_WRAP_WITH_TRUSTED of key from salt");
+    CHECK_RV(state, CK_TRUE,
+             "key from wrap-with-trusted salt key needs trusted wrap");
+
+cleanup:
+    destroy_obj(session, &derived);
+    destroy_obj(session, &salt);
+    destroy_obj(session, &base);
+    return result;
+}
+
+/* CKA_ALWAYS_SENSITIVE and CKA_NEVER_EXTRACTABLE of the derived key need the
+ * salt key to have them as well as the base key. */
+static int test_hkdf_salt_key_states(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE salt = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    byte saltValue[HKDF_SALT_LEN];
+    CK_BBOOL state;
+    CK_HKDF_PARAMS params;
+    CK_MECHANISM mech = { CKM_HKDF_DERIVE, &params, sizeof(params) };
+    int result = 0;
+
+    XMEMSET(saltValue, 0x99, sizeof(saltValue));
+    ret = generate_protected_key(session, &base);
+    CHECK_CKR(ret, "generate HKDF base key");
+
+    ret = generate_protected_key(session, &salt);
+    CHECK_CKR(ret, "generate HKDF salt key");
+    hkdf_salt_key_params(&params, salt);
+    ret = derive_protected(session, &mech, base, &ckTrue, &ckFalse, &derived);
+    CHECK_CKR(ret, "HKDF with generated salt key");
+    ret = read_bool(session, derived, CKA_ALWAYS_SENSITIVE, &state);
+    CHECK_CKR(ret, "read CKA_ALWAYS_SENSITIVE with generated salt");
+    CHECK_RV(state, CK_TRUE, "generated salt keeps CKA_ALWAYS_SENSITIVE");
+    ret = read_bool(session, derived, CKA_NEVER_EXTRACTABLE, &state);
+    CHECK_CKR(ret, "read CKA_NEVER_EXTRACTABLE with generated salt");
+    CHECK_RV(state, CK_TRUE, "generated salt keeps CKA_NEVER_EXTRACTABLE");
+    destroy_obj(session, &derived);
+    destroy_obj(session, &salt);
+
+    /* An imported key was once outside the token. */
+    ret = create_salt_key(session, saltValue, CK_TRUE, CK_TRUE, CK_FALSE,
+                          CK_FALSE, &salt);
+    CHECK_CKR(ret, "import sensitive non-extractable HKDF salt key");
+    hkdf_salt_key_params(&params, salt);
+    ret = derive_protected(session, &mech, base, &ckTrue, &ckFalse, &derived);
+    CHECK_CKR(ret, "HKDF with imported salt key");
+    ret = read_bool(session, derived, CKA_ALWAYS_SENSITIVE, &state);
+    CHECK_CKR(ret, "read CKA_ALWAYS_SENSITIVE with imported salt");
+    CHECK_RV(state, CK_FALSE, "imported salt clears CKA_ALWAYS_SENSITIVE");
+    ret = read_bool(session, derived, CKA_NEVER_EXTRACTABLE, &state);
+    CHECK_CKR(ret, "read CKA_NEVER_EXTRACTABLE with imported salt");
+    CHECK_RV(state, CK_FALSE, "imported salt clears CKA_NEVER_EXTRACTABLE");
+
+cleanup:
+    destroy_obj(session, &derived);
+    destroy_obj(session, &salt);
+    destroy_obj(session, &base);
+    return result;
+}
+#endif /* !EXPECT_NO_INHERIT */
+#endif /* WOLFPKCS11_HKDF */
 
 static CK_RV pkcs11_init(void)
 {
@@ -1853,6 +2224,16 @@ static int kdf_tls_derive_test(void)
 #ifdef WOLFPKCS11_HKDF
     if (test_hkdf_salt_key_is_secret(session) != 0)
         result = -1;
+    if (test_hkdf_salt_key_needs_derive(session) != 0)
+        result = -1;
+    if (test_hkdf_unprotected_salt_key(session) != 0)
+        result = -1;
+#ifndef EXPECT_NO_INHERIT
+    if (test_hkdf_salt_key_protection(session) != 0)
+        result = -1;
+    if (test_hkdf_salt_key_states(session) != 0)
+        result = -1;
+#endif
 #endif
 #ifdef NSS_EMS_WIDE_TEST
     if (test_session_hash_length_fits_word32(session) != 0)

@@ -11086,6 +11086,7 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
     WP11_Object* obj = NULL;
     CK_ATTRIBUTE* valueAttr = NULL;
 #ifdef WP11_DERIVE_SECRET_KEY
+    /* The CKM_CONCATENATE_BASE_AND_KEY second key or the HKDF salt key. */
     WP11_Object* otherKey = NULL;
     byte* derivedKey = NULL;
     word32 keyLen;
@@ -11274,15 +11275,32 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                 !CK_ULONG_FITS_WORD32(kdfParams->ulInfoLen))
                 return CKR_MECHANISM_PARAM_INVALID;
             if (kdfParams->bExtract &&
-                    kdfParams->ulSaltType == CKF_HKDF_SALT_KEY &&
-                    WP11_Object_Find(session, kdfParams->hSaltKey,
-                                     &saltObj) == 0 &&
-                    WP11_Object_GetClass(saltObj) == CKO_SECRET_KEY) {
-                rv = CheckKeyDecoded(saltObj);
-                if (rv != CKR_OK)
-                    return rv;
+                    kdfParams->ulSaltType == CKF_HKDF_SALT_KEY) {
+                /* The salt key is the HMAC key of HKDF-Extract. */
+                if (WP11_Object_Find(session, kdfParams->hSaltKey,
+                                     &saltObj) != 0 ||
+                        WP11_Object_GetClass(saltObj) != CKO_SECRET_KEY ||
+                        !WP11_KeyType_IsSecret(WP11_Object_GetType(saltObj)))
+                    return CKR_MECHANISM_PARAM_INVALID;
+#ifndef WP11_NSS_PERMISSIVE_KEY_DEFAULTS
+                ret = CheckOpSupported(saltObj, CKA_DERIVE);
+#else
+                ret = (int)CheckKeyDecoded(saltObj);
+#endif
+                if (ret != CKR_OK)
+                    return ret;
                 if (TLS12_ONLY(saltObj))
                     return CKR_KEY_FUNCTION_NOT_PERMITTED;
+#ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
+                /* The derived key depends on the salt key's value, so it
+                 * takes the salt key's protection as it does that of the
+                 * second key of CKM_CONCATENATE_BASE_AND_KEY. */
+                otherKey = saltObj;
+                bLen = sizeof(CK_BBOOL);
+                if (WP11_Object_GetAttr(saltObj, CKA_WRAP_WITH_TRUSTED,
+                        &otherState, &bLen) == 0 && otherState == CK_TRUE)
+                    wrapTrusted = CK_TRUE;
+#endif
             }
 
             FindAttributeType(pTemplate, ulAttributeCount, CKA_VALUE_LEN,
