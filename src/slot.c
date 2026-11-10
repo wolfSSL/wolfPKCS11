@@ -1868,18 +1868,20 @@ CK_RV C_GetOperationState(CK_SESSION_HANDLE hSession,
 }
 
 /**
- * Get the state of the current operation.
- * Only intended for Digest state.
+ * Replace the session's operation with the digest operation held in
+ * serialized state.
  *
  * @param  hSession             [in]  Session handle.
  * @param  pOperationState      [in]  Serialized state.
  * @param  ulOperationStateLen  [in]  Length of serialized state in bytes.
- * @param  hEncryptionKey       [in]  Object handle for encryption key.
- * @param  hAuthenticationKey   [in]  Object handle for authentication key.
+ * @param  hEncryptionKey       [in]  Must be CK_INVALID_HANDLE.
+ * @param  hAuthenticationKey   [in]  Must be CK_INVALID_HANDLE.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pOperationState is NULL.
+ *          CKR_KEY_NOT_NEEDED when a key handle is given.
  *          CKR_SAVED_STATE_INVALID indicating the state is not valid.
+ *          CKR_OK on success.
  */
 CK_RV C_SetOperationState(CK_SESSION_HANDLE hSession,
                           CK_BYTE_PTR pOperationState,

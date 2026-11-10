@@ -12111,7 +12111,7 @@ int WP11_Slot_TokenFailedLogin(WP11_Slot* slot, int login)
  *
  * @param  slot   [in]  Slot object.
  * @param  login  [in]  Security officer or user.
- * @return  Count of consecutive failed logins.
+ * @return  Time of the last failed login plus the lockout timeout.
  */
 time_t WP11_Slot_TokenFailedExpire(WP11_Slot* slot, int login)
 {
@@ -12209,11 +12209,12 @@ int WP11_Session_GetState(WP11_Session* session)
 }
 
 /**
- * Return whether this session is in use.
+ * Return whether this session is read/write. NSS builds treat every session
+ * as read/write.
  *
  * @param  session  [in]  Session object.
- * @return  1 when session is in used.
- *          0 when session is not in used.
+ * @return  1 when session is read/write.
+ *          0 otherwise.
  */
 int WP11_Session_IsRW(WP11_Session* session)
 {
@@ -12230,8 +12231,8 @@ int WP11_Session_IsRW(WP11_Session* session)
  *
  * @param  session  [in]  Session object.
  * @param  init     [in]  Operation to check.
- * @return  1 when session is in used.
- *          0 when session is not in used.
+ * @return  1 when the session's operation is init.
+ *          0 otherwise.
  */
 int WP11_Session_IsOpInitialized(WP11_Session* session, int init)
 {
@@ -12559,8 +12560,8 @@ static int MechanismToHash(int mechanism)
  *
  * @param  session   [in]  Session object.
  * @param  mechanism [in]  Mechanism to check against.
- * @return  1 when session is in used.
- *          0 when session is not in used.
+ * @return  1 when the session's hash operation uses the mechanism's hash.
+ *          0 otherwise.
  */
 int WP11_Session_IsHashOpInitialized(WP11_Session* session, int mechanism)
 {
@@ -15286,7 +15287,7 @@ int WP11_Object_SetMlKemKey(WP11_Object* object, unsigned char** data,
 #endif /* WOLFPKCS11_MLKEM */
 
 /**
- * Set the DH key data into the object.
+ * Set the secret key data into the object.
  *
  * @param  object  [in]  Object object.
  * @param  data    [in]  Array of byte arrays.

@@ -5479,7 +5479,6 @@ CK_RV C_DecryptFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastPart,
 
 /**
  * Initialize digest operation.
- * No digest mechanisms are supported.
  *
  * @param  hSession    [in]  Handle of session.
  * @param  pMechanism  [in]  Type of operation to perform with parameters.
@@ -5489,6 +5488,7 @@ CK_RV C_DecryptFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastPart,
  *          instead cancel the active operation and return CKR_OK.
  *          CKR_MECHANISM_INVALID when the mechanism is not supported with this
  *          type of operation.
+ *          CKR_OK on success.
  */
 CK_RV C_DigestInit(CK_SESSION_HANDLE hSession,
                    CK_MECHANISM_PTR pMechanism)
@@ -5554,12 +5554,11 @@ CK_RV C_DigestInit(CK_SESSION_HANDLE hSession,
 
 /**
  * Digest single-part data.
- * No digest mechanisms are supported.
  *
  * @param  hSession      [in]      Handle of session.
  * @param  pData         [in]      Data to be digested.
  * @param  ulDataLen     [in]      Length of data in bytes.
- * @param  pDigest       [in]      Buffer to hold digest output.
+ * @param  pDigest       [out]     Buffer to hold digest output.
  *                                 NULL indicates length required.
  * @param  pulDigestLen  [in,out]  On in, length of the buffer.
  *                                 On out, length of the digest data in bytes.
@@ -5568,6 +5567,7 @@ CK_RV C_DigestInit(CK_SESSION_HANDLE hSession,
  *          CKR_ARGUMENTS_BAD when pData or pulDigestLen is NULL.
  *          CKR_OPERATION_NOT_INITIALIZED when C_DigestInit has not been
  *          successfully called.
+ *          CKR_OK on success.
  */
 CK_RV C_Digest(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                   CK_ULONG ulDataLen, CK_BYTE_PTR pDigest,
@@ -5621,7 +5621,6 @@ CK_RV C_Digest(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 
 /**
  * Continue digesting multi-part data.
- * No digest mechanisms are supported.
  *
  * @param  hSession      [in]      Handle of session.
  * @param  pPart         [in]      Data to be digested.
@@ -5631,6 +5630,7 @@ CK_RV C_Digest(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
  *          CKR_ARGUMENTS_BAD when pPart is NULL.
  *          CKR_OPERATION_NOT_INITIALIZED when C_DigestInit has not been
  *          successfully called.
+ *          CKR_OK on success.
  */
 CK_RV C_DigestUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
                         CK_ULONG ulPartLen)
@@ -5674,7 +5674,6 @@ CK_RV C_DigestUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
 
 /**
  * Continues digesting multi-part data by digesting the value in the key.
- * No digest mechanisms are supported.
  *
  * @param  hSession  [in]  Handle of session.
  * @param  hKey      [in]  Handle of a key object.
@@ -5683,6 +5682,7 @@ CK_RV C_DigestUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart,
  *          CKR_KEY_HANDLE_INVALID when key object handle is not valid.
  *          CKR_OPERATION_NOT_INITIALIZED when C_DigestInit has not been
  *          successfully called.
+ *          CKR_OK on success.
  */
 static CK_RV wp11_C_DigestKey(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hKey)
 {
@@ -5748,10 +5748,9 @@ CK_RV C_DigestKey(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hKey)
 
 /**
  * Finished digesting multi-part data.
- * No digest mechanisms are supported.
  *
  * @param  hSession      [in]      Handle of session.
- * @param  pDigest       [in]      Buffer to hold digest output.
+ * @param  pDigest       [out]     Buffer to hold digest output.
  *                                 NULL indicates length required.
  * @param  pulDigestLen  [in,out]  On in, length of the buffer.
  *                                 On out, length of the digest data in bytes.
@@ -5760,6 +5759,7 @@ CK_RV C_DigestKey(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hKey)
  *          CKR_ARGUMENTS_BAD when pulDigestLen is NULL.
  *          CKR_OPERATION_NOT_INITIALIZED when C_DigestInit has not been
  *          successfully called.
+ *          CKR_OK on success.
  */
 CK_RV C_DigestFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pDigest,
                        CK_ULONG_PTR pulDigestLen)
@@ -10307,24 +10307,32 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
 }
 
 /**
- * Unwrap a key using a wrap key.
- * Support only RSA private key wrapped by AESCBCPAD mechanism
+ * Unwrap an RSA private key or an AES, HKDF or generic secret key with AES key
+ * wrap (padded or not), AES-CBC-PAD, AES-ECB or RSA PKCS#1 v1.5, as built.
  *
  * @param  hSession          [in]   Handle of session.
  * @param  pMechanism        [in]   Type of operation to perform with
  *                                  parameters.
  * @param  hUnwrappingKey    [in]   Handle of key to unwrap with.
- * @param  pWrappedKey       [in]   Buffer to hold wrapped key.
- * @param  pulWrappedKeyLen  [in]   Length of wrapped key in bytes.
+ * @param  pWrappedKey       [in]   Wrapped key data.
+ * @param  ulWrappedKeyLen   [in]   Length of wrapped key in bytes.
  * @param  pTemplate         [in]   Array of attributes to create key object
  *                                  with.
  * @param  ulAttributeCount  [in]   Count of array elements.
  * @param  phKey             [out]  Handle of unwrapped key.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_ARGUMENTS_BAD when pMechanism or pulWrappedKeyLen is NULL.
+ *          CKR_ARGUMENTS_BAD when pMechanism, pWrappedKey, pTemplate or phKey
+ *          is NULL, or ulWrappedKeyLen is 0.
  *          CKR_UNWRAPPING_KEY_HANDLE_INVALID when the unwrapping key handle is
  *          not valid.
+ *          CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT when the unwrapping key type
+ *          does not match the mechanism.
+ *          CKR_WRAPPED_KEY_LEN_RANGE when the wrapped or unwrapped key length
+ *          is not valid.
+ *          CKR_WRAPPED_KEY_INVALID when the wrapped key does not unwrap to a
+ *          valid key.
+ *          CKR_OK on success.
  *          CKR_TEMPLATE_INCONSISTENT when the template's key type cannot be
  *          unwrapped.
  *          CKR_MECHANISM_INVALID when the mechanism is not supported with this
