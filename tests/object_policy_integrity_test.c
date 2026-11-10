@@ -1235,6 +1235,66 @@ static void test_unbound_store_upgraded(void)
     CHECK_TRUE(res == CHILD_PASS, "rebound key keeps its policy");
     cleanup_test_files();
 }
+
+/* Give the stored object record a wrap template with CKA_LABEL "x". */
+static int add_stored_template(void)
+{
+    static byte data[MAX_FILE_SZ];
+    static const byte ent[] = {
+        0, 0, 0, 0, 0, 0, 0, 0, (byte)CKA_LABEL, 0, 0, 0, 0, 1, 'x'
+    };
+    char path[256];
+    size_t sz = 0;
+
+    if (find_store_file("obj", path, sizeof(path)) != 0 ||
+            read_file(path, data, sizeof(data), &sz) != 0 || sz < 4 ||
+            sz + sizeof(ent) > sizeof(data) || get_be32(data + sz - 4) != 0)
+        return -1;
+    put_be32(data + sz - 4, (word32)sizeof(ent));
+    XMEMCPY(data + sz, ent, sizeof(ent));
+    return write_file(path, data, sz + sizeof(ent));
+}
+
+static int child_key_unusable(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    byte out[BLOCK_SZ];
+    int res = CHILD_FAIL;
+
+    if (pkcs11_load() != CKR_OK)
+        return CHILD_SETUP;
+    rv = init_slot(&slot);
+    if (rv == CKR_OK)
+        rv = open_session(slot, 1, &session);
+    if (rv == CKR_OK)
+        rv = find_key(session, &obj);
+    if (rv == CKR_OBJECT_HANDLE_INVALID ||
+            (rv == CKR_OK && aes_encrypt_block(session, obj, out) != CKR_OK))
+        res = CHILD_PASS;
+    else
+        fprintf(stderr, "  key with templates usable: 0x%lx\n",
+                (unsigned long)rv);
+    (void)funcList->C_Finalize(NULL);
+    return res;
+}
+
+static void test_unbound_store_takes_no_templates(void)
+{
+    CK_RV rv;
+    int res = CHILD_SETUP;
+
+    printf("\n--- store without bound policy takes no templates ---\n");
+    rv = store_objects(create_aes_key);
+    CHECK_RV(rv, "store AES key", CKR_OK);
+    if (rv == CKR_OK && write_unbound_key_record() == 0 &&
+            stored_key_is_unbound() && add_stored_template() == 0)
+        res = run_in_child(child_key_unusable);
+    CHECK_TRUE(res == CHILD_PASS, "unbound key with templates is unusable");
+    cleanup_test_files();
+}
 #endif
 
 static byte otherUserPin[] = "wolfpkcs11-other";
@@ -1888,6 +1948,7 @@ int main(int argc, char* argv[])
 #endif
 #ifdef HAVE_LEGACY_STORE_TEST
     test_unbound_store_upgraded();
+    test_unbound_store_takes_no_templates();
 #endif
 
     return pkcs11_test_summary();

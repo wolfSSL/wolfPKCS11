@@ -282,9 +282,25 @@ versions may need to update templates or error-handling:
   value the key cannot take.
 - `CKM_HKDF_DERIVE` and `CKM_HKDF_DATA` report the largest secret key the
   token can store (512 bytes by default) as their maximum, instead of 16320.
-- `CKA_WRAP_TEMPLATE`, `CKA_UNWRAP_TEMPLATE` and `CKA_DERIVE_TEMPLATE` are not
-  supported. A template that sets one returns `CKR_TEMPLATE_INCONSISTENT`
-  instead of `CKR_ATTRIBUTE_VALUE_INVALID`.
+- `CKA_WRAP_TEMPLATE`, `CKA_UNWRAP_TEMPLATE` and `CKA_DERIVE_TEMPLATE` are
+  supported. They are set when a key is created and are read-only after that.
+  They cannot hold key material such as `CKA_VALUE`, and a key without a
+  template reads back an empty array.
+- `C_WrapKey` refuses a key that does not match the wrapping key's
+  `CKA_WRAP_TEMPLATE` with `CKR_KEY_HANDLE_INVALID`. `C_UnwrapKey` and
+  `C_DeriveKey` add the unwrapping or base key's template to the new key's
+  template and return `CKR_TEMPLATE_INCONSISTENT` when the two conflict. A
+  derive also adds the template of the other key of
+  `CKM_CONCATENATE_BASE_AND_KEY` and of an HKDF salt key. `C_UnwrapKey` also
+  returns `CKR_TEMPLATE_INCONSISTENT` when the unwrapping key's template sets a
+  `CKA_VALUE_LEN` other than the unwrapped key's length, and a TLS 1.2 key and
+  MAC derive when the base key's template sets one longer than the keys.
+- Token objects keep their templates in the store, and a secret or private key
+  fails to load if its templates were changed there, unless the key is held in
+  a TPM. An older wolfPKCS11 cannot use a secret or private key that has
+  templates, and after it has written to the token no version can use that
+  key. An older wolfPKCS11 drops the `CKA_WRAP_TEMPLATE` of a public key when
+  it rewrites the object.
 
 One known gap remains: `CKM_RSA_PKCS_OAEP` does not support an empty message,
 although PKCS#11 and RFC 8017 allow one. wolfCrypt rejects it on both sides, so

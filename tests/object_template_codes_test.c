@@ -854,21 +854,18 @@ static void test_unwrap(CK_SESSION_HANDLE session)
     XMEMSET(iv, 0, sizeof(iv));
     XMEMSET(blob, 0x5A, sizeof(blob));
 
-    create_expect(session, kekTmpl, kekCnt, CKR_TEMPLATE_INCONSISTENT,
-                  "CKA_WRAP_TEMPLATE");
+    create_expect(session, kekTmpl, kekCnt, CKR_OK, "CKA_WRAP_TEMPLATE");
     kekTmpl[kekCnt - 1].type = CKA_UNWRAP_TEMPLATE;
-    create_expect(session, kekTmpl, kekCnt, CKR_TEMPLATE_INCONSISTENT,
-                  "CKA_UNWRAP_TEMPLATE");
+    create_expect(session, kekTmpl, kekCnt, CKR_OK, "CKA_UNWRAP_TEMPLATE");
     kekTmpl[kekCnt - 1].type = CKA_DERIVE_TEMPLATE;
-    create_expect(session, kekTmpl, kekCnt, CKR_TEMPLATE_INCONSISTENT,
-                  "CKA_DERIVE_TEMPLATE");
+    create_expect(session, kekTmpl, kekCnt, CKR_OK, "CKA_DERIVE_TEMPLATE");
 
     rv = funcList->C_CreateObject(session, kekTmpl, kekCnt - 1, &kek);
     CHECK_RV(rv, "create KEK", CKR_OK);
     if (rv != CKR_OK)
         return;
     rv = funcList->C_SetAttributeValue(session, kek, &kekTmpl[kekCnt - 1], 1);
-    CHECK_RV(rv, "set CKA_DERIVE_TEMPLATE", CKR_TEMPLATE_INCONSISTENT);
+    CHECK_RV(rv, "set CKA_DERIVE_TEMPLATE", CKR_ATTRIBUTE_READ_ONLY);
 
     rv = funcList->C_UnwrapKey(session, &cbcPad, kek, blob, 32, ecTmpl,
                                TMPL_CNT(ecTmpl), &key);

@@ -3521,8 +3521,6 @@ static CK_RV test_attribute_types(void* args)
     };
     CK_ULONG boolSetTmplCnt = sizeof(boolSetTmpl) / sizeof(*boolSetTmpl);
     CK_ATTRIBUTE badAttrsTmpl[] = {
-        { CKA_WRAP_TEMPLATE,       NULL,                0                     },
-        { CKA_UNWRAP_TEMPLATE,     NULL,                0                     },
         { CKA_ALLOWED_MECHANISMS,  NULL,                0                     },
     };
     CK_ULONG badAttrsTmplCnt = sizeof(badAttrsTmpl) / sizeof(*badAttrsTmpl);
@@ -4416,11 +4414,11 @@ static CK_RV test_attributes_secret(void* args)
         { CKA_VALUE_LEN,           &valueLen,           sizeof(valueLen)      },
     };
     CK_ULONG tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
-    CK_ATTRIBUTE badTmpl[] = {
+    CK_ATTRIBUTE emptyTmpl[] = {
         { CKA_WRAP_TEMPLATE,       NULL,                0                     },
         { CKA_UNWRAP_TEMPLATE,     NULL,                0                     },
     };
-    CK_ULONG badTmplCnt = sizeof(badTmpl) / sizeof(*badTmpl);
+    CK_ULONG emptyTmplCnt = sizeof(emptyTmpl) / sizeof(*emptyTmpl);
     int i;
 
     ret = get_generic_key(session, keyData, sizeof(keyData), CK_FALSE, &key);
@@ -4430,10 +4428,14 @@ static CK_RV test_attributes_secret(void* args)
                        "Get Attributes Secret Key");
     }
     if (ret == CKR_OK) {
-        for (i = 0; i < (int)badTmplCnt; i++) {
-            ret = funcList->C_GetAttributeValue(session, key, &badTmpl[i], 1);
-            CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_TYPE_INVALID,
-                                           "Get Attributes secret unavailable");
+        for (i = 0; ret == CKR_OK && i < (int)emptyTmplCnt; i++) {
+            ret = funcList->C_GetAttributeValue(session, key, &emptyTmpl[i],
+                                                1);
+            CHECK_CKR(ret, "Get Attributes secret empty template");
+            if (ret == CKR_OK) {
+                CHECK_COND(emptyTmpl[i].ulValueLen == 0, ret,
+                           "Get Attributes secret empty template length");
+            }
         }
     }
     if (ret == CKR_OK) {
@@ -7525,8 +7527,8 @@ static CK_RV test_attributes_rsa(void* args)
     };
     CK_ULONG rsaPubTmplCnt = sizeof(rsaPubTmpl) / sizeof(*rsaPubTmpl);
     CK_ATTRIBUTE rsaPubBadTmpl[] = {
-        { CKA_WRAP_TEMPLATE,       NULL,                0                     },
         { CKA_UNWRAP_TEMPLATE,     NULL,                0                     },
+        { CKA_DERIVE_TEMPLATE,     NULL,                0                     },
     };
     CK_ULONG rsaPubBadTmplCnt = sizeof(rsaPubBadTmpl) / sizeof(*rsaPubBadTmpl);
     CK_ATTRIBUTE rsaPrivTmpl[] = {
@@ -9324,7 +9326,6 @@ static CK_RV test_attributes_ecc(void* args)
     };
     CK_ULONG eccTmplCnt = sizeof(eccTmpl) / sizeof(*eccTmpl);
     CK_ATTRIBUTE eccBadTmpl[] = {
-        { CKA_WRAP_TEMPLATE,       NULL,                0                     },
         { CKA_UNWRAP_TEMPLATE,     NULL,                0                     },
         { CKA_DERIVE_TEMPLATE,     NULL,                0                     },
     };
@@ -10384,7 +10385,6 @@ static CK_RV test_attributes_dh(void* args)
     };
     CK_ULONG dhTmplCnt = sizeof(dhTmpl) / sizeof(*dhTmpl);
     CK_ATTRIBUTE dhBadTmpl[] = {
-        { CKA_WRAP_TEMPLATE,       NULL,                0                     },
         { CKA_UNWRAP_TEMPLATE,     NULL,                0                     },
         { CKA_DERIVE_TEMPLATE,     NULL,                0                     },
     };
