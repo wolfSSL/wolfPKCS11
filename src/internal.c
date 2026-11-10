@@ -20206,46 +20206,6 @@ int WP11_MlKem_Decapsulate(WP11_Object* priv, unsigned char** sharedSecret,
 }
 #endif /* WOLFPKCS11_MLKEM */
 
-#ifndef NO_AES
-
-#ifdef HAVE_AES_CBC
-/**
- * Return the amount of data not yet processed.
- *
- * @param  session  [in]  Session object.
- * @return  Unprocessed amount in bytes.
- */
-int WP11_AesCbc_PartLen(WP11_Session* session)
-{
-    WP11_CbcParams* cbc = &session->params.cbc;
-
-    return cbc->partialSz;
-}
-
-
-int WP11_AesCbc_DeriveKey(unsigned char* plain, word32 plainSz,
-                        unsigned char* enc, byte* iv,
-                        WP11_Object* key)
-{
-    Aes aes;
-    int ret = 0;
-
-    if (key->type != CKK_AES && key->type != CKK_GENERIC_SECRET)
-        return BAD_FUNC_ARG;
-
-    XMEMSET(&aes, 0, sizeof(aes));
-    ret = wc_AesInit(&aes, NULL, key->devId);
-    if (ret == 0) {
-        ret = wc_AesSetKey(&aes, key->data.symmKey->data, key->data.symmKey->len,
-                iv, AES_ENCRYPTION);
-    }
-    if (ret == 0)
-        ret = wc_AesCbcEncrypt(&aes, enc, plain, plainSz);
-    wc_AesFree(&aes);
-
-    return ret;
-}
-
 #ifdef WOLFSSL_HAVE_PRF
 /* Used for wc_PRF_TLS, less than sha256_mac not possible */
 static enum wc_MACAlgorithm MechToMac(CK_MECHANISM_TYPE mech)
@@ -20494,6 +20454,46 @@ int WP11_Nss_Tls12_Master_Key_Derive(CK_BYTE_PTR pSessionHash,
 }
 #endif
 #endif /* WOLFSSL_HAVE_PRF */
+
+#ifndef NO_AES
+
+#ifdef HAVE_AES_CBC
+/**
+ * Return the amount of data not yet processed.
+ *
+ * @param  session  [in]  Session object.
+ * @return  Unprocessed amount in bytes.
+ */
+int WP11_AesCbc_PartLen(WP11_Session* session)
+{
+    WP11_CbcParams* cbc = &session->params.cbc;
+
+    return cbc->partialSz;
+}
+
+
+int WP11_AesCbc_DeriveKey(unsigned char* plain, word32 plainSz,
+                        unsigned char* enc, byte* iv,
+                        WP11_Object* key)
+{
+    Aes aes;
+    int ret = 0;
+
+    if (key->type != CKK_AES && key->type != CKK_GENERIC_SECRET)
+        return BAD_FUNC_ARG;
+
+    XMEMSET(&aes, 0, sizeof(aes));
+    ret = wc_AesInit(&aes, NULL, key->devId);
+    if (ret == 0) {
+        ret = wc_AesSetKey(&aes, key->data.symmKey->data, key->data.symmKey->len,
+                iv, AES_ENCRYPTION);
+    }
+    if (ret == 0)
+        ret = wc_AesCbcEncrypt(&aes, enc, plain, plainSz);
+    wc_AesFree(&aes);
+
+    return ret;
+}
 
 /**
  * Encrypt plain text with AES-CBC.
