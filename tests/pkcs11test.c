@@ -767,7 +767,7 @@ static CK_RV test_token(void* args)
             if (ret == CKR_OK) {
                 ret = funcList->C_SetPIN(session, userPin, userPinLen, userPin,
                                                                     userPinLen);
-                CHECK_CKR_FAIL(ret, CKR_USER_PIN_NOT_INITIALIZED,
+                CHECK_CKR_FAIL(ret, CKR_PIN_INCORRECT,
                                                         "Set User PIN not set");
             }
             funcList->C_CloseSession(session);

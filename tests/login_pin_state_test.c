@@ -510,7 +510,7 @@ static void set_pin_lockout(CK_USER_TYPE type, const char* pin, int maxFails,
     rv = funcList->C_SetPIN(session, (CK_UTF8CHAR_PTR)pin,
                             (CK_ULONG)XSTRLEN(pin), (CK_UTF8CHAR_PTR)newPin,
                             (CK_ULONG)XSTRLEN(newPin));
-    CHECK_TRUE(rv == CKR_PIN_INCORRECT || rv == CKR_PIN_LOCKED, what);
+    CHECK_RV(rv, what, CKR_PIN_LOCKED);
     if (type == CKU_SO)
         funcList->C_Logout(session);
     funcList->C_CloseSession(session);
@@ -551,13 +551,14 @@ static void* wrong_login(void* arg)
     return NULL;
 }
 
-/* Run simultaneous wrong-PIN logins, one per session. Returns 1 when every
- * one of them was rejected as an incorrect PIN. */
+/* Run simultaneous wrong-PIN logins with one attempt left. Returns 1 when one
+ * was found incorrect and the rest were refused as locked or busy. */
 static int concurrent_wrong_logins(CK_SLOT_ID slot, CK_USER_TYPE type)
 {
     int i;
     int started = 0;
     int rejected = 1;
+    int incorrect = 0;
     pthread_t threads[LOCKOUT_THREADS];
     login_ctx ctx[LOCKOUT_THREADS];
 
@@ -581,9 +582,14 @@ static int concurrent_wrong_logins(CK_SLOT_ID slot, CK_USER_TYPE type)
     for (i = 0; i < started; i++) {
         pthread_join(threads[i], NULL);
         funcList->C_CloseSession(ctx[i].session);
-        if (ctx[i].rv != CKR_PIN_INCORRECT)
+        if (ctx[i].rv == CKR_PIN_INCORRECT)
+            incorrect++;
+        else if (ctx[i].rv != CKR_PIN_LOCKED &&
+                 ctx[i].rv != CKR_FUNCTION_FAILED)
             rejected = 0;
     }
+    if (incorrect != 1)
+        rejected = 0;
     CHECK_TRUE(started == LOCKOUT_THREADS, "start concurrent logins");
     return rejected;
 }
@@ -617,7 +623,7 @@ static void lockout_after_concurrent_failures(CK_USER_TYPE type,
                 rejected = 0;
             final = funcList->C_Login(session, type, (CK_UTF8CHAR_PTR)pin,
                                       (CK_ULONG)XSTRLEN(pin));
-            if (final != CKR_PIN_INCORRECT && final != CKR_PIN_LOCKED)
+            if (final != CKR_PIN_LOCKED)
                 locked = 0;
             if (final == CKR_OK)
                 funcList->C_Logout(session);
@@ -1258,7 +1264,7 @@ static void guess_in_flight_caps_attempts(CK_USER_TYPE type, const char* pin,
                                    (CK_ULONG)XSTRLEN(wrongPin));
         }
         CHECK_RV(rv, "second guess refused while one is in flight",
-                 CKR_PIN_INCORRECT);
+                 CKR_FUNCTION_FAILED);
         CHECK_TRUE(pin_hook_calls() == 1, what);
         pthread_mutex_lock(&pinMutex);
         pinHookRelease = 1;
@@ -1269,8 +1275,8 @@ static void guess_in_flight_caps_attempts(CK_USER_TYPE type, const char* pin,
         CHECK_RV(ctx.rv, "guess in flight rejected", CKR_PIN_INCORRECT);
         rv = funcList->C_Login(other, type, (CK_UTF8CHAR_PTR)pin,
                                (CK_ULONG)XSTRLEN(pin));
-        CHECK_TRUE(rv == CKR_PIN_INCORRECT || rv == CKR_PIN_LOCKED,
-                   "PIN locked once the guess in flight fails");
+        CHECK_RV(rv, "PIN locked once the guess in flight fails",
+                 CKR_PIN_LOCKED);
         if (rv == CKR_OK)
             funcList->C_Logout(other);
     }

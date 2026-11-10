@@ -10761,7 +10761,8 @@ int WP11_Slot_TokenReset(WP11_Slot* slot, char* pin, int pinLen, char* label)
  * @param  timeout   [in]      Lockout duration.
  * @param  max       [in]      Failures allowed before lockout.
  * @param  now       [in]      Current time.
- * @return  PIN_INVALID_E when locked out or no attempt is available.
+ * @return  PIN_LOCKED_E when locked out.
+ *          PIN_BUSY_E when the checks in progress use up the attempts left.
  *          0 when the check may proceed.
  */
 static int wp11_PinCheckReserve(int* failed, int* inFlight, time_t last,
@@ -10773,10 +10774,10 @@ static int wp11_PinCheckReserve(int* failed, int* inFlight, time_t last,
         if (last + timeout < now)
             *failed = 0;
         else
-            ret = PIN_INVALID_E;
+            ret = PIN_LOCKED_E;
     }
     if (ret == 0 && *failed + *inFlight >= max)
-        ret = PIN_INVALID_E;
+        ret = PIN_BUSY_E;
     if (ret == 0)
         (*inFlight)++;
 
@@ -10915,7 +10916,9 @@ int WP11_Slot_CheckSOPin(WP11_Slot* slot, char* pin, int pinLen)
  * @param  pin     [in]  PIN to check.
  * @param  pinLen  [in]  Length of PIN.
  * @return  PIN_NOT_SET_E when the token is not initialized.
- *          PIN_INVALID_E when the PIN is not correct or the SO is locked out.
+ *          PIN_INVALID_E when the PIN is not correct.
+ *          PIN_LOCKED_E when the SO is locked out.
+ *          PIN_BUSY_E when the checks in progress use up the attempts left.
  *          Other -ve value when hashing PIN fails.
  *          0 when PIN is correct.
  */
@@ -11015,6 +11018,8 @@ int WP11_Slot_CheckUserPin(WP11_Slot* slot, char* pin, int pinLen)
  * @return  READ_ONLY_E when there is a read-only session open.
  *          PIN_NOT_SET_E when the token is not initialized.
  *          PIN_INVALID_E when the PIN is not correct.
+ *          PIN_LOCKED_E when the SO is locked out.
+ *          PIN_BUSY_E when the checks in progress use up the attempts left.
  *          Other -ve value when hashing PIN fails.
  *          0 on success.
  */
@@ -11364,6 +11369,8 @@ void WP11_Slot_ObjectCallLeave(WP11_ObjectCalls* calls)
  *          LOGGED_IN_ANOTHER_E when the SO is logged in.
  *          PIN_NOT_SET_E when the token is not initialized.
  *          PIN_INVALID_E when the PIN is not correct or changed during login.
+ *          PIN_LOCKED_E when the user is locked out.
+ *          PIN_BUSY_E when the checks in progress use up the attempts left.
  *          MEMORY_E when dynamic memory allocation fails.
  *          Other -ve value when hashing PIN fails.
  *          0 on success.
@@ -11685,8 +11692,11 @@ static void wp11_Token_RestoreUserPinState(WP11_Token* token,
  * memory and a store of the previous state is attempted.
  *
  * @return  PIN_NOT_SET_E when the old PIN is supplied and no user PIN is set.
- *          PIN_INVALID_E when the old PIN is supplied and is incorrect or the
- *          user is locked out.
+ *          PIN_INVALID_E when the old PIN is supplied and is incorrect.
+ *          PIN_LOCKED_E when the old PIN is supplied and the user is locked
+ *          out.
+ *          PIN_BUSY_E when the old PIN is supplied and the checks in progress
+ *          use up the attempts left.
  *          BAD_STATE_E when the user PIN changed during the operation.
  *          MEMORY_E when dynamic memory allocation fails.
  *          -ve value when generating random, hashing PIN, re-encrypting or
@@ -11895,8 +11905,9 @@ int WP11_Slot_SetUserPin(WP11_Slot* slot, char* pin, int pinLen)
  * @param  pin        [in]  PIN to set.
  * @param  pinLen     [in]  Length of PIN.
  * @return  PIN_NOT_SET_E when no user PIN is set.
- *          PIN_INVALID_E when the current PIN is incorrect or the user is
- *          locked out.
+ *          PIN_INVALID_E when the current PIN is incorrect.
+ *          PIN_LOCKED_E when the user is locked out.
+ *          PIN_BUSY_E when the checks in progress use up the attempts left.
  *          BAD_STATE_E when the user PIN changed during the operation.
  *          -ve value when generating random, hashing PIN or re-encrypting
  *          fails.

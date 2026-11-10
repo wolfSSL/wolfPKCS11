@@ -1335,8 +1335,10 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
  *          CKR_ARGUMENTS_BAD when pPin or pLabel is NULL.
  *          CKR_PIN_LEN_RANGE when length of PIN is not valid.
  *          CKR_PIN_INCORRECT when PIN does not match initialized PIN.
+ *          CKR_PIN_LOCKED when the SO PIN is locked out.
  *          CKR_SESSION_EXISTS when a session is open on the token.
- *          CKR_FUNCTION_FAILED when resetting token fails.
+ *          CKR_FUNCTION_FAILED when resetting token fails or other PIN checks
+ *          in progress use up the attempts left.
  *          CKR_OK on success.
  */
 CK_RV C_InitToken(CK_SLOT_ID slotID, CK_UTF8CHAR_PTR pPin,
@@ -1393,7 +1395,12 @@ CK_RV C_InitToken(CK_SLOT_ID slotID, CK_UTF8CHAR_PTR pPin,
              * earlier so the SOLogin read-only-session check is not wanted. */
             ret = WP11_Slot_CheckSOPinLockout(slot, (char*)pPin, (int)ulPinLen);
             if (ret != 0) {
-                rv = CKR_PIN_INCORRECT;
+                if (ret == PIN_LOCKED_E)
+                    rv = CKR_PIN_LOCKED;
+                else if (ret == PIN_BUSY_E)
+                    rv = CKR_FUNCTION_FAILED;
+                else
+                    rv = CKR_PIN_INCORRECT;
                 WOLFPKCS11_LEAVE("C_InitToken", rv);
                 return rv;
             }
@@ -1492,12 +1499,13 @@ CK_RV C_InitPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pPin,
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pOldPin or pNewPin is NULL.
- *          CKR_PIN_INCORRECT when length of old PIN is not valid or old PIN
- *          does not verify.
+ *          CKR_PIN_INCORRECT when length of old PIN is not valid, old PIN
+ *          does not verify or no previous PIN is set.
+ *          CKR_PIN_LOCKED when the PIN is locked out.
  *          CKR_PIN_LEN_RANGE when length of new PIN is not valid.
  *          CKR_SESSION_READ_ONLY when session not read/write.
- *          CKR_USER_PIN_NOT_INITIALIZED when no previous PIN set for user.
- *          CKR_FUNCTION_FAILED when setting user PIN fails.
+ *          CKR_FUNCTION_FAILED when setting user PIN fails or other PIN checks
+ *          in progress use up the attempts left.
  *          CKR_OK on success.
  */
 CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
@@ -1555,8 +1563,13 @@ CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
     slot = WP11_Session_GetSlot(session);
     if (state == WP11_APP_STATE_RW_SO) {
         ret = WP11_Slot_CheckSOPinLockout(slot, (char*)pOldPin, (int)ulOldLen);
-        if (ret == PIN_NOT_SET_E) {
-            rv = CKR_USER_PIN_NOT_INITIALIZED;
+        if (ret == PIN_LOCKED_E) {
+            rv = CKR_PIN_LOCKED;
+            WOLFPKCS11_LEAVE("C_SetPIN", rv);
+            return rv;
+        }
+        if (ret == PIN_BUSY_E) {
+            rv = CKR_FUNCTION_FAILED;
             WOLFPKCS11_LEAVE("C_SetPIN", rv);
             return rv;
         }
@@ -1576,12 +1589,12 @@ CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
     else {
         ret = WP11_Slot_ChangeUserPin(slot, (char*)pOldPin, (int)ulOldLen,
                                       (char*)pNewPin, (int)ulNewLen);
-        if (ret == PIN_NOT_SET_E) {
-            rv = CKR_USER_PIN_NOT_INITIALIZED;
+        if (ret == PIN_LOCKED_E) {
+            rv = CKR_PIN_LOCKED;
             WOLFPKCS11_LEAVE("C_SetPIN", rv);
             return rv;
         }
-        if (ret == PIN_INVALID_E) {
+        if (ret == PIN_NOT_SET_E || ret == PIN_INVALID_E) {
             rv = CKR_PIN_INCORRECT;
             WOLFPKCS11_LEAVE("C_SetPIN", rv);
             return rv;
@@ -1948,6 +1961,9 @@ CK_RV C_SetOperationState(CK_SESSION_HANDLE hSession,
  *          already logged in.
  *          CKR_PIN_LEN_RANGE when the PIN length is out of range.
  *          CKR_PIN_INCORRECT when the PIN does not verify.
+ *          CKR_PIN_LOCKED when the PIN is locked out.
+ *          CKR_FUNCTION_FAILED when other PIN checks in progress use up the
+ *          attempts left.
  *          CKR_OPERATION_NOT_INITIALIZED when using user type
  *          CKU_CONTEXT_SPECIFIC - user type not supported.
  *          CKR_USER_TYPE_INVALID when other user type is specified.
@@ -2024,6 +2040,12 @@ CK_RV C_Login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
         case HMAC_MIN_KEYLEN_E:
         case PIN_INVALID_E:
             rv = CKR_PIN_INCORRECT;
+            break;
+        case PIN_LOCKED_E:
+            rv = CKR_PIN_LOCKED;
+            break;
+        case PIN_BUSY_E:
+            rv = CKR_FUNCTION_FAILED;
             break;
         case READ_ONLY_E:
             /* Only possible for SO login */
