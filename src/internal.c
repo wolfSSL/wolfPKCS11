@@ -354,6 +354,8 @@ struct WP11_Object {
     byte local:1;                      /* Locally created object              */
     word32 opFlag;                     /* Flags of operations allowed         */
     word32 freeEpoch;                  /* Call epoch the object was unlinked */
+    word32 logoutCnt;                  /* Slot logouts when it was removed    */
+    byte unlinked;                     /* Destroyed or retired by logout      */
 
     char startDate[8];                 /* Start date of usage                 */
     char endDate[8];                   /* End data of usage                   */
@@ -665,6 +667,7 @@ struct WP11_Slot {
     WP11_ObjectCalls calls[2];         /* Object calls of the last two epochs */
     word32 epoch;                      /* Current object call epoch           */
     WP11_Object* discarded;            /* Destroyed objects awaiting free     */
+    word32 logoutCnt;                  /* Logouts, guarded by the token lock  */
     WP11_Lock callLock;                /* Lock for object call epochs         */
     byte reclaim:1;                    /* Unlinked objects await free         */
 #ifndef WOLFPKCS11_NO_STORE
@@ -1162,6 +1165,31 @@ WP11_API void WP11_Test_SetEmptyPinCheckHook(void (*hook)(void))
 {
     wp11_EmptyPinCheckHook = hook;
 }
+
+static void (*wp11_DiscardHook)(void) = NULL;
+static void (*wp11_GetObjectHook)(void) = NULL;
+
+/**
+ * Test hook: set a function for WP11_Slot_DiscardObject() to call on entry,
+ * with no locks held.
+ *
+ * @param  hook  [in]  Function to call, or NULL to remove the hook.
+ */
+WP11_API void WP11_Test_SetDiscardHook(void (*hook)(void))
+{
+    wp11_DiscardHook = hook;
+}
+
+/**
+ * Test hook: set a function for WP11_Session_GetObject() to call after it
+ * read the key, with no locks held.
+ *
+ * @param  hook  [in]  Function to call, or NULL to remove the hook.
+ */
+WP11_API void WP11_Test_SetGetObjectHook(void (*hook)(void))
+{
+    wp11_GetObjectHook = hook;
+}
 #endif
 
 /**
@@ -1334,7 +1362,9 @@ static void wp11_Session_FreeOp(WP11_Session* session);
 static void wp11_Slot_UnlinkObject(WP11_Slot* slot, WP11_Object* object,
                                    WP11_Object** list);
 static void wp11_Slot_FreeUnlinkedObjects(WP11_Slot* slot);
-static void wp11_Slot_ClearObjectOps(WP11_Slot* slot, WP11_Object* object);
+static void wp11_Slot_ClearObjectOps(WP11_Slot* slot, WP11_Object* object,
+                                     int all);
+static int wp11_Object_KeyStateLocked(WP11_Object* object);
 
 /**
  * Finalize a session - clean-up but don't clear out.
@@ -1358,7 +1388,7 @@ static void wp11_Session_Final(WP11_Session* session)
             session->object = obj->next;
             session->objCnt--;
             obj->session = NULL;
-            wp11_Slot_ClearObjectOps(slot, obj);
+            wp11_Slot_ClearObjectOps(slot, obj, 0);
             wp11_Slot_UnlinkObject(slot, obj, &slot->discarded);
         }
         while ((obj = session->retired) != NULL) {
@@ -4445,16 +4475,7 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
         }
     }
 
-    if (src->lock != NULL)
-        WP11_Lock_UnlockRO(src->lock);
-
-    if (ret != 0)
-        return ret;
-
-    if (src->objClass == CKO_DATA) {
-        /* Payload copied above under the source lock. */
-    }
-    else {
+    if (ret == 0 && src->objClass != CKO_DATA) {
 #ifdef WOLFPKCS11_TPM
         /* Handle TPM keys - copy tpmKey structure directly */
         if (src->opFlag & WP11_FLAG_TPM) {
@@ -4800,7 +4821,8 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
 #endif
 #ifndef NO_DH
                 case CKK_DH:
-                    return BAD_FUNC_ARG;
+                    ret = BAD_FUNC_ARG;
+                    break;
 #endif
 #ifdef WOLFPKCS11_LMS
                 case CKK_HSS:
@@ -4815,7 +4837,8 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                      * private keys whose one-time signature state must never be
                      * duplicated; rejecting every HBS key copy keeps that
                      * invariant uniform across key classes. */
-                    return BAD_FUNC_ARG;
+                    ret = BAD_FUNC_ARG;
+                    break;
 #endif
 #ifndef NO_AES
                 case CKK_AES:
@@ -4832,6 +4855,8 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
         }
     }
 
+    if (src->lock != NULL)
+        WP11_Lock_UnlockRO(src->lock);
 
     return ret;
 }
@@ -6005,6 +6030,7 @@ int WP11_Rsa_SerializeKeyPTPKC8(WP11_Object* object, byte* output, word32* pouts
 {
     int ret;
     word32 dersz = 0;
+    word32 derAlloc = 0;
     byte* der = NULL;
 
     if (object == NULL || poutsz == NULL)
@@ -6016,29 +6042,33 @@ int WP11_Rsa_SerializeKeyPTPKC8(WP11_Object* object, byte* output, word32* pouts
     if (object->objClass != CKO_PRIVATE_KEY)
         return OBJ_TYPE_E;
 
-    ret = WP11_Rsa_SerializeKey(object, NULL, &dersz);
-    if (ret != 0)
-        return ret;
+    if (object->lock != NULL)
+        WP11_Lock_LockRO(object->lock);
+    ret = wp11_Object_KeyStateLocked(object);
+    if (ret == 0)
+        ret = WP11_Rsa_SerializeKey(object, NULL, &dersz);
+    if (ret == 0) {
+        der = (unsigned char*)XMALLOC(dersz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (der == NULL)
+            ret = MEMORY_E;
+        else
+            derAlloc = dersz;
+    }
+    if (ret == 0)
+        ret = WP11_Rsa_SerializeKey(object, der, &dersz);
+    if (object->lock != NULL)
+        WP11_Lock_UnlockRO(object->lock);
 
-    der = (unsigned char*)XMALLOC(dersz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-    if (der == NULL)
-        return MEMORY_E;
-
-    ret = WP11_Rsa_SerializeKey(object, der, &dersz);
-
-    if ( ret != 0) {
-        goto end_func;
+    if (ret == 0) {
+        /* Get length of encoded private key. */
+        ret = wc_CreatePKCS8Key(output, poutsz, der,
+                                dersz, RSAk, NULL, 0);
+        if ( ret == LENGTH_ONLY_E || ret > 0)
+            ret = 0;
     }
 
-    /* Get length of encoded private key. */
-    ret = wc_CreatePKCS8Key(output, poutsz, der,
-                            dersz, RSAk, NULL, 0);
-    if ( ret == LENGTH_ONLY_E || ret > 0)
-        ret = 0;
-
-end_func:
     if (NULL != der) {
-        wc_ForceZero(der, dersz);
+        wc_ForceZero(der, derAlloc);
         XFREE(der, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     }
 
@@ -11217,6 +11247,7 @@ static void wp11_Slot_UnlinkObject(WP11_Slot* slot, WP11_Object* object,
                                    WP11_Object** list)
 {
     WP11_Lock_LockRW(&slot->callLock);
+    object->unlinked = 1;
     object->freeEpoch = slot->epoch;
     object->next = *list;
     *list = object;
@@ -11225,17 +11256,45 @@ static void wp11_Slot_UnlinkObject(WP11_Slot* slot, WP11_Object* object,
 }
 
 /**
- * Hand over an object that C_DestroyObject has unlinked. It is freed once no
- * object call that began before the unlink and no operation can use it.
+ * Check whether a logout scrubs or retires an object.
+ *
+ * @param  object  [in]  Object object.
+ * @return  1 when a logout ends the operations on the object, 0 otherwise.
+ */
+static int wp11_Object_LogoutEnds(WP11_Object* object)
+{
+    if (wp11_Object_ListFlags(object) & WP11_FLAG_PRIVATE)
+        return 1;
+#ifndef WOLFPKCS11_NO_STORE
+    return object->onToken && wp11_Object_IsEncrypted(object);
+#else
+    return 0;
+#endif
+}
+
+/**
+ * Hand over an object that C_DestroyObject has unlinked and clear the
+ * operations that use it. It is freed once no object call that began before
+ * the unlink and no operation can use it.
  *
  * @param  slot    [in]  Slot object.
  * @param  object  [in]  Unlinked object.
  */
 void WP11_Slot_DiscardObject(WP11_Slot* slot, WP11_Object* object)
 {
+    int all;
+
+#ifdef DEBUG_WOLFPKCS11
+    if (wp11_DiscardHook != NULL)
+        wp11_DiscardHook();
+#endif
     WP11_Lock_LockRW(&slot->lock);
     WP11_Lock_LockRW(&slot->token.lock);
     wp11_Slot_UnlinkObject(slot, object, &slot->discarded);
+    /* A logout since the removal did not see the object. */
+    all = (object->logoutCnt != slot->logoutCnt) &&
+          wp11_Object_LogoutEnds(object);
+    wp11_Slot_ClearObjectOps(slot, object, all);
     wp11_Slot_FreeUnlinkedObjects(slot);
     WP11_Lock_UnlockRW(&slot->token.lock);
     WP11_Lock_UnlockRW(&slot->lock);
@@ -11900,10 +11959,10 @@ int WP11_Slot_IsUserLoggedIn(WP11_Slot* slot)
 #ifndef WOLFPKCS11_NSS
 /**
  * Invalidate the private session objects of all sessions on the slot, as
- * logging out requires: their handles stop resolving immediately. They are
- * freed, which zeroizes their key material, as soon as no object call is in
- * progress and no operation uses them. Caller holds the slot and token locks
- * for writing.
+ * logging out requires: their handles stop resolving immediately and the
+ * operations using them end. They are freed, which zeroizes their key
+ * material, as soon as no object call is in progress. Caller holds the slot
+ * and token locks for writing.
  *
  * @param  slot  [in]  Slot object.
  */
@@ -11920,6 +11979,7 @@ static void wp11_Slot_RetirePrivateSessionObjects(WP11_Slot* slot)
             if (wp11_Object_ListFlags(obj) & WP11_FLAG_PRIVATE) {
                 *curr = obj->next;
                 sess->objCnt--;
+                wp11_Slot_ClearObjectOps(slot, obj, 1);
                 wp11_Slot_UnlinkObject(slot, obj, &sess->retired);
             }
             else {
@@ -11940,8 +12000,8 @@ static void wp11_Slot_Logout(WP11_Slot* slot)
 {
 #ifndef WOLFPKCS11_NO_STORE
     int state;
-    WP11_Object* object;
 #endif
+    WP11_Object* object;
 
     /* Object state is guarded by the token lock. */
     WP11_Lock_LockRW(&slot->token.lock);
@@ -11964,13 +12024,19 @@ static void wp11_Slot_Logout(WP11_Slot* slot)
         for (object = slot->token.object; object != NULL;
                 object = object->next) {
             if (object->encoded)
-                wp11_Slot_ClearObjectOps(slot, object);
+                wp11_Slot_ClearObjectOps(slot, object, 1);
         }
     }
 #endif
+    /* Destroyed keys stay allocated while an operation uses them. */
+    for (object = slot->discarded; object != NULL; object = object->next) {
+        if (wp11_Object_LogoutEnds(object))
+            wp11_Slot_ClearObjectOps(slot, object, 1);
+    }
 #ifndef WOLFPKCS11_NSS
     wp11_Slot_RetirePrivateSessionObjects(slot);
 #endif
+    slot->logoutCnt++;
     slot->token.loginState = WP11_APP_STATE_RW_PUBLIC;
     WP11_Lock_UnlockRW(&slot->token.lock);
 }
@@ -13106,8 +13172,11 @@ int WP11_Session_SetCbcParams(WP11_Session* session, unsigned char* iv,
         if (object->lock != NULL)
             WP11_Lock_LockRO(object->lock);
         key = object->data.symmKey;
-        ret = wc_AesSetKey(&cbc->aes, key->data, key->len, iv,
-                                         enc ? AES_ENCRYPTION : AES_DECRYPTION);
+        ret = wp11_Object_KeyStateLocked(object);
+        if (ret == 0) {
+            ret = wc_AesSetKey(&cbc->aes, key->data, key->len, iv,
+                               enc ? AES_ENCRYPTION : AES_DECRYPTION);
+        }
         if (ret == 0)
             XMEMCPY(cbc->iv, iv, AES_IV_SIZE);
         if (object->lock != NULL)
@@ -13151,7 +13220,11 @@ int WP11_Session_SetCtrParams(WP11_Session* session, CK_ULONG ulCounterBits,
         if (object->lock != NULL)
             WP11_Lock_LockRO(object->lock);
         key = object->data.symmKey;
-        ret = wc_AesSetKey(&ctr->aes, key->data, key->len, cb, AES_ENCRYPTION);
+        ret = wp11_Object_KeyStateLocked(object);
+        if (ret == 0) {
+            ret = wc_AesSetKey(&ctr->aes, key->data, key->len, cb,
+                               AES_ENCRYPTION);
+        }
         if (object->lock != NULL)
             WP11_Lock_UnlockRO(object->lock);
         if (ret != 0)
@@ -13181,8 +13254,11 @@ int WP11_Session_SetAesWrapParams(WP11_Session* session, byte* iv, word32 ivLen,
         if (object->lock != NULL)
             WP11_Lock_LockRO(object->lock);
         key = object->data.symmKey;
-        ret = wc_AesSetKey(&wrap->aes, key->data, key->len, NULL,
-                enc ? AES_ENCRYPTION : AES_DECRYPTION);
+        ret = wp11_Object_KeyStateLocked(object);
+        if (ret == 0) {
+            ret = wc_AesSetKey(&wrap->aes, key->data, key->len, NULL,
+                    enc ? AES_ENCRYPTION : AES_DECRYPTION);
+        }
         if (object->lock != NULL)
             WP11_Lock_UnlockRO(object->lock);
         if (ret != 0)
@@ -13351,8 +13427,11 @@ int WP11_Session_SetCtsParams(WP11_Session* session, unsigned char* iv,
         if (object->lock != NULL)
             WP11_Lock_LockRO(object->lock);
         key = object->data.symmKey;
-        ret = wc_AesSetKey(&cts->aes, key->data, key->len, iv,
-                                         enc ? AES_ENCRYPTION : AES_DECRYPTION);
+        ret = wp11_Object_KeyStateLocked(object);
+        if (ret == 0) {
+            ret = wc_AesSetKey(&cts->aes, key->data, key->len, iv,
+                               enc ? AES_ENCRYPTION : AES_DECRYPTION);
+        }
         if (object->lock != NULL)
             WP11_Lock_UnlockRO(object->lock);
         if (ret != 0)
@@ -13736,6 +13815,7 @@ int WP11_Session_RemoveObjectByHandle(WP11_Session* session,
         object->session = NULL;
     }
 
+    object->logoutCnt = session->slot->logoutCnt;
     WP11_Lock_UnlockRW(&token->lock);
     (void)id; /* set but not used with WOLFPKCS11_NO_STORE */
     return ret;
@@ -13775,7 +13855,6 @@ WP11_API int WP11_Test_RemoveObjectStale(CK_SESSION_HANDLE hSession,
                 ret != WP11_OBJECT_NOT_DESTROYABLE) {
             /* Removed: this caller now owns the object, as C_DestroyObject
              * would. */
-            WP11_Slot_ClearActiveObject(session->slot, object);
             WP11_Slot_DiscardObject(session->slot, object);
         }
     }
@@ -13868,16 +13947,19 @@ static void wp11_Session_ClearActive(WP11_Session* session, int symmetric)
 
 /**
  * Clear the running operations of the slot's sessions that use the object as
- * their key, as when it is freed or logout scrubs its value.
+ * their key, as when it is freed or logout scrubs or retires it.
  * Caller holds the slot lock for writing.
  *
  * @param  slot    [in]  Slot whose sessions are scanned.
  * @param  object  [in]  Object whose key is going away.
+ * @param  all     [in]  Whether to end every operation, not only those that
+ *                       read the key on each call.
  */
-static void wp11_Slot_ClearObjectOps(WP11_Slot* slot, WP11_Object* object)
+static void wp11_Slot_ClearObjectOps(WP11_Slot* slot, WP11_Object* object,
+                                     int all)
 {
     WP11_Session* sess;
-    int symmetric = WP11_KeyType_IsSecret(object->type);
+    int symmetric = !all && WP11_KeyType_IsSecret(object->type);
 
     for (sess = slot->session; sess != NULL; sess = sess->next) {
         if (sess->curr == object)
@@ -13886,25 +13968,9 @@ static void wp11_Slot_ClearObjectOps(WP11_Slot* slot, WP11_Object* object)
 }
 
 /**
- * Drop any session reference to an object that is about to be freed.
- *
- * @param  slot    [in]  Slot whose sessions are scanned.
- * @param  object  [in]  Object being destroyed.
- */
-void WP11_Slot_ClearActiveObject(WP11_Slot* slot, WP11_Object* object)
-{
-    if (slot == NULL || object == NULL)
-        return;
-
-    WP11_Lock_LockRW(&slot->lock);
-    wp11_Slot_ClearObjectOps(slot, object);
-    WP11_Lock_UnlockRW(&slot->lock);
-}
-
-/**
  * Get the current object of the session - key for operation.
  *
- * WP11_Slot_ClearActiveObject() may clear session->curr from another session's
+ * WP11_Slot_DiscardObject() may clear session->curr from another session's
  * thread, holding the slot lock for write, so access it under the slot lock.
  *
  * @param  session  [in]   Session object.
@@ -13913,6 +13979,10 @@ void WP11_Slot_ClearActiveObject(WP11_Slot* slot, WP11_Object* object)
 void WP11_Session_GetObject(WP11_Session* session, WP11_Object** object)
 {
     *object = wp11_Session_ReleaseStaleOp(session);
+#ifdef DEBUG_WOLFPKCS11
+    if (wp11_GetObjectHook != NULL)
+        wp11_GetObjectHook();
+#endif
 }
 
 /**
@@ -13922,12 +13992,21 @@ void WP11_Session_GetObject(WP11_Session* session, WP11_Object** object)
  *
  * @param  session  [in]  Session object.
  * @param  object   [in]  Key Object object.
+ * @return  BAD_STATE_E when the key was scrubbed by a logout, or the object
+ *          unlinked, after the init read it. No object is set then.
+ *          0 on success.
  */
-void WP11_Session_SetObject(WP11_Session* session, WP11_Object* object)
+int WP11_Session_SetObject(WP11_Session* session, WP11_Object* object)
 {
+    int ended = 0;
+
     WP11_Lock_LockRO(&session->slot->lock);
-    session->curr = object;
+    if (object != NULL)
+        ended = object->unlinked || WP11_Object_KeyState(object) != 0;
+    session->curr = ended ? NULL : object;
     WP11_Lock_UnlockRO(&session->slot->lock);
+
+    return ended ? BAD_STATE_E : 0;
 }
 
 /**
@@ -16609,6 +16688,8 @@ static int MlKemObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
 
 int WP11_Generic_SerializeKey(WP11_Object* object, byte* output, word32* poutsz)
 {
+    int ret;
+
     if (object == NULL || poutsz == NULL)
         return PARAM_E;
 
@@ -16618,17 +16699,22 @@ int WP11_Generic_SerializeKey(WP11_Object* object, byte* output, word32* poutsz)
     if (object->objClass != CKO_SECRET_KEY)
         return OBJ_TYPE_E;
 
-    if (output != NULL) {
+    if (object->lock != NULL)
+        WP11_Lock_LockRO(object->lock);
+    ret = wp11_Object_KeyStateLocked(object);
+    if (ret == 0 && output != NULL) {
         if (*poutsz < object->data.symmKey->len)
-            return PARAM_E;
-        XMEMCPY(output, object->data.symmKey->data, object->data.symmKey->len);
-        *poutsz = object->data.symmKey->len;
+            ret = PARAM_E;
+        else
+            XMEMCPY(output, object->data.symmKey->data,
+                    object->data.symmKey->len);
     }
-    else {
+    if (ret == 0)
         *poutsz = object->data.symmKey->len;
-    }
+    if (object->lock != NULL)
+        WP11_Lock_UnlockRO(object->lock);
 
-    return 0;
+    return ret;
 }
 
 /**
@@ -17945,7 +18031,9 @@ int WP11_Rsa_PrivKey2PubKey(WP11_Object* privKey, WP11_Object* pubKey,
     if (ret == 0) {
         if (privKey->lock != NULL)
             WP11_Lock_LockRO(privKey->lock);
-        ret = wc_RsaKeyToPublicDer(privKey->data.rsaKey, workbuf, worksz);
+        ret = wp11_Object_KeyStateLocked(privKey);
+        if (ret == 0)
+            ret = wc_RsaKeyToPublicDer(privKey->data.rsaKey, workbuf, worksz);
         if (privKey->lock != NULL)
             WP11_Lock_UnlockRO(privKey->lock);
         if (ret >= 0) {
@@ -18066,7 +18154,17 @@ int WP11_Rsa_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
  */
 word32 WP11_Rsa_KeyLen(WP11_Object* key)
 {
-    return mp_unsigned_bin_size(&key->data.rsaKey->n);
+    word32 len;
+
+    if (key->lock != NULL)
+        WP11_Lock_LockRO(key->lock);
+    len = 0;
+    if (wp11_Object_KeyStateLocked(key) == 0)
+        len = (word32)mp_unsigned_bin_size(&key->data.rsaKey->n);
+    if (key->lock != NULL)
+        WP11_Lock_UnlockRO(key->lock);
+
+    return len;
 }
 
 /**
@@ -18164,7 +18262,9 @@ int WP11_Rsa_PrivateDecrypt(unsigned char* in, word32 inLen, unsigned char* out,
 
     if (priv->lock != NULL)
         WP11_Lock_LockRO(priv->lock);
-    ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
+    ret = wp11_Object_KeyStateLocked(priv);
+    if (ret == 0)
+        ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
     if (ret == 0) {
     #ifdef WOLFPKCS11_TPM
         ret = WP11_Object_LoadTpmKey(priv);
@@ -18249,9 +18349,11 @@ int WP11_RsaPkcs15_PrivateDecrypt(unsigned char* in, word32 inLen,
     /* A random number generator is needed for blinding. */
     if (priv->lock != NULL)
         WP11_Lock_LockRW(priv->lock);
+    ret = wp11_Object_KeyStateLocked(priv);
 
 #ifdef WOLFPKCS11_NEED_RSA_RNG
-    ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
+    if (ret == 0)
+        ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
 #endif
     if (ret == 0) {
     #ifdef WOLFPKCS11_NEED_RSA_RNG
@@ -18365,8 +18467,10 @@ int WP11_RsaOaep_PrivateDecrypt(unsigned char* in, word32 inLen,
     /* A random number generator is needed for blinding. */
     if (priv->lock != NULL)
         WP11_Lock_LockRW(priv->lock);
+    ret = wp11_Object_KeyStateLocked(priv);
 #ifdef WOLFPKCS11_NEED_RSA_RNG
-    ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
+    if (ret == 0)
+        ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
 #endif
     if (ret == 0) {
     #ifdef WOLFPKCS11_NEED_RSA_RNG
@@ -18436,6 +18540,11 @@ int WP11_Rsa_Sign(unsigned char* in, word32 inLen, unsigned char* sig,
 
     if (priv->lock != NULL)
         WP11_Lock_LockRO(priv->lock);
+    if (wp11_Object_KeyStateLocked(priv) != 0) {
+        if (priv->lock != NULL)
+            WP11_Lock_UnlockRO(priv->lock);
+        return BAD_STATE_E;
+    }
 
     keyLen = wc_RsaEncryptSize(priv->data.rsaKey);
     if (keyLen > sizeof(data)) {
@@ -18641,7 +18750,9 @@ int WP11_RsaPkcs15_Sign(unsigned char* encHash, word32 encHashLen,
 
     if (priv->lock != NULL)
         WP11_Lock_LockRO(priv->lock);
-    ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
+    ret = wp11_Object_KeyStateLocked(priv);
+    if (ret == 0)
+        ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
     if (ret == 0) {
     #ifdef WOLFPKCS11_TPM
         ret = WP11_Object_LoadTpmKey(priv);
@@ -18736,7 +18847,9 @@ int WP11_RsaPKCSPSS_Sign(unsigned char* hash, word32 hashLen,
 
     if (priv->lock != NULL)
         WP11_Lock_LockRO(priv->lock);
-    ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
+    ret = wp11_Object_KeyStateLocked(priv);
+    if (ret == 0)
+        ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
     if (ret == 0) {
     #ifdef WOLFPKCS11_TPM
         ret = WP11_Object_LoadTpmKey(priv);
@@ -19148,7 +19261,17 @@ static int Pkcs11ECDSASig_Decode(const byte* in, word32 inSz, byte* sig,
  */
 int WP11_Ec_SigLen(WP11_Object* key)
 {
-    return wc_ecc_size(key->data.ecKey) * 2;
+    int len;
+
+    if (key->lock != NULL)
+        WP11_Lock_LockRO(key->lock);
+    len = 0;
+    if (wp11_Object_KeyStateLocked(key) == 0)
+        len = wc_ecc_size(key->data.ecKey) * 2;
+    if (key->lock != NULL)
+        WP11_Lock_UnlockRO(key->lock);
+
+    return len;
 }
 
 /**
@@ -19172,16 +19295,18 @@ int WP11_Ec_Sign(unsigned char* hash, word32 hashLen, unsigned char* sig,
     int ret = 0;
     byte encSig[ECC_MAX_SIG_SIZE];
     word32 encSigLen;
-    word32 ordSz;
+    word32 ordSz = 0;
     WC_RNG rng;
 
     if (priv->lock != NULL)
         WP11_Lock_LockRO(priv->lock);
-    ordSz = priv->data.ecKey->dp->size;
+    ret = wp11_Object_KeyStateLocked(priv);
+    if (ret == 0)
+        ordSz = priv->data.ecKey->dp->size;
     if (priv->lock != NULL)
         WP11_Lock_UnlockRO(priv->lock);
 
-    if (*sigLen < ordSz * 2)
+    if (ret == 0 && *sigLen < ordSz * 2)
         ret = BUFFER_E;
     if (ret == 0) {
         encSigLen = sizeof(encSig);
@@ -19189,7 +19314,9 @@ int WP11_Ec_Sign(unsigned char* hash, word32 hashLen, unsigned char* sig,
         if (priv->lock != NULL)
             WP11_Lock_LockRO(priv->lock);
 
-        ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
+        ret = wp11_Object_KeyStateLocked(priv);
+        if (ret == 0)
+            ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
         if (ret == 0) {
         #ifdef WOLFPKCS11_TPM
             ret = WP11_Object_LoadTpmKey(priv);
@@ -19291,6 +19418,12 @@ int WP11_EC_Derive(unsigned char* point, word32 pointLen, unsigned char* key,
     /* Exclusive: the temporary RNG is stored in the shared key. */
     if (priv->lock != NULL) {
         WP11_Lock_LockRW(priv->lock);
+    }
+    if (wp11_Object_KeyStateLocked(priv) != 0) {
+        if (priv->lock != NULL) {
+            WP11_Lock_UnlockRW(priv->lock);
+        }
+        return BAD_STATE_E;
     }
 
     /* Check if the point data is DER-encoded (starts with OCTET STRING tag) */
@@ -19486,6 +19619,17 @@ int WP11_Mldsa_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
     return ret;
 }
 
+/* Signature length of an ML-DSA key object whose lock the caller holds. */
+static int wp11_Mldsa_SigLen(WP11_Object* key)
+{
+    int len = 0;
+
+    if (wc_MlDsaKey_GetSigLen(key->data.mldsaKey, &len) != 0)
+        len = 0;
+
+    return len;
+}
+
 /**
 * Return the length of a signature in bytes.
 *
@@ -19494,10 +19638,15 @@ int WP11_Mldsa_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
 */
 int WP11_Mldsa_SigLen(WP11_Object* key)
 {
-    int len = 0;
+    int len;
 
-    if (wc_MlDsaKey_GetSigLen(key->data.mldsaKey, &len) != 0)
-        len = 0;
+    if (key->lock != NULL)
+        WP11_Lock_LockRO(key->lock);
+    len = 0;
+    if (wp11_Object_KeyStateLocked(key) == 0)
+        len = wp11_Mldsa_SigLen(key);
+    if (key->lock != NULL)
+        WP11_Lock_UnlockRO(key->lock);
 
     return len;
 }
@@ -19527,7 +19676,9 @@ int WP11_Mldsa_Sign(unsigned char* data, word32 dataLen, unsigned char* sig,
     if (priv->lock != NULL)
         WP11_Lock_LockRO(priv->lock);
 
-    ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
+    ret = wp11_Object_KeyStateLocked(priv);
+    if (ret == 0)
+        ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
     if (ret == 0) {
         if (params->preHashType == WC_HASH_TYPE_NONE) {
             if (params->hedgeType == CKH_HEDGE_PREFERRED ||
@@ -19604,7 +19755,7 @@ int WP11_Mldsa_Verify(unsigned char* sig, word32 sigLen, unsigned char* data,
     if (pub->lock != NULL)
         WP11_Lock_LockRO(pub->lock);
 
-    if (sigLen != (word32)WP11_Mldsa_SigLen(pub))
+    if (sigLen != (word32)wp11_Mldsa_SigLen(pub))
         ret = BAD_FUNC_ARG;
 
     if (ret == 0) {
@@ -19998,13 +20149,15 @@ int WP11_Dh_Derive(unsigned char* pub, word32 pubLen, unsigned char* key,
                    word32* keyLen, int strip, WP11_Object* priv)
 {
     int ret = 0;
-    word32 primeLen;
+    word32 primeLen = 0;
     word32 i = 0;
 
     if (priv->lock != NULL)
         WP11_Lock_LockRO(priv->lock);
-    primeLen = (word32)mp_unsigned_bin_size(&priv->data.dhKey->params.p);
-    if (primeLen > *keyLen)
+    ret = wp11_Object_KeyStateLocked(priv);
+    if (ret == 0)
+        primeLen = (word32)mp_unsigned_bin_size(&priv->data.dhKey->params.p);
+    if (ret == 0 && primeLen > *keyLen)
         ret = BUFFER_E;
     if (ret == 0) {
         *keyLen = primeLen;
@@ -20207,7 +20360,9 @@ int WP11_MlKem_Decapsulate(WP11_Object* priv, unsigned char** sharedSecret,
         WP11_Lock_LockRO(priv->lock);
 
     mlKemKey = priv->data.mlKemKey;
-    ret = wc_MlKemKey_SharedSecretSize(mlKemKey, ssLen);
+    ret = wp11_Object_KeyStateLocked(priv);
+    if (ret == 0)
+        ret = wc_MlKemKey_SharedSecretSize(mlKemKey, ssLen);
     if (ret == 0) {
         *sharedSecret = (unsigned char*)XMALLOC(*ssLen, NULL,
                                                 DYNAMIC_TYPE_TMP_BUFFER);
@@ -20296,12 +20451,19 @@ int WP11_Tls12_Master_Key_Derive(CK_SSL3_RANDOM_DATA* random,
         XMEMCPY(pSeed + serverLen, random->pClientRandom, clientLen);
     }
 
-    PRIVATE_KEY_UNLOCK();
-    ret = wc_PRF_TLS(enc, (word32)encLen, key->data.symmKey->data,
-                     key->data.symmKey->len, (const byte*)label,
-                     (word32)ulLabelLen, pSeed, (word32)ulSeedLen,
-                     1, macType, NULL, 0);
-    PRIVATE_KEY_LOCK();
+    if (key->lock != NULL)
+        WP11_Lock_LockRO(key->lock);
+    ret = wp11_Object_KeyStateLocked(key);
+    if (ret == 0) {
+        PRIVATE_KEY_UNLOCK();
+        ret = wc_PRF_TLS(enc, (word32)encLen, key->data.symmKey->data,
+                         key->data.symmKey->len, (const byte*)label,
+                         (word32)ulLabelLen, pSeed, (word32)ulSeedLen,
+                         1, macType, NULL, 0);
+        PRIVATE_KEY_LOCK();
+    }
+    if (key->lock != NULL)
+        WP11_Lock_UnlockRO(key->lock);
 
     if (pSeed) {
         XFREE(pSeed, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -20469,12 +20631,19 @@ int WP11_Nss_Tls12_Master_Key_Derive(CK_BYTE_PTR pSessionHash,
         return BAD_FUNC_ARG;
     }
 
-    PRIVATE_KEY_UNLOCK();
-    ret = wc_PRF_TLS(enc, (word32)encLen, key->data.symmKey->data,
-                     key->data.symmKey->len, (const byte*)label,
-                     (word32)ulLabelLen, pSessionHash, (word32)ulSessionHashLen,
-                     1, macType, NULL, 0);
-    PRIVATE_KEY_LOCK();
+    if (key->lock != NULL)
+        WP11_Lock_LockRO(key->lock);
+    ret = wp11_Object_KeyStateLocked(key);
+    if (ret == 0) {
+        PRIVATE_KEY_UNLOCK();
+        ret = wc_PRF_TLS(enc, (word32)encLen, key->data.symmKey->data,
+                         key->data.symmKey->len, (const byte*)label,
+                         (word32)ulLabelLen, pSessionHash,
+                         (word32)ulSessionHashLen, 1, macType, NULL, 0);
+        PRIVATE_KEY_LOCK();
+    }
+    if (key->lock != NULL)
+        WP11_Lock_UnlockRO(key->lock);
 
     return ret;
 }
@@ -20511,8 +20680,15 @@ int WP11_AesCbc_DeriveKey(unsigned char* plain, word32 plainSz,
     XMEMSET(&aes, 0, sizeof(aes));
     ret = wc_AesInit(&aes, NULL, key->devId);
     if (ret == 0) {
-        ret = wc_AesSetKey(&aes, key->data.symmKey->data, key->data.symmKey->len,
-                iv, AES_ENCRYPTION);
+        if (key->lock != NULL)
+            WP11_Lock_LockRO(key->lock);
+        ret = wp11_Object_KeyStateLocked(key);
+        if (ret == 0) {
+            ret = wc_AesSetKey(&aes, key->data.symmKey->data,
+                               key->data.symmKey->len, iv, AES_ENCRYPTION);
+        }
+        if (key->lock != NULL)
+            WP11_Lock_UnlockRO(key->lock);
     }
     if (ret == 0)
         ret = wc_AesCbcEncrypt(&aes, enc, plain, plainSz);
@@ -21322,7 +21498,9 @@ int WP11_AesGcm_Encrypt(unsigned char* plain, word32 plainSz,
         if (secret->lock != NULL)
             WP11_Lock_LockRO(secret->lock);
         key = secret->data.symmKey;
-        ret = wc_AesGcmSetKey(&aes, key->data, key->len);
+        ret = wp11_Object_KeyStateLocked(secret);
+        if (ret == 0)
+            ret = wc_AesGcmSetKey(&aes, key->data, key->len);
         if (secret->lock != NULL)
             WP11_Lock_UnlockRO(secret->lock);
 
@@ -21414,10 +21592,15 @@ int WP11_AesGcm_EncryptUpdate(unsigned char* plain, word32 plainSz,
             if (secret->lock != NULL)
                 WP11_Lock_LockRO(secret->lock);
             key = secret->data.symmKey;
-            ret = wc_AesGcmInit(&gcm->aes, key->data, key->len, gcm->iv,
-                                                                    gcm->ivSz);
+            ret = wp11_Object_KeyStateLocked(secret);
+            if (ret == 0) {
+                ret = wc_AesGcmInit(&gcm->aes, key->data, key->len,
+                                    gcm->iv, gcm->ivSz);
+            }
             if (secret->lock != NULL)
                 WP11_Lock_UnlockRO(secret->lock);
+            if (ret != 0)
+                wc_AesFree(&gcm->aes);
         }
         if (ret != 0)
             return ret;
@@ -21468,7 +21651,9 @@ int WP11_AesGcm_EncryptUpdate(unsigned char* plain, word32 plainSz,
         if (secret->lock != NULL)
             WP11_Lock_LockRO(secret->lock);
         key = secret->data.symmKey;
-        ret = wc_AesGcmSetKey(&aes, key->data, key->len);
+        ret = wp11_Object_KeyStateLocked(secret);
+        if (ret == 0)
+            ret = wc_AesGcmSetKey(&aes, key->data, key->len);
         if (secret->lock != NULL)
             WP11_Lock_UnlockRO(secret->lock);
 
@@ -21522,10 +21707,15 @@ int WP11_AesGcm_EncryptFinal(unsigned char* enc, word32* encSz,
                 if (secret->lock != NULL)
                     WP11_Lock_LockRO(secret->lock);
                 key = secret->data.symmKey;
-                ret = wc_AesGcmInit(&gcm->aes, key->data, key->len, gcm->iv,
-                                                                    gcm->ivSz);
+                ret = wp11_Object_KeyStateLocked(secret);
+                if (ret == 0) {
+                    ret = wc_AesGcmInit(&gcm->aes, key->data, key->len,
+                                    gcm->iv, gcm->ivSz);
+                }
                 if (secret->lock != NULL)
                     WP11_Lock_UnlockRO(secret->lock);
+                if (ret != 0)
+                    wc_AesFree(&gcm->aes);
             }
             if (ret == 0) {
                 gcm->streamInit = 1;
@@ -21559,7 +21749,9 @@ int WP11_AesGcm_EncryptFinal(unsigned char* enc, word32* encSz,
             if (secret->lock != NULL)
                 WP11_Lock_LockRO(secret->lock);
             key = secret->data.symmKey;
-            ret = wc_AesGcmSetKey(&aes, key->data, key->len);
+            ret = wp11_Object_KeyStateLocked(secret);
+            if (ret == 0)
+                ret = wc_AesGcmSetKey(&aes, key->data, key->len);
             if (secret->lock != NULL)
                 WP11_Lock_UnlockRO(secret->lock);
 
@@ -21623,7 +21815,9 @@ int WP11_AesGcm_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
         }
 
         key = secret->data.symmKey;
-        ret = wc_AesGcmSetKey(&aes, key->data, key->len);
+        ret = wp11_Object_KeyStateLocked(secret);
+        if (ret == 0)
+            ret = wc_AesGcmSetKey(&aes, key->data, key->len);
         if (secret->lock != NULL) {
             WP11_Lock_UnlockRO(secret->lock);
         }
@@ -21787,7 +21981,9 @@ int WP11_AesCcm_Encrypt(unsigned char* plain, word32 plainSz,
         if (secret->lock != NULL)
             WP11_Lock_LockRO(secret->lock);
         key = secret->data.symmKey;
-        ret = wc_AesCcmSetKey(&aes, key->data, key->len);
+        ret = wp11_Object_KeyStateLocked(secret);
+        if (ret == 0)
+            ret = wc_AesCcmSetKey(&aes, key->data, key->len);
         if (secret->lock != NULL)
             WP11_Lock_UnlockRO(secret->lock);
 
@@ -21842,7 +22038,9 @@ int WP11_AesCcm_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
         if (secret->lock != NULL)
             WP11_Lock_LockRO(secret->lock);
         key = secret->data.symmKey;
-        ret = wc_AesCcmSetKey(&aes, key->data, key->len);
+        ret = wp11_Object_KeyStateLocked(secret);
+        if (ret == 0)
+            ret = wc_AesCcmSetKey(&aes, key->data, key->len);
         if (secret->lock != NULL)
             WP11_Lock_UnlockRO(secret->lock);
 
@@ -21897,7 +22095,9 @@ static int wp11_AesEcb_SetKey(Aes* aes, WP11_Object* secret, int dir)
         if (secret->lock != NULL)
             WP11_Lock_LockRO(secret->lock);
         key = secret->data.symmKey;
-        ret = wc_AesSetKey(aes, key->data, key->len, NULL, dir);
+        ret = wp11_Object_KeyStateLocked(secret);
+        if (ret == 0)
+            ret = wc_AesSetKey(aes, key->data, key->len, NULL, dir);
         if (secret->lock != NULL)
             WP11_Lock_UnlockRO(secret->lock);
     }
@@ -22536,8 +22736,11 @@ int WP11_Aes_Cmac_Init(WP11_Object* secret, WP11_Session* session,
     if (secret->lock != NULL)
         WP11_Lock_LockRO(secret->lock);
     key = secret->data.symmKey;
-    ret = wc_InitCmac_ex(&cmac->cmac, key->data, key->len, WC_CMAC_AES, NULL,
-            NULL, secret->slot->devId);
+    ret = wp11_Object_KeyStateLocked(secret);
+    if (ret == 0) {
+        ret = wc_InitCmac_ex(&cmac->cmac, key->data, key->len, WC_CMAC_AES,
+                             NULL, NULL, secret->slot->devId);
+    }
     if (secret->lock != NULL)
         WP11_Lock_UnlockRO(secret->lock);
 
@@ -22999,7 +23202,9 @@ int WP11_Hmac_Init(CK_MECHANISM_TYPE mechanism, WP11_Object* secret,
         if (secret->lock != NULL)
             WP11_Lock_LockRO(secret->lock);
         key = secret->data.symmKey;
-        ret = wc_HmacSetKey(&hmac->hmac, hashType, key->data, key->len);
+        ret = wp11_Object_KeyStateLocked(secret);
+        if (ret == 0)
+            ret = wc_HmacSetKey(&hmac->hmac, hashType, key->data, key->len);
         if (secret->lock != NULL)
             WP11_Lock_UnlockRO(secret->lock);
         if (ret != 0)
@@ -23201,14 +23406,15 @@ int WP11_TLS_MAC_sign(byte* data, word32 dataLen, byte* sig, word32* sigLen,
     if (secret->lock != NULL)
         WP11_Lock_LockRO(secret->lock);
     key = secret->data.symmKey;
+    ret = wp11_Object_KeyStateLocked(secret);
 
     PRIVATE_KEY_UNLOCK();
-    if (mac->isTlsPrf) {
+    if (ret == 0 && mac->isTlsPrf) {
         outLen = mac->macSz;
         ret = wc_PRF_TLSv1(sig, outLen, key->data, key->len, label, 15,
                 data, dataLen, NULL, secret->slot->devId);
     }
-    else {
+    else if (ret == 0) {
         /* Use maximum requested size if MAC size is unspecified */
         if (mac->macSz == 0)
             outLen = *sigLen;

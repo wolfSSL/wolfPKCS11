@@ -613,10 +613,32 @@ static int IsVerifyOpInit(WP11_Session* session)
            !IsVerifyRecoverInit(session);
 }
 
+#ifdef DEBUG_WOLFPKCS11
+static void (*wp11_keyDecodedHook)(void) = NULL;
+
+/**
+ * Test hook: called when CheckKeyDecoded finds the key value decoded.
+ *
+ * @param  hook  [in]  Function to call, or NULL to remove the hook.
+ */
+WP11_API void WP11_Test_SetKeyDecodedHook(void (*hook)(void))
+{
+    wp11_keyDecodedHook = hook;
+}
+#endif
+
 static CK_RV CheckKeyDecoded(WP11_Object* obj)
 {
+#ifdef DEBUG_WOLFPKCS11
+    void (*hook)(void) = wp11_keyDecodedHook;
+#endif
+
     if (WP11_Object_KeyState(obj) != 0)
         return UndecodedKeyRv(WP11_Object_GetSlot(obj));
+#ifdef DEBUG_WOLFPKCS11
+    if (hook != NULL)
+        hook();
+#endif
     return CKR_OK;
 }
 
@@ -1487,7 +1509,6 @@ static void RemoveAddedObject(WP11_Session* session, WP11_Object* obj,
 {
     if (WP11_Session_RemoveObjectByHandle(session, obj, *handle, 0) !=
             WP11_OBJECT_ALREADY_REMOVED) {
-        WP11_Slot_ClearActiveObject(WP11_Session_GetSlot(session), obj);
         WP11_Slot_DiscardObject(WP11_Session_GetSlot(session), obj);
     }
     *handle = CK_INVALID_HANDLE;
@@ -2368,9 +2389,6 @@ static CK_RV wp11_C_DestroyObject(CK_SESSION_HANDLE hSession,
         WOLFPKCS11_LEAVE("C_DestroyObject", rv);
         return rv;
     }
-    /* Drop any active-operation reference to this object before freeing it so a
-     * pending operation cannot use freed memory. */
-    WP11_Slot_ClearActiveObject(WP11_Session_GetSlot(session), obj);
     /* Freed once no call that looked the object up can still be using it. */
     WP11_Slot_DiscardObject(WP11_Session_GetSlot(session), obj);
 
@@ -3100,6 +3118,8 @@ static CK_RV EncryptInit(CK_SESSION_HANDLE hSession,
             params = (CK_AES_CTR_PARAMS*)pMechanism->pParameter;
             ret = WP11_Session_SetCtrParams(session, params->ulCounterBits,
                                             params->cb, obj);
+            if (ret == BAD_STATE_E)
+                return CKR_FUNCTION_FAILED;
             if (ret != 0)
                 return CKR_MECHANISM_PARAM_INVALID;
             init = WP11_INIT_AES_CTR_ENC;
@@ -3126,6 +3146,8 @@ static CK_RV EncryptInit(CK_SESSION_HANDLE hSession,
             }
 
             ret = WP11_Session_SetAesWrapParams(session, iv, ivLen, obj, 1);
+            if (ret == BAD_STATE_E)
+                return CKR_FUNCTION_FAILED;
             if (ret != 0)
                 return CKR_MECHANISM_PARAM_INVALID;
             init = WP11_INIT_AES_KEYWRAP_ENC;
@@ -3230,8 +3252,11 @@ static CK_RV EncryptInit(CK_SESSION_HANDLE hSession,
     }
 
     WP11_Session_SetMechanism(session, pMechanism->mechanism);
-    WP11_Session_SetObject(session, obj);
     WP11_Session_SetOpInitialized(session, init);
+    if (WP11_Session_SetObject(session, obj) != 0) {
+        WP11_Session_AbortOp(session);
+        return CKR_FUNCTION_FAILED;
+    }
 
     return CKR_OK;
 }
@@ -3345,6 +3370,10 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             }
 
             encDataLen = WP11_Rsa_KeyLen(obj);
+            if (encDataLen == 0) {
+                WP11_Session_AbortOp(session);
+                return CKR_FUNCTION_FAILED;
+            }
             if (pEncryptedData == NULL) {
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
@@ -3370,6 +3399,10 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             }
 
             encDataLen = WP11_Rsa_KeyLen(obj);
+            if (encDataLen == 0) {
+                WP11_Session_AbortOp(session);
+                return CKR_FUNCTION_FAILED;
+            }
             if (pEncryptedData == NULL) {
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
@@ -3398,6 +3431,10 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             }
 
             encDataLen = WP11_Rsa_KeyLen(obj);
+            if (encDataLen == 0) {
+                WP11_Session_AbortOp(session);
+                return CKR_FUNCTION_FAILED;
+            }
             if (pEncryptedData == NULL) {
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
@@ -4351,6 +4388,8 @@ static CK_RV DecryptInit(CK_SESSION_HANDLE hSession,
             params = (CK_AES_CTR_PARAMS*)pMechanism->pParameter;
             ret = WP11_Session_SetCtrParams(session, params->ulCounterBits,
                                             params->cb, obj);
+            if (ret == BAD_STATE_E)
+                return CKR_FUNCTION_FAILED;
             if (ret != 0)
                 return CKR_MECHANISM_PARAM_INVALID;
             init = WP11_INIT_AES_CTR_DEC;
@@ -4465,6 +4504,8 @@ static CK_RV DecryptInit(CK_SESSION_HANDLE hSession,
             }
 
             ret = WP11_Session_SetAesWrapParams(session, iv, ivLen, obj, 0);
+            if (ret == BAD_STATE_E)
+                return CKR_FUNCTION_FAILED;
             if (ret != 0)
                 return CKR_MECHANISM_PARAM_INVALID;
             init = WP11_INIT_AES_KEYWRAP_DEC;
@@ -4479,8 +4520,11 @@ static CK_RV DecryptInit(CK_SESSION_HANDLE hSession,
     }
 
     WP11_Session_SetMechanism(session, pMechanism->mechanism);
-    WP11_Session_SetObject(session, obj);
     WP11_Session_SetOpInitialized(session, init);
+    if (WP11_Session_SetObject(session, obj) != 0) {
+        WP11_Session_AbortOp(session);
+        return CKR_FUNCTION_FAILED;
+    }
 
     return CKR_OK;
 }
@@ -4588,6 +4632,10 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
             }
 
             decDataLen = WP11_Rsa_KeyLen(obj);
+            if (decDataLen == 0) {
+                WP11_Session_AbortOp(session);
+                return CKR_FUNCTION_FAILED;
+            }
             if (pData == NULL) {
                 *pulDataLen = decDataLen;
                 return CKR_OK;
@@ -4614,6 +4662,10 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
             }
 
             decDataLen = WP11_Rsa_KeyLen(obj);
+            if (decDataLen == 0) {
+                WP11_Session_AbortOp(session);
+                return CKR_FUNCTION_FAILED;
+            }
             if (pData == NULL) {
                 *pulDataLen = decDataLen;
                 return CKR_OK;
@@ -4643,6 +4695,10 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
             }
 
             decDataLen = WP11_Rsa_KeyLen(obj);
+            if (decDataLen == 0) {
+                WP11_Session_AbortOp(session);
+                return CKR_FUNCTION_FAILED;
+            }
             if (pData == NULL) {
                 *pulDataLen = decDataLen;
                 return CKR_OK;
@@ -6059,6 +6115,10 @@ static CK_RV HashSignFinal(WP11_Session* session, WP11_Object* obj,
     int digestSz = 0;
     word32 sigLen = HashSignLen(session, obj, 0);
 
+    if (sigLen == 0) {
+        WP11_Session_AbortOp(session);
+        return CKR_FUNCTION_FAILED;
+    }
     if (pSignature == NULL) {
         *pulSignatureLen = sigLen;
         return CKR_OK;
@@ -6519,8 +6579,11 @@ static CK_RV wp11_C_SignInit(CK_SESSION_HANDLE hSession,
     }
 
     WP11_Session_SetMechanism(session, pMechanism->mechanism);
-    WP11_Session_SetObject(session, obj);
     WP11_Session_SetOpInitialized(session, init);
+    if (WP11_Session_SetObject(session, obj) != 0) {
+        WP11_Session_AbortOp(session);
+        return CKR_FUNCTION_FAILED;
+    }
     /* Tying the key to TLS since the check above ends the operations already
      * set on it, so check again now that this one is. */
     if (pMechanism->mechanism != CKM_TLS_MAC && TLS12_ONLY(obj)) {
@@ -6615,6 +6678,10 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             }
 
             sigLen = WP11_Rsa_KeyLen(obj);
+            if (sigLen == 0) {
+                WP11_Session_AbortOp(session);
+                return CKR_FUNCTION_FAILED;
+            }
             if (pSignature == NULL) {
                 *pulSignatureLen = sigLen;
                 return CKR_OK;
@@ -6656,6 +6723,10 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 return CKR_OPERATION_NOT_INITIALIZED;
 
             sigLen = WP11_Rsa_KeyLen(obj);
+            if (sigLen == 0) {
+                WP11_Session_AbortOp(session);
+                return CKR_FUNCTION_FAILED;
+            }
             if (pSignature == NULL) {
                 *pulSignatureLen = sigLen;
                 return CKR_OK;
@@ -6713,6 +6784,10 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 return CKR_OPERATION_NOT_INITIALIZED;
 
             sigLen = WP11_Rsa_KeyLen(obj);
+            if (sigLen == 0) {
+                WP11_Session_AbortOp(session);
+                return CKR_FUNCTION_FAILED;
+            }
             if (pSignature == NULL) {
                 *pulSignatureLen = sigLen;
                 return CKR_OK;
@@ -6767,6 +6842,10 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 return CKR_OPERATION_NOT_INITIALIZED;
 
             sigLen = WP11_Ec_SigLen(obj);
+            if (sigLen == 0) {
+                WP11_Session_AbortOp(session);
+                return CKR_FUNCTION_FAILED;
+            }
             if (pSignature == NULL) {
                 *pulSignatureLen = sigLen;
                 return CKR_OK;
@@ -6799,6 +6878,10 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 return CKR_OPERATION_NOT_INITIALIZED;
 
             sigLen = WP11_Mldsa_SigLen(obj);
+            if (sigLen == 0) {
+                WP11_Session_AbortOp(session);
+                return CKR_FUNCTION_FAILED;
+            }
             if (pSignature == NULL) {
                 *pulSignatureLen = sigLen;
                 return CKR_OK;
@@ -7753,8 +7836,11 @@ static CK_RV wp11_C_VerifyInit(CK_SESSION_HANDLE hSession,
     }
 
     WP11_Session_SetMechanism(session, pMechanism->mechanism);
-    WP11_Session_SetObject(session, obj);
     WP11_Session_SetOpInitialized(session, init);
+    if (WP11_Session_SetObject(session, obj) != 0) {
+        WP11_Session_AbortOp(session);
+        return CKR_FUNCTION_FAILED;
+    }
     /* Tying the key to TLS since the check above ends the operations already
      * set on it, so check again now that this one is. */
     if (pMechanism->mechanism != CKM_TLS_MAC && TLS12_ONLY(obj)) {
@@ -8635,8 +8721,11 @@ static CK_RV wp11_C_VerifyRecoverInit(CK_SESSION_HANDLE hSession,
     }
 
     WP11_Session_SetMechanism(session, pMechanism->mechanism);
-    WP11_Session_SetObject(session, obj);
     WP11_Session_SetOpInitialized(session, init);
+    if (WP11_Session_SetObject(session, obj) != 0) {
+        WP11_Session_AbortOp(session);
+        return CKR_FUNCTION_FAILED;
+    }
 
     return CKR_OK;
 }
@@ -8748,6 +8837,10 @@ static CK_RV wp11_C_VerifyRecover(CK_SESSION_HANDLE hSession,
         return CKR_KEY_TYPE_INCONSISTENT;
 
     decDataLen = WP11_Rsa_KeyLen(obj);
+    if (decDataLen == 0) {
+        WP11_Session_AbortOp(session);
+        return CKR_FUNCTION_FAILED;
+    }
     if (pData == NULL) {
         *pulDataLen = decDataLen;
         return CKR_OK;
@@ -10248,6 +10341,10 @@ static CK_RV wp11_C_WrapKey(CK_SESSION_HANDLE hSession,
             }
 
             encDataLen = WP11_Rsa_KeyLen(wrappingKey);
+            if (encDataLen == 0) {
+                rv = CKR_FUNCTION_FAILED;
+                goto err_out;
+            }
             if (pWrappedKey == NULL) {
                 *pulWrappedKeyLen = encDataLen;
                 rv = CKR_OK;

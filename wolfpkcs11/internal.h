@@ -472,6 +472,9 @@ WP11_API int WP11_Test_StoreWriteFailOnce(int writes);
 WP11_API void WP11_Test_TpmStoreShortBy(int bytes);
 #endif
 WP11_API void WP11_Test_SetEmptyPinCheckHook(void (*hook)(void));
+WP11_API void WP11_Test_SetKeyDecodedHook(void (*hook)(void));
+WP11_API void WP11_Test_SetDiscardHook(void (*hook)(void));
+WP11_API void WP11_Test_SetGetObjectHook(void (*hook)(void));
 #if defined(WOLFPKCS11_TPM) && (!defined(NO_RSA) || defined(HAVE_ECC))
 WP11_API int WP11_Test_DecodeTpmKey(CK_SLOT_ID slotId, unsigned char* keyData,
     int keyDataLen);
@@ -567,10 +570,8 @@ WP11_API int WP11_Test_StoreName(int type);
 #endif
 #endif
 WP11_LOCAL int WP11_Object_HandleOnToken(CK_OBJECT_HANDLE handle);
-WP11_LOCAL void WP11_Slot_ClearActiveObject(WP11_Slot* slot,
-                                            WP11_Object* object);
 WP11_LOCAL void WP11_Session_GetObject(WP11_Session* session, WP11_Object** object);
-WP11_LOCAL void WP11_Session_SetObject(WP11_Session* session, WP11_Object* object);
+WP11_LOCAL int WP11_Session_SetObject(WP11_Session* session, WP11_Object* object);
 
 WP11_LOCAL int WP11_Session_FindInit(WP11_Session* session);
 WP11_LOCAL int WP11_Session_Find(WP11_Session* session, int onToken,
