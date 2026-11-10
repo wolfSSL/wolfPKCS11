@@ -11777,10 +11777,25 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
         if (reqValueLen > keyLen)
             rv = CKR_ATTRIBUTE_VALUE_INVALID;
 #ifndef WOLFPKCS11_NO_DERIVE_LENGTH_GUARD
-        if (rv == CKR_OK && !concat && WP11_Object_GetClass(obj) != CKO_DATA &&
-                DerivedKeyTooShort(baseSensitive, baseExtractable,
-                                   (reqValueLen > 0) ? reqValueLen : keyLen))
-            rv = CKR_ATTRIBUTE_VALUE_INVALID;
+        if (rv == CKR_OK && !concat) {
+            CK_BBOOL guardSensitive = baseSensitive;
+            CK_BBOOL guardExtractable = baseExtractable;
+            int guard = 1;
+
+            /* A data object base is readable, so only an HKDF salt key's
+             * protection limits the length. */
+            if (WP11_Object_GetClass(obj) == CKO_DATA) {
+                if (otherKey != NULL) {
+                    GetBaseProtection(otherKey, &guardSensitive,
+                                      &guardExtractable);
+                }
+                else
+                    guard = 0;
+            }
+            if (guard && DerivedKeyTooShort(guardSensitive, guardExtractable,
+                    (reqValueLen > 0) ? reqValueLen : keyLen))
+                rv = CKR_ATTRIBUTE_VALUE_INVALID;
+        }
 #endif
 #ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
         if (rv == CKR_OK) {
