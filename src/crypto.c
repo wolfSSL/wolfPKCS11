@@ -100,6 +100,7 @@
 #define CHECK_WRAPPABLE(kc, kt) \
     ( \
             (kc == CKO_PRIVATE_KEY && kt == CKK_RSA) || \
+            (kc == CKO_PRIVATE_KEY && kt == CKK_EC) || \
             (kc == CKO_SECRET_KEY && kt == CKK_AES) || \
             (kc == CKO_SECRET_KEY && kt == CKK_GENERIC_SECRET) || \
             (kc == CKO_SECRET_KEY && kt == CKK_HKDF) \
@@ -1289,6 +1290,16 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
         for (j = 0; j < (int)ulCount; j++) {
             if (attrs[i] == pTemplate[j].type) {
                 attrsFound = 1;
+            #ifdef HAVE_ECC
+                /* NSS sends an empty CKA_EC_POINT on a private key whose
+                 * PKCS#8 has no public value. The point is optional there, so
+                 * treat it as not given. */
+                if (type == CKK_EC && objClass == CKO_PRIVATE_KEY &&
+                        attrs[i] == CKA_EC_POINT &&
+                        pTemplate[j].ulValueLen == 0) {
+                    break;
+                }
+            #endif
                 present[i] = 1;
                 data[i] = (unsigned char*)pTemplate[j].pValue;
                 if (data[i] == NULL) {
@@ -1677,6 +1688,59 @@ err_out:
     return rv;
 }
 #endif
+
+#ifdef HAVE_ECC
+/**
+ * Create an EC private key object from an unwrapped PKCS#8 encoding.
+ *
+ * @param  session    [in]   Session object.
+ * @param  pTemplate  [in]   Template of attributes for object.
+ * @param  ulCount    [in]   Number of attribute triplets in template.
+ * @param  derBuf     [in]   DER-encoded PKCS#8 or ECPrivateKey.
+ * @param  derLen     [in]   Length of the DER-encoded key data.
+ * @param  phKey      [out]  Handle of the new key object.
+ * @return  CKR_TEMPLATE_INCONSISTENT when the template's CKA_EC_PARAMS names
+ *          another curve.
+ *          CKR_WRAPPED_KEY_INVALID when the key data isn't a valid EC key.
+ *          Other errors as for NewObject() and AddObject().
+ *          CKR_OK on success.
+ */
+static CK_RV AddECPrivateKeyObject(WP11_Session* session,
+    CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount, byte* derBuf, CK_ULONG derLen,
+    CK_OBJECT_HANDLE_PTR phKey)
+{
+    CK_RV rv;
+    int ret;
+    WP11_Object* privKeyObject = NULL;
+
+    *phKey = CK_INVALID_HANDLE;
+
+    rv = NewObject(session, CKK_EC, CKO_PRIVATE_KEY, pTemplate, ulCount,
+                   &privKeyObject);
+    if (rv != CKR_OK)
+        return rv;
+
+    ret = WP11_Ec_ParsePrivKey(derBuf, (word32)derLen, privKeyObject);
+    if (ret == ECC_CURVE_OID_E)
+        rv = CKR_TEMPLATE_INCONSISTENT;
+    else if (ret == MP_MEM || ret == MEMORY_E)
+        rv = CKR_DEVICE_MEMORY;
+    else if (ret != 0)
+        rv = CKR_WRAPPED_KEY_INVALID;
+
+    if (rv == CKR_OK)
+        rv = AddObject(session, privKeyObject, pTemplate, ulCount, phKey);
+
+    if (rv != CKR_OK) {
+        if (*phKey != CK_INVALID_HANDLE)
+            RemoveAddedObject(session, privKeyObject, phKey);
+        else
+            WP11_Object_Free(privKeyObject);
+    }
+
+    return rv;
+}
+#endif /* HAVE_ECC */
 
 /**
  * Create an object in the session or on the token associated with the session.
@@ -10223,6 +10287,27 @@ static CK_RV wp11_C_WrapKey(CK_SESSION_HANDLE hSession,
             }
             break;
 #endif
+#if defined(HAVE_ECC) && defined(HAVE_PKCS8) && defined(HAVE_ECC_KEY_EXPORT)
+        case CKK_EC:
+            ret = WP11_Ec_SerializeKeyPTPKC8(key, NULL, &serialSize);
+            /* A key kept on a TPM has no private scalar to export. */
+            if (ret == BAD_STATE_E)
+                return CKR_KEY_NOT_WRAPPABLE;
+            if (ret != 0)
+                return CKR_FUNCTION_FAILED;
+
+            serialBuff = (byte*)XMALLOC(serialSize, NULL,
+                DYNAMIC_TYPE_TMP_BUFFER);
+            if (serialBuff == NULL)
+                return CKR_HOST_MEMORY;
+
+            ret = WP11_Ec_SerializeKeyPTPKC8(key, serialBuff, &serialSize);
+            if (ret != 0) {
+                rv = CKR_FUNCTION_FAILED;
+                goto err_out;
+            }
+            break;
+#endif
 #if defined(WOLFSSL_STM32U5_DHUK) || !defined(WOLFPKCS11_NO_STORE)
 #ifndef NO_AES
         case CKK_AES:
@@ -10648,6 +10733,12 @@ static CK_RV wp11_C_UnwrapKey(CK_SESSION_HANDLE hSession,
 #ifndef NO_RSA
         case CKK_RSA:
             rv = AddRSAPrivateKeyObject(session, pTemplate, ulAttributeCount,
+                workBuffer, ulUnwrappedLen, phKey);
+            break;
+#endif
+#ifdef HAVE_ECC
+        case CKK_EC:
+            rv = AddECPrivateKeyObject(session, pTemplate, ulAttributeCount,
                 workBuffer, ulUnwrappedLen, phKey);
             break;
 #endif
