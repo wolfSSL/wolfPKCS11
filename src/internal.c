@@ -7174,6 +7174,8 @@ static int wp11_Object_Store_MlKemKey(WP11_Object* object, int tokenId,
 }
 #endif /* WOLFPKCS11_MLKEM */
 
+#endif /* !WOLFPKCS11_NO_STORE */
+
 #ifdef WOLFPKCS11_LMS
 /* ===========================================================================
  * LMS/HSS (RFC 8554): verification and public-key import.
@@ -7269,6 +7271,7 @@ static int wp11_HssCheckParamAttrs(LmsKey* key,
     return 0;
 }
 
+#ifndef WOLFPKCS11_NO_STORE
 /* Serialize the public key: keyData holds the raw RFC 8554 HSS public key. */
 static int wp11_Object_Encode_HssKey(WP11_Object* object)
 {
@@ -7348,6 +7351,8 @@ static int wp11_Object_Store_HssKey(WP11_Object* object, int tokenId, int objId)
     return ret;
 }
 
+#endif /* !WOLFPKCS11_NO_STORE */
+
 /* Import an HSS public key from a C_CreateObject template. Following the
  * PKCS#11 v3.3 HSS profile the collected attributes are data[0]=CKA_HSS_LEVELS,
  * data[1]=CKA_HSS_LMS_TYPE, data[2]=CKA_HSS_LMOTS_TYPE (all optional CK_ULONG)
@@ -7395,16 +7400,20 @@ int WP11_Object_SetHssKey(WP11_Object* object, unsigned char** data,
         /* Replace the live key and drop the cached serialization so a later
          * store re-encodes from the new key instead of persisting stale bytes. */
         if (object->data.lmsKey != NULL) {
+        #ifndef WOLFPKCS11_NO_STORE
             if (!object->encoded)
+        #endif
                 wc_LmsKey_Free(object->data.lmsKey);
             XFREE(object->data.lmsKey, NULL, DYNAMIC_TYPE_KEY);
         }
         object->data.lmsKey = newKey;
-        object->encoded = 0;
         newKey = NULL;
+    #ifndef WOLFPKCS11_NO_STORE
+        object->encoded = 0;
         XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         object->keyData = NULL;
         object->keyDataLen = 0;
+    #endif
     }
     if (newKey != NULL) {
         wc_LmsKey_Free(newKey);
@@ -7725,6 +7734,7 @@ static int wp11_XmssImportPub(XmssKey* key, int is_xmssmt, int devId,
     return ret;
 }
 
+#ifndef WOLFPKCS11_NO_STORE
 /* Serialize the public key: keyData holds the raw RFC 8391 public key. */
 static int wp11_Object_Encode_XmssKey(WP11_Object* object)
 {
@@ -7805,6 +7815,8 @@ static int wp11_Object_Store_XmssKey(WP11_Object* object, int tokenId,
     return ret;
 }
 
+#endif /* !WOLFPKCS11_NO_STORE */
+
 /* Import an XMSS/XMSS^MT public key from a C_CreateObject template. data[1] is
  * the raw RFC 8391 public key; data[0] (CKA_PARAMETER_SET, the OID as a
  * CK_ULONG) is optional and, when present, is validated against the key.
@@ -7842,16 +7854,20 @@ int WP11_Object_SetXmssKey(WP11_Object* object, unsigned char** data,
         /* Replace the live key and drop the cached serialization so a later
          * store re-encodes from the new key. */
         if (object->data.xmssKey != NULL) {
+        #ifndef WOLFPKCS11_NO_STORE
             if (!object->encoded)
+        #endif
                 wc_XmssKey_Free(object->data.xmssKey);
             XFREE(object->data.xmssKey, NULL, DYNAMIC_TYPE_KEY);
         }
         object->data.xmssKey = newKey;
-        object->encoded = 0;
         newKey = NULL;
+    #ifndef WOLFPKCS11_NO_STORE
+        object->encoded = 0;
         XFREE(object->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         object->keyData = NULL;
         object->keyDataLen = 0;
+    #endif
     }
     if (newKey != NULL) {
         wc_XmssKey_Free(newKey);
@@ -8017,6 +8033,8 @@ static int XmssObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
     return ret;
 }
 #endif /* WOLFPKCS11_XMSS */
+
+#ifndef WOLFPKCS11_NO_STORE
 
 /**
  * Get the length of the secret in a stored symmetric key record.
@@ -14298,7 +14316,9 @@ void WP11_Object_Free(WP11_Object* object)
     #endif
     #ifdef WOLFPKCS11_MLKEM
         if (object->type == CKK_ML_KEM && object->data.mlKemKey != NULL) {
+        #ifndef WOLFPKCS11_NO_STORE
             if (!object->encoded)
+        #endif
                 wc_MlKemKey_Free(object->data.mlKemKey);
             XFREE(object->data.mlKemKey, NULL, DYNAMIC_TYPE_KEY);
             object->data.mlKemKey = NULL;
@@ -14306,7 +14326,9 @@ void WP11_Object_Free(WP11_Object* object)
     #endif
     #ifdef WOLFPKCS11_LMS
         if (object->type == CKK_HSS && object->data.lmsKey != NULL) {
+        #ifndef WOLFPKCS11_NO_STORE
             if (!object->encoded)
+        #endif
                 wc_LmsKey_Free(object->data.lmsKey);
             XFREE(object->data.lmsKey, NULL, DYNAMIC_TYPE_KEY);
             object->data.lmsKey = NULL;
@@ -14315,7 +14337,9 @@ void WP11_Object_Free(WP11_Object* object)
     #ifdef WOLFPKCS11_XMSS
         if ((object->type == CKK_XMSS || object->type == CKK_XMSSMT) &&
                 object->data.xmssKey != NULL) {
+        #ifndef WOLFPKCS11_NO_STORE
             if (!object->encoded)
+        #endif
                 wc_XmssKey_Free(object->data.xmssKey);
             XFREE(object->data.xmssKey, NULL, DYNAMIC_TYPE_KEY);
             object->data.xmssKey = NULL;
