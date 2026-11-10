@@ -382,7 +382,8 @@ static CK_RV hkdf_data(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE base,
 }
 #endif
 
-/* HKDF extract and expand into a sensitive key with the salt in a key. */
+/* HKDF extract and expand into a sensitive key with the salt in a key, or
+ * with no salt when salt is CK_INVALID_HANDLE. */
 static CK_RV hkdf_salt_key(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE base,
                            CK_OBJECT_HANDLE salt, CK_ULONG len,
                            CK_OBJECT_HANDLE* key)
@@ -400,7 +401,8 @@ static CK_RV hkdf_salt_key(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE base,
     params.bExtract = CK_TRUE;
     params.bExpand = CK_TRUE;
     params.prfHashMechanism = CKM_SHA256;
-    params.ulSaltType = CKF_HKDF_SALT_KEY;
+    params.ulSaltType = (salt != CK_INVALID_HANDLE) ? CKF_HKDF_SALT_KEY :
+                                                      CKF_HKDF_SALT_NULL;
     params.hSaltKey = salt;
     *key = CK_INVALID_HANDLE;
     return funcList->C_DeriveKey(session, &mech, base, tmpl,
@@ -408,17 +410,24 @@ static CK_RV hkdf_salt_key(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE base,
 }
 
 /* The derived key depends on the salt key's value as much as on the base
- * key's, so a protected salt key limits the length even when the base key is
- * readable. */
+ * key's, so a protected salt key limits the length even when the base key, or
+ * data object, is readable. */
 static void test_hkdf_salt_key(CK_SESSION_HANDLE session)
 {
     CK_RV rv;
     CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE data = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE salt = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE readableSalt = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
     byte ikm[32];
     byte saltValue[16];
+    CK_ATTRIBUTE dataTmpl[] = {
+        { CKA_CLASS,       &dataClass,      sizeof(dataClass)      },
+        { CKA_DERIVE,      &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VALUE,       ikm,             sizeof(ikm)            },
+    };
 
     printf("\n--- HKDF salt key lengths ---\n");
     XMEMSET(ikm, 0x0b, sizeof(ikm));
@@ -426,6 +435,12 @@ static void test_hkdf_salt_key(CK_SESSION_HANDLE session)
     rv = create_secret(session, CKK_GENERIC_SECRET, ikm, sizeof(ikm), CK_FALSE,
                        &base);
     check_rv(rv, CKR_OK, "create readable HKDF base key");
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, dataTmpl,
+                                      sizeof(dataTmpl) / sizeof(*dataTmpl),
+                                      &data);
+        check_rv(rv, CKR_OK, "create HKDF base data object");
+    }
     if (rv == CKR_OK) {
         rv = create_secret(session, CKK_GENERIC_SECRET, saltValue,
                            sizeof(saltValue), CK_TRUE, &salt);
@@ -448,10 +463,23 @@ static void test_hkdf_salt_key(CK_SESSION_HANDLE session)
     rv = hkdf_salt_key(session, base, readableSalt, 8, &key);
     check_derive(session, rv, CKR_OK, &key,
                  "8 byte HKDF key from a readable salt key");
+    rv = hkdf_salt_key(session, data, salt, 8, &key);
+    check_derive(session, rv, GUARD_RV(CKR_ATTRIBUTE_VALUE_INVALID), &key,
+                 "8 byte HKDF key from a data object and protected salt key");
+    rv = hkdf_salt_key(session, data, salt, 16, &key);
+    check_derive(session, rv, CKR_OK, &key,
+                 "16 byte HKDF key from a data object and protected salt key");
+    rv = hkdf_salt_key(session, data, readableSalt, 8, &key);
+    check_derive(session, rv, CKR_OK, &key,
+                 "8 byte HKDF key from a data object and readable salt key");
+    rv = hkdf_salt_key(session, data, CK_INVALID_HANDLE, 8, &key);
+    check_derive(session, rv, CKR_OK, &key,
+                 "8 byte HKDF key from a data object and no salt key");
 
 cleanup:
     destroy_obj(session, &readableSalt);
     destroy_obj(session, &salt);
+    destroy_obj(session, &data);
     destroy_obj(session, &base);
 }
 
