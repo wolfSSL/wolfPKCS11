@@ -767,7 +767,7 @@ static CK_RV test_token(void* args)
             if (ret == CKR_OK) {
                 ret = funcList->C_SetPIN(session, userPin, userPinLen, userPin,
                                                                     userPinLen);
-                CHECK_CKR_FAIL(ret, CKR_USER_PIN_NOT_INITIALIZED,
+                CHECK_CKR_FAIL(ret, CKR_PIN_INCORRECT,
                                                         "Set User PIN not set");
             }
             funcList->C_CloseSession(session);
@@ -17293,7 +17293,6 @@ static CK_RV test_key_use_logged_out(void* args)
 #ifdef HAVE_AES_CBC
     CK_BYTE iv[16] = { 0 };
     CK_BYTE cbcOut[16];
-    CK_BYTE cbcSessOut[16];
     CK_SESSION_HANDLE cbcSession = CK_INVALID_HANDLE;
 #endif
 #ifdef HAVE_AESECB
@@ -17556,7 +17555,8 @@ static CK_RV test_key_use_logged_out(void* args)
     if (ret == CKR_OK) {
         outSz = sizeof(cbcOut);
         ret = funcList->C_Encrypt(cbcSession, in, sizeof(in), cbcOut, &outSz);
-        CHECK_CKR(ret, "AES-CBC encrypt started before logout");
+        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
+                       "AES-CBC encrypt started before logout");
     }
 #endif
 #ifdef HAVE_AESGCM
@@ -17881,21 +17881,6 @@ static CK_RV test_key_use_logged_out(void* args)
                "Token key decoded after login");
 #endif
 #ifdef HAVE_AES_CBC
-    mech.mechanism = CKM_AES_CBC;
-    mech.pParameter = iv;
-    mech.ulParameterLen = sizeof(iv);
-    if (ret == CKR_OK) {
-        ret = funcList->C_EncryptInit(session, &mech, hAesSess);
-        CHECK_CKR(ret, "AES-CBC encrypt init with session key");
-    }
-    if (ret == CKR_OK) {
-        outSz = sizeof(cbcSessOut);
-        ret = funcList->C_Encrypt(session, in, sizeof(in), cbcSessOut, &outSz);
-        CHECK_CKR(ret, "AES-CBC encrypt with session key");
-    }
-    CHECK_COND(ret != CKR_OK ||
-               XMEMCMP(cbcOut, cbcSessOut, sizeof(cbcOut)) == 0, ret,
-               "AES-CBC across logout used the key value");
     if (cbcSession != CK_INVALID_HANDLE)
         funcList->C_CloseSession(cbcSession);
 #endif

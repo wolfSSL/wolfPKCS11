@@ -355,6 +355,10 @@ noinst_PROGRAMS += tests/logout_retire_test
 tests_logout_retire_test_SOURCES = tests/logout_retire_test.c
 tests_logout_retire_test_LDADD =
 
+noinst_PROGRAMS += tests/logout_key_ops_test
+tests_logout_key_ops_test_SOURCES = tests/logout_key_ops_test.c
+tests_logout_key_ops_test_LDADD =
+
 check_PROGRAMS += tests/login_pin_state_test
 noinst_PROGRAMS += tests/login_pin_state_test
 tests_login_pin_state_test_SOURCES = tests/login_pin_state_test.c
@@ -468,6 +472,7 @@ endif
 if !BUILD_STATIC_WOLFSSL
 check_PROGRAMS += tests/token_store_test
 check_PROGRAMS += tests/logout_retire_test
+check_PROGRAMS += tests/logout_key_ops_test
 check_PROGRAMS += tests/session_op_lifecycle_test
 check_PROGRAMS += tests/info_mech_table_test
 check_PROGRAMS += tests/attribute_validation_test
@@ -553,6 +558,7 @@ tests_wrapkey_length_query_test_LDADD += src/libwolfpkcs11.la
 tests_set_pin_rekey_test_LDADD += src/libwolfpkcs11.la
 tests_nss_configdir_prefix_test_LDADD += src/libwolfpkcs11.la
 tests_logout_retire_test_LDADD += src/libwolfpkcs11.la
+tests_logout_key_ops_test_LDADD += src/libwolfpkcs11.la
 tests_login_pin_state_test_LDADD += src/libwolfpkcs11.la
 tests_object_store_decode_test_LDADD += src/libwolfpkcs11.la
 tests_object_policy_integrity_test_LDADD += src/libwolfpkcs11.la
@@ -637,6 +643,7 @@ tests_wrapkey_length_query_test_LDADD += src/libwolfpkcs11.la
 tests_set_pin_rekey_test_LDADD += src/libwolfpkcs11.la
 tests_nss_configdir_prefix_test_LDADD += src/libwolfpkcs11.la
 tests_logout_retire_test_LDADD += src/libwolfpkcs11.la
+tests_logout_key_ops_test_LDADD += src/libwolfpkcs11.la
 tests_login_pin_state_test_LDADD += src/libwolfpkcs11.la
 tests_object_store_decode_test_LDADD += src/libwolfpkcs11.la
 tests_object_policy_integrity_test_LDADD += src/libwolfpkcs11.la
