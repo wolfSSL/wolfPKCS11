@@ -896,6 +896,12 @@ static void test_destroy_unstored_object(void)
 /* A library initialization that fails part way is undone and retried. */
 static void test_init_out_of_memory(void)
 {
+#ifdef HAVE_FIPS
+    /* The failed initialization runs the FIPS self-tests without memory. A
+     * failed self-test disables its algorithm until the process exits, so the
+     * retry cannot succeed in a FIPS build. */
+    printf("\nSkipping initialization out of memory test in a FIPS build\n");
+#else
     CK_RV rv;
     CK_SLOT_ID slot = 0;
     CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
@@ -919,6 +925,7 @@ static void test_init_out_of_memory(void)
     }
     close_session(session);
     funcList->C_Finalize(NULL);
+#endif
 }
 
 /* Object creation fails cleanly when memory cannot be allocated. */

@@ -74,11 +74,13 @@
     #pragma GCC diagnostic ignored "-Wunused-function"
 #endif
 
+/* Non-empty PINs are at least 14 bytes, the FIPS HMAC minimum key length, so
+ * they can be hashed in FIPS builds. */
 static const char* soPin = "password123456";
 static const char* userPin = "wolfpkcs11-test";
 static const char tokenLabel[] = "login-pin-state";
 #ifndef WOLFPKCS11_NO_TIME
-static const char* wrongOldPin = "wrong-old-pin";
+static const char* wrongOldPin = "wrong-old-pin-1";
 #endif
 
 /* Start from an unprovisioned token so earlier runs cannot affect this one. */
@@ -416,7 +418,7 @@ static void empty_pin_change_requires_login_test(void)
     CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
     CK_TOKEN_INFO info;
     pthread_t thread;
-    const char* newPin = "non-empty-pin";
+    const char* newPin = "non-empty-pin-1";
     CK_OBJECT_CLASS dataClass = CKO_DATA;
     CK_BBOOL privTrue = CK_TRUE;
     CK_ATTRIBUTE privTmpl[] = {

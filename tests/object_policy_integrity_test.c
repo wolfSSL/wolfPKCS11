@@ -155,23 +155,6 @@ static void cleanup_test_files(void)
     }
 }
 
-/* Locate the stored file of the given kind for its single object. */
-static int find_store_file(const char* kind, char* path, size_t sz)
-{
-    FILE* f;
-    int i;
-
-    for (i = 0; i < MAX_OBJ_ID; i++) {
-        store_path(path, sz, kind, i);
-        f = fopen(path, "rb");
-        if (f != NULL) {
-            fclose(f);
-            return 0;
-        }
-    }
-    return -1;
-}
-
 static int read_file(const char* path, byte* data, size_t sz, size_t* readSz)
 {
     FILE* f = fopen(path, "rb");
@@ -1089,6 +1072,23 @@ static void test_legitimate_updates_round_trip(void)
     !defined(WOLFSSL_STM32U5_DHUK) && \
     !(defined(HAVE_FIPS) && defined(WOLFPKCS11_NSS))
 #define HAVE_LEGACY_STORE_TEST
+
+/* Locate the stored file of the given kind for its single object. */
+static int find_store_file(const char* kind, char* path, size_t sz)
+{
+    FILE* f;
+    int i;
+
+    for (i = 0; i < MAX_OBJ_ID; i++) {
+        store_path(path, sz, kind, i);
+        f = fopen(path, "rb");
+        if (f != NULL) {
+            fclose(f);
+            return 0;
+        }
+    }
+    return -1;
+}
 
 /* Derive the token storage key from the user PIN and the stored token seed,
  * the way stores have always been keyed. */

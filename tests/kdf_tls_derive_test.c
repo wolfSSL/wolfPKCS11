@@ -190,7 +190,9 @@ static int test_hkdf_lengths_fit_word32(CK_SESSION_HANDLE session)
     CK_RV ret;
     CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
-    byte salt[4] = { 0x00, 0x01, 0x02, 0x03 };
+    /* HKDF-Extract keys HMAC with the salt; FIPS requires 14+ bytes. */
+    byte salt[16] = { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+                      0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f };
     byte info[4] = { 0xf0, 0xf1, 0xf2, 0xf3 };
     CK_HKDF_PARAMS params;
     CK_MECHANISM mech = { CKM_HKDF_DERIVE, &params, sizeof(params) };
