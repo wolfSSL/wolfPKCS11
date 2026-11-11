@@ -11788,6 +11788,11 @@ static int wp11_Slot_SetUserPin(WP11_Slot* slot, char* oldPin, int oldPinLen,
     #ifndef WOLFPKCS11_NO_TIME
         oldPinRet = ret;
     #endif
+        /* An old PIN too short for the PIN hash, such as below the FIPS HMAC
+         * minimum key length, cannot be the current PIN. As with a login, it
+         * does not count toward the lockout. */
+        if (ret == HMAC_MIN_KEYLEN_E || ret == BAD_LENGTH_E)
+            ret = PIN_INVALID_E;
     }
     if (ret == 0) {
         ret = HashPIN(pin, pinLen, d->userPinSeed, sizeof(d->userPinSeed),
