@@ -18190,6 +18190,7 @@ static int wp11_Rsa_SigInvalid(int ret)
            ret == RSA_OUT_OF_RANGE_E;
 }
 
+#ifdef WC_RSA_DIRECT
 /**
  * Check that a raw RSA input is below the modulus.
  *
@@ -18215,6 +18216,7 @@ static int wp11_Rsa_CheckRange(const unsigned char* in, word32 inLen,
     }
     return ret;
 }
+#endif /* WC_RSA_DIRECT */
 
 /**
  * Encrypt data with public key.
