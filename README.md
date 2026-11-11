@@ -172,13 +172,15 @@ versions may need to update templates or error-handling:
 
 - `C_DeriveKey` now enforces `CKA_DERIVE` on the base key. Keys that do not
   set `CKA_DERIVE=CK_TRUE` at creation are rejected with
-  `CKR_KEY_TYPE_INCONSISTENT`. RSA, EC, and ML-DSA private keys default
+  `CKR_KEY_FUNCTION_NOT_PERMITTED`. RSA, EC, and ML-DSA private keys default
   `CKA_DERIVE` to `CK_FALSE`, so applications doing ECDH or other key
   derivation must now set `CKA_DERIVE=CK_TRUE` explicitly in the key
-  template. The check is skipped on `--enable-nss` builds because NSS
-  generates ephemeral ECDHE keys without setting `CKA_DERIVE` and relies on
-  the historic permissive behavior; non-NSS builds get the spec-compliant
-  enforcement.
+  template. The second key of `CKM_CONCATENATE_BASE_AND_KEY` and the
+  `CKF_HKDF_SALT_KEY` salt key of `CKM_HKDF_DERIVE` and `CKM_HKDF_DATA` need
+  `CKA_DERIVE=CK_TRUE` too. The check is skipped on `--enable-nss` builds
+  because NSS generates ephemeral ECDHE keys without setting `CKA_DERIVE`
+  and relies on the historic permissive behavior; non-NSS builds get the
+  spec-compliant enforcement.
 - `C_DeriveKey` returns `CKR_TEMPLATE_INCONSISTENT` and creates no key when
   the template sets `CKA_SENSITIVE=CK_FALSE` under a sensitive base key, or
   `CKA_EXTRACTABLE=CK_TRUE` under a non-extractable one. The second key of
@@ -188,8 +190,12 @@ versions may need to update templates or error-handling:
   leaves these attributes out gets a sensitive key from a sensitive base key
   and a non-extractable key from a non-extractable one; for
   `CKM_TLS12_KEY_AND_MAC_DERIVE` this is new, as its keys used the defaults
-  before. NSS builds and builds with `WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT`
-  are unchanged.
+  before. An HKDF salt key counts as a base key too, as the derived value
+  depends on it: its `CKA_SENSITIVE`, `CKA_EXTRACTABLE`,
+  `CKA_ALWAYS_SENSITIVE`, `CKA_NEVER_EXTRACTABLE` and
+  `CKA_WRAP_WITH_TRUSTED` now carry over to the derived key as those of the
+  second concatenation key do. NSS builds and builds with
+  `WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT` are unchanged.
 - `C_DeriveKey` returns `CKR_ATTRIBUTE_VALUE_INVALID` and creates no key when
   a key derived from a sensitive or non-extractable key would be shorter than
   16 bytes. A `CKM_TLS12_KEY_AND_MAC_DERIVE` MAC or key size that short
