@@ -38,6 +38,7 @@
     #include <wolfpkcs11/options.h>
 #endif
 #include <wolfpkcs11/pkcs11.h>
+#include <wolfpkcs11/internal.h>
 
 #ifndef HAVE_PKCS11_STATIC
 #include <dlfcn.h>
@@ -342,6 +343,198 @@ static void test_stray_calls(CK_SESSION_HANDLE session,
 #endif
 }
 
+#ifndef WOLFPKCS11_NO_DIGEST_STATE
+static void test_odd_offset_digest(CK_SESSION_HANDLE session,
+                                   CK_MECHANISM_TYPE type)
+{
+    CK_RV rv;
+    CK_MECHANISM mech;
+    byte data[200];
+    byte state[1024];
+    byte want[64];
+    byte out[64];
+    CK_ULONG stateSz = sizeof(state) - 3;
+    CK_ULONG wantSz = sizeof(want);
+    CK_ULONG outSz = sizeof(out);
+
+    XMEMSET(data, 0xa5, sizeof(data));
+    set_mech(&mech, type);
+    rv = funcList->C_DigestInit(session, &mech);
+    CHECK_RV(rv, "C_DigestInit(odd offset reference)", CKR_OK);
+    rv = funcList->C_Digest(session, data, sizeof(data), want, &wantSz);
+    CHECK_RV(rv, "C_Digest(odd offset reference)", CKR_OK);
+
+    rv = funcList->C_DigestInit(session, &mech);
+    CHECK_RV(rv, "C_DigestInit to save at an odd offset", CKR_OK);
+    rv = funcList->C_DigestUpdate(session, data, 150);
+    CHECK_RV(rv, "C_DigestUpdate before odd offset save", CKR_OK);
+    rv = funcList->C_GetOperationState(session, state + 1, &stateSz);
+    CHECK_RV(rv, "C_GetOperationState at an odd offset", CKR_OK);
+    rv = funcList->C_DigestFinal(session, out, &outSz);
+    CHECK_RV(rv, "C_DigestFinal after odd offset save", CKR_OK);
+
+    XMEMMOVE(state + 3, state + 1, stateSz);
+    rv = funcList->C_SetOperationState(session, state + 3, stateSz, 0, 0);
+    CHECK_RV(rv, "C_SetOperationState at an odd offset", CKR_OK);
+    rv = funcList->C_DigestUpdate(session, data + 150, sizeof(data) - 150);
+    CHECK_RV(rv, "C_DigestUpdate of odd offset state", CKR_OK);
+    outSz = sizeof(out);
+    rv = funcList->C_DigestFinal(session, out, &outSz);
+    CHECK_RV(rv, "C_DigestFinal of odd offset state", CKR_OK);
+    CHECK_TRUE(outSz == wantSz && XMEMCMP(out, want, wantSz) == 0,
+               "odd offset state continues the saved digest");
+}
+
+static void test_forged_digest_state(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_MECHANISM mech;
+    byte abc[] = { 'a', 'b', 'c' };
+    byte def[] = { 'd', 'e', 'f' };
+    byte abcdef[] = { 'a', 'b', 'c', 'd', 'e', 'f' };
+    byte state[1024];
+    byte forged[1024];
+    byte want[32];
+    byte out[32];
+    CK_ULONG stateSz = sizeof(state);
+    CK_ULONG outSz = sizeof(want);
+    /* Saved state layout: mechanism, then 64-bit loLen and hiLen, buffLen. */
+    CK_ULONG loLenOff = sizeof(CK_MECHANISM_TYPE);
+    CK_ULONG buffLenOff = sizeof(CK_MECHANISM_TYPE) + 16;
+    CK_MECHANISM_TYPE badMech;
+    word64 loLen;
+    word32 buffLen;
+
+    set_mech(&mech, CKM_SHA256);
+    rv = funcList->C_DigestInit(session, &mech);
+    CHECK_RV(rv, "C_DigestInit(forged reference)", CKR_OK);
+    rv = funcList->C_Digest(session, abcdef, sizeof(abcdef), want, &outSz);
+    CHECK_RV(rv, "C_Digest(forged reference)", CKR_OK);
+
+    rv = funcList->C_DigestInit(session, &mech);
+    CHECK_RV(rv, "C_DigestInit to forge", CKR_OK);
+    rv = funcList->C_DigestUpdate(session, abc, sizeof(abc));
+    CHECK_RV(rv, "C_DigestUpdate to forge", CKR_OK);
+    rv = funcList->C_GetOperationState(session, state, &stateSz);
+    CHECK_RV(rv, "C_GetOperationState to forge", CKR_OK);
+    XMEMCPY(&loLen, state + loLenOff, sizeof(loLen));
+    XMEMCPY(&buffLen, state + buffLenOff, sizeof(buffLen));
+    /* ARMv8 SHA-256 in wolfSSL v5.6.6 counts only whole blocks in loLen. */
+    CHECK_TRUE(buffLen == sizeof(abc) && (loLen == sizeof(abc) || loLen == 0),
+               "saved state has the length fields at the forged offsets");
+
+    rv = funcList->C_SetOperationState(session, state, stateSz + 1, 0, 0);
+    CHECK_RV(rv, "C_SetOperationState with a trailing byte",
+             CKR_SAVED_STATE_INVALID);
+    rv = funcList->C_SetOperationState(session, state, stateSz - 2, 0, 0);
+    CHECK_RV(rv, "C_SetOperationState truncated", CKR_SAVED_STATE_INVALID);
+
+    XMEMCPY(forged, state, stateSz);
+    buffLen = 64;
+    XMEMCPY(forged + buffLenOff, &buffLen, sizeof(buffLen));
+    rv = funcList->C_SetOperationState(session, forged, stateSz, 0, 0);
+    CHECK_RV(rv, "C_SetOperationState with a full buffer",
+             CKR_SAVED_STATE_INVALID);
+
+    XMEMCPY(forged, state, stateSz);
+    loLen = ((word64)1 << 32) + sizeof(abc);
+    XMEMCPY(forged + loLenOff, &loLen, sizeof(loLen));
+    rv = funcList->C_SetOperationState(session, forged, stateSz, 0, 0);
+    CHECK_RV(rv, "C_SetOperationState with a length beyond 32 bits",
+             CKR_SAVED_STATE_INVALID);
+
+    XMEMCPY(forged, state, stateSz);
+    badMech = CKM_SHA3_256;
+    XMEMCPY(forged, &badMech, sizeof(badMech));
+    rv = funcList->C_SetOperationState(session, forged, stateSz, 0, 0);
+    CHECK_RV(rv, "C_SetOperationState with a SHA-3 mechanism",
+             CKR_SAVED_STATE_INVALID);
+
+    badMech = CKM_AES_CBC;
+    XMEMCPY(forged, &badMech, sizeof(badMech));
+    rv = funcList->C_SetOperationState(session, forged, stateSz, 0, 0);
+    CHECK_RV(rv, "C_SetOperationState with a non-digest mechanism",
+             CKR_SAVED_STATE_INVALID);
+
+    XMEMCPY(forged, state, stateSz);
+    forged[stateSz - 1] = 0;
+    rv = funcList->C_SetOperationState(session, forged, stateSz, 0, 0);
+    CHECK_RV(rv, "C_SetOperationState with hashed data not updated",
+             CKR_SAVED_STATE_INVALID);
+    forged[stateSz - 1] = 2;
+    rv = funcList->C_SetOperationState(session, forged, stateSz, 0, 0);
+    CHECK_RV(rv, "C_SetOperationState with a bad updated flag",
+             CKR_SAVED_STATE_INVALID);
+
+    rv = funcList->C_DigestUpdate(session, def, sizeof(def));
+    CHECK_RV(rv, "C_DigestUpdate after forged states", CKR_OK);
+    outSz = sizeof(out);
+    rv = funcList->C_DigestFinal(session, out, &outSz);
+    CHECK_RV(rv, "C_DigestFinal after forged states", CKR_OK);
+    CHECK_TRUE(outSz == sizeof(want) && XMEMCMP(out, want, sizeof(want)) == 0,
+               "forged states leave the running digest intact");
+
+    rv = funcList->C_SetOperationState(session, state, stateSz, 0, 0);
+    CHECK_RV(rv, "C_SetOperationState after forged states", CKR_OK);
+    rv = funcList->C_DigestUpdate(session, def, sizeof(def));
+    CHECK_RV(rv, "C_DigestUpdate of state kept from forging", CKR_OK);
+    outSz = sizeof(out);
+    rv = funcList->C_DigestFinal(session, out, &outSz);
+    CHECK_RV(rv, "C_DigestFinal of state kept from forging", CKR_OK);
+    CHECK_TRUE(outSz == sizeof(want) && XMEMCMP(out, want, sizeof(want)) == 0,
+               "state kept from forging continues the digest");
+
+    rv = funcList->C_DigestInit(session, &mech);
+    CHECK_RV(rv, "C_DigestInit to save an empty state", CKR_OK);
+    stateSz = sizeof(state);
+    rv = funcList->C_GetOperationState(session, state, &stateSz);
+    CHECK_RV(rv, "C_GetOperationState of an empty state", CKR_OK);
+    rv = funcList->C_SetOperationState(session, state, stateSz, 0, 0);
+    CHECK_RV(rv, "C_SetOperationState of an empty state", CKR_OK);
+    outSz = sizeof(out);
+    rv = funcList->C_Digest(session, abcdef, sizeof(abcdef), out, &outSz);
+    CHECK_RV(rv, "C_Digest after restoring an empty state", CKR_OK);
+    CHECK_TRUE(outSz == sizeof(want) && XMEMCMP(out, want, sizeof(want)) == 0,
+               "empty state allows a single-part digest");
+}
+
+static void test_stale_digest_state(CK_SESSION_HANDLE session,
+                                    CK_OBJECT_HANDLE aesKey)
+{
+    CK_RV rv;
+    CK_MECHANISM mech;
+    byte block[16];
+    byte out[32];
+    byte state[1024];
+    CK_ULONG outSz = sizeof(out);
+    CK_ULONG stateSz = sizeof(state);
+    /* Saved state layout: mechanism, loLen, hiLen, buffLen, digest, buffer. */
+    CK_ULONG bufferOff = sizeof(CK_MECHANISM_TYPE) + 8 + 8 + 4 + 64;
+    CK_ULONG i;
+    int clean = 1;
+
+    XMEMSET(block, 0x5a, sizeof(block));
+    set_mech(&mech, CKM_AES_CBC);
+    rv = funcList->C_EncryptInit(session, &mech, aesKey);
+    CHECK_RV(rv, "C_EncryptInit before stale state check", CKR_OK);
+    rv = funcList->C_Encrypt(session, block, sizeof(block), out, &outSz);
+    CHECK_RV(rv, "C_Encrypt before stale state check", CKR_OK);
+
+    set_mech(&mech, CKM_SHA256);
+    rv = funcList->C_DigestInit(session, &mech);
+    CHECK_RV(rv, "C_DigestInit after C_Encrypt", CKR_OK);
+    rv = funcList->C_GetOperationState(session, state, &stateSz);
+    CHECK_RV(rv, "C_GetOperationState after C_Encrypt", CKR_OK);
+    for (i = bufferOff; i < bufferOff + 128 && i < stateSz; i++) {
+        if (state[i] != 0)
+            clean = 0;
+    }
+    CHECK_TRUE(clean, "saved state holds no data of the ended operation");
+    outSz = sizeof(out);
+    rv = funcList->C_DigestFinal(session, out, &outSz);
+    CHECK_RV(rv, "C_DigestFinal after stale state check", CKR_OK);
+}
+
 static void test_restored_digest(CK_SESSION_HANDLE session)
 {
     CK_RV rv;
@@ -408,6 +601,49 @@ static void test_restored_digest(CK_SESSION_HANDLE session)
     CHECK_TRUE(outSz == sizeof(want) && XMEMCMP(out, want, sizeof(want)) == 0,
                "C_Digest of state saved without update is correct");
 }
+#endif
+
+#ifdef WOLFPKCS11_NO_DIGEST_STATE
+static void test_no_digest_state(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_MECHANISM mech;
+    byte abc[] = { 'a', 'b', 'c' };
+    byte def[] = { 'd', 'e', 'f' };
+    byte abcdef[] = { 'a', 'b', 'c', 'd', 'e', 'f' };
+    byte state[256];
+    byte want[32];
+    byte out[32];
+    CK_ULONG stateSz = 1234;
+    CK_ULONG outSz = sizeof(want);
+
+    XMEMSET(state, 0, sizeof(state));
+    set_mech(&mech, CKM_SHA256);
+    rv = funcList->C_DigestInit(session, &mech);
+    CHECK_RV(rv, "C_DigestInit(no state reference)", CKR_OK);
+    rv = funcList->C_Digest(session, abcdef, sizeof(abcdef), want, &outSz);
+    CHECK_RV(rv, "C_Digest(no state reference)", CKR_OK);
+
+    rv = funcList->C_DigestInit(session, &mech);
+    CHECK_RV(rv, "C_DigestInit without digest state", CKR_OK);
+    rv = funcList->C_DigestUpdate(session, abc, sizeof(abc));
+    CHECK_RV(rv, "C_DigestUpdate without digest state", CKR_OK);
+    rv = funcList->C_GetOperationState(session, NULL, &stateSz);
+    CHECK_RV(rv, "C_GetOperationState without digest state",
+             CKR_STATE_UNSAVEABLE);
+    CHECK_TRUE(stateSz == 1234, "refused state save leaves the length");
+    rv = funcList->C_SetOperationState(session, state, sizeof(state), 0, 0);
+    CHECK_RV(rv, "C_SetOperationState without digest state",
+             CKR_SAVED_STATE_INVALID);
+    rv = funcList->C_DigestUpdate(session, def, sizeof(def));
+    CHECK_RV(rv, "C_DigestUpdate after refused states", CKR_OK);
+    outSz = sizeof(out);
+    rv = funcList->C_DigestFinal(session, out, &outSz);
+    CHECK_RV(rv, "C_DigestFinal after refused states", CKR_OK);
+    CHECK_TRUE(outSz == sizeof(want) && XMEMCMP(out, want, sizeof(want)) == 0,
+               "refused states leave the running digest intact");
+}
+#endif
 
 static void test_single_part_after_update(CK_SESSION_HANDLE session,
                                           CK_OBJECT_HANDLE aesKey,
@@ -456,7 +692,29 @@ static void test_single_part_after_update(CK_SESSION_HANDLE session,
              CKR_OPERATION_NOT_INITIALIZED);
 #endif
 
+#ifndef WOLFPKCS11_NO_DIGEST_STATE
     test_restored_digest(session);
+    test_forged_digest_state(session);
+    test_stale_digest_state(session, aesKey);
+#ifndef NO_MD5
+    test_odd_offset_digest(session, CKM_MD5);
+#endif
+#ifndef NO_SHA
+    test_odd_offset_digest(session, CKM_SHA1);
+#endif
+#ifdef WOLFSSL_SHA224
+    test_odd_offset_digest(session, CKM_SHA224);
+#endif
+    test_odd_offset_digest(session, CKM_SHA256);
+#ifdef WOLFSSL_SHA384
+    test_odd_offset_digest(session, CKM_SHA384);
+#endif
+#ifdef WOLFSSL_SHA512
+    test_odd_offset_digest(session, CKM_SHA512);
+#endif
+#else
+    test_no_digest_state(session);
+#endif
 
     set_mech(&mech, CKM_SHA256_HMAC);
     rv = funcList->C_SignInit(session, &mech, hmacKey);

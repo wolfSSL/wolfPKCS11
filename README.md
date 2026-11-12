@@ -165,6 +165,17 @@ one byte at a time, so define this only where strict specification
 compliance is required. `--disable-derive-length-guard` and the CMake option
 `WOLFPKCS11_DERIVE_LENGTH_GUARD=no` define it.
 
+#### Define WOLFPKCS11_NO_DIGEST_STATE
+
+Makes `C_GetOperationState` return `CKR_STATE_UNSAVEABLE` for every active
+operation and `C_SetOperationState` return `CKR_SAVED_STATE_INVALID` for
+every saved state. It is defined automatically when wolfSSL does not keep the
+whole hash state in the software digest, buffer and length fields: hash
+hardware ports, builds with `WOLFSSL_NO_HASH_RAW` and builds with
+`WOLFSSL_HASH_KEEP`. Define it for a port that is not detected and either
+fails to build the digest state code or keeps the hash state somewhere else,
+such as in a hardware engine.
+
 ### Behavior changes for PKCS#11 spec compliance
 
 Several pre-existing gaps were closed; applications upgrading from earlier

@@ -41,6 +41,7 @@
     #include <wolfpkcs11/options.h>
 #endif
 #include <wolfpkcs11/pkcs11.h>
+#include <wolfpkcs11/internal.h>
 
 #ifndef HAVE_PKCS11_STATIC
 #include <dlfcn.h>
@@ -908,6 +909,7 @@ static void digest_key_state_unsaveable_test(CK_SESSION_HANDLE session)
     rv = funcList->C_DigestFinal(session, hash, &hashLen);
     CHECK_RV(rv, "C_DigestFinal after a refused state save", CKR_OK);
 
+#ifndef WOLFPKCS11_NO_DIGEST_STATE
     rv = funcList->C_DigestInit(session, &sha256Mech);
     CHECK_RV(rv, "C_DigestInit(SHA256) without C_DigestKey", CKR_OK);
     rv = funcList->C_DigestUpdate(session, value, sizeof(value));
@@ -918,6 +920,7 @@ static void digest_key_state_unsaveable_test(CK_SESSION_HANDLE session)
     hashLen = sizeof(hash);
     rv = funcList->C_DigestFinal(session, hash, &hashLen);
     CHECK_RV(rv, "C_DigestFinal after a state save", CKR_OK);
+#endif
 
     funcList->C_DestroyObject(session, key);
 }

@@ -31,6 +31,7 @@
 #include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/wolfcrypt/wc_encrypt.h>
+#include <wolfssl/wolfcrypt/hash.h>
 
 #ifdef WOLFPKCS11_MLDSA
 #include <wolfssl/wolfcrypt/wc_mldsa.h>
@@ -55,6 +56,33 @@
         volatile byte* p = (volatile byte*)mem;
         while (len--) *p++ = 0;
     }
+#endif
+
+/* Builds whose hash state is not all in the digest, buffer and lengths. */
+#if !defined(WOLFPKCS11_NO_DIGEST_STATE) && \
+    (defined(WOLFSSL_NO_HASH_RAW) || defined(WOLFSSL_HASH_KEEP) || \
+     defined(WOLFSSL_TI_HASH) || defined(WOLFSSL_AFALG_HASH) || \
+     defined(WOLFSSL_DEVCRYPTO_HASH) || defined(WOLFSSL_KCAPI_HASH) || \
+     (defined(WOLFSSL_IMX6_CAAM) && !defined(NO_IMX6_CAAM_HASH) && \
+      !defined(WOLFSSL_QNX_CAAM)) || \
+     defined(WOLFSSL_IMXRT1170_CAAM) || \
+     ((defined(WOLFSSL_RENESAS_TSIP_TLS) || \
+       defined(WOLFSSL_RENESAS_TSIP_CRYPTONLY)) && \
+      !defined(NO_WOLFSSL_RENESAS_TSIP_CRYPT_HASH)) || \
+     ((defined(WOLFSSL_RENESAS_SCEPROTECT) || \
+       defined(WOLFSSL_RENESAS_RSIP)) && \
+      !defined(NO_WOLFSSL_RENESAS_FSPSM_HASH)) || \
+     defined(WOLFSSL_RENESAS_RX64_HASH) || defined(FREESCALE_LTC_SHA) || \
+     defined(WOLFSSL_SE050_HASH) || defined(STM32_HASH) || \
+     defined(WOLFSSL_SILABS_SE_ACCEL) || defined(WOLFSSL_IMXRT_DCP) || \
+     defined(PSOC6_HASH_SHA1) || defined(PSOC6_HASH_SHA2) || \
+     defined(WOLFSSL_CRYPTOCELL) || defined(WOLFSSL_MAX3266X) || \
+     defined(WOLFSSL_MAX3266X_OLD) || defined(WOLFSSL_PIC32MZ_HASH) || \
+     defined(WOLFSSL_NXP_HASHCRYPT_SHA) || \
+     (defined(WOLFSSL_ESP32_CRYPT) && \
+      !defined(NO_WOLFSSL_ESP32_CRYPT_HASH)) || \
+     (defined(WOLFSSL_HAVE_PSA) && !defined(WOLFSSL_PSA_NO_HASH)))
+    #define WOLFPKCS11_NO_DIGEST_STATE
 #endif
 
 #ifdef __cplusplus
