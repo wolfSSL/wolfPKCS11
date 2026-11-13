@@ -22955,6 +22955,8 @@ int WP11_Digest_Init(CK_MECHANISM_TYPE mechanism, WP11_Session* session)
         WP11_Session_AbortOp(session);
         digest->hashType = (enum wc_HashType)hashType;
         digest->keyDigested = 0;
+        /* The params union can still hold data of an ended operation. */
+        wc_ForceZero(&digest->hash, sizeof(digest->hash));
         ret = wc_HashInit(&digest->hash, (enum wc_HashType)hashType);
     }
 
@@ -23523,15 +23525,353 @@ int WP11_Slot_GenerateRandom(WP11_Slot* slot, unsigned char* data, int len)
     return ret;
 }
 
+#ifndef WOLFPKCS11_NO_DIGEST_STATE
+#if defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX < 0x05007004
+    typedef wc_HashAlg WP11_Hashes;
+    #define WP11_HASHES(h)      (h)
+#else
+    typedef wc_Hashes WP11_Hashes;
+    #define WP11_HASHES(h)      (&(h)->alg)
+#endif
+
+/* Saved digest operation: chaining value, unprocessed input and length. */
+typedef struct WP11_DigestState {
+    word64 loLen;
+    word64 hiLen;
+    word32 buffLen;
+    byte   digest[64];
+    byte   buffer[128];
+} WP11_DigestState;
+
+#define WP11_DIGEST_STATE_SAVE(c, st)                                         \
+    do {                                                                      \
+        (void)sizeof(char[(sizeof((c).digest) <= sizeof((st)->digest) &&      \
+                           sizeof((c).buffer) <= sizeof((st)->buffer)) ?      \
+                          1 : -1]);                                           \
+        XMEMCPY((st)->digest, (c).digest, sizeof((c).digest));                \
+        if ((c).buffLen < sizeof((c).buffer))                                 \
+            XMEMCPY((st)->buffer, (c).buffer, (c).buffLen);                   \
+        (st)->buffLen = (c).buffLen;                                          \
+        (st)->loLen = (c).loLen;                                              \
+        (st)->hiLen = (c).hiLen;                                              \
+    } while (0)
+
+/* Valid when buffLen is inside the block and the lengths fit the hash. */
+#define WP11_DIGEST_STATE_VALID(type, st)                                     \
+    ((st)->buffLen < sizeof(((type*)0)->buffer) &&                            \
+     (sizeof(((type*)0)->loLen) == sizeof(word64) ||                          \
+      (((st)->loLen | (st)->hiLen) >> 32) == 0))
+
+#define WP11_DIGEST_STATE_LOAD(c, st, lenType)                                \
+    do {                                                                      \
+        XMEMCPY((c).digest, (st)->digest, sizeof((c).digest));                \
+        XMEMCPY((c).buffer, (st)->buffer, sizeof((c).buffer));                \
+        (c).buffLen = (st)->buffLen;                                          \
+        (c).loLen = (lenType)(st)->loLen;                                     \
+        (c).hiLen = (lenType)(st)->hiLen;                                     \
+    } while (0)
+
+/**
+ * Save the resumable fields of a hash.
+ *
+ * @param  mechanism  [in]   Digest mechanism.
+ * @param  hash       [in]   Hash of the operation.
+ * @param  state      [out]  Saved digest state.
+ * @return  CKR_STATE_UNSAVEABLE when the mechanism is not supported.
+ *          CKR_OK on success.
+ */
+static int wp11_digest_state_save(CK_MECHANISM_TYPE mechanism,
+                                  WP11_Hashes* hash, WP11_DigestState* state)
+{
+    int ret = CKR_OK;
+
+    XMEMSET(state, 0, sizeof(*state));
+    switch (mechanism) {
+#ifndef NO_MD5
+        case CKM_MD5:
+            WP11_DIGEST_STATE_SAVE(hash->md5, state);
+            break;
+#endif
+#ifndef NO_SHA
+        case CKM_SHA1:
+            WP11_DIGEST_STATE_SAVE(hash->sha, state);
+            break;
+#endif
+#ifdef WOLFSSL_SHA224
+        case CKM_SHA224:
+            WP11_DIGEST_STATE_SAVE(hash->sha224, state);
+            break;
+#endif
+#ifndef NO_SHA256
+        case CKM_SHA256:
+            WP11_DIGEST_STATE_SAVE(hash->sha256, state);
+            break;
+#endif
+#ifdef WOLFSSL_SHA384
+        case CKM_SHA384:
+            WP11_DIGEST_STATE_SAVE(hash->sha384, state);
+            break;
+#endif
+#ifdef WOLFSSL_SHA512
+        case CKM_SHA512:
+            WP11_DIGEST_STATE_SAVE(hash->sha512, state);
+            break;
+#endif
+        default:
+            ret = CKR_STATE_UNSAVEABLE;
+            break;
+    }
+
+    return ret;
+}
+
+/**
+ * Check that a saved digest state can be loaded into its hash.
+ *
+ * @param  mechanism  [in]  Digest mechanism.
+ * @param  state      [in]  Saved digest state.
+ * @return  CKR_SAVED_STATE_INVALID when the mechanism is not supported, the
+ *          buffered length is not inside a block or the lengths do not fit.
+ *          CKR_OK on success.
+ */
+static int wp11_digest_state_check(CK_MECHANISM_TYPE mechanism,
+                                   const WP11_DigestState* state)
+{
+    int valid = 0;
+
+    switch (mechanism) {
+#ifndef NO_MD5
+        case CKM_MD5:
+            valid = WP11_DIGEST_STATE_VALID(wc_Md5, state);
+            break;
+#endif
+#ifndef NO_SHA
+        case CKM_SHA1:
+            valid = WP11_DIGEST_STATE_VALID(wc_Sha, state);
+            break;
+#endif
+#ifdef WOLFSSL_SHA224
+        case CKM_SHA224:
+            valid = WP11_DIGEST_STATE_VALID(wc_Sha224, state);
+            break;
+#endif
+#ifndef NO_SHA256
+        case CKM_SHA256:
+            valid = WP11_DIGEST_STATE_VALID(wc_Sha256, state);
+            break;
+#endif
+#ifdef WOLFSSL_SHA384
+        case CKM_SHA384:
+            valid = WP11_DIGEST_STATE_VALID(wc_Sha384, state);
+            break;
+#endif
+#ifdef WOLFSSL_SHA512
+        case CKM_SHA512:
+            valid = WP11_DIGEST_STATE_VALID(wc_Sha512, state);
+            break;
+#endif
+        default:
+            break;
+    }
+
+    return valid ? CKR_OK : CKR_SAVED_STATE_INVALID;
+}
+
+/**
+ * Load a checked saved digest state into a hash.
+ *
+ * @param  mechanism  [in]   Digest mechanism.
+ * @param  state      [in]   Saved digest state.
+ * @param  hash       [out]  Hash to load the state into.
+ * @return  CKR_SAVED_STATE_INVALID when the mechanism is not supported.
+ *          CKR_OK on success.
+ */
+static int wp11_digest_state_load(CK_MECHANISM_TYPE mechanism,
+                                  const WP11_DigestState* state,
+                                  WP11_Hashes* hash)
+{
+    int ret = CKR_OK;
+
+    switch (mechanism) {
+#ifndef NO_MD5
+        case CKM_MD5:
+            WP11_DIGEST_STATE_LOAD(hash->md5, state, word32);
+            break;
+#endif
+#ifndef NO_SHA
+        case CKM_SHA1:
+            WP11_DIGEST_STATE_LOAD(hash->sha, state, word32);
+            break;
+#endif
+#ifdef WOLFSSL_SHA224
+        case CKM_SHA224:
+            WP11_DIGEST_STATE_LOAD(hash->sha224, state, word32);
+            break;
+#endif
+#ifndef NO_SHA256
+        case CKM_SHA256:
+            WP11_DIGEST_STATE_LOAD(hash->sha256, state, word32);
+            break;
+#endif
+#ifdef WOLFSSL_SHA384
+        case CKM_SHA384:
+            WP11_DIGEST_STATE_LOAD(hash->sha384, state, word64);
+            break;
+#endif
+#ifdef WOLFSSL_SHA512
+        case CKM_SHA512:
+            WP11_DIGEST_STATE_LOAD(hash->sha512, state, word64);
+            break;
+#endif
+        default:
+            ret = CKR_SAVED_STATE_INVALID;
+            break;
+    }
+
+    return ret;
+}
+
+/**
+ * Get the digest of the data hashed so far without ending the operation.
+ *
+ * @param  mechanism  [in]   Digest mechanism.
+ * @param  hash       [in]   Hash of the operation.
+ * @param  out        [out]  Buffer of WC_MAX_DIGEST_SIZE bytes.
+ * @return  BAD_FUNC_ARG when the mechanism is not supported.
+ *          Other -ve value on hash failure.
+ *          0 on success.
+ */
+static int wp11_digest_get_hash(CK_MECHANISM_TYPE mechanism,
+                                WP11_Hashes* hash, byte* out)
+{
+    int ret;
+
+    switch (mechanism) {
+#ifndef NO_MD5
+        case CKM_MD5:
+            ret = wc_Md5GetHash(&hash->md5, out);
+            break;
+#endif
+#ifndef NO_SHA
+        case CKM_SHA1:
+            ret = wc_ShaGetHash(&hash->sha, out);
+            break;
+#endif
+#ifdef WOLFSSL_SHA224
+        case CKM_SHA224:
+            ret = wc_Sha224GetHash(&hash->sha224, out);
+            break;
+#endif
+#ifndef NO_SHA256
+        case CKM_SHA256:
+            ret = wc_Sha256GetHash(&hash->sha256, out);
+            break;
+#endif
+#ifdef WOLFSSL_SHA384
+        case CKM_SHA384:
+            ret = wc_Sha384GetHash(&hash->sha384, out);
+            break;
+#endif
+#ifdef WOLFSSL_SHA512
+        case CKM_SHA512:
+            ret = wc_Sha512GetHash(&hash->sha512, out);
+            break;
+#endif
+        default:
+            ret = BAD_FUNC_ARG;
+            break;
+    }
+
+    return ret;
+}
+
+/**
+ * Save the digest operation of the session and check that it restores.
+ *
+ * @param  session  [in]   Session object with an active digest operation.
+ * @param  state    [out]  Saved digest state.
+ * @return  CKR_STATE_UNSAVEABLE when the state is not held in the saved fields.
+ *          CKR_HOST_MEMORY when allocating a hash fails.
+ *          CKR_FUNCTION_FAILED on hash failure.
+ *          CKR_OK on success.
+ */
+static int wp11_digest_state_export(WP11_Session* session,
+                                    WP11_DigestState* state)
+{
+    int ret;
+    int hashRet = 0;
+    int digestSz;
+    enum wc_HashType hashType = session->params.digest.hashType;
+    WP11_Hashes* live = WP11_HASHES(&session->params.digest.hash);
+    wc_HashAlg check;
+    byte want[WC_MAX_DIGEST_SIZE];
+    byte got[WC_MAX_DIGEST_SIZE];
+
+    ret = wp11_digest_state_save(session->mechanism, live, state);
+    if (ret == CKR_OK && wp11_digest_state_check(session->mechanism,
+                                                 state) != CKR_OK) {
+        ret = CKR_STATE_UNSAVEABLE;
+    }
+    if (ret != CKR_OK) {
+        wc_ForceZero(state, sizeof(*state));
+        return ret;
+    }
+
+    ret = wc_HashInit(&check, hashType);
+    if (ret != 0) {
+        wc_ForceZero(state, sizeof(*state));
+        return (ret == MEMORY_E) ? CKR_HOST_MEMORY : CKR_FUNCTION_FAILED;
+    }
+    ret = wp11_digest_state_load(session->mechanism, state,
+                                 WP11_HASHES(&check));
+    if (ret == CKR_OK) {
+        hashRet = wp11_digest_get_hash(session->mechanism,
+                                       WP11_HASHES(&check), got);
+    }
+    if (ret == CKR_OK && hashRet == 0) {
+        hashRet = wp11_digest_get_hash(session->mechanism, live, want);
+    }
+    if (ret == CKR_OK && hashRet != 0)
+        ret = (hashRet == MEMORY_E) ? CKR_HOST_MEMORY : CKR_FUNCTION_FAILED;
+    if (ret == CKR_OK) {
+        digestSz = wc_HashGetDigestSize(hashType);
+        if (digestSz <= 0 || digestSz > (int)sizeof(want))
+            ret = CKR_FUNCTION_FAILED;
+        else if (XMEMCMP(got, want, (size_t)digestSz) != 0)
+            ret = CKR_STATE_UNSAVEABLE;
+    }
+    (void)wc_HashFree(&check, hashType);
+    wc_ForceZero(&check, sizeof(check));
+    wc_ForceZero(want, sizeof(want));
+    wc_ForceZero(got, sizeof(got));
+    if (ret != CKR_OK)
+        wc_ForceZero(state, sizeof(*state));
+
+    return ret;
+}
+#endif /* !WOLFPKCS11_NO_DIGEST_STATE */
+
+/**
+ * Serialize the digest operation of the session.
+ *
+ * @param  session       [in]      Session object.
+ * @param  stateData     [in]      Buffer to hold the state. May be NULL.
+ * @param  stateDataLen  [in,out]  On in, length of buffer in bytes.
+ *                                 On out, length of the state in bytes.
+ * @return  CKR_OPERATION_NOT_INITIALIZED when no operation is active.
+ *          CKR_STATE_UNSAVEABLE when the operation cannot be saved.
+ *          CKR_BUFFER_TOO_SMALL when the buffer is too small.
+ *          CKR_HOST_MEMORY when allocating a hash fails.
+ *          CKR_FUNCTION_FAILED on hash failure.
+ *          CKR_OK on success.
+ */
 int WP11_GetOperationState(WP11_Session* session, unsigned char* stateData,
                            unsigned long* stateDataLen)
 {
+#ifndef WOLFPKCS11_NO_DIGEST_STATE
     unsigned long bufferAvailable = *stateDataLen;
-    unsigned long mechSize = 0;
-#if defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX < 0x05007004
-    wc_HashAlg* hashAlg;
-#else
-    wc_Hashes* hashAlg;
+    int ret;
+    WP11_DigestState state;
 #endif
 
     if (session->init == 0)
@@ -23542,214 +23882,86 @@ int WP11_GetOperationState(WP11_Session* session, unsigned char* stateData,
     if (session->params.digest.keyDigested)
         return CKR_STATE_UNSAVEABLE;
 
-    switch (session->mechanism) {
-#ifndef NO_MD5
-        case CKM_MD5:
-            mechSize = sizeof(wc_Md5);
-            break;
-#endif
-#ifndef NO_SHA
-        case CKM_SHA1:
-            mechSize = sizeof(wc_Sha);
-            break;
-#endif
-#ifdef WOLFSSL_SHA224
-        case CKM_SHA224:
-            mechSize = sizeof(wc_Sha224);
-            break;
-#endif
-#ifndef NO_SHA256
-        case CKM_SHA256:
-            mechSize = sizeof(wc_Sha256);
-            break;
-#endif
-#ifdef WOLFSSL_SHA384
-        case CKM_SHA384:
-            mechSize = sizeof(wc_Sha384);
-            break;
-#endif
-#ifdef WOLFSSL_SHA512
-        case CKM_SHA512:
-            mechSize = sizeof(wc_Sha512);
-            break;
-#endif
-        default:
-            return CKR_STATE_UNSAVEABLE;
-    }
-    *stateDataLen = sizeof(session->mechanism) + mechSize + 1;
-
-    if (stateData == NULL)
-        return CKR_OK;
-
-    if (bufferAvailable < *stateDataLen)
-        return CKR_BUFFER_TOO_SMALL;
-
-    XMEMCPY(stateData, &session->mechanism, sizeof(session->mechanism));
-    stateData += sizeof(session->mechanism);
-
-#if defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX < 0x05007004
-    hashAlg = &session->params.digest.hash;
+#ifdef WOLFPKCS11_NO_DIGEST_STATE
+    (void)stateData;
+    (void)stateDataLen;
+    return CKR_STATE_UNSAVEABLE;
 #else
-    hashAlg = &session->params.digest.hash.alg;
-#endif
+    ret = wp11_digest_state_export(session, &state);
+    if (ret != CKR_OK)
+        return ret;
 
-
-    switch (session->mechanism) {
-#ifndef NO_MD5
-        case CKM_MD5:
-            wc_Md5Copy(&hashAlg->md5, (wc_Md5*)stateData);
-            break;
-#endif
-#ifndef NO_SHA
-        case CKM_SHA1:
-            wc_ShaCopy(&hashAlg->sha, (wc_Sha*)stateData);
-            break;
-#endif
-#ifdef WOLFSSL_SHA224
-        case CKM_SHA224:
-            wc_Sha224Copy(&hashAlg->sha224, (wc_Sha224*)stateData);
-            break;
-#endif
-#ifndef NO_SHA256
-        case CKM_SHA256:
-            wc_Sha256Copy(&hashAlg->sha256, (wc_Sha256*)stateData);
-            break;
-#endif
-#ifdef WOLFSSL_SHA384
-        case CKM_SHA384:
-            wc_Sha384Copy(&hashAlg->sha384, (wc_Sha384*)stateData);
-            break;
-#endif
-#ifdef WOLFSSL_SHA512
-        case CKM_SHA512:
-            wc_Sha512Copy(&hashAlg->sha512, (wc_Sha512*)stateData);
-            break;
-#endif
+    *stateDataLen = sizeof(session->mechanism) + sizeof(state) + 1;
+    if (stateData == NULL)
+        ret = CKR_OK;
+    else if (bufferAvailable < *stateDataLen)
+        ret = CKR_BUFFER_TOO_SMALL;
+    else {
+        XMEMCPY(stateData, &session->mechanism, sizeof(session->mechanism));
+        XMEMCPY(stateData + sizeof(session->mechanism), &state, sizeof(state));
+        stateData[sizeof(session->mechanism) + sizeof(state)] =
+            session->opUpdated;
     }
-    stateData[mechSize] = session->opUpdated;
+    wc_ForceZero(&state, sizeof(state));
 
-    return CKR_OK;
+    return ret;
+#endif
 }
 
+/**
+ * Restore a serialized digest operation into the session.
+ *
+ * @param  session       [in]  Session object.
+ * @param  stateData     [in]  Serialized state.
+ * @param  stateDataLen  [in]  Length of the state in bytes.
+ * @return  CKR_SAVED_STATE_INVALID when the state is not valid.
+ *          CKR_HOST_MEMORY when allocating the hash fails.
+ *          CKR_FUNCTION_FAILED on hash failure.
+ *          CKR_OK on success.
+ */
 int WP11_SetOperationState(WP11_Session* session, unsigned char* stateData,
                            unsigned long stateDataLen)
 {
-    unsigned long mechSize = 0;
-    int hashType = WC_HASH_TYPE_NONE;
+#ifdef WOLFPKCS11_NO_DIGEST_STATE
+    (void)session;
+    (void)stateData;
+    (void)stateDataLen;
+    return CKR_SAVED_STATE_INVALID;
+#else
     int ret;
     byte updated = 1;
     CK_MECHANISM_TYPE mechanism;
-#if defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX < 0x05007004
-    wc_HashAlg* hashAlg;
-#else
-    wc_Hashes* hashAlg;
-#endif
+    WP11_DigestState state;
+    unsigned long baseLen = (unsigned long)(sizeof(mechanism) + sizeof(state));
 
-    if (stateDataLen < sizeof(mechanism))
+    if (stateDataLen != baseLen && stateDataLen != baseLen + 1)
         return CKR_SAVED_STATE_INVALID;
-
     XMEMCPY(&mechanism, stateData, sizeof(mechanism));
-    switch (mechanism) {
-#ifndef NO_MD5
-        case CKM_MD5:
-            mechSize = sizeof(wc_Md5);
-            break;
-#endif
-#ifndef NO_SHA
-        case CKM_SHA1:
-            mechSize = sizeof(wc_Sha);
-            break;
-#endif
-#ifdef WOLFSSL_SHA224
-        case CKM_SHA224:
-            mechSize = sizeof(wc_Sha224);
-            break;
-#endif
-#ifndef NO_SHA256
-        case CKM_SHA256:
-            mechSize = sizeof(wc_Sha256);
-            break;
-#endif
-#ifdef WOLFSSL_SHA384
-        case CKM_SHA384:
-            mechSize = sizeof(wc_Sha384);
-            break;
-#endif
-#ifdef WOLFSSL_SHA512
-        case CKM_SHA512:
-            mechSize = sizeof(wc_Sha512);
-            break;
-#endif
-        default:
-            return CKR_SAVED_STATE_INVALID;
+    XMEMCPY(&state, stateData + sizeof(mechanism), sizeof(state));
+    if (stateDataLen > baseLen)
+        updated = stateData[baseLen];
+
+    ret = wp11_digest_state_check(mechanism, &state);
+    if (ret == CKR_OK && (updated > 1 || (updated == 0 &&
+            (state.loLen | state.hiLen | state.buffLen) != 0))) {
+        ret = CKR_SAVED_STATE_INVALID;
     }
-
-    if (stateDataLen < (sizeof(mechanism) + mechSize))
-        return CKR_SAVED_STATE_INVALID;
-    if (stateDataLen > (sizeof(mechanism) + mechSize))
-        updated = stateData[sizeof(mechanism) + mechSize];
-
-    stateData += sizeof(mechanism);
-
-    ret = wp11_digest_hash_type(mechanism, &hashType);
-
-    if (ret != CKR_OK)
-        return ret;
-
-    /* The saved state is valid: replace the current operation. */
-    WP11_Session_AbortOp(session);
-    session->mechanism = mechanism;
-
-    session->params.digest.hashType = (enum wc_HashType)hashType;
-    session->params.digest.keyDigested = 0;
-    ret = wc_HashInit(&session->params.digest.hash,
-        (enum wc_HashType)hashType);
-
-    if (ret != CKR_OK)
-        return ret;
-
-    #if defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX < 0x05007004
-        hashAlg = &session->params.digest.hash;
-    #else
-        hashAlg = &session->params.digest.hash.alg;
-    #endif
-
-    WP11_Session_SetOpInitialized(session, WP11_INIT_DIGEST);
-    if (updated)
-        WP11_Session_SetOpUpdated(session);
-
-    switch (session->mechanism) {
-#ifndef NO_MD5
-        case CKM_MD5:
-            wc_Md5Copy((wc_Md5*)stateData, &hashAlg->md5);
-            break;
-#endif
-#ifndef NO_SHA
-        case CKM_SHA1:
-            wc_ShaCopy((wc_Sha*)stateData, &hashAlg->sha);
-            break;
-#endif
-#ifdef WOLFSSL_SHA224
-        case CKM_SHA224:
-            wc_Sha224Copy((wc_Sha224*)stateData, &hashAlg->sha224);
-            break;
-#endif
-#ifndef NO_SHA256
-        case CKM_SHA256:
-            wc_Sha256Copy((wc_Sha256*)stateData, &hashAlg->sha256);
-            break;
-#endif
-#ifdef WOLFSSL_SHA384
-        case CKM_SHA384:
-            wc_Sha384Copy((wc_Sha384*)stateData, &hashAlg->sha384);
-            break;
-#endif
-#ifdef WOLFSSL_SHA512
-        case CKM_SHA512:
-            wc_Sha512Copy((wc_Sha512*)stateData, &hashAlg->sha512);
-            break;
-#endif
+    if (ret == CKR_OK) {
+        /* The saved state is valid: replace the current operation. */
+        ret = WP11_Digest_Init(mechanism, session);
+        if (ret != 0)
+            ret = (ret == MEMORY_E) ? CKR_HOST_MEMORY : CKR_FUNCTION_FAILED;
     }
+    if (ret == CKR_OK) {
+        session->mechanism = mechanism;
+        WP11_Session_SetOpInitialized(session, WP11_INIT_DIGEST);
+        if (updated)
+            WP11_Session_SetOpUpdated(session);
+        ret = wp11_digest_state_load(mechanism, &state,
+                                     WP11_HASHES(&session->params.digest.hash));
+    }
+    wc_ForceZero(&state, sizeof(state));
 
-    return CKR_OK;
+    return ret;
+#endif
 }

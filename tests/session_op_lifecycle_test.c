@@ -41,6 +41,7 @@
     #include <wolfpkcs11/options.h>
 #endif
 #include <wolfpkcs11/pkcs11.h>
+#include <wolfpkcs11/internal.h>
 
 #ifndef HAVE_PKCS11_STATIC
 #include <dlfcn.h>
@@ -1019,7 +1020,7 @@ out:
 #endif
 
 #if defined(TRACK_ALLOCS) && !defined(NO_AES) && defined(HAVE_AESGCM) && \
-    !defined(NO_SHA256)
+    !defined(NO_SHA256) && !defined(WOLFPKCS11_NO_DIGEST_STATE)
 /* Restoring a saved digest state must release the operation it replaces. */
 static void test_restored_state_releases_operation(void)
 {
@@ -1091,7 +1092,7 @@ out:
 }
 #endif
 
-#ifndef NO_SHA256
+#if !defined(NO_SHA256) && !defined(WOLFPKCS11_NO_DIGEST_STATE)
 /* A saved state that is rejected must leave the session's digest exactly as
  * it was. */
 static void test_rejected_state_keeps_session(void)
@@ -1154,7 +1155,7 @@ out:
 }
 #endif
 
-#ifndef NO_SHA256
+#if !defined(NO_SHA256) && !defined(WOLFPKCS11_NO_DIGEST_STATE)
 /* Saved digest states need no key, so restoring one with a key handle is
  * refused. */
 static void test_restore_with_key_is_refused(void)
@@ -1523,6 +1524,8 @@ static int run_test(void)
 #endif
 #ifndef NO_SHA256
     test_operation_state_requires_active_digest();
+#endif
+#if !defined(NO_SHA256) && !defined(WOLFPKCS11_NO_DIGEST_STATE)
     test_rejected_state_keeps_session();
     test_restore_with_key_is_refused();
 #endif
@@ -1534,7 +1537,7 @@ static int run_test(void)
     test_null_mechanism_cancels_after_key_destroyed();
 #endif
 #if defined(TRACK_ALLOCS) && !defined(NO_AES) && defined(HAVE_AESGCM) && \
-    !defined(NO_SHA256)
+    !defined(NO_SHA256) && !defined(WOLFPKCS11_NO_DIGEST_STATE)
     test_restored_state_releases_operation();
 #endif
 

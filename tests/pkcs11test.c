@@ -1149,7 +1149,7 @@ static CK_RV test_session(void* args)
     return ret;
 }
 
-#ifndef NO_SHA256
+#if !defined(NO_SHA256) && !defined(WOLFPKCS11_NO_DIGEST_STATE)
 /* This test:
 *  1. Starts a digest
 *  2. Saves the state
@@ -21124,7 +21124,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_login_logout),
     PKCS11TEST_FUNC_SESS_DECL(test_pin),
     PKCS11TEST_FUNC_SESS_DECL(test_session),
-#ifndef NO_SHA256
+#if !defined(NO_SHA256) && !defined(WOLFPKCS11_NO_DIGEST_STATE)
     PKCS11TEST_FUNC_SESS_DECL(test_op_state_success),
 #endif
     PKCS11TEST_FUNC_SESS_DECL(test_op_state_fail),
