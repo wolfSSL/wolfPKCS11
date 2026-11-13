@@ -431,6 +431,625 @@ static CK_RV FindValidAttributeType(CK_ATTRIBUTE* pTemplate, CK_ULONG ulCount,
     return CKR_OK;
 }
 
+/* Encoded template entry: index, type, ULONG flag, value length, value. */
+#define TMPL_HDR_SZ        14
+
+static const CK_ATTRIBUTE_TYPE tmplTypes[] = {
+    CKA_WRAP_TEMPLATE, CKA_UNWRAP_TEMPLATE, CKA_DERIVE_TEMPLATE
+};
+#define TMPL_TYPES_CNT     (sizeof(tmplTypes) / sizeof(*tmplTypes))
+
+static CK_RV CheckAttributes(CK_ATTRIBUTE* pTemplate, CK_ULONG ulCount,
+                             int set);
+
+static int TemplateIndex(CK_ATTRIBUTE_TYPE type)
+{
+    int i;
+
+    for (i = 0; i < (int)TMPL_TYPES_CNT; i++) {
+        if (tmplTypes[i] == type)
+            return i;
+    }
+    return -1;
+}
+
+static int IsUlongAttrType(CK_ATTRIBUTE_TYPE type)
+{
+    int j;
+
+    for (j = 0; j < (int)ATTR_TYPE_SIZE; j++) {
+        if (attrType[j].attr == type)
+            return attrType[j].type == ATTR_TYPE_ULONG;
+    }
+    return 0;
+}
+
+/* Whether objects of the class carry the attribute-array template. */
+static int ClassHasTemplate(CK_OBJECT_CLASS objClass, CK_ATTRIBUTE_TYPE type)
+{
+    if (objClass == CKO_SECRET_KEY)
+        return 1;
+    if (objClass == CKO_PUBLIC_KEY)
+        return type == CKA_WRAP_TEMPLATE;
+    if (objClass == CKO_PRIVATE_KEY)
+        return type != CKA_WRAP_TEMPLATE;
+    return 0;
+}
+
+static CK_RV CheckTemplateAttr(CK_ATTRIBUTE* attr)
+{
+    CK_ATTRIBUTE* inner = (CK_ATTRIBUTE*)attr->pValue;
+    CK_ULONG cnt;
+    CK_ULONG i;
+    CK_ULONG j;
+
+    if (attr->ulValueLen % sizeof(CK_ATTRIBUTE) != 0)
+        return CKR_ATTRIBUTE_VALUE_INVALID;
+    cnt = attr->ulValueLen / sizeof(CK_ATTRIBUTE);
+    if (cnt > WP11_MAX_TEMPLATE_ATTRS || (cnt > 0 && inner == NULL))
+        return CKR_ATTRIBUTE_VALUE_INVALID;
+    for (i = 0; i < cnt; i++) {
+        if (TemplateIndex(inner[i].type) >= 0)
+            return CKR_ATTRIBUTE_VALUE_INVALID;
+        for (j = 0; j < i; j++) {
+            if (inner[j].type == inner[i].type)
+                return CKR_ATTRIBUTE_VALUE_INVALID;
+        }
+        /* Templates are readable and stored unencrypted. */
+        if (inner[i].type == CKA_VALUE ||
+                inner[i].type == CKA_PRIVATE_EXPONENT ||
+                inner[i].type == CKA_PRIME_1 ||
+                inner[i].type == CKA_PRIME_2 ||
+                inner[i].type == CKA_EXPONENT_1 ||
+                inner[i].type == CKA_EXPONENT_2 ||
+                inner[i].type == CKA_COEFFICIENT ||
+                inner[i].type == CKA_SEED)
+            return CKR_ATTRIBUTE_VALUE_INVALID;
+        if (attr->type != CKA_WRAP_TEMPLATE &&
+                (inner[i].type == CKA_UNIQUE_ID ||
+                 inner[i].type == CKA_LOCAL ||
+                 inner[i].type == CKA_KEY_GEN_MECHANISM ||
+                 inner[i].type == CKA_ALWAYS_SENSITIVE ||
+                 inner[i].type == CKA_NEVER_EXTRACTABLE ||
+                 ((inner[i].type == CKA_ALWAYS_AUTHENTICATE ||
+                   inner[i].type == CKA_TRUSTED) &&
+                  inner[i].pValue != NULL &&
+                  inner[i].ulValueLen == sizeof(CK_BBOOL) &&
+                  *(CK_BBOOL*)inner[i].pValue == CK_TRUE)))
+            return CKR_ATTRIBUTE_VALUE_INVALID;
+    }
+    return CheckAttributes(inner, cnt, 1);
+}
+
+static void EncodeBe(byte* out, CK_ULONG val, int sz)
+{
+    int i;
+
+    for (i = sz - 1; i >= 0; i--) {
+        out[i] = (byte)val;
+        val >>= 8;
+    }
+}
+
+static word32 DecodeBe32(const byte* in)
+{
+    return ((word32)in[0] << 24) | ((word32)in[1] << 16) |
+           ((word32)in[2] << 8) | (word32)in[3];
+}
+
+/* Decodes eight big-endian bytes; 0 when the value does not fit. */
+static int DecodeBeUlong(const byte* in, CK_ULONG* val)
+{
+    int i;
+
+    *val = 0;
+    for (i = 0; i < 8; i++) {
+        if (i < 8 - (int)sizeof(CK_ULONG) && in[i] != 0)
+            return 0;
+        *val = (*val << 8) | in[i];
+    }
+    return 1;
+}
+
+/**
+ * Encode the attribute-array templates of a creation template.
+ *
+ * @param  pTemplate  [in]   Template the object is created with.
+ * @param  ulCount    [in]   Number of attributes in template.
+ * @param  out        [out]  Allocated encoding, NULL when there is none.
+ *                           NULL to only check the template.
+ * @param  outSz      [out]  Length of encoding.
+ * @return  CKR_TEMPLATE_INCONSISTENT when a template attribute repeats.
+ *          CKR_ATTRIBUTE_VALUE_INVALID when the encoding is too large.
+ *          CKR_DEVICE_MEMORY when dynamic memory allocation fails.
+ *          CKR_OK on success.
+ */
+static CK_RV EncodeTemplates(CK_ATTRIBUTE* pTemplate, CK_ULONG ulCount,
+                             byte** out, int* outSz)
+{
+    CK_ATTRIBUTE* attr;
+    CK_ATTRIBUTE* inner;
+    CK_ULONG cnt;
+    CK_ULONG i;
+    CK_ULONG sz = 0;
+    CK_ULONG vLen;
+    CK_ULONG left;
+    int t;
+    int pass;
+    int isUlong;
+    int seen;
+    byte* p = NULL;
+
+    if (out != NULL) {
+        *out = NULL;
+        *outSz = 0;
+    }
+    for (t = 0; t < (int)TMPL_TYPES_CNT; t++) {
+        seen = 0;
+        for (i = 0; i < ulCount; i++) {
+            if (pTemplate[i].type == tmplTypes[t] && seen++ > 0)
+                return CKR_TEMPLATE_INCONSISTENT;
+        }
+    }
+    for (pass = 0; pass < 2; pass++) {
+        for (t = 0; t < (int)TMPL_TYPES_CNT; t++) {
+            FindAttributeType(pTemplate, ulCount, tmplTypes[t], &attr);
+            if (attr == NULL)
+                continue;
+            inner = (CK_ATTRIBUTE*)attr->pValue;
+            cnt = attr->ulValueLen / sizeof(CK_ATTRIBUTE);
+            for (i = 0; i < cnt; i++) {
+                isUlong = IsUlongAttrType(inner[i].type);
+                vLen = isUlong ? 8 : inner[i].ulValueLen;
+                if (pass == 0) {
+                    sz += TMPL_HDR_SZ + vLen;
+                    if (sz > WP11_MAX_TEMPLATE_SZ)
+                        return CKR_ATTRIBUTE_VALUE_INVALID;
+                    continue;
+                }
+                left = sz - (CK_ULONG)(p - *out);
+                if (left < TMPL_HDR_SZ || vLen > left - TMPL_HDR_SZ) {
+                    XFREE(*out, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                    *out = NULL;
+                    return CKR_ATTRIBUTE_VALUE_INVALID;
+                }
+                p[0] = (byte)t;
+                EncodeBe(p + 1, inner[i].type, 8);
+                p[9] = (byte)isUlong;
+                EncodeBe(p + 10, vLen, 4);
+                if (isUlong)
+                    EncodeBe(p + TMPL_HDR_SZ, *(CK_ULONG*)inner[i].pValue, 8);
+                else if (vLen > 0)
+                    XMEMCPY(p + TMPL_HDR_SZ, inner[i].pValue, vLen);
+                p += TMPL_HDR_SZ + vLen;
+            }
+        }
+        if (pass == 0) {
+            if (sz == 0 || out == NULL)
+                return CKR_OK;
+            *out = (byte*)XMALLOC(sz, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            if (*out == NULL)
+                return CKR_DEVICE_MEMORY;
+            p = *out;
+        }
+    }
+    *outSz = (int)sz;
+
+    return CKR_OK;
+}
+
+/**
+ * Decode the next entry of an attribute-array template.
+ *
+ * @param  enc     [in]      Encoded templates.
+ * @param  encSz   [in]      Length of encoded templates.
+ * @param  pos     [in,out]  Offset of the entry; moved past it.
+ * @param  idx     [out]     Index of the template the entry belongs to.
+ * @param  attr    [out]     Attribute; value points into enc or at ulVal.
+ * @param  ulVal   [out]     Storage for a CK_ULONG value.
+ * @return  1 when an entry was decoded, 0 at the end, -1 when malformed.
+ */
+static int DecodeTemplateEntry(const byte* enc, int encSz, int* pos, int* idx,
+                               CK_ATTRIBUTE* attr, CK_ULONG* ulVal)
+{
+    const byte* p;
+    word32 vLen;
+    int left = encSz - *pos;
+
+    if (left == 0)
+        return 0;
+    p = enc + *pos;
+    if (left < TMPL_HDR_SZ || p[0] >= (byte)TMPL_TYPES_CNT)
+        return -1;
+    vLen = DecodeBe32(p + 10);
+    if (vLen > (word32)(left - TMPL_HDR_SZ))
+        return -1;
+    *idx = p[0];
+    if (!DecodeBeUlong(p + 1, &attr->type) || TemplateIndex(attr->type) >= 0 ||
+            p[9] != (byte)IsUlongAttrType(attr->type))
+        return -1;
+    if (p[9]) {
+        if (vLen != 8 || !DecodeBeUlong(p + TMPL_HDR_SZ, ulVal))
+            return -1;
+        attr->pValue = ulVal;
+        attr->ulValueLen = sizeof(CK_ULONG);
+    }
+    else {
+        attr->pValue = (vLen > 0) ? (CK_VOID_PTR)(p + TMPL_HDR_SZ) : NULL;
+        attr->ulValueLen = vLen;
+    }
+    *pos += TMPL_HDR_SZ + (int)vLen;
+
+    return 1;
+}
+
+/**
+ * Get an attribute-array template of an object (PKCS#11 v3.1 sec 5.7.5).
+ *
+ * @param  obj   [in]      Object object.
+ * @param  attr  [in,out]  Attribute to fill in.
+ * @return  CKR_ATTRIBUTE_TYPE_INVALID when the object has no such attribute.
+ *          CKR_BUFFER_TOO_SMALL when the array or a value does not fit.
+ *          CKR_DEVICE_MEMORY when dynamic memory allocation fails.
+ *          CKR_FUNCTION_FAILED when the stored encoding is malformed.
+ *          CKR_OK on success.
+ */
+static CK_RV GetTemplateAttr(WP11_Object* obj, CK_ATTRIBUTE* attr)
+{
+    CK_RV rv = CKR_OK;
+    byte* enc = NULL;
+    int encSz = 0;
+    int pos = 0;
+    int idx = 0;
+    int r;
+    int want = TemplateIndex(attr->type);
+    CK_ULONG cnt = 0;
+    CK_ULONG k = 0;
+    CK_ULONG ulVal;
+    CK_ATTRIBUTE ent;
+    CK_ATTRIBUTE* out = (CK_ATTRIBUTE*)attr->pValue;
+
+    if (!ClassHasTemplate(WP11_Object_GetClass(obj), attr->type))
+        return CKR_ATTRIBUTE_TYPE_INVALID;
+    if (WP11_Object_GetAttrTemplates(obj, &enc, &encSz) != 0)
+        return CKR_DEVICE_MEMORY;
+
+    while ((r = DecodeTemplateEntry(enc, encSz, &pos, &idx, &ent,
+                                    &ulVal)) == 1) {
+        if (idx == want)
+            cnt++;
+    }
+    if (r < 0)
+        rv = CKR_FUNCTION_FAILED;
+    else if (out == NULL)
+        attr->ulValueLen = cnt * sizeof(CK_ATTRIBUTE);
+    else if (attr->ulValueLen < cnt * sizeof(CK_ATTRIBUTE)) {
+        attr->ulValueLen = CK_UNAVAILABLE_INFORMATION;
+        rv = CKR_BUFFER_TOO_SMALL;
+    }
+    else {
+        pos = 0;
+        while (DecodeTemplateEntry(enc, encSz, &pos, &idx, &ent,
+                                   &ulVal) == 1) {
+            if (idx != want)
+                continue;
+            out[k].type = ent.type;
+            if (out[k].pValue == NULL)
+                out[k].ulValueLen = ent.ulValueLen;
+            else if (out[k].ulValueLen < ent.ulValueLen) {
+                out[k].ulValueLen = CK_UNAVAILABLE_INFORMATION;
+                rv = CKR_BUFFER_TOO_SMALL;
+            }
+            else {
+                if (ent.ulValueLen > 0)
+                    XMEMCPY(out[k].pValue, ent.pValue, ent.ulValueLen);
+                out[k].ulValueLen = ent.ulValueLen;
+            }
+            k++;
+        }
+        attr->ulValueLen = cnt * sizeof(CK_ATTRIBUTE);
+    }
+
+    XFREE(enc, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    return rv;
+}
+
+/**
+ * Check a key to be wrapped against the wrapping key's CKA_WRAP_TEMPLATE.
+ *
+ * @param  wrappingKey  [in]  Wrapping key object.
+ * @param  key          [in]  Key to be wrapped.
+ * @return  CKR_KEY_HANDLE_INVALID when an attribute does not match.
+ *          CKR_DEVICE_MEMORY when dynamic memory allocation fails.
+ *          CKR_FUNCTION_FAILED when the stored encoding is malformed.
+ *          CKR_OK on success.
+ */
+static CK_RV CheckWrapTemplate(WP11_Object* wrappingKey, WP11_Object* key)
+{
+    CK_RV rv = CKR_OK;
+    byte* enc = NULL;
+    int encSz = 0;
+    int pos = 0;
+    int idx = 0;
+    int r;
+    CK_ULONG ulVal;
+    CK_ATTRIBUTE ent;
+
+    if (WP11_Object_GetAttrTemplates(wrappingKey, &enc, &encSz) != 0)
+        return CKR_DEVICE_MEMORY;
+    while (rv == CKR_OK && (r = DecodeTemplateEntry(enc, encSz, &pos, &idx,
+                                                    &ent, &ulVal)) != 0) {
+        if (r < 0)
+            rv = CKR_FUNCTION_FAILED;
+        else if (tmplTypes[idx] == CKA_WRAP_TEMPLATE &&
+                 !WP11_Object_MatchAttr(key, ent.type, (byte*)ent.pValue,
+                                        ent.ulValueLen))
+            rv = CKR_KEY_HANDLE_INVALID;
+    }
+
+    XFREE(enc, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    return rv;
+}
+
+/**
+ * Get CKA_VALUE_LEN from a key's unwrap or derive template.
+ *
+ * @param  key       [in]   Unwrapping or base key object.
+ * @param  type      [in]   CKA_UNWRAP_TEMPLATE or CKA_DERIVE_TEMPLATE.
+ * @param  valueLen  [out]  Length the template sets, or 0 when it sets none.
+ * @return  CKR_DEVICE_MEMORY when dynamic memory allocation fails.
+ *          CKR_FUNCTION_FAILED when the stored encoding is malformed.
+ *          CKR_OK on success.
+ */
+static CK_RV GetTemplateValueLen(WP11_Object* key, CK_ATTRIBUTE_TYPE type,
+                                 CK_ULONG* valueLen)
+{
+    CK_RV rv = CKR_OK;
+    byte* enc = NULL;
+    int encSz = 0;
+    int pos = 0;
+    int idx = 0;
+    int r;
+    CK_ULONG ulVal;
+    CK_ATTRIBUTE ent;
+
+    *valueLen = 0;
+    if (WP11_Object_GetAttrTemplates(key, &enc, &encSz) != 0)
+        return CKR_DEVICE_MEMORY;
+    while ((r = DecodeTemplateEntry(enc, encSz, &pos, &idx, &ent,
+                                    &ulVal)) == 1) {
+        if (tmplTypes[idx] == type && ent.type == CKA_VALUE_LEN)
+            *valueLen = ulVal;
+    }
+    if (r < 0)
+        rv = CKR_FUNCTION_FAILED;
+
+    XFREE(enc, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    return rv;
+}
+
+#ifdef WOLFSSL_HAVE_PRF
+/* Whether the MAC keys SetKeyExtract makes are no looser than an attribute. */
+static int MacKeyAttrMatches(const CK_ATTRIBUTE* attr)
+{
+    switch (attr->type) {
+        case CKA_KEY_TYPE:
+            return *(CK_ULONG*)attr->pValue == CKK_GENERIC_SECRET;
+        case CKA_DERIVE:
+        case CKA_SIGN:
+        case CKA_VERIFY:
+            return attr->ulValueLen == sizeof(CK_BBOOL) &&
+                   *(CK_BBOOL*)attr->pValue == CK_TRUE;
+        default:
+            return 1;
+    }
+}
+
+/**
+ * Check a TLS 1.2 base key's CKA_DERIVE_TEMPLATE against the MAC keys.
+ *
+ * @param  baseKey  [in]  Base key object.
+ * @return  CKR_TEMPLATE_INCONSISTENT when the template sets a key type or
+ *          denies a usage the MAC keys have.
+ *          CKR_DEVICE_MEMORY when dynamic memory allocation fails.
+ *          CKR_FUNCTION_FAILED when the stored encoding is malformed.
+ *          CKR_OK on success.
+ */
+static CK_RV CheckMacKeyTemplate(WP11_Object* baseKey)
+{
+    CK_RV rv = CKR_OK;
+    byte* enc = NULL;
+    int encSz = 0;
+    int pos = 0;
+    int idx = 0;
+    int r;
+    CK_ULONG ulVal;
+    CK_ATTRIBUTE ent;
+
+    if (WP11_Object_GetAttrTemplates(baseKey, &enc, &encSz) != 0)
+        return CKR_DEVICE_MEMORY;
+    while (rv == CKR_OK && (r = DecodeTemplateEntry(enc, encSz, &pos, &idx,
+                                                    &ent, &ulVal)) != 0) {
+        if (r < 0)
+            rv = CKR_FUNCTION_FAILED;
+        else if (tmplTypes[idx] == CKA_DERIVE_TEMPLATE &&
+                 !MacKeyAttrMatches(&ent))
+            rv = CKR_TEMPLATE_INCONSISTENT;
+    }
+
+    XFREE(enc, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    return rv;
+}
+#endif
+
+/* A creation template with a key's unwrap or derive template added. */
+typedef struct MergedTemplate {
+    CK_ATTRIBUTE* attrs;
+    CK_ULONG cnt;
+    CK_ULONG* ulVals;
+    byte* enc[2];
+    WP11_Object* key[2];
+} MergedTemplate;
+
+static void FreeMergedTemplate(MergedTemplate* m)
+{
+    /* attrs is the caller's template until a merge allocates ulVals. */
+    if (m->ulVals != NULL) {
+        XFREE(m->attrs, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        XFREE(m->ulVals, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    }
+    XFREE(m->enc[0], NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    XFREE(m->enc[1], NULL, DYNAMIC_TYPE_TMP_BUFFER);
+}
+
+/**
+ * Add a key's template of the given type to a creation template.
+ *
+ * @param  m     [in,out]  Merged template; holds the caller's to start with.
+ * @param  key   [in]      Key whose template is added.
+ * @param  type  [in]      CKA_UNWRAP_TEMPLATE or CKA_DERIVE_TEMPLATE.
+ * @param  slot  [in]      Index of m->enc to keep the encoding in.
+ * @return  CKR_TEMPLATE_INCONSISTENT when an attribute conflicts.
+ *          CKR_DEVICE_MEMORY when dynamic memory allocation fails.
+ *          CKR_FUNCTION_FAILED when the stored encoding is malformed.
+ *          CKR_OK on success.
+ */
+static CK_RV MergeKeyTemplate(MergedTemplate* m, WP11_Object* key,
+                              CK_ATTRIBUTE_TYPE type, int slot)
+{
+    byte* enc = NULL;
+    int encSz = 0;
+    int pos = 0;
+    int idx = 0;
+    int r;
+    int want = TemplateIndex(type);
+    CK_ULONG add = 0;
+    CK_ULONG ulVal;
+    CK_ULONG n;
+    CK_ULONG k;
+    size_t total;
+    int found;
+    CK_ATTRIBUTE ent;
+    CK_ATTRIBUTE* cur;
+    CK_ATTRIBUTE* attrs;
+    CK_ULONG* ulVals;
+
+    if (WP11_Object_GetAttrTemplates(key, &enc, &encSz) != 0)
+        return CKR_DEVICE_MEMORY;
+    m->enc[slot] = enc;
+    while ((r = DecodeTemplateEntry(enc, encSz, &pos, &idx, &ent,
+                                    &ulVal)) == 1) {
+        if (idx == want)
+            add++;
+    }
+    if (r < 0)
+        return CKR_FUNCTION_FAILED;
+    if (add == 0)
+        return CKR_OK;
+    total = (size_t)m->cnt + add;
+    if (total > ((size_t)-1) / sizeof(CK_ATTRIBUTE))
+        return CKR_DEVICE_MEMORY;
+
+    attrs = (CK_ATTRIBUTE*)XMALLOC(total * sizeof(CK_ATTRIBUTE), NULL,
+                                   DYNAMIC_TYPE_TMP_BUFFER);
+    ulVals = (CK_ULONG*)XMALLOC(total * sizeof(CK_ULONG), NULL,
+                                DYNAMIC_TYPE_TMP_BUFFER);
+    if (attrs == NULL || ulVals == NULL) {
+        XFREE(attrs, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        XFREE(ulVals, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        return CKR_DEVICE_MEMORY;
+    }
+    for (n = 0; n < m->cnt; n++) {
+        attrs[n] = m->attrs[n];
+        if (m->ulVals != NULL && m->attrs[n].pValue == &m->ulVals[n]) {
+            ulVals[n] = m->ulVals[n];
+            attrs[n].pValue = &ulVals[n];
+        }
+    }
+    if (m->ulVals != NULL) {
+        XFREE(m->attrs, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        XFREE(m->ulVals, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    }
+    m->attrs = attrs;
+    m->ulVals = ulVals;
+
+    pos = 0;
+    while (DecodeTemplateEntry(enc, encSz, &pos, &idx, &ent, &ulVal) == 1) {
+        if (idx != want)
+            continue;
+        found = 0;
+        for (k = 0; k < n; k++) {
+            cur = &m->attrs[k];
+            if (cur->type != ent.type)
+                continue;
+            if (cur->ulValueLen != ent.ulValueLen ||
+                    (ent.ulValueLen > 0 && (cur->pValue == NULL ||
+                     XMEMCMP(cur->pValue, ent.pValue, ent.ulValueLen) != 0)))
+                return CKR_TEMPLATE_INCONSISTENT;
+            /* Use the checked copy so the caller cannot change the value. */
+            if (ent.pValue == &ulVal) {
+                ulVals[k] = ulVal;
+                cur->pValue = &ulVals[k];
+            }
+            else
+                cur->pValue = ent.pValue;
+            found = 1;
+        }
+        if (found)
+            continue;
+        attrs[n] = ent;
+        if (ent.pValue == &ulVal) {
+            ulVals[n] = ulVal;
+            attrs[n].pValue = &ulVals[n];
+        }
+        n++;
+    }
+    m->cnt = n;
+
+    return CKR_OK;
+}
+
+/**
+ * Build the creation template of an unwrapped or derived key.
+ *
+ * @param  hSession   [in]   Handle of session.
+ * @param  hKey       [in]   Unwrapping or base key.
+ * @param  hOther     [in]   Second base key, or CK_INVALID_HANDLE.
+ * @param  type       [in]   CKA_UNWRAP_TEMPLATE or CKA_DERIVE_TEMPLATE.
+ * @param  pTemplate  [in]   Caller's template.
+ * @param  ulCount    [in]   Number of attributes in the caller's template.
+ * @param  m          [out]  Merged template and the keys found.
+ * @return  CKR_TEMPLATE_INCONSISTENT when an attribute conflicts.
+ *          CKR_DEVICE_MEMORY when dynamic memory allocation fails.
+ *          CKR_FUNCTION_FAILED when the stored encoding is malformed.
+ *          CKR_OK on success, including when the keys cannot be found.
+ */
+static CK_RV BuildKeyTemplate(CK_SESSION_HANDLE hSession,
+                              CK_OBJECT_HANDLE hKey, CK_OBJECT_HANDLE hOther,
+                              CK_ATTRIBUTE_TYPE type,
+                              CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
+                              MergedTemplate* m)
+{
+    CK_RV rv = CKR_OK;
+    WP11_Session* session;
+
+    XMEMSET(m, 0, sizeof(*m));
+    m->attrs = pTemplate;
+    m->cnt = ulCount;
+    if (!WP11_Library_IsInitialized() || pTemplate == NULL ||
+            ulCount > (CK_ULONG)INT_MAX ||
+            WP11_Session_Get(hSession, &session) != 0)
+        return CKR_OK;
+
+    if (WP11_Object_Find(session, hKey, &m->key[0]) == 0)
+        rv = MergeKeyTemplate(m, m->key[0], type, 0);
+    if (rv == CKR_OK && hOther != CK_INVALID_HANDLE &&
+            WP11_Object_Find(session, hOther, &m->key[1]) == 0)
+        rv = MergeKeyTemplate(m, m->key[1], type, 1);
+
+    return rv;
+}
+
 /* Sentinel for CheckPrivateLogin: callers that legitimately have no implicit
  * class (C_CreateObject, C_UnwrapKey - both require CKA_CLASS in template per
  * spec) pass this so the helper falls back to template inspection only. */
@@ -524,7 +1143,6 @@ static CK_RV CheckPrivateLogin(WP11_Session* session,
  * @param  set        [in]  Whether attributes are being used to set or get
  *                          value.
  * @return  CKR_ATTRIBUTE_TYPE_INVALID if the attribute type is not supported.
- *          CKR_TEMPLATE_INCONSISTENT if setting an attribute-array template.
  *          CKR_ATTRIBUTE_VALUE_INVALID if value or length is not valid for
  *          data type.
  *          CKR_OK on success.
@@ -543,10 +1161,11 @@ static CK_RV CheckAttributes(CK_ATTRIBUTE* pTemplate, CK_ULONG ulCount, int set)
         }
         if (j == ATTR_TYPE_SIZE)
             return CKR_ATTRIBUTE_TYPE_INVALID;
-        if (set && (attr->type == CKA_WRAP_TEMPLATE ||
-                    attr->type == CKA_UNWRAP_TEMPLATE ||
-                    attr->type == CKA_DERIVE_TEMPLATE))
-            return CKR_TEMPLATE_INCONSISTENT;
+        if (set && TemplateIndex(attr->type) >= 0) {
+            if (CheckTemplateAttr(attr) != CKR_OK)
+                return CKR_ATTRIBUTE_VALUE_INVALID;
+            continue;
+        }
 
         if (attrType[j].type == ATTR_TYPE_ULONG) {
             if (attr->pValue == NULL && set)
@@ -1085,6 +1704,12 @@ static CK_RV CheckAttributeUpdate(WP11_Session* session, WP11_Object* obj,
             ) {
         return CKR_ATTRIBUTE_TYPE_INVALID;
     }
+    if (TemplateIndex(attr->type) >= 0) {
+        if (!ClassHasTemplate(objClass, attr->type))
+            return CKR_ATTRIBUTE_TYPE_INVALID;
+        if (!newObject)
+            return CKR_ATTRIBUTE_READ_ONLY;
+    }
     /* The type-specific storage was allocated for the creation class. */
     if (newObject && attr->type == CKA_CLASS &&
             *(CK_OBJECT_CLASS*)attr->pValue != objClass) {
@@ -1153,6 +1778,9 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
     CK_ATTRIBUTE_TYPE* attrs = NULL;
     int cnt;
     CK_BBOOL attrsFound = 0;
+    int haveTmpl = 0;
+    byte* enc = NULL;
+    int encSz = 0;
     CK_KEY_TYPE type;
     CK_OBJECT_CLASS objClass;
 
@@ -1284,6 +1912,9 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
         if (rv != CKR_OK)
             return rv;
     }
+    rv = EncodeTemplates(pTemplate, ulCount, NULL, NULL);
+    if (rv != CKR_OK)
+        return rv;
 
     for (i = 0; i < cnt; i++) {
         for (j = 0; j < (int)ulCount; j++) {
@@ -1410,6 +2041,10 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
         rv = CheckAttributeUpdate(session, obj, attr, objClass, newObject);
         if (rv != CKR_OK)
             return rv;
+        if (TemplateIndex(attr->type) >= 0) {
+            haveTmpl = 1;
+            continue;
+        }
         ret = WP11_Object_SetAttr(obj, attr->type, (byte*)attr->pValue,
                                                               attr->ulValueLen);
         if (ret == MEMORY_E)
@@ -1420,6 +2055,15 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
             return UndecodedKeyRv(WP11_Session_GetSlot(session));
         else if (ret != 0)
             return CKR_FUNCTION_FAILED;
+    }
+
+    if (haveTmpl) {
+        rv = EncodeTemplates(pTemplate, ulCount, &enc, &encSz);
+        if (rv == CKR_OK && WP11_Object_SetAttrTemplates(obj, enc, encSz) != 0)
+            rv = CKR_DEVICE_MEMORY;
+        XFREE(enc, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (rv != CKR_OK)
+            return rv;
     }
 
     return CKR_OK;
@@ -2555,6 +3199,23 @@ static CK_RV wp11_C_GetAttributeValue(CK_SESSION_HANDLE hSession,
             attr->ulValueLen = (CK_ULONG)-1;
             if (rv == CKR_OK)
                 rv = CKR_ATTRIBUTE_TYPE_INVALID;
+            continue;
+        }
+        if (TemplateIndex(attr->type) >= 0) {
+            ret = (int)GetTemplateAttr(obj, attr);
+            if (ret == (int)CKR_ATTRIBUTE_TYPE_INVALID) {
+                attr->ulValueLen = (CK_ULONG)-1;
+                if (rv == CKR_OK)
+                    rv = CKR_ATTRIBUTE_TYPE_INVALID;
+            }
+            else if (ret == (int)CKR_BUFFER_TOO_SMALL) {
+                if (rv == CKR_OK)
+                    rv = CKR_BUFFER_TOO_SMALL;
+            }
+            else if (ret != (int)CKR_OK) {
+                WOLFPKCS11_LEAVE("C_GetAttributeValue", (CK_RV)ret);
+                return (CK_RV)ret;
+            }
             continue;
         }
 
@@ -10203,6 +10864,9 @@ static CK_RV wp11_C_WrapKey(CK_SESSION_HANDLE hSession,
     rv = CheckKeyDecoded(key);
     if (rv != CKR_OK)
         return rv;
+    rv = CheckWrapTemplate(wrappingKey, key);
+    if (rv != CKR_OK)
+        return rv;
 
     switch (keyType) {
 #if !defined(NO_RSA) && !defined(WOLFPKCS11_NO_STORE)
@@ -10417,6 +11081,7 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
  *                                  with.
  * @param  ulAttributeCount  [in]   Count of array elements.
  * @param  phKey             [out]  Handle of unwrapped key.
+ * @param  merged            [in]   Keys found when the template was merged.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pMechanism, pWrappedKey, pTemplate or phKey
@@ -10441,7 +11106,8 @@ static CK_RV wp11_C_UnwrapKey(CK_SESSION_HANDLE hSession,
                               CK_BYTE_PTR pWrappedKey, CK_ULONG ulWrappedKeyLen,
                               CK_ATTRIBUTE_PTR pTemplate,
                               CK_ULONG ulAttributeCount,
-                              CK_OBJECT_HANDLE_PTR phKey)
+                              CK_OBJECT_HANDLE_PTR phKey,
+                              WP11_Object** merged)
 {
     CK_RV rv;
     int ret;
@@ -10476,7 +11142,8 @@ static CK_RV wp11_C_UnwrapKey(CK_SESSION_HANDLE hSession,
     }
 
     if (pMechanism == NULL || pWrappedKey == NULL || ulWrappedKeyLen == 0 ||
-                                           pTemplate == NULL || phKey == NULL) {
+            pTemplate == NULL || ulAttributeCount > (CK_ULONG)INT_MAX ||
+            phKey == NULL) {
         rv = CKR_ARGUMENTS_BAD;
         WOLFPKCS11_LEAVE("C_UnwrapKey", rv);
         return rv;
@@ -10513,7 +11180,7 @@ static CK_RV wp11_C_UnwrapKey(CK_SESSION_HANDLE hSession,
     *phKey = CK_INVALID_HANDLE;
 
     ret = WP11_Object_Find(session, hUnwrappingKey, &unwrappingKey);
-    if (ret != 0)
+    if (ret != 0 || unwrappingKey != merged[0])
         return CKR_UNWRAPPING_KEY_HANDLE_INVALID;
 
     ret = CheckOpSupported(unwrappingKey, CKA_UNWRAP);
@@ -10662,10 +11329,17 @@ static CK_RV wp11_C_UnwrapKey(CK_SESSION_HANDLE hSession,
                 workBuffer
             };
             CK_ULONG keyDataLens[2] = { sizeof(CK_ULONG), ulUnwrappedLen };
+            CK_ULONG tmplLen;
 
             *phKey = CK_INVALID_HANDLE;
-            rv = CreateObject(session, pTemplate, ulAttributeCount,
-                              WP11_NO_IMPLICIT_CLASS, &keyObj);
+            rv = GetTemplateValueLen(unwrappingKey, CKA_UNWRAP_TEMPLATE,
+                                     &tmplLen);
+            if (rv == CKR_OK && tmplLen != 0 && tmplLen != ulUnwrappedLen)
+                rv = CKR_TEMPLATE_INCONSISTENT;
+            if (rv == CKR_OK) {
+                rv = CreateObject(session, pTemplate, ulAttributeCount,
+                                  WP11_NO_IMPLICIT_CLASS, &keyObj);
+            }
             if (rv == CKR_OK) {
                 ret = WP11_Object_SetSecretKey(keyObj, keyData, keyDataLens);
                 /* The unwrapped value is a length the key type cannot take. */
@@ -10714,10 +11388,20 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
                   CK_OBJECT_HANDLE_PTR phKey)
 {
     CK_RV rv;
+    MergedTemplate m;
     WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
 
-    rv = wp11_C_UnwrapKey(hSession, pMechanism, hUnwrappingKey, pWrappedKey,
-                          ulWrappedKeyLen, pTemplate, ulAttributeCount, phKey);
+    rv = BuildKeyTemplate(hSession, hUnwrappingKey, CK_INVALID_HANDLE,
+                          CKA_UNWRAP_TEMPLATE, pTemplate, ulAttributeCount,
+                          &m);
+    if (rv != CKR_OK && phKey != NULL)
+        *phKey = CK_INVALID_HANDLE;
+    else if (rv == CKR_OK) {
+        rv = wp11_C_UnwrapKey(hSession, pMechanism, hUnwrappingKey,
+                              pWrappedKey, ulWrappedKeyLen, m.attrs, m.cnt,
+                              phKey, m.key);
+    }
+    FreeMergedTemplate(&m);
     WP11_Slot_ObjectCallLeave(calls);
     return rv;
 }
@@ -11049,6 +11733,7 @@ static int ConcatCutsProtectedKey(WP11_Object* key, CK_ULONG off,
  * @param  pTemplate   [in]   Array of attributes to create key object with.
  * @param  ulCount     [in]   Count of array elements.
  * @param  phKey       [out]  Handle to new key object.
+ * @param  merged      [in]   Keys found when the template was merged.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pMechanism, pTemplate or phKey is NULL.
@@ -11078,7 +11763,8 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                               CK_OBJECT_HANDLE hBaseKey,
                               CK_ATTRIBUTE_PTR pTemplate,
                               CK_ULONG ulAttributeCount,
-                              CK_OBJECT_HANDLE_PTR phKey)
+                              CK_OBJECT_HANDLE_PTR phKey,
+                              WP11_Object** merged)
 {
     int ret;
     CK_RV rv = CKR_OK;
@@ -11140,7 +11826,8 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
         WOLFPKCS11_LEAVE("C_DeriveKey", rv);
         return rv;
     }
-    if (pMechanism == NULL || pTemplate == NULL) {
+    if (pMechanism == NULL || pTemplate == NULL ||
+            ulAttributeCount > (CK_ULONG)INT_MAX) {
         rv = CKR_ARGUMENTS_BAD;
         WOLFPKCS11_LEAVE("C_DeriveKey", rv);
         return rv;
@@ -11172,7 +11859,7 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
     }
 
     ret = WP11_Object_Find(session, hBaseKey, &obj);
-    if (ret != 0)
+    if (ret != 0 || obj != merged[0])
         return CKR_KEY_HANDLE_INVALID;
 
     /* F-4064: spec-compliance gate - reject keys whose CKA_DERIVE is CK_FALSE.
@@ -11274,15 +11961,19 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                 !CK_ULONG_FITS_WORD32(kdfParams->ulInfoLen))
                 return CKR_MECHANISM_PARAM_INVALID;
             if (kdfParams->bExtract &&
-                    kdfParams->ulSaltType == CKF_HKDF_SALT_KEY &&
-                    WP11_Object_Find(session, kdfParams->hSaltKey,
-                                     &saltObj) == 0 &&
-                    WP11_Object_GetClass(saltObj) == CKO_SECRET_KEY) {
-                rv = CheckKeyDecoded(saltObj);
-                if (rv != CKR_OK)
-                    return rv;
-                if (TLS12_ONLY(saltObj))
-                    return CKR_KEY_FUNCTION_NOT_PERMITTED;
+                    kdfParams->ulSaltType == CKF_HKDF_SALT_KEY) {
+                if (WP11_Object_Find(session, kdfParams->hSaltKey,
+                                     &saltObj) != 0)
+                    return CKR_MECHANISM_PARAM_INVALID;
+                if (saltObj != merged[1])
+                    return CKR_KEY_HANDLE_INVALID;
+                if (WP11_Object_GetClass(saltObj) == CKO_SECRET_KEY) {
+                    rv = CheckKeyDecoded(saltObj);
+                    if (rv != CKR_OK)
+                        return rv;
+                    if (TLS12_ONLY(saltObj))
+                        return CKR_KEY_FUNCTION_NOT_PERMITTED;
+                }
             }
 
             FindAttributeType(pTemplate, ulAttributeCount, CKA_VALUE_LEN,
@@ -11392,6 +12083,7 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
             CK_ULONG macBits;
             CK_ULONG keyBits;
             CK_ULONG ivBits;
+            CK_ULONG tmplLen;
             int used = 0;
 #ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
             int tied = 0;
@@ -11425,12 +12117,23 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
             if (rv != CKR_OK)
                 return rv;
 #endif
+            rv = CheckMacKeyTemplate(obj);
+            if (rv != CKR_OK)
+                return rv;
 
             /* Each field is extracted separately in whole bytes */
             if ((macBits % 8) != 0 || (keyBits % 8) != 0 ||
                     (ivBits % 8) != 0) {
                 return CKR_MECHANISM_PARAM_INVALID;
             }
+            rv = GetTemplateValueLen(obj, CKA_DERIVE_TEMPLATE, &tmplLen);
+            if (rv != CKR_OK)
+                return rv;
+            /* SymmKeyLen shortens each key to CKA_VALUE_LEN but never
+             * lengthens it. */
+            if (tmplLen != 0 && (tmplLen > macBits / 8 ||
+                                 tmplLen > keyBits / 8))
+                return CKR_TEMPLATE_INCONSISTENT;
             /* The caps also keep the key block length far below word32. */
             if (macBits > TLS12_KEY_MAT_MAX_MAC_BITS ||
                     keyBits > TLS12_KEY_MAT_MAX_KEY_BITS) {
@@ -11609,7 +12312,7 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
                     return CKR_MECHANISM_PARAM_INVALID;
                 if (WP11_Object_Find(session,
                         *(CK_OBJECT_HANDLE*)pMechanism->pParameter,
-                        &otherKey) != 0)
+                        &otherKey) != 0 || otherKey != merged[1])
                     return CKR_KEY_HANDLE_INVALID;
                 if (WP11_Object_GetClass(otherKey) != CKO_SECRET_KEY ||
                         !WP11_KeyType_IsSecret(WP11_Object_GetType(otherKey)))
@@ -11866,10 +12569,47 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
                   CK_OBJECT_HANDLE_PTR phKey)
 {
     CK_RV rv;
+    MergedTemplate m;
+    CK_OBJECT_HANDLE hOther = CK_INVALID_HANDLE;
+    CK_MECHANISM mech;
+#ifdef WOLFPKCS11_HKDF
+    CK_HKDF_PARAMS hkdf;
+#endif
     WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
 
-    rv = wp11_C_DeriveKey(hSession, pMechanism, hBaseKey, pTemplate,
-                          ulAttributeCount, phKey);
+    /* Derive with the same second key whose template was merged. */
+    if (pMechanism != NULL) {
+        mech = *pMechanism;
+#ifdef WOLFPKCS11_CONCATENATE
+        if (mech.mechanism == CKM_CONCATENATE_BASE_AND_KEY &&
+                mech.pParameter != NULL &&
+                mech.ulParameterLen == sizeof(CK_OBJECT_HANDLE)) {
+            hOther = *(CK_OBJECT_HANDLE*)mech.pParameter;
+            mech.pParameter = &hOther;
+        }
+#endif
+#ifdef WOLFPKCS11_HKDF
+        if ((mech.mechanism == CKM_HKDF_DERIVE ||
+                mech.mechanism == CKM_HKDF_DATA) &&
+                mech.pParameter != NULL &&
+                mech.ulParameterLen == sizeof(CK_HKDF_PARAMS)) {
+            hkdf = *(CK_HKDF_PARAMS*)mech.pParameter;
+            if (hkdf.bExtract && hkdf.ulSaltType == CKF_HKDF_SALT_KEY)
+                hOther = hkdf.hSaltKey;
+            mech.pParameter = &hkdf;
+        }
+#endif
+        pMechanism = &mech;
+    }
+    rv = BuildKeyTemplate(hSession, hBaseKey, hOther, CKA_DERIVE_TEMPLATE,
+                          pTemplate, ulAttributeCount, &m);
+    if (rv != CKR_OK && phKey != NULL)
+        *phKey = CK_INVALID_HANDLE;
+    else if (rv == CKR_OK) {
+        rv = wp11_C_DeriveKey(hSession, pMechanism, hBaseKey, m.attrs, m.cnt,
+                              phKey, m.key);
+    }
+    FreeMergedTemplate(&m);
     WP11_Slot_ObjectCallLeave(calls);
     return rv;
 }
