@@ -14840,22 +14840,19 @@ static int wp11_OidValid(const byte* oid, int len)
 }
 
 /**
- * Set the EC Parameters based on the DER encoding of the OID.
+ * Find the curve named by EC parameters: the DER encoding of an OID.
  *
- * @param  key  [in]  EC Key object.
- * @param  der  [in]  DER encoding of OID.
- * @param  len  [in]  Length of DER encoding.
+ * @param  der      [in]   DER encoding of OID.
+ * @param  len      [in]   Length of DER encoding.
+ * @param  curveId  [out]  Id of the curve.
  * @return  BAD_FUNC_ARG when the DER encoding is not an OID.
  *          ECC_CURVE_OID_E when the OID is not a supported curve, or the
  *          curve is given as explicit parameters.
- *          Other -ve on failure.
  *          0 on success.
  */
-static int EcSetParams(ecc_key* key, byte* der, int len)
+static int EcCurveFromParams(const byte* der, int len, int* curveId)
 {
     int ret = 0;
-    int keySize;
-    int curveId;
 
     if (len > 0 && der[0] == (ASN_SEQUENCE | ASN_CONSTRUCTED) &&
             wp11_DerLenCovers(der + 1, len - 1)) {
@@ -14871,13 +14868,36 @@ static int EcSetParams(ecc_key* key, byte* der, int len)
         /* wc_ecc_get_curve_id_from_oid() is broken in FIPSv5 and ecc_sets is
          * not accessible in FIPS, so we have our own lookup.
          */
-        curveId = ecc_lookup_curve(der +2, der[1]);
+        *curveId = ecc_lookup_curve(der + 2, der[1]);
 #else
-        curveId = wc_ecc_get_curve_id_from_oid(der + 2, der[1]);
+        *curveId = wc_ecc_get_curve_id_from_oid(der + 2, der[1]);
 #endif
-        if (curveId == ECC_CURVE_INVALID)
+        if (*curveId == ECC_CURVE_INVALID)
             ret = ECC_CURVE_OID_E;
     }
+
+    return ret;
+}
+
+/**
+ * Set the EC Parameters based on the DER encoding of the OID.
+ *
+ * @param  key  [in]  EC Key object.
+ * @param  der  [in]  DER encoding of OID.
+ * @param  len  [in]  Length of DER encoding.
+ * @return  BAD_FUNC_ARG when the DER encoding is not an OID.
+ *          ECC_CURVE_OID_E when the OID is not a supported curve, or the
+ *          curve is given as explicit parameters.
+ *          Other -ve on failure.
+ *          0 on success.
+ */
+static int EcSetParams(ecc_key* key, byte* der, int len)
+{
+    int ret;
+    int keySize;
+    int curveId = ECC_CURVE_INVALID;
+
+    ret = EcCurveFromParams(der, len, &curveId);
     if (ret == 0) {
         /* Set the curve into the EC key. */
         keySize = wc_ecc_get_curve_size_from_id(curveId);
@@ -14958,14 +14978,21 @@ static int wp11_Ec_PointOnCurve(ecc_key* key)
 /**
  * Set the EC Point, encoded in DER and X9.63, as the public key.
  *
- * @param  key  [in]  EC Key object.
- * @param  der  [in]  DER encoding of OID.
- * @param  len  [in]  Length of DER encoding.
- * @return  BAD_FUNC_ARG when the data is not a DER encoded point on the curve.
+ * With rawOk set, the X9.63 point without the DER OCTET STRING is accepted
+ * too. NSS passes that form for CKA_EC_POINT on private keys. The forms can't
+ * be confused: an uncompressed point is 2 * size + 1 bytes starting with 0x04,
+ * and its DER encoding is always longer. softokn tells them apart the same
+ * way.
+ *
+ * @param  key    [in]  EC Key object.
+ * @param  der    [in]  DER encoding of the point.
+ * @param  len    [in]  Length of DER encoding.
+ * @param  rawOk  [in]  Whether a raw uncompressed point is accepted.
+ * @return  BAD_FUNC_ARG when the data is not an encoded point on the curve.
  *          Other -ve on failure.
  *          0 on success.
  */
-static int EcSetPoint(ecc_key* key, byte* der, int len)
+static int EcSetPoint(ecc_key* key, byte* der, int len, int rawOk)
 {
     int ret = 0;
     int dataLen;
@@ -14973,18 +15000,24 @@ static int EcSetPoint(ecc_key* key, byte* der, int len)
 
     if (len < 3)
         ret = BAD_FUNC_ARG;
-    if (ret == 0 && der[i++] != ASN_OCTET_STRING)
-        ret = BAD_FUNC_ARG;
-    if (ret == 0 && der[i] >= ASN_LONG_LENGTH) {
-        if (der[i] != (ASN_LONG_LENGTH | 1))
-            ret = BAD_FUNC_ARG;
-        else
-            i++;
+    if (ret == 0 && rawOk && key->dp != NULL &&
+            len == 2 * key->dp->size + 1 && der[0] == ECC_POINT_UNCOMP) {
+        /* Raw point: no DER encoding to strip. */
     }
-    if (ret == 0) {
-        dataLen = der[i++];
-        if (dataLen != len - i)
+    else if (ret == 0) {
+        if (der[i++] != ASN_OCTET_STRING)
             ret = BAD_FUNC_ARG;
+        if (ret == 0 && der[i] >= ASN_LONG_LENGTH) {
+            if (der[i] != (ASN_LONG_LENGTH | 1))
+                ret = BAD_FUNC_ARG;
+            else
+                i++;
+        }
+        if (ret == 0) {
+            dataLen = der[i++];
+            if (dataLen != len - i)
+                ret = BAD_FUNC_ARG;
+        }
     }
     if (ret == 0) {
         /* Now stripped of DER encoding. */
@@ -14997,6 +15030,13 @@ static int EcSetPoint(ecc_key* key, byte* der, int len)
 
     return ret;
 }
+
+/* The private scalar of an EC key: FIPS v5 and earlier embed the mp_int. */
+#if defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION <= 5)
+    #define WP11_EC_PRIV(key)   (&(key)->k)
+#else
+    #define WP11_EC_PRIV(key)   ((key)->k)
+#endif
 
 /**
  * Check that a private scalar is in [1, n-1] for the key's curve.
@@ -15054,19 +15094,17 @@ int WP11_Object_SetEcKey(WP11_Object* object, unsigned char** data,
         }
         /* Importing the point resets the key, so it goes before the scalar. */
         if (ret == 0 && data[2] != NULL) {
+            /* PKCS#11 defines CKA_EC_POINT only for public keys, as DER. NSS
+             * also sets it on private keys, as the raw point (pk11pk12.c). */
+            int rawOk = (object->objClass == CKO_PRIVATE_KEY);
+
             key->type = ECC_PUBLICKEY;
-            ret = EcSetPoint(key, data[2], (int)len[2]);
+            ret = EcSetPoint(key, data[2], (int)len[2], rawOk);
         }
         if (ret == 0 && data[1] != NULL) {
-#if defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION <= 5)
-            ret = SetMPI(&key->k, data[1], (int)len[1]);
+            ret = SetMPI(WP11_EC_PRIV(key), data[1], (int)len[1]);
             if (ret == 0)
-                ret = EcCheckPrivRange(key, &key->k);
-#else
-            ret = SetMPI(key->k, data[1], (int)len[1]);
-            if (ret == 0)
-                ret = EcCheckPrivRange(key, key->k);
-#endif
+                ret = EcCheckPrivRange(key, WP11_EC_PRIV(key));
             if (ret != 0 && ret != MP_MEM)
                 ret = BAD_FUNC_ARG;
             key->type = (data[2] != NULL) ? ECC_PRIVATEKEY :
@@ -16231,34 +16269,39 @@ static int GetEcParams(ecc_key* key, byte* data, CK_ULONG* len)
 }
 
 /**
- * Get the DER encoded EC public point.
+ * Get the EC public point, DER encoded or raw.
  *
  * @param  key   [in]      Elliptic curve key.
- * @param  data  [in]      Buffer to hold DER encoded point.
+ * @param  data  [in]      Buffer to hold the point.
  * @param  len   [in,out]  On in, the length of the buffer in bytes.
  *                         On out, the length of the data in bytes.
+ * @param  raw   [in]      Whether to give the X9.63 point without the DER
+ *                         OCTET STRING.
  * @return  BUFFER_E when buffer is too small for data.
  *          0 on success.
  */
-static int GetEcPoint(ecc_key* key, byte* data, CK_ULONG* len)
+static int GetEcPoint(ecc_key* key, byte* data, CK_ULONG* len, int raw)
 {
     int ret = 0;
     word32 dataLen = key->dp->size * 2 + 1;
     int longLen = dataLen >= ASN_LONG_LENGTH;
+    word32 hdrLen = raw ? 0 : (word32)(2 + longLen);
     int i;
 
     if (data == NULL)
-        *len = dataLen + 2 + longLen;
-    else if (*len < (CK_ULONG)(dataLen + 2 + longLen)) {
+        *len = dataLen + hdrLen;
+    else if (*len < (CK_ULONG)(dataLen + hdrLen)) {
         ret = BUFFER_E;
     }
     else {
-        *len = dataLen + 2 + longLen;
+        *len = dataLen + hdrLen;
         i = 0;
-        data[i++] = ASN_OCTET_STRING;
-        if (longLen)
-            data[i++] = ASN_LONG_LENGTH | 1;
-        data[i++] = dataLen;
+        if (!raw) {
+            data[i++] = ASN_OCTET_STRING;
+            if (longLen)
+                data[i++] = ASN_LONG_LENGTH | 1;
+            data[i++] = dataLen;
+        }
         PRIVATE_KEY_UNLOCK();
         ret = wc_ecc_export_x963(key, data + i, &dataLen);
         PRIVATE_KEY_LOCK();
@@ -16310,11 +16353,7 @@ static int EcObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
                 ret = CKR_ATTRIBUTE_SENSITIVE;
             }
             else
-#if defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION <= 5)
-                ret = GetMPIData(&object->data.ecKey->k, data, len);
-#else
-                ret = GetMPIData(object->data.ecKey->k, data, len);
-#endif
+                ret = GetMPIData(WP11_EC_PRIV(object->data.ecKey), data, len);
             break;
         case CKA_EC_POINT:
             if (noPub) {
@@ -16325,8 +16364,19 @@ static int EcObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
                 *len = CK_UNAVAILABLE_INFORMATION;
                 ret = CKR_ATTRIBUTE_SENSITIVE;
             }
-            else
-                ret = GetEcPoint(object->data.ecKey, data, len);
+            else {
+                /* NSS builds always return the raw point from a private key,
+                 * whichever form it was set in, so a C_FindObjects template
+                 * must use that form too. NSS sets the raw point and reads
+                 * it back: PK11_ExportPrivKeyInfo puts it in the PKCS#8 as
+                 * is. Unwrapped and generated keys have no form set. */
+            #ifdef WOLFPKCS11_NSS
+                int raw = (object->objClass == CKO_PRIVATE_KEY);
+            #else
+                int raw = 0;
+            #endif
+                ret = GetEcPoint(object->data.ecKey, data, len, raw);
+            }
             break;
         case CKA_WRAP_TEMPLATE:
         case CKA_UNWRAP_TEMPLATE:
@@ -19053,6 +19103,339 @@ static int EcGenerateTpmKey(WP11_Object* priv, WP11_Slot* slot, int* genOnTpm)
     return ret;
 }
 #endif /* WOLFPKCS11_TPM */
+
+/* id-ecPublicKey (RFC 5480), the PKCS#8 algorithm of an EC key. */
+static const byte wp11_EcPublicKeyOid[] = {
+    0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01
+};
+
+/**
+ * Read the header of a DER item and check its tag.
+ *
+ * @param  data  [in]      Encoding.
+ * @param  end   [in]      Index just past the enclosing item.
+ * @param  idx   [in,out]  On in, index of the item.
+ *                         On out, index of its value.
+ * @param  tag   [in]      Tag the item must have.
+ * @param  len   [out]     Length of the value in bytes.
+ * @return  ASN_PARSE_E when the item has another tag or doesn't fit before
+ *          end.
+ *          0 on success.
+ */
+static int wp11_DerItem(const byte* data, word32 end, word32* idx, byte tag,
+                        word32* len)
+{
+    word32 i = *idx;
+    word32 l;
+    word32 cnt;
+
+    if (i >= end || end - i < 2 || data[i] != tag)
+        return ASN_PARSE_E;
+    i++;
+    l = data[i++];
+    if (l >= ASN_LONG_LENGTH) {
+        /* Two length bytes are enough for any EC private key. */
+        cnt = l & 0x7f;
+        if (cnt == 0 || cnt > 2 || end - i < cnt)
+            return ASN_PARSE_E;
+        for (l = 0; cnt > 0; cnt--)
+            l = (l << 8) | data[i++];
+    }
+    if (l > end - i)
+        return ASN_PARSE_E;
+
+    *idx = i;
+    *len = l;
+    return 0;
+}
+
+/**
+ * Find the private scalar, public point and curve in an EC private key
+ * encoding.
+ *
+ * The encoding is a PKCS#8 PrivateKeyInfo (RFC 5208) holding an ECPrivateKey,
+ * or a bare ECPrivateKey (RFC 5915). The PKCS#8 AlgorithmIdentifier and the
+ * ECPrivateKey parameters can each name the curve, and must agree when both
+ * do.
+ *
+ * wc_EccPrivateKeyDecode() isn't used: before wolfSSL v5.7.4, and in builds
+ * with the original ASN code, it ignores the AlgorithmIdentifier and picks a
+ * curve by key size when the ECPrivateKey has no parameters. wc_EccKeyToPKCS8()
+ * and OpenSSL write the key that way, so a secp256k1 or brainpoolP256r1 key
+ * would come back on P-256.
+ *
+ * @param  data     [in]   Encoding.
+ * @param  dataLen  [in]   Length of the encoding in bytes.
+ * @param  curveId  [out]  Curve named, or ECC_CURVE_INVALID when none is.
+ * @param  priv     [out]  Private scalar, big-endian.
+ * @param  privLen  [out]  Length of the private scalar in bytes.
+ * @param  pub      [out]  X9.63 public point, or NULL when there is none.
+ * @param  pubLen   [out]  Length of the public point in bytes.
+ * @return  ASN_PARSE_E when the encoding isn't an EC private key, or names
+ *          two curves.
+ *          ECC_CURVE_OID_E when a curve isn't supported or is given as
+ *          explicit parameters.
+ *          0 on success.
+ */
+static int EcPrivKeyDecode(const byte* data, word32 dataLen, int* curveId,
+    const byte** priv, word32* privLen, const byte** pub, word32* pubLen)
+{
+    int ret;
+    word32 idx = 0;
+    word32 end = dataLen;
+    word32 len = 0;
+    word32 subEnd;
+    byte version = 0;
+    int pk8Curve = ECC_CURVE_INVALID;
+    int keyCurve = ECC_CURVE_INVALID;
+
+    *pub = NULL;
+    *pubLen = 0;
+
+    /* Both forms are a SEQUENCE starting with an INTEGER version. */
+    ret = wp11_DerItem(data, end, &idx, ASN_SEQUENCE | ASN_CONSTRUCTED, &len);
+    if (ret == 0) {
+        end = idx + len;
+        ret = wp11_DerItem(data, end, &idx, ASN_INTEGER, &len);
+    }
+    if (ret == 0 && len != 1)
+        ret = ASN_PARSE_E;
+    if (ret == 0)
+        version = data[idx++];
+
+    /* In PKCS#8, version 0 (or 1 for OneAsymmetricKey) is followed by the
+     * AlgorithmIdentifier. In an ECPrivateKey an OCTET STRING follows. */
+    if (ret == 0 && idx < end &&
+            data[idx] == (ASN_SEQUENCE | ASN_CONSTRUCTED)) {
+        if (version > 1)
+            ret = ASN_PARSE_E;
+        if (ret == 0) {
+            ret = wp11_DerItem(data, end, &idx,
+                               ASN_SEQUENCE | ASN_CONSTRUCTED, &len);
+        }
+        if (ret == 0) {
+            subEnd = idx + len;
+            ret = wp11_DerItem(data, subEnd, &idx, ASN_OBJECT_ID, &len);
+        }
+        if (ret == 0 && (len != sizeof(wp11_EcPublicKeyOid) ||
+                XMEMCMP(data + idx, wp11_EcPublicKeyOid, len) != 0)) {
+            ret = ASN_PARSE_E;
+        }
+        /* The parameters fill the rest of the AlgorithmIdentifier. */
+        if (ret == 0) {
+            idx += len;
+            ret = EcCurveFromParams(data + idx, (int)(subEnd - idx),
+                                    &pk8Curve);
+            idx = subEnd;
+        }
+        /* The OCTET STRING holds the ECPrivateKey. */
+        if (ret == 0)
+            ret = wp11_DerItem(data, end, &idx, ASN_OCTET_STRING, &len);
+        if (ret == 0) {
+            end = idx + len;
+            ret = wp11_DerItem(data, end, &idx,
+                               ASN_SEQUENCE | ASN_CONSTRUCTED, &len);
+        }
+        if (ret == 0) {
+            end = idx + len;
+            ret = wp11_DerItem(data, end, &idx, ASN_INTEGER, &len);
+        }
+        if (ret == 0 && len != 1)
+            ret = ASN_PARSE_E;
+        if (ret == 0)
+            version = data[idx++];
+    }
+
+    /* ECPrivateKey: version 1, the scalar, then [0] parameters and
+     * [1] public key, both optional. */
+    if (ret == 0 && version != 1)
+        ret = ASN_PARSE_E;
+    if (ret == 0)
+        ret = wp11_DerItem(data, end, &idx, ASN_OCTET_STRING, &len);
+    if (ret == 0 && len == 0)
+        ret = ASN_PARSE_E;
+    if (ret == 0) {
+        *priv = data + idx;
+        *privLen = len;
+        idx += len;
+    }
+    if (ret == 0 && idx < end &&
+            data[idx] == (ASN_CONTEXT_SPECIFIC | ASN_CONSTRUCTED | 0)) {
+        ret = wp11_DerItem(data, end, &idx,
+                           ASN_CONTEXT_SPECIFIC | ASN_CONSTRUCTED | 0, &len);
+        if (ret == 0) {
+            ret = EcCurveFromParams(data + idx, (int)len, &keyCurve);
+            idx += len;
+        }
+    }
+    if (ret == 0 && idx < end &&
+            data[idx] == (ASN_CONTEXT_SPECIFIC | ASN_CONSTRUCTED | 1)) {
+        ret = wp11_DerItem(data, end, &idx,
+                           ASN_CONTEXT_SPECIFIC | ASN_CONSTRUCTED | 1, &len);
+        if (ret == 0) {
+            subEnd = idx + len;
+            ret = wp11_DerItem(data, subEnd, &idx, ASN_BIT_STRING, &len);
+        }
+        /* The BIT STRING fills the [1] and has no unused bits. */
+        if (ret == 0 && (len < 2 || data[idx] != 0 || idx + len != subEnd))
+            ret = ASN_PARSE_E;
+        if (ret == 0) {
+            *pub = data + idx + 1;
+            *pubLen = len - 1;
+            idx += len;
+        }
+    }
+    if (ret == 0 && idx != end)
+        ret = ASN_PARSE_E;
+    if (ret == BAD_FUNC_ARG)
+        ret = ASN_PARSE_E;
+
+    if (ret == 0 && pk8Curve != ECC_CURVE_INVALID &&
+            keyCurve != ECC_CURVE_INVALID && pk8Curve != keyCurve) {
+        ret = ASN_PARSE_E;
+    }
+    if (ret == 0)
+        *curveId = (pk8Curve != ECC_CURVE_INVALID) ? pk8Curve : keyCurve;
+
+    return ret;
+}
+
+/**
+ * Internalize an EC private key from DER form, as C_UnwrapKey gets it.
+ *
+ * The DER is a PKCS#8 PrivateKeyInfo or a bare ECPrivateKey (RFC 5915). The
+ * curve is the one the encoding names, else the one set from the template's
+ * CKA_EC_PARAMS, and the two must match when both are given. The key gets
+ * the checks C_CreateObject makes: the scalar is in [1, n-1] and a public
+ * point in the encoding is on the curve.
+ *
+ * @param  data     [in]      Buffer to parse.
+ * @param  dataLen  [in]      Size of buffer in bytes.
+ * @param  privKey  [in,out]  Private key object.
+ * @return  ECC_CURVE_OID_E when the curve differs from the template's.
+ *          ASN_PARSE_E when the key can't be parsed, or names no curve or
+ *          one that isn't supported.
+ *          BAD_FUNC_ARG when the key fails a check.
+ *          MEMORY_E or MP_MEM when dynamic memory allocation fails.
+ *          Other -ve on failure.
+ *          0 on success.
+ */
+int WP11_Ec_ParsePrivKey(byte* data, word32 dataLen, WP11_Object* privKey)
+{
+    int ret;
+    int curveId = ECC_CURVE_INVALID;
+    int keyCurve = ECC_CURVE_INVALID;
+    const byte* priv = NULL;
+    const byte* pub = NULL;
+    word32 privLen = 0;
+    word32 pubLen = 0;
+    ecc_key* key = privKey->data.ecKey;
+
+    if (privKey->lock != NULL)
+        WP11_Lock_LockRW(privKey->lock);
+
+    /* The template may have set a curve; the key goes into a fresh one. */
+    if (key->dp != NULL)
+        curveId = key->dp->id;
+    wc_ecc_free(key);
+    ret = wc_ecc_init_ex(key, NULL, privKey->devId);
+    if (ret == 0) {
+        ret = EcPrivKeyDecode(data, dataLen, &keyCurve, &priv, &privLen, &pub,
+                              &pubLen);
+        /* An unsupported curve is a fault in the key, not the template. */
+        if (ret != 0)
+            ret = ASN_PARSE_E;
+    }
+    if (ret == 0) {
+        if (keyCurve == ECC_CURVE_INVALID)
+            keyCurve = curveId;
+        else if (curveId != ECC_CURVE_INVALID && keyCurve != curveId)
+            ret = ECC_CURVE_OID_E;
+    }
+    if (ret == 0 && keyCurve == ECC_CURVE_INVALID)
+        ret = ASN_PARSE_E;
+    if (ret == 0) {
+        ret = wc_ecc_import_private_key_ex(priv, privLen, pub, pubLen, key,
+                                           keyCurve);
+        if (ret != 0 && ret != MEMORY_E && ret != MP_MEM)
+            ret = BAD_FUNC_ARG;
+    }
+    if (ret == 0 && key->dp == NULL)
+        ret = BAD_FUNC_ARG;
+    if (ret == 0) {
+        ret = EcCheckPrivRange(key, WP11_EC_PRIV(key));
+        if (ret != 0 && ret != MP_MEM)
+            ret = BAD_FUNC_ARG;
+    }
+    if (ret == 0 && key->type == ECC_PRIVATEKEY) {
+        ret = wp11_Ec_PointOnCurve(key);
+        if (wp11_Ec_PointInvalid(ret))
+            ret = BAD_FUNC_ARG;
+    }
+#ifdef WOLFPKCS11_TPM
+    if (ret == 0)
+        ret = WP11_Object_WrapTpmKey(privKey);
+#endif
+    if (ret != 0)
+        wc_ecc_free(key);
+
+    if (privKey->lock != NULL)
+        WP11_Lock_UnlockRW(privKey->lock);
+
+    return ret;
+}
+
+#if defined(HAVE_PKCS8) && defined(HAVE_ECC_KEY_EXPORT)
+/**
+ * Export the EC private key in plain-text PKCS#8, as C_WrapKey wraps it.
+ *
+ * The ECPrivateKey (RFC 5915) includes the public point when the key has one,
+ * and the PKCS#8 algorithm parameters name the curve.
+ *
+ * @param  object  [in]      EC private key object.
+ * @param  output  [out]     Buffer for the encoding, or NULL for its length.
+ * @param  poutsz  [in,out]  In, size of the buffer. Out, encoding length.
+ * @return  BAD_STATE_E when the key value is not decoded, as after a logout.
+ *          NOT_AVAILABLE_E when the object holds no private scalar, as for a
+ *          key generated on a TPM.
+ *          Other -ve on failure.
+ *          0 on success.
+ */
+int WP11_Ec_SerializeKeyPTPKC8(WP11_Object* object, byte* output,
+                               word32* poutsz)
+{
+    int ret;
+    ecc_key* key;
+
+    if (object == NULL || poutsz == NULL)
+        return PARAM_E;
+    if (object->type != CKK_EC || object->objClass != CKO_PRIVATE_KEY)
+        return OBJ_TYPE_E;
+
+    key = object->data.ecKey;
+    if (object->lock != NULL)
+        WP11_Lock_LockRO(object->lock);
+    ret = wp11_Object_KeyStateLocked(object);
+    if (ret == 0 && key->type != ECC_PRIVATEKEY &&
+            key->type != ECC_PRIVATEKEY_ONLY) {
+        ret = NOT_AVAILABLE_E;
+    }
+    if (ret == 0 && mp_iszero(WP11_EC_PRIV(key)))
+        ret = NOT_AVAILABLE_E;
+    if (ret == 0) {
+        if (key->type == ECC_PRIVATEKEY)
+            ret = wc_EccKeyToPKCS8(key, output, poutsz);
+        else
+            ret = wc_EccPrivateKeyToPKCS8(key, output, poutsz);
+        if (ret == LENGTH_ONLY_E || ret > 0)
+            ret = 0;
+    }
+    if (object->lock != NULL)
+        WP11_Lock_UnlockRO(object->lock);
+
+    return ret;
+}
+#endif /* HAVE_PKCS8 && HAVE_ECC_KEY_EXPORT */
 
 /**
  * Generate an EC key pair.
