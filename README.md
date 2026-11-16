@@ -205,8 +205,9 @@ versions may need to update templates or error-handling:
   depends on it: its `CKA_SENSITIVE`, `CKA_EXTRACTABLE`,
   `CKA_ALWAYS_SENSITIVE`, `CKA_NEVER_EXTRACTABLE` and
   `CKA_WRAP_WITH_TRUSTED` now carry over to the derived key as those of the
-  second concatenation key do. NSS builds and builds with
-  `WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT` are unchanged.
+  second concatenation key do. A `CKO_DATA` base object is readable, so a
+  key derived from one takes only the salt key's protection. NSS builds and
+  builds with `WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT` are unchanged.
 - `C_DeriveKey` returns `CKR_ATTRIBUTE_VALUE_INVALID` and creates no key when
   a key derived from a sensitive or non-extractable key would be shorter than
   16 bytes. A `CKM_TLS12_KEY_AND_MAC_DERIVE` MAC or key size that short

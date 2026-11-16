@@ -11732,7 +11732,10 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
         /* F-4533: read the base key's protection bits while `obj' still
          * refers to it, before CreateObject reuses `obj' for the new key. */
         if (inherit) {
-            GetBaseProtection(obj, &baseSensitive, &baseExtractable);
+            /* A data object base is readable and its CKA_EXTRACTABLE reads
+             * CK_FALSE, so only an HKDF salt key protects the derived key. */
+            if (WP11_Object_GetClass(obj) != CKO_DATA)
+                GetBaseProtection(obj, &baseSensitive, &baseExtractable);
             bLen = sizeof(CK_BBOOL);
             if (otherKey != NULL && WP11_Object_GetAttr(otherKey,
                     CKA_SENSITIVE, &otherState, &bLen) == 0 &&
@@ -11777,25 +11780,10 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
         if (reqValueLen > keyLen)
             rv = CKR_ATTRIBUTE_VALUE_INVALID;
 #ifndef WOLFPKCS11_NO_DERIVE_LENGTH_GUARD
-        if (rv == CKR_OK && !concat) {
-            CK_BBOOL guardSensitive = baseSensitive;
-            CK_BBOOL guardExtractable = baseExtractable;
-            int guard = 1;
-
-            /* A data object base is readable, so only an HKDF salt key's
-             * protection limits the length. */
-            if (WP11_Object_GetClass(obj) == CKO_DATA) {
-                if (otherKey != NULL) {
-                    GetBaseProtection(otherKey, &guardSensitive,
-                                      &guardExtractable);
-                }
-                else
-                    guard = 0;
-            }
-            if (guard && DerivedKeyTooShort(guardSensitive, guardExtractable,
-                    (reqValueLen > 0) ? reqValueLen : keyLen))
-                rv = CKR_ATTRIBUTE_VALUE_INVALID;
-        }
+        if (rv == CKR_OK && !concat &&
+                DerivedKeyTooShort(baseSensitive, baseExtractable,
+                                   (reqValueLen > 0) ? reqValueLen : keyLen))
+            rv = CKR_ATTRIBUTE_VALUE_INVALID;
 #endif
 #ifndef WOLFPKCS11_LEGACY_DERIVE_NO_INHERIT
         if (rv == CKR_OK) {

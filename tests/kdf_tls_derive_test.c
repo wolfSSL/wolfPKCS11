@@ -2107,6 +2107,94 @@ cleanup:
     destroy_obj(session, &base);
     return result;
 }
+
+/* A data object base is readable and has no protection of its own, so only
+ * the salt key protects the derived key. */
+static int test_hkdf_data_base_protection(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE salt = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    byte saltValue[HKDF_SALT_LEN];
+    CK_ATTRIBUTE dataTmpl[] = {
+        { CKA_CLASS,   &dataClass, sizeof(dataClass)  },
+        { CKA_PRIVATE, &ckFalse,   sizeof(ckFalse)    },
+        { CKA_DERIVE,  &ckTrue,    sizeof(ckTrue)     },
+        { CKA_VALUE,   baseSecret, sizeof(baseSecret) },
+    };
+    CK_BBOOL state;
+    CK_HKDF_PARAMS params;
+    CK_MECHANISM mech = { CKM_HKDF_DATA, &params, sizeof(params) };
+    int result = 0;
+
+    XMEMSET(saltValue, 0x6b, sizeof(saltValue));
+    ret = funcList->C_CreateObject(session, dataTmpl,
+                                   sizeof(dataTmpl) / sizeof(*dataTmpl),
+                                   &base);
+    CHECK_CKR(ret, "create HKDF base data object");
+
+    /* Salt as data: nothing protects the derived key. */
+    hkdf_salt_key_params(&params, CK_INVALID_HANDLE);
+    params.ulSaltType = CKF_HKDF_SALT_DATA;
+    params.pSalt = saltValue;
+    params.ulSaltLen = sizeof(saltValue);
+    ret = derive_generic(session, &mech, base, 32, &derived);
+    CHECK_CKR(ret, "HKDF from data object with salt data and open template");
+    ret = read_bool(session, derived, CKA_SENSITIVE, &state);
+    CHECK_CKR(ret, "read CKA_SENSITIVE of key from data object");
+    CHECK_RV(state, CK_FALSE, "key from data object not sensitive");
+    ret = read_bool(session, derived, CKA_EXTRACTABLE, &state);
+    CHECK_CKR(ret, "read CKA_EXTRACTABLE of key from data object");
+    CHECK_RV(state, CK_TRUE, "key from data object extractable");
+    destroy_obj(session, &derived);
+
+    /* Readable salt key. */
+    ret = create_salt_key(session, saltValue, CK_TRUE, CK_FALSE, CK_TRUE,
+                          CK_FALSE, &salt);
+    CHECK_CKR(ret, "create readable HKDF salt key");
+    hkdf_salt_key_params(&params, salt);
+    ret = derive_generic(session, &mech, base, 32, &derived);
+    CHECK_CKR(ret, "HKDF from data object and readable salt key");
+    ret = read_bool(session, derived, CKA_EXTRACTABLE, &state);
+    CHECK_CKR(ret, "read CKA_EXTRACTABLE of key from data and readable salt");
+    CHECK_RV(state, CK_TRUE, "key from data and readable salt extractable");
+    destroy_obj(session, &derived);
+    destroy_obj(session, &salt);
+
+    /* Non-extractable salt key. */
+    ret = create_salt_key(session, saltValue, CK_TRUE, CK_FALSE, CK_FALSE,
+                          CK_FALSE, &salt);
+    CHECK_CKR(ret, "create non-extractable HKDF salt key");
+    hkdf_salt_key_params(&params, salt);
+    ret = derive_generic(session, &mech, base, 32, &derived);
+    CHECK_RV(ret, CKR_TEMPLATE_INCONSISTENT,
+             "extractable key from data and non-extractable salt refused");
+    ret = derive_protected(session, &mech, base, &ckFalse, NULL, &derived);
+    CHECK_CKR(ret, "HKDF from data object and non-extractable salt key");
+    ret = read_bool(session, derived, CKA_EXTRACTABLE, &state);
+    CHECK_CKR(ret, "read CKA_EXTRACTABLE of key from non-extractable salt");
+    CHECK_RV(state, CK_FALSE,
+             "key from data and non-extractable salt not extractable");
+    destroy_obj(session, &derived);
+    destroy_obj(session, &salt);
+
+    /* Sensitive salt key. */
+    ret = create_salt_key(session, saltValue, CK_TRUE, CK_TRUE, CK_TRUE,
+                          CK_FALSE, &salt);
+    CHECK_CKR(ret, "create sensitive HKDF salt key");
+    hkdf_salt_key_params(&params, salt);
+    ret = derive_generic(session, &mech, base, 32, &derived);
+    CHECK_RV(ret, CKR_TEMPLATE_INCONSISTENT,
+             "non-sensitive key from data and sensitive salt refused");
+
+cleanup:
+    destroy_obj(session, &derived);
+    destroy_obj(session, &salt);
+    destroy_obj(session, &base);
+    return result;
+}
 #endif /* !EXPECT_NO_INHERIT */
 #endif /* WOLFPKCS11_HKDF */
 
@@ -2232,6 +2320,8 @@ static int kdf_tls_derive_test(void)
     if (test_hkdf_salt_key_protection(session) != 0)
         result = -1;
     if (test_hkdf_salt_key_states(session) != 0)
+        result = -1;
+    if (test_hkdf_data_base_protection(session) != 0)
         result = -1;
 #endif
 #endif
