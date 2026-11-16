@@ -56,6 +56,19 @@
     #define TEST_EC_WRAP
 #endif
 
+/* TPMs don't all take P-521 or brainpool keys. */
+#if (defined(HAVE_ECC521) || defined(HAVE_ALL_CURVES)) && \
+    !defined(WOLFPKCS11_TPM)
+    #define TEST_EC_P521
+#endif
+#if defined(HAVE_ECC_BRAINPOOL) && !defined(NO_ECC256) && \
+    !defined(HAVE_FIPS) && !defined(WOLFPKCS11_TPM)
+    #define TEST_EC_BRAINPOOL
+#endif
+#if defined(TEST_EC_P521) || defined(TEST_EC_BRAINPOOL)
+    #define TEST_EC_CURVES
+#endif
+
 #define TEST_DIR "./store/ec_private_key_import_test"
 
 static int test_passed = 0;
@@ -109,6 +122,100 @@ static unsigned char hash[32] = {
     0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20
 };
 
+/* An EC test key: the curve, private scalar and raw X9.63 public point. */
+typedef struct EcTestKey {
+    const char* name;
+    unsigned char* params;
+    CK_ULONG paramsLen;
+    unsigned char* priv;
+    CK_ULONG privLen;
+    unsigned char* point;
+    CK_ULONG pointLen;
+} EcTestKey;
+
+static const EcTestKey p256Key = {
+    "P-256",
+    ecc_p256_params, sizeof(ecc_p256_params),
+    ecc_p256_priv, sizeof(ecc_p256_priv),
+    ecc_p256_point, sizeof(ecc_p256_point)
+};
+
+#ifdef TEST_EC_P521
+/* The point is 133 bytes, so its DER encoding has a long-form length. */
+static unsigned char p521_params[] = {
+    0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x23
+};
+static unsigned char p521_priv[] = {
+    0x01, 0xA6, 0x91, 0xA8, 0x28, 0x0C, 0x88, 0xE7,
+    0xAC, 0x56, 0x2B, 0xDF, 0x14, 0xE8, 0x96, 0x61,
+    0x98, 0xEF, 0xE8, 0x83, 0x8B, 0xBC, 0xDA, 0x7C,
+    0x13, 0x51, 0xE7, 0xE3, 0x27, 0x7B, 0xD4, 0xBC,
+    0x21, 0xA1, 0xD4, 0x2A, 0x5D, 0x45, 0x9A, 0xC0,
+    0xC2, 0x47, 0xFD, 0xB9, 0x2A, 0x82, 0xDE, 0x7D,
+    0x0B, 0xB5, 0x93, 0x3B, 0x8F, 0x32, 0xEE, 0xB6,
+    0x38, 0x8D, 0x4B, 0x31, 0x63, 0xF0, 0xAD, 0xDF,
+    0x89, 0x4D
+};
+static unsigned char p521_point[] = {
+    0x04, 0x01, 0xFD, 0x96, 0xF8, 0x3E, 0x02, 0x1B,
+    0x98, 0x22, 0xFF, 0x76, 0xB8, 0x07, 0x09, 0xB8,
+    0xA0, 0xC2, 0xDA, 0x3F, 0x52, 0x92, 0xCD, 0xF6,
+    0x47, 0x2F, 0x43, 0xF1, 0x20, 0x6A, 0x93, 0x10,
+    0xF8, 0xE8, 0xF7, 0x03, 0x31, 0x27, 0x4F, 0xCC,
+    0xDB, 0x1F, 0x74, 0xF1, 0x5F, 0x1A, 0x54, 0xC2,
+    0xC8, 0x5B, 0x0B, 0x48, 0xDB, 0x86, 0x06, 0xF5,
+    0x2C, 0xAC, 0x46, 0x71, 0xB8, 0x22, 0x62, 0xAA,
+    0x20, 0xCB, 0x09, 0x01, 0x98, 0x1F, 0x85, 0x8D,
+    0x29, 0x38, 0x31, 0x09, 0x81, 0x80, 0x06, 0x0D,
+    0x1A, 0x74, 0x71, 0xB6, 0xC1, 0xBE, 0x1B, 0x1B,
+    0xD4, 0xB7, 0x0D, 0xD2, 0x62, 0xDB, 0xC8, 0x24,
+    0x95, 0x83, 0x70, 0xC2, 0xD9, 0xA5, 0x9F, 0x8E,
+    0xCC, 0x5A, 0xD4, 0x2D, 0xEC, 0x43, 0x0F, 0x7C,
+    0xB0, 0xE6, 0xA5, 0x0A, 0x4A, 0xB4, 0xBB, 0x06,
+    0xAB, 0x34, 0xD2, 0xCD, 0x0A, 0x03, 0x47, 0x05,
+    0x15, 0x1F, 0x6B, 0x7A, 0xDA
+};
+
+static const EcTestKey p521Key = {
+    "P-521",
+    p521_params, sizeof(p521_params),
+    p521_priv, sizeof(p521_priv),
+    p521_point, sizeof(p521_point)
+};
+#endif /* TEST_EC_P521 */
+
+#ifdef TEST_EC_BRAINPOOL
+/* A 32-byte curve other than P-256, which a decoder that picks the curve by
+ * key size gets wrong. */
+static unsigned char bp256_params[] = {
+    0x06, 0x09, 0x2B, 0x24, 0x03, 0x03, 0x02, 0x08, 0x01, 0x01, 0x07
+};
+static unsigned char bp256_priv[] = {
+    0x0A, 0x2C, 0xD9, 0x51, 0xCC, 0xC4, 0x82, 0xB2,
+    0x62, 0x50, 0x04, 0xBE, 0x88, 0xE3, 0x82, 0xBE,
+    0x0C, 0xE8, 0x85, 0xAC, 0x83, 0xC0, 0xD4, 0x89,
+    0x6A, 0xA5, 0xA1, 0xEA, 0xB8, 0x3A, 0xAD, 0x19
+};
+static unsigned char bp256_point[] = {
+    0x04, 0x07, 0x4A, 0xD9, 0xF8, 0xD9, 0xB2, 0x34,
+    0x92, 0xE6, 0xBB, 0x34, 0x47, 0x93, 0x23, 0x33,
+    0x04, 0xE8, 0x99, 0x4C, 0xA4, 0x5E, 0x63, 0xC7,
+    0x28, 0xE8, 0x07, 0x20, 0x31, 0xDD, 0xA5, 0x34,
+    0xA1, 0x3C, 0x89, 0xFF, 0x44, 0x89, 0xEC, 0x80,
+    0x6A, 0x01, 0x88, 0x94, 0xD6, 0x83, 0xB1, 0xB2,
+    0xCE, 0x76, 0x2A, 0x43, 0x08, 0xBB, 0xC3, 0xDE,
+    0x4B, 0xCF, 0x38, 0x81, 0xB3, 0xE3, 0x8D, 0xB2,
+    0x34
+};
+
+static const EcTestKey bp256Key = {
+    "brainpoolP256r1",
+    bp256_params, sizeof(bp256_params),
+    bp256_priv, sizeof(bp256_priv),
+    bp256_point, sizeof(bp256_point)
+};
+#endif /* TEST_EC_BRAINPOOL */
+
 #ifdef TEST_EC_WRAP
 static CK_OBJECT_CLASS secretKeyClass = CKO_SECRET_KEY;
 static CK_KEY_TYPE aesKeyType = CKK_AES;
@@ -120,6 +227,13 @@ static unsigned char ecc_p384_params[] = {
 /* id-ecPublicKey, the PKCS #8 algorithm of an EC key. */
 static const unsigned char ec_public_key_oid[] = {
     0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01
+};
+/* The order n of P-256, a scalar out of range. */
+static unsigned char p256_order[32] = {
+    0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xBC, 0xE6, 0xFA, 0xAD, 0xA7, 0x17, 0x9E, 0x84,
+    0xF3, 0xB9, 0xCA, 0xC2, 0xFC, 0x63, 0x25, 0x51
 };
 
 static unsigned char wrapKeyValue[32] = {
@@ -213,37 +327,59 @@ static CK_RV open_session(CK_SESSION_HANDLE* session)
     return ret;
 }
 
-/* Create a P-256 private key; point may be NULL with pointLen 0. */
-static CK_RV create_ec_priv(CK_SESSION_HANDLE session, unsigned char* point,
-    CK_ULONG pointLen, CK_OBJECT_HANDLE* key)
+/* Create a private key; point may be NULL with pointLen 0. */
+static CK_RV create_ec_priv(CK_SESSION_HANDLE session, const EcTestKey* k,
+    unsigned char* point, CK_ULONG pointLen, CK_OBJECT_HANDLE* key)
 {
     CK_ATTRIBUTE tmpl[] = {
-        { CKA_CLASS,       &privKeyClass,   sizeof(privKeyClass)    },
-        { CKA_KEY_TYPE,    &ecKeyType,      sizeof(ecKeyType)       },
-        { CKA_TOKEN,       &ckFalse,        sizeof(ckFalse)         },
-        { CKA_SIGN,        &ckTrue,         sizeof(ckTrue)          },
-        { CKA_EXTRACTABLE, &ckTrue,         sizeof(ckTrue)          },
-        { CKA_EC_PARAMS,   ecc_p256_params, sizeof(ecc_p256_params) },
-        { CKA_VALUE,       ecc_p256_priv,   sizeof(ecc_p256_priv)   },
-        { CKA_EC_POINT,    point,           pointLen                },
+        { CKA_CLASS,       &privKeyClass, sizeof(privKeyClass) },
+        { CKA_KEY_TYPE,    &ecKeyType,    sizeof(ecKeyType)    },
+        { CKA_TOKEN,       &ckFalse,      sizeof(ckFalse)      },
+        { CKA_SIGN,        &ckTrue,       sizeof(ckTrue)       },
+        { CKA_EXTRACTABLE, &ckTrue,       sizeof(ckTrue)       },
+        { CKA_EC_PARAMS,   k->params,     k->paramsLen         },
+        { CKA_VALUE,       k->priv,       k->privLen           },
+        { CKA_EC_POINT,    point,         pointLen             },
     };
     return funcList->C_CreateObject(session, tmpl,
         sizeof(tmpl) / sizeof(tmpl[0]), key);
 }
 
-static CK_RV create_ec_pub(CK_SESSION_HANDLE session, unsigned char* point,
-    CK_ULONG pointLen, CK_OBJECT_HANDLE* key)
+static CK_RV create_ec_pub(CK_SESSION_HANDLE session, const EcTestKey* k,
+    unsigned char* point, CK_ULONG pointLen, CK_OBJECT_HANDLE* key)
 {
     CK_ATTRIBUTE tmpl[] = {
-        { CKA_CLASS,     &pubKeyClass,    sizeof(pubKeyClass)     },
-        { CKA_KEY_TYPE,  &ecKeyType,      sizeof(ecKeyType)       },
-        { CKA_TOKEN,     &ckFalse,        sizeof(ckFalse)         },
-        { CKA_VERIFY,    &ckTrue,         sizeof(ckTrue)          },
-        { CKA_EC_PARAMS, ecc_p256_params, sizeof(ecc_p256_params) },
-        { CKA_EC_POINT,  point,           pointLen                },
+        { CKA_CLASS,     &pubKeyClass, sizeof(pubKeyClass) },
+        { CKA_KEY_TYPE,  &ecKeyType,   sizeof(ecKeyType)   },
+        { CKA_TOKEN,     &ckFalse,     sizeof(ckFalse)     },
+        { CKA_VERIFY,    &ckTrue,      sizeof(ckTrue)      },
+        { CKA_EC_PARAMS, k->params,    k->paramsLen        },
+        { CKA_EC_POINT,  point,        pointLen            },
     };
     return funcList->C_CreateObject(session, tmpl,
         sizeof(tmpl) / sizeof(tmpl[0]), key);
+}
+
+/* DER encode the key's point as an OCTET STRING into out, 140 bytes. */
+static CK_ULONG der_point(const EcTestKey* k, unsigned char* out)
+{
+    CK_ULONG i = 0;
+
+    out[i++] = 0x04;
+    if (k->pointLen >= 0x80)
+        out[i++] = 0x81;
+    out[i++] = (unsigned char)k->pointLen;
+    XMEMCPY(out + i, k->point, k->pointLen);
+    return i + k->pointLen;
+}
+
+/* Destroy the object, if any. A session holds only a few objects. */
+static void destroy_obj(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE* obj)
+{
+    if (*obj != CK_INVALID_HANDLE) {
+        funcList->C_DestroyObject(session, *obj);
+        *obj = CK_INVALID_HANDLE;
+    }
 }
 
 /* Sign the hash with priv and verify it with pub. */
@@ -252,7 +388,7 @@ static CK_RV sign_verify(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE priv,
 {
     CK_RV ret;
     CK_MECHANISM mech = { CKM_ECDSA, NULL, 0 };
-    unsigned char sig[64];
+    unsigned char sig[140];
     CK_ULONG sigLen = sizeof(sig);
 
     ret = funcList->C_SignInit(session, &mech, priv);
@@ -263,6 +399,41 @@ static CK_RV sign_verify(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE priv,
     if (ret == CKR_OK)
         ret = funcList->C_Verify(session, hash, sizeof(hash), sig, sigLen);
     return ret;
+}
+
+/* NSS copies the private key's CKA_EC_POINT into an exported PKCS #8 as the
+ * raw point, so NSS builds return that form; others return DER. */
+static int check_priv_point(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE priv,
+    const EcTestKey* k)
+{
+    int result = 0;
+    CK_RV rv;
+    unsigned char point[140];
+    unsigned char want[140];
+    CK_ULONG wantLen;
+    char op[128];
+    CK_ATTRIBUTE getPoint[] = {
+        { CKA_EC_POINT, point, sizeof(point) },
+    };
+
+#ifdef WOLFPKCS11_NSS
+    XMEMCPY(want, k->point, k->pointLen);
+    wantLen = k->pointLen;
+#else
+    wantLen = der_point(k, want);
+#endif
+
+    snprintf(op, sizeof(op), "%s: read CKA_EC_POINT of the private key",
+        k->name);
+    rv = funcList->C_GetAttributeValue(session, priv, getPoint, 1);
+    CHECK_CKR(rv, op, CKR_OK);
+    snprintf(op, sizeof(op), "%s: private key CKA_EC_POINT has the build's "
+        "form", k->name);
+    CHECK_COND(getPoint[0].ulValueLen == wantLen &&
+        XMEMCMP(point, want, wantLen) == 0, op);
+
+cleanup:
+    return result;
 }
 
 #ifdef TEST_EC_WRAP
@@ -294,18 +465,18 @@ static CK_RV create_wrap_key(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE* key)
         sizeof(tmpl) / sizeof(tmpl[0]), key);
 }
 
-/* Wrap priv, check the plaintext is a PKCS #8 of the test key, unwrap it and
- * check the new key signs. */
+/* Wrap priv, check the plaintext is a PKCS #8 of the test key, unwrap it
+ * without naming the curve and check the new key has the curve and signs. */
 static int wrap_unwrap_roundtrip(CK_SESSION_HANDLE session,
-    CK_OBJECT_HANDLE wrapKey, CK_OBJECT_HANDLE priv, CK_OBJECT_HANDLE pub,
-    const char* name)
+    CK_OBJECT_HANDLE wrapKey, const EcTestKey* k, CK_OBJECT_HANDLE priv,
+    CK_OBJECT_HANDLE pub, const char* name)
 {
     int result = 0;
     CK_RV rv;
     CK_MECHANISM mech = { CKM_AES_CBC_PAD, iv, sizeof(iv) };
     CK_OBJECT_HANDLE unwrapped = CK_INVALID_HANDLE;
-    unsigned char wrapped[256];
-    unsigned char plain[256];
+    unsigned char wrapped[512];
+    unsigned char plain[512];
     unsigned char params[16];
     CK_ULONG wrappedLen = 0;
     CK_ULONG plainLen = sizeof(plain);
@@ -344,29 +515,231 @@ static int wrap_unwrap_roundtrip(CK_SESSION_HANDLE session,
     CHECK_COND(plainLen > 2 && plain[0] == 0x30 &&
         contains(plain, plainLen, ec_public_key_oid,
                  sizeof(ec_public_key_oid)) &&
-        contains(plain, plainLen, ecc_p256_params, sizeof(ecc_p256_params)) &&
-        contains(plain, plainLen, ecc_p256_priv, sizeof(ecc_p256_priv)), op);
+        contains(plain, plainLen, k->params, k->paramsLen) &&
+        contains(plain, plainLen, k->priv, k->privLen), op);
 
     snprintf(op, sizeof(op), "%s: C_UnwrapKey", name);
     rv = funcList->C_UnwrapKey(session, &mech, wrapKey, wrapped, wrappedLen,
         unwrapTmpl, sizeof(unwrapTmpl) / sizeof(unwrapTmpl[0]), &unwrapped);
     CHECK_CKR(rv, op, CKR_OK);
-    snprintf(op, sizeof(op), "%s: unwrapped key has the P-256 CKA_EC_PARAMS",
-        name);
+    snprintf(op, sizeof(op), "%s: unwrapped key has the %s CKA_EC_PARAMS",
+        name, k->name);
     rv = funcList->C_GetAttributeValue(session, unwrapped, getParams, 1);
-    CHECK_COND(rv == CKR_OK &&
-        getParams[0].ulValueLen == sizeof(ecc_p256_params) &&
-        XMEMCMP(params, ecc_p256_params, sizeof(ecc_p256_params)) == 0, op);
+    CHECK_COND(rv == CKR_OK && getParams[0].ulValueLen == k->paramsLen &&
+        XMEMCMP(params, k->params, k->paramsLen) == 0, op);
     snprintf(op, sizeof(op), "%s: unwrapped key signs", name);
     rv = sign_verify(session, unwrapped, pub);
     CHECK_CKR(rv, op, CKR_OK);
 
 cleanup:
-    if (unwrapped != CK_INVALID_HANDLE)
-        funcList->C_DestroyObject(session, unwrapped);
+    destroy_obj(session, &unwrapped);
+    return result;
+}
+
+/* Offset of the ECPrivateKey in a PKCS #8 from build_p256_pkcs8(). */
+#define P256_PKCS8_KEY_OFF    29
+
+/* Build a PKCS #8 PrivateKeyInfo of a P-256 key into out, 160 bytes. The
+ * ECPrivateKey has keyParams as its parameters, or none when NULL. */
+static CK_ULONG build_p256_pkcs8(unsigned char* out, const unsigned char* priv,
+    const unsigned char* point, const unsigned char* keyParams,
+    CK_ULONG keyParamsLen)
+{
+    static const unsigned char algId[] = {
+        0x30, 0x13,
+        0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01,
+        0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07
+    };
+    /* Version, scalar and public key: the ECPrivateKey contents. */
+    CK_ULONG keyLen = 3 + 2 + 32 + 5 + 65;
+    CK_ULONG i = 0;
+
+    if (keyParams != NULL)
+        keyLen += 2 + keyParamsLen;
+
+    out[i++] = 0x30;
+    out[i++] = 0x81;
+    out[i++] = (unsigned char)(3 + sizeof(algId) + 2 + 2 + keyLen);
+    out[i++] = 0x02; out[i++] = 0x01; out[i++] = 0x00;
+    XMEMCPY(out + i, algId, sizeof(algId));
+    i += sizeof(algId);
+    out[i++] = 0x04;
+    out[i++] = (unsigned char)(2 + keyLen);
+    out[i++] = 0x30;
+    out[i++] = (unsigned char)keyLen;
+    out[i++] = 0x02; out[i++] = 0x01; out[i++] = 0x01;
+    out[i++] = 0x04; out[i++] = 0x20;
+    XMEMCPY(out + i, priv, 32);
+    i += 32;
+    if (keyParams != NULL) {
+        out[i++] = 0xA0;
+        out[i++] = (unsigned char)keyParamsLen;
+        XMEMCPY(out + i, keyParams, keyParamsLen);
+        i += keyParamsLen;
+    }
+    out[i++] = 0xA1; out[i++] = 0x44;
+    out[i++] = 0x03; out[i++] = 0x42; out[i++] = 0x00;
+    XMEMCPY(out + i, point, 65);
+    i += 65;
+    return i;
+}
+
+/* Encrypt plain with the wrapping key and unwrap it with tmpl. */
+static CK_RV unwrap_plain(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE wrapKey,
+    unsigned char* plain, CK_ULONG plainLen, CK_ATTRIBUTE* tmpl,
+    CK_ULONG tmplCnt, CK_OBJECT_HANDLE* key)
+{
+    CK_RV rv;
+    CK_MECHANISM mech = { CKM_AES_CBC_PAD, iv, sizeof(iv) };
+    unsigned char wrapped[512];
+    CK_ULONG wrappedLen = sizeof(wrapped);
+
+    *key = CK_INVALID_HANDLE;
+    rv = funcList->C_EncryptInit(session, &mech, wrapKey);
+    if (rv == CKR_OK) {
+        rv = funcList->C_Encrypt(session, plain, plainLen, wrapped,
+            &wrappedLen);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_UnwrapKey(session, &mech, wrapKey, wrapped,
+            wrappedLen, tmpl, tmplCnt, key);
+    }
+    return rv;
+}
+
+/* Unwrap hand-built P-256 keys, each with one fault, and check they get the
+ * checks C_CreateObject makes. */
+static int bad_pkcs8_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE wrapKey)
+{
+    int result = 0;
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    unsigned char plain[160];
+    unsigned char zero[32];
+    unsigned char badPoint[sizeof(ecc_p256_point)];
+    CK_ULONG plainLen;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,     &privKeyClass,   sizeof(privKeyClass)    },
+        { CKA_KEY_TYPE,  &ecKeyType,      sizeof(ecKeyType)       },
+        { CKA_TOKEN,     &ckFalse,        sizeof(ckFalse)         },
+        { CKA_EC_PARAMS, ecc_p256_params, sizeof(ecc_p256_params) },
+    };
+    /* The template without CKA_EC_PARAMS. */
+    CK_ULONG noCurveCnt = sizeof(tmpl) / sizeof(tmpl[0]) - 1;
+    CK_ULONG curveCnt = sizeof(tmpl) / sizeof(tmpl[0]);
+
+    /* The encoding is good, so each case below fails on its own fault. */
+    plainLen = build_p256_pkcs8(plain, ecc_p256_priv, ecc_p256_point, NULL,
+        0);
+    rv = unwrap_plain(session, wrapKey, plain, plainLen, tmpl, noCurveCnt,
+        &key);
+    CHECK_CKR(rv, "Unwrap a hand-built PKCS #8", CKR_OK);
+    destroy_obj(session, &key);
+
+    /* A bare ECPrivateKey without parameters needs the template's curve. */
+    rv = unwrap_plain(session, wrapKey, plain + P256_PKCS8_KEY_OFF,
+        plainLen - P256_PKCS8_KEY_OFF, tmpl, noCurveCnt, &key);
+    CHECK_CKR(rv, "Unwrap an ECPrivateKey that names no curve",
+        CKR_WRAPPED_KEY_INVALID);
+    rv = unwrap_plain(session, wrapKey, plain + P256_PKCS8_KEY_OFF,
+        plainLen - P256_PKCS8_KEY_OFF, tmpl, curveCnt, &key);
+    CHECK_CKR(rv, "Unwrap an ECPrivateKey with the template's curve",
+        CKR_OK);
+    destroy_obj(session, &key);
+
+    XMEMSET(zero, 0, sizeof(zero));
+    plainLen = build_p256_pkcs8(plain, zero, ecc_p256_point, NULL, 0);
+    rv = unwrap_plain(session, wrapKey, plain, plainLen, tmpl, noCurveCnt,
+        &key);
+    CHECK_CKR(rv, "Unwrap a zero scalar", CKR_WRAPPED_KEY_INVALID);
+
+    plainLen = build_p256_pkcs8(plain, p256_order, ecc_p256_point, NULL, 0);
+    rv = unwrap_plain(session, wrapKey, plain, plainLen, tmpl, noCurveCnt,
+        &key);
+    CHECK_CKR(rv, "Unwrap a scalar equal to the order",
+        CKR_WRAPPED_KEY_INVALID);
+
+    XMEMCPY(badPoint, ecc_p256_point, sizeof(badPoint));
+    badPoint[sizeof(badPoint) - 1] ^= 0x01;
+    plainLen = build_p256_pkcs8(plain, ecc_p256_priv, badPoint, NULL, 0);
+    rv = unwrap_plain(session, wrapKey, plain, plainLen, tmpl, noCurveCnt,
+        &key);
+    CHECK_CKR(rv, "Unwrap a point off the curve", CKR_WRAPPED_KEY_INVALID);
+
+    /* The ECPrivateKey names P-384 and the AlgorithmIdentifier P-256. */
+    plainLen = build_p256_pkcs8(plain, ecc_p256_priv, ecc_p256_point,
+        ecc_p384_params, sizeof(ecc_p384_params));
+    rv = unwrap_plain(session, wrapKey, plain, plainLen, tmpl, noCurveCnt,
+        &key);
+    CHECK_CKR(rv, "Unwrap a key that names two curves",
+        CKR_WRAPPED_KEY_INVALID);
+
+cleanup:
+    destroy_obj(session, &key);
     return result;
 }
 #endif /* TEST_EC_WRAP */
+
+#ifdef TEST_EC_CURVES
+/* Import a key with a DER and a raw point, check the point read back, then
+ * wrap and unwrap it when wrapping is built. */
+static int curve_test(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE wrapKey,
+    const EcTestKey* k)
+{
+    int result = 0;
+    CK_RV rv;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE privDer = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE privRaw = CK_INVALID_HANDLE;
+    unsigned char der[140];
+    CK_ULONG derLen;
+    char op[128];
+
+    derLen = der_point(k, der);
+    snprintf(op, sizeof(op), "%s: create public key with a DER CKA_EC_POINT",
+        k->name);
+    rv = create_ec_pub(session, k, der, derLen, &pub);
+    CHECK_CKR(rv, op, CKR_OK);
+
+    snprintf(op, sizeof(op), "%s: create private key with a DER "
+        "CKA_EC_POINT", k->name);
+    rv = create_ec_priv(session, k, der, derLen, &privDer);
+    CHECK_CKR(rv, op, CKR_OK);
+    snprintf(op, sizeof(op), "%s: private key with a DER point signs",
+        k->name);
+    rv = sign_verify(session, privDer, pub);
+    CHECK_CKR(rv, op, CKR_OK);
+
+    snprintf(op, sizeof(op), "%s: create private key with a raw "
+        "CKA_EC_POINT", k->name);
+    rv = create_ec_priv(session, k, k->point, k->pointLen, &privRaw);
+    CHECK_CKR(rv, op, CKR_OK);
+    snprintf(op, sizeof(op), "%s: private key with a raw point signs",
+        k->name);
+    rv = sign_verify(session, privRaw, pub);
+    CHECK_CKR(rv, op, CKR_OK);
+    if (check_priv_point(session, privDer, k) != 0) {
+        result = -1;
+        goto cleanup;
+    }
+
+#ifdef TEST_EC_WRAP
+    if (wrap_unwrap_roundtrip(session, wrapKey, k, privDer, pub,
+            k->name) != 0) {
+        result = -1;
+        goto cleanup;
+    }
+#else
+    (void)wrapKey;
+#endif
+
+cleanup:
+    destroy_obj(session, &privRaw);
+    destroy_obj(session, &privDer);
+    destroy_obj(session, &pub);
+    return result;
+}
+#endif /* TEST_EC_CURVES */
 
 static int ec_private_key_import_test(void)
 {
@@ -379,8 +752,12 @@ static int ec_private_key_import_test(void)
     CK_OBJECT_HANDLE privNoPoint = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
     unsigned char badPoint[sizeof(ecc_p256_point)];
-#ifdef TEST_EC_WRAP
+    unsigned char der[140];
+    CK_ULONG derLen;
+#if defined(TEST_EC_WRAP) || defined(TEST_EC_CURVES)
     CK_OBJECT_HANDLE wrapKey = CK_INVALID_HANDLE;
+#endif
+#ifdef TEST_EC_WRAP
     CK_MECHANISM mech = { CKM_AES_CBC_PAD, iv, sizeof(iv) };
     unsigned char wrapped[256];
     unsigned char junk[48];
@@ -402,45 +779,30 @@ static int ec_private_key_import_test(void)
     CHECK_CKR(rv, "Initialize", CKR_OK);
     rv = open_session(&session);
     CHECK_CKR(rv, "Token, PIN and user login", CKR_OK);
-    rv = create_ec_pub(session, ecc_p256_pub, sizeof(ecc_p256_pub), &pub);
+    derLen = der_point(&p256Key, der);
+    CHECK_COND(derLen == sizeof(ecc_p256_pub) &&
+        XMEMCMP(der, ecc_p256_pub, derLen) == 0, "DER encode the P-256 point");
+    rv = create_ec_pub(session, &p256Key, der, derLen, &pub);
     CHECK_CKR(rv, "Create public key with a DER CKA_EC_POINT", CKR_OK);
 
     /* NSS sets the raw point on the private key (pk11pk12.c). */
-    rv = create_ec_priv(session, ecc_p256_point, sizeof(ecc_p256_point),
-        &privRaw);
+    rv = create_ec_priv(session, &p256Key, ecc_p256_point,
+        sizeof(ecc_p256_point), &privRaw);
     CHECK_CKR(rv, "Create private key with a raw CKA_EC_POINT", CKR_OK);
     rv = sign_verify(session, privRaw, pub);
     CHECK_CKR(rv, "Private key with a raw point signs", CKR_OK);
-
-    /* NSS copies the private key's CKA_EC_POINT into an exported PKCS #8 as
-     * the raw point, so NSS builds return that form; others return DER. */
-    {
-        unsigned char point[80];
-        CK_ATTRIBUTE getPoint[] = {
-            { CKA_EC_POINT, point, sizeof(point) },
-        };
-    #ifdef WOLFPKCS11_NSS
-        unsigned char* want = ecc_p256_point;
-        CK_ULONG wantLen = sizeof(ecc_p256_point);
-    #else
-        unsigned char* want = ecc_p256_pub;
-        CK_ULONG wantLen = sizeof(ecc_p256_pub);
-    #endif
-
-        rv = funcList->C_GetAttributeValue(session, privRaw, getPoint, 1);
-        CHECK_CKR(rv, "Read CKA_EC_POINT of the private key", CKR_OK);
-        CHECK_COND(getPoint[0].ulValueLen == wantLen &&
-            XMEMCMP(point, want, wantLen) == 0,
-            "Private key CKA_EC_POINT has the build's form");
+    if (check_priv_point(session, privRaw, &p256Key) != 0) {
+        result = -1;
+        goto cleanup;
     }
 
-    rv = create_ec_priv(session, ecc_p256_pub, sizeof(ecc_p256_pub), &privDer);
+    rv = create_ec_priv(session, &p256Key, der, derLen, &privDer);
     CHECK_CKR(rv, "Create private key with a DER CKA_EC_POINT", CKR_OK);
     rv = sign_verify(session, privDer, pub);
     CHECK_CKR(rv, "Private key with a DER point signs", CKR_OK);
 
     /* NSS sends an empty point when the PKCS #8 has no public value. */
-    rv = create_ec_priv(session, NULL, 0, &privNoPoint);
+    rv = create_ec_priv(session, &p256Key, NULL, 0, &privNoPoint);
     CHECK_CKR(rv, "Create private key with an empty CKA_EC_POINT", CKR_OK);
     rv = sign_verify(session, privNoPoint, pub);
     CHECK_CKR(rv, "Private key without a point signs", CKR_OK);
@@ -448,12 +810,13 @@ static int ec_private_key_import_test(void)
     /* A raw point must still be on the curve. */
     XMEMCPY(badPoint, ecc_p256_point, sizeof(badPoint));
     badPoint[sizeof(badPoint) - 1] ^= 0x01;
-    rv = create_ec_priv(session, badPoint, sizeof(badPoint), &key);
+    rv = create_ec_priv(session, &p256Key, badPoint, sizeof(badPoint), &key);
     CHECK_CKR(rv, "Raw CKA_EC_POINT off the curve is rejected",
         CKR_ATTRIBUTE_VALUE_INVALID);
 
     /* Public keys still take only the DER form PKCS #11 defines. */
-    rv = create_ec_pub(session, ecc_p256_point, sizeof(ecc_p256_point), &key);
+    rv = create_ec_pub(session, &p256Key, ecc_p256_point,
+        sizeof(ecc_p256_point), &key);
     CHECK_CKR(rv, "Public key with a raw CKA_EC_POINT is rejected",
         CKR_ATTRIBUTE_VALUE_INVALID);
 
@@ -461,12 +824,12 @@ static int ec_private_key_import_test(void)
     rv = create_wrap_key(session, &wrapKey);
     CHECK_CKR(rv, "Create AES wrapping key", CKR_OK);
 
-    if (wrap_unwrap_roundtrip(session, wrapKey, privRaw, pub,
+    if (wrap_unwrap_roundtrip(session, wrapKey, &p256Key, privRaw, pub,
             "with public point") != 0) {
         result = -1;
         goto cleanup;
     }
-    if (wrap_unwrap_roundtrip(session, wrapKey, privNoPoint, pub,
+    if (wrap_unwrap_roundtrip(session, wrapKey, &p256Key, privNoPoint, pub,
             "without public point") != 0) {
         result = -1;
         goto cleanup;
@@ -496,10 +859,41 @@ static int ec_private_key_import_test(void)
         unwrapTmpl, sizeof(unwrapTmpl) / sizeof(unwrapTmpl[0]), &key);
     CHECK_CKR(rv, "Unwrap data that isn't an EC key",
         CKR_WRAPPED_KEY_INVALID);
+
+    if (bad_pkcs8_test(session, wrapKey) != 0) {
+        result = -1;
+        goto cleanup;
+    }
+#endif
+
+    /* Make room in the session for the other curves' keys. */
+    destroy_obj(session, &privNoPoint);
+    destroy_obj(session, &privDer);
+    destroy_obj(session, &privRaw);
+    destroy_obj(session, &pub);
+
+#ifdef TEST_EC_P521
+    if (curve_test(session, wrapKey, &p521Key) != 0) {
+        result = -1;
+        goto cleanup;
+    }
+#endif
+#ifdef TEST_EC_BRAINPOOL
+    if (curve_test(session, wrapKey, &bp256Key) != 0) {
+        result = -1;
+        goto cleanup;
+    }
 #endif
 
 cleanup:
     if (session != CK_INVALID_HANDLE) {
+#if defined(TEST_EC_WRAP) || defined(TEST_EC_CURVES)
+        destroy_obj(session, &wrapKey);
+#endif
+        destroy_obj(session, &privNoPoint);
+        destroy_obj(session, &privDer);
+        destroy_obj(session, &privRaw);
+        destroy_obj(session, &pub);
         funcList->C_Logout(session);
         funcList->C_CloseSession(session);
     }

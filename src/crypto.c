@@ -10173,8 +10173,10 @@ CK_RV C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
  *          CK_FALSE.
  *          CKR_KEY_NOT_WRAPPABLE when hKey has CKA_WRAP_WITH_TRUSTED set to
  *          CK_TRUE but hWrappingKey does not have CKA_TRUSTED set to CK_TRUE,
- *          or when the key class/type combination is not supported for
- *          wrapping.
+ *          when the key class/type combination is not supported for
+ *          wrapping, or when an EC private key has no private scalar in
+ *          software, as for a key generated on a TPM.
+ *          CKR_USER_NOT_LOGGED_IN when a logout scrubbed the key value.
  *          CKR_MECHANISM_INVALID when the mechanism is not supported with this
  *          type of operation.
  */
@@ -10297,8 +10299,11 @@ static CK_RV wp11_C_WrapKey(CK_SESSION_HANDLE hSession,
         case CKK_EC:
             ret = WP11_Ec_SerializeKeyPTPKC8(key, NULL, &serialSize);
             /* A key kept on a TPM has no private scalar to export. */
-            if (ret == BAD_STATE_E)
+            if (ret == NOT_AVAILABLE_E)
                 return CKR_KEY_NOT_WRAPPABLE;
+            /* A logout since CheckKeyDecoded() scrubbed the key value. */
+            if (ret == BAD_STATE_E)
+                return UndecodedKeyRv(WP11_Session_GetSlot(session));
             if (ret != 0)
                 return CKR_FUNCTION_FAILED;
 
@@ -10308,6 +10313,10 @@ static CK_RV wp11_C_WrapKey(CK_SESSION_HANDLE hSession,
                 return CKR_HOST_MEMORY;
 
             ret = WP11_Ec_SerializeKeyPTPKC8(key, serialBuff, &serialSize);
+            if (ret == BAD_STATE_E) {
+                rv = UndecodedKeyRv(WP11_Session_GetSlot(session));
+                goto err_out;
+            }
             if (ret != 0) {
                 rv = CKR_FUNCTION_FAILED;
                 goto err_out;
@@ -10495,8 +10504,9 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
 }
 
 /**
- * Unwrap an RSA private key or an AES, HKDF or generic secret key with AES key
- * wrap (padded or not), AES-CBC-PAD, AES-ECB or RSA PKCS#1 v1.5, as built.
+ * Unwrap an RSA or EC private key or an AES, HKDF or generic secret key with
+ * AES key wrap (padded or not), AES-CBC-PAD, AES-ECB or RSA PKCS#1 v1.5, as
+ * built. Private keys are unwrapped from PKCS#8.
  *
  * @param  hSession          [in]   Handle of session.
  * @param  pMechanism        [in]   Type of operation to perform with
@@ -10522,7 +10532,8 @@ CK_RV C_WrapKey(CK_SESSION_HANDLE hSession,
  *          valid key.
  *          CKR_OK on success.
  *          CKR_TEMPLATE_INCONSISTENT when the template's key type cannot be
- *          unwrapped.
+ *          unwrapped, or the template's CKA_EC_PARAMS names another curve
+ *          than the wrapped EC key.
  *          CKR_MECHANISM_INVALID when the mechanism is not supported with this
  *          type of operation.
  */
