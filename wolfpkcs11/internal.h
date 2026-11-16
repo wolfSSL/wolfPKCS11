@@ -216,6 +216,13 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #endif
 #endif
 
+#ifndef WP11_MAX_TEMPLATE_ATTRS
+#define WP11_MAX_TEMPLATE_ATTRS        32
+#endif
+#ifndef WP11_MAX_TEMPLATE_SZ
+#define WP11_MAX_TEMPLATE_SZ           2048
+#endif
+
 /* Token initialization state. */
 #define WP11_TOKEN_STATE_UNKNOWN       0
 #define WP11_TOKEN_STATE_INITIALIZED   1
@@ -666,6 +673,10 @@ WP11_LOCAL void WP11_Object_SetKeyGeneration(WP11_Object* object,
                         CK_MECHANISM_TYPE mechanism);
 WP11_LOCAL int WP11_Object_MatchAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
                           byte* data, CK_ULONG len);
+WP11_LOCAL int WP11_Object_SetAttrTemplates(WP11_Object* object,
+                                            const byte* data, int len);
+WP11_LOCAL int WP11_Object_GetAttrTemplates(WP11_Object* object, byte** data,
+                                            int* len);
 WP11_LOCAL int WP11_Generic_SerializeKey(WP11_Object* object, byte* output, word32* poutsz);
 
 WP11_LOCAL int WP11_Rsa_SerializeKey(WP11_Object* object, byte* output, word32* poutsz);

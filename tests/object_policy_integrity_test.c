@@ -70,6 +70,8 @@
 /* Offsets of the class and operational flags in a stored object record. */
 #define OBJ_CLASS_OFF   (12 + sizeof(CK_ULONG))
 #define OBJ_FLAGS_OFF   (12 + 3 * sizeof(CK_ULONG) + 1 + 1 + 4)
+#define OBJ_REC_OFF     (OBJ_FLAGS_OFF - 4)
+#define OBJ_REC_TMPL    0x80000000U
 #define OBJ_IV_SZ       12
 #define TAG_SZ          16
 #define BLOCK_SZ        16
@@ -1016,6 +1018,50 @@ static int child_unbound_update_refused(void)
     return res;
 }
 
+/* Rewrite the object record as one from before the template field, with a
+ * stale tail where that field would be, as a shrunk TPM NV record keeps. */
+static int write_old_record_with_tail(void)
+{
+    static byte data[MAX_FILE_SZ];
+    char path[256];
+    size_t sz = 0;
+    word32 recFlags;
+    int i;
+    int found = 0;
+
+    for (i = 0; i < MAX_OBJ_ID && !found; i++) {
+        store_path(path, sizeof(path), "obj", i);
+        if (read_file(path, data, sizeof(data), &sz) == 0 &&
+                sz >= OBJ_FLAGS_OFF + 4 &&
+                get_be_ulong(data + OBJ_CLASS_OFF) == keyClass) {
+            found = 1;
+        }
+    }
+    if (!found || get_be32(data + sz - 4) != 0)
+        return -1;
+    recFlags = get_be32(data + OBJ_REC_OFF);
+    if ((recFlags & OBJ_REC_TMPL) == 0)
+        return -1;
+    put_be32(data + OBJ_REC_OFF, recFlags & ~(word32)OBJ_REC_TMPL);
+    put_be32(data + sz - 4, 0x00010000);
+    return write_file(path, data, sz);
+}
+
+static void test_old_record_ignores_tail(void)
+{
+    CK_RV rv;
+    int res = CHILD_SETUP;
+
+    printf("\n--- record without templates ignores trailing bytes ---\n");
+    set_aes_check();
+    rv = store_objects(create_aes_key);
+    CHECK_RV(rv, "store AES key", CKR_OK);
+    if (rv == CKR_OK && write_old_record_with_tail() == 0)
+        res = run_in_child(child_key_intact);
+    CHECK_TRUE(res == CHILD_PASS, "old record with a stale tail loads");
+    cleanup_test_files();
+}
+
 static void test_legitimate_updates_round_trip(void)
 {
     CK_RV rv;
@@ -1233,6 +1279,66 @@ static void test_unbound_store_upgraded(void)
     if (mark_stored_key_exportable() == 0)
         res = run_in_child(child_key_not_exported);
     CHECK_TRUE(res == CHILD_PASS, "rebound key keeps its policy");
+    cleanup_test_files();
+}
+
+/* Give the stored object record a wrap template with CKA_LABEL "x". */
+static int add_stored_template(void)
+{
+    static byte data[MAX_FILE_SZ];
+    static const byte ent[] = {
+        0, 0, 0, 0, 0, 0, 0, 0, (byte)CKA_LABEL, 0, 0, 0, 0, 1, 'x'
+    };
+    char path[256];
+    size_t sz = 0;
+
+    if (find_store_file("obj", path, sizeof(path)) != 0 ||
+            read_file(path, data, sizeof(data), &sz) != 0 || sz < 4 ||
+            sz + sizeof(ent) > sizeof(data) || get_be32(data + sz - 4) != 0)
+        return -1;
+    put_be32(data + sz - 4, (word32)sizeof(ent));
+    XMEMCPY(data + sz, ent, sizeof(ent));
+    return write_file(path, data, sz + sizeof(ent));
+}
+
+static int child_key_unusable(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    byte out[BLOCK_SZ];
+    int res = CHILD_FAIL;
+
+    if (pkcs11_load() != CKR_OK)
+        return CHILD_SETUP;
+    rv = init_slot(&slot);
+    if (rv == CKR_OK)
+        rv = open_session(slot, 1, &session);
+    if (rv == CKR_OK)
+        rv = find_key(session, &obj);
+    if (rv == CKR_OBJECT_HANDLE_INVALID ||
+            (rv == CKR_OK && aes_encrypt_block(session, obj, out) != CKR_OK))
+        res = CHILD_PASS;
+    else
+        fprintf(stderr, "  key with templates usable: 0x%lx\n",
+                (unsigned long)rv);
+    (void)funcList->C_Finalize(NULL);
+    return res;
+}
+
+static void test_unbound_store_takes_no_templates(void)
+{
+    CK_RV rv;
+    int res = CHILD_SETUP;
+
+    printf("\n--- store without bound policy takes no templates ---\n");
+    rv = store_objects(create_aes_key);
+    CHECK_RV(rv, "store AES key", CKR_OK);
+    if (rv == CKR_OK && write_unbound_key_record() == 0 &&
+            stored_key_is_unbound() && add_stored_template() == 0)
+        res = run_in_child(child_key_unusable);
+    CHECK_TRUE(res == CHILD_PASS, "unbound key with templates is unusable");
     cleanup_test_files();
 }
 #endif
@@ -1874,6 +1980,7 @@ int main(int argc, char* argv[])
     printf("=== wolfPKCS11 stored object policy integrity test ===\n");
     test_stored_policy_is_authenticated();
     test_legitimate_updates_round_trip();
+    test_old_record_ignores_tail();
     test_failed_store_keeps_state();
     test_failed_store_keeps_undecoded_keys();
     test_pin_change_is_complete_when_stored();
@@ -1888,6 +1995,7 @@ int main(int argc, char* argv[])
 #endif
 #ifdef HAVE_LEGACY_STORE_TEST
     test_unbound_store_upgraded();
+    test_unbound_store_takes_no_templates();
 #endif
 
     return pkcs11_test_summary();
