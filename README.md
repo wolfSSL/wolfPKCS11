@@ -209,8 +209,9 @@ scheme - handle operationally):
   restore it - a filesystem backup/restore, a VM or container snapshot, `cp`,
   or block-level replication - resets the OTS counter and causes one-time-key
   **reuse**, which breaks the signatures irrecoverably. Only a device with a
-  hardware monotonic counter can prevent this. Never restore or duplicate a
-  signing machine's token directory.
+  hardware monotonic counter can prevent this, and RFC 10033 section 4
+  recommends dedicated hardware for this reason (see below). Never restore or
+  duplicate a signing machine's token directory.
 
 HSS signing is not secret-input timing-sensitive the way an RSA/ECC private
 scalar is (the message and the tree position are not confidential), so no
@@ -224,6 +225,34 @@ and the rest of the token, `C_SetPIN` included, keep working. A record that is
 there but cannot be read is not treated as damaged: the token does not load
 while it cannot be read, and once loaded, `C_SetPIN` fails and changes to that
 key are not stored until it can be read again.
+
+#### Keys held by a device
+
+A crypto callback device can generate and hold the signature state. This
+needs wolfSSL 5.9.4 or later built with `--enable-cryptocb` and
+`WOLF_PRIVATE_KEY_ID`, and without `WOLF_CRYPTO_CB_FIND`.
+
+1. Put `CKA_WOLFSSL_DEVID` in the private key template. Keygen then makes
+   the key on that device; without it, or with `INVALID_DEVID`, the key uses
+   the software state.
+2. Keygen fails with `CKR_DEVICE_ERROR` when no device at that id handles
+   LMS, or when wolfSSL lacks the support above.
+3. Signing goes to the device, and the key is spent when the device says so.
+   A device error disables the key until the token is loaded again or the
+   user logs in again.
+
+The key record keeps the parameters, the public key and the device's key id,
+sealed and bound to the policy attributes like a software state. The public
+key in the record is not checked against the device, and `CKA_WOLFSSL_DEVID`
+of a device key cannot be changed.
+
+`C_DestroyObject` and `C_InitToken` remove the key record but not the key on
+the device, nor does a `C_GenerateKeyPair` that fails after the device made
+the key.
+
+`CKA_KEYS_REMAINING` is not available for a device key. A spent device key
+reports 0 only after a `C_Sign` returned `CKR_KEY_EXHAUSTED` since the token
+was loaded or the user last logged in.
 
 #### Stores
 
