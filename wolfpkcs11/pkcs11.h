@@ -274,7 +274,8 @@ extern "C" {
 #define CKA_HSS_LMOTS_TYPE                    0x00000619UL
 #define CKA_HSS_LMS_TYPES                     0x0000061AUL
 #define CKA_HSS_LMOTS_TYPES                   0x0000061BUL
-#define CKA_HSS_KEYS_REMAINING                0x0000061CUL
+#define CKA_KEYS_REMAINING                    0x0000061CUL
+#define CKA_HSS_KEYS_REMAINING                CKA_KEYS_REMAINING
 
 #ifdef WOLFPKCS11_NSS
 #define CKA_NSS_EMAIL                         (CKA_NSS + 2)
@@ -489,6 +490,7 @@ extern "C" {
 #define CKR_MUTEX_NOT_LOCKED                  0x000001A1UL
 #define CKR_FUNCTION_REJECTED                 0x00000200UL
 #define CKR_OPERATION_CANCEL_FAILED           0x00000202UL
+#define CKR_KEY_EXHAUSTED                     0x00000203UL
 #define CKR_VENDOR_DEFINED                    0x80000000UL
 
 

@@ -536,6 +536,22 @@ add_option("WOLFPKCS11_LMS"
     "no" "yes;no"
 )
 
+# LMS/HSS keygen + signing (EXPERIMENTAL, stateful private keys; default: disabled)
+add_option("WOLFPKCS11_LMS_PRIVATE"
+    "Enable wolfPKCS11 LMS/HSS keygen and signing (EXPERIMENTAL, stateful private keys, default: disabled)"
+    "no" "yes;no"
+)
+
+if(WOLFPKCS11_LMS_PRIVATE AND NOT WOLFPKCS11_SHA256)
+    message(STATUS "LMS/HSS requires SHA-256 support (disabled); disabling WOLFPKCS11_LMS_PRIVATE")
+    override_cache(WOLFPKCS11_LMS_PRIVATE "no")
+endif()
+
+if(WOLFPKCS11_LMS_PRIVATE AND NOT WOLFPKCS11_LMS)
+    message(STATUS "WOLFPKCS11_LMS_PRIVATE requires WOLFPKCS11_LMS - enabling WOLFPKCS11_LMS automatically")
+    override_cache(WOLFPKCS11_LMS "yes")
+endif()
+
 if(WOLFPKCS11_LMS AND NOT WOLFPKCS11_SHA256)
     message(STATUS "LMS/HSS requires SHA-256 support (disabled); disabling WOLFPKCS11_LMS")
     override_cache(WOLFPKCS11_LMS "no")
@@ -552,6 +568,10 @@ if(WOLFPKCS11_LMS)
         list(APPEND WOLFPKCS11_DEFINITIONS "-DWOLFPKCS11_PKCS11_V3_2")
     endif()
     list(APPEND WOLFPKCS11_DEFINITIONS "-DWOLFPKCS11_LMS")
+endif()
+
+if(WOLFPKCS11_LMS_PRIVATE)
+    list(APPEND WOLFPKCS11_DEFINITIONS "-DWOLFPKCS11_LMS_PRIVATE")
 endif()
 
 # XMSS/XMSS^MT (RFC 8391) verify + public-key import (default: disabled)

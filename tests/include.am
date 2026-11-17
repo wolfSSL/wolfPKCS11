@@ -475,7 +475,9 @@ tests_custom_store_test_CFLAGS = -DBUILDING_WOLFPKCS11 \
                                  -DWOLFPKCS11_CUSTOM_STORE_CLOSE_COMMIT \
                                  $(AM_CFLAGS)
 tests_custom_store_test_LDADD =
+endif
 
+if BUILD_CUSTOM_STORE_LEGACY_TEST
 check_PROGRAMS += tests/custom_store_legacy_test
 tests_custom_store_legacy_test_SOURCES = tests/custom_store_test.c \
                                          $(src_libwolfpkcs11_la_SOURCES)

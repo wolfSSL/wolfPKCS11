@@ -297,7 +297,7 @@ struct WP11_Object {
         MlKemKey* mlKemKey;            /* ML-KEM key object                   */
     #endif
     #ifdef WOLFPKCS11_LMS
-        LmsKey* lmsKey;                /* LMS/HSS key object (verify)         */
+        LmsKey* lmsKey;                /* LMS/HSS key object                  */
     #endif
     #ifdef WOLFPKCS11_XMSS
         XmssKey* xmssKey;              /* XMSS/XMSS^MT key object (verify)    */
@@ -342,6 +342,16 @@ struct WP11_Object {
     byte unlinked;                     /* Destroyed or retired by logout      */
     byte replaced;                     /* Unlinked by a reload of the token,
                                         * with the key unchanged              */
+#ifdef WOLFPKCS11_STATEFUL_SIG_PRIVATE
+    word64 statefulSigCount;           /* Signatures made, as stored          */
+    byte* statefulBuf;                 /* State not yet stored                */
+    word32 statefulBufLen;             /* Length of statefulBuf               */
+    int statefulStoreId;               /* Store id + 1 for the next state     */
+    int statefulHomeId;                /* Store id + 1 of the last record     */
+    int statefulHomeNext;              /* Store id + 1 once the pass commits  */
+    byte statefulResealed;             /* Key data re-sealed but not stored   */
+    byte statefulState;                /* Token RW, or token RO + storeLock   */
+#endif
 
     char startDate[8];                 /* Start date of usage                 */
     char endDate[8];                   /* End data of usage                   */
@@ -648,6 +658,7 @@ typedef struct WP11_Token {
     byte storeReset;                   /* Next pass stores a token reset      */
     byte storeStale;                   /* Another process changed the store   */
     byte storeKeepGen;                 /* Pass rewrites what is stored        */
+    byte* reKeyOld;                    /* Token key being replaced in a pass  */
 #endif
 } WP11_Token;
 
@@ -695,22 +706,46 @@ WP11_LOCAL int WP11_Lock_LockRO(WP11_Lock* lock);
 WP11_LOCAL int WP11_Lock_UnlockRO(WP11_Lock* lock);
 #endif
 
+WP11_LOCAL int wp11_Slot_NewRng(WP11_Slot* slot, WC_RNG* rng);
+
 #ifndef WOLFPKCS11_NO_STORE
 WP11_LOCAL int wp11_storage_open_readonly(int type, CK_ULONG id1, CK_ULONG id2,
                                           void** storage);
 WP11_LOCAL int wp11_storage_open(int type, CK_ULONG id1, CK_ULONG id2,
                                  int variableSz, void** storage);
 WP11_LOCAL void wp11_storage_close(void* storage);
+WP11_LOCAL int wp11_storage_remove(int type, CK_ULONG id1, CK_ULONG id2);
+WP11_LOCAL int wp11_storage_atomic(void);
 WP11_LOCAL int wp11_storage_close_write(void* storage, int ret);
 WP11_LOCAL int wp11_storage_read_alloc_array(void* storage,
                                              unsigned char** buffer, int* len);
 WP11_LOCAL int wp11_storage_write_array(void* storage, unsigned char* buffer,
                                         word32 len);
 
+WP11_LOCAL int wp11_EncryptData(byte* out, const byte* data, int len,
+                                const byte* key, int keySz, const byte* iv,
+                                int ivSz, const byte* aad, word32 aadSz,
+                                int devId);
+WP11_LOCAL int wp11_DecryptData(byte* out, const byte* data, int len,
+                                const byte* key, int keySz, const byte* iv,
+                                int ivSz, const byte* aad, word32 aadSz,
+                                int devId);
+
 WP11_LOCAL void wp11_Object_EncodeDone(WP11_Object* object,
                                        unsigned char* oldData, int oldLen,
                                        word32 newLen, int ret);
 
+#ifdef WOLFPKCS11_STATEFUL_SIG_PRIVATE
+/* Commit the write at close, outside any store batch. */
+WP11_LOCAL void wp11_storage_set_durable(void* store, int durable);
+WP11_LOCAL int wp11_storage_check_durable(int type, CK_ULONG id1,
+    CK_ULONG id2);
+WP11_LOCAL int wp11_Token_ObjectId(WP11_Token* token, WP11_Object* object);
+WP11_LOCAL int wp11_Token_StoreIfDirty(WP11_Slot* slot);
+/* Exclude stores of the token, in this and other processes, while held. */
+WP11_LOCAL int wp11_Slot_StateLock(WP11_Slot* slot, void** held);
+WP11_LOCAL void wp11_Slot_StateUnlock(void* held);
+#endif
 #endif /* !WOLFPKCS11_NO_STORE */
 
 #endif /* WOLFPKCS11_WP11_TYPES_H */
