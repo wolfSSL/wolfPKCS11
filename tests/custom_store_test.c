@@ -217,10 +217,12 @@ int wolfPKCS11_Store_Remove(int type, CK_ULONG id1, CK_ULONG id2)
         injectCnt++;
         return STORE_FAIL_E;
     }
-    if (rejectReserved && (type == WOLFPKCS11_STORE_HSSKEY_PRIV ||
-            type == WOLFPKCS11_STORE_XMSSKEY_PRIV)) {
+#ifndef WOLFPKCS11_LMS_PRIVATE
+    if (rejectReserved && type == WOLFPKCS11_STORE_HSSKEY_PRIV)
         return STORE_FAIL_E;
-    }
+#endif
+    if (rejectReserved && type == WOLFPKCS11_STORE_XMSSKEY_PRIV)
+        return STORE_FAIL_E;
     if (rec == NULL)
         return NOT_AVAILABLE_E;
     free(rec->data);

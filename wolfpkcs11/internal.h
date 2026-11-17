@@ -167,6 +167,28 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #error Compiling with XMSS requires XMSS support in wolfSSL (--enable-xmss).
 #endif
 
+#if defined(WOLFPKCS11_LMS_PRIVATE) && defined(WOLFSSL_LMS_VERIFY_ONLY)
+#error LMS/HSS keygen+sign (--enable-lms-private) needs a sign-capable wolfSSL LMS build, not verify-only.
+#endif
+#if defined(WOLFPKCS11_LMS_PRIVATE) && !defined(WOLFPKCS11_LMS)
+#error WOLFPKCS11_LMS_PRIVATE requires WOLFPKCS11_LMS.
+#endif
+#if defined(WOLFPKCS11_LMS_PRIVATE) && defined(NO_HMAC)
+#error WOLFPKCS11_LMS_PRIVATE requires HMAC to seal the signature state (not --disable-hmac).
+#endif
+#if defined(WOLFPKCS11_LMS_PRIVATE) && defined(WOLFPKCS11_NO_STORE)
+#error WOLFPKCS11_LMS_PRIVATE requires object storage for durable signature state (not WOLFPKCS11_NO_STORE).
+#endif
+#if defined(WOLFPKCS11_LMS_PRIVATE) && defined(WOLFPKCS11_CUSTOM_STORE) && \
+    !defined(WOLFPKCS11_CUSTOM_STORE_CLOSE_COMMIT)
+#error WOLFPKCS11_LMS_PRIVATE with WOLFPKCS11_CUSTOM_STORE needs WOLFPKCS11_CUSTOM_STORE_CLOSE_COMMIT, so a signature is only released once its state is stored.
+#endif
+
+/* Durable signature state for stateful hash-based private keys. */
+#if defined(WOLFPKCS11_LMS_PRIVATE)
+#define WOLFPKCS11_STATEFUL_SIG_PRIVATE
+#endif
+
 /* We need the next two for NSS, just for storage, even if we have no algos */
 #ifndef WC_MD5_DIGEST_SIZE
 #define WC_MD5_DIGEST_SIZE 16
@@ -334,7 +356,7 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #define WP11_INIT_TLS_MAC_VERIFY       0x0071
 #define WP11_INIT_MLDSA_SIGN           0x0080
 #define WP11_INIT_MLDSA_VERIFY         0x0081
-#define WP11_INIT_HSS_SIGN             0x0090 /* Reserved for future use */
+#define WP11_INIT_HSS_SIGN             0x0090
 #define WP11_INIT_HSS_VERIFY           0x0091
 #define WP11_INIT_XMSS_SIGN            0x00A0 /* Reserved for future use */
 #define WP11_INIT_XMSS_VERIFY          0x00A1
@@ -493,6 +515,7 @@ WP11_API void WP11_Session_SetFindHook(void (*hook)(void));
 WP11_API void WP11_Object_SetFindHook(void (*hook)(void));
 WP11_API void WP11_Session_SetAddObjectHook(void (*hook)(void));
 WP11_API void WP11_Slot_SetPinCheckHook(void (*hook)(void));
+WP11_API void WP11_Test_SetPinStoreHook(void (*hook)(void));
 WP11_API void WP11_Test_FailTokenInit(int fail);
 #if !defined(WOLFPKCS11_NO_STORE) && !defined(WOLFPKCS11_CUSTOM_STORE) && \
     !defined(WOLFPKCS11_TPM_STORE) && !defined(_WIN32) && !defined(_MSC_VER)
@@ -500,6 +523,7 @@ WP11_API void WP11_Test_FailTokenInit(int fail);
 #define WP11_TEST_STORE_EXIT_CODE 75
 WP11_API void WP11_Test_StoreExitAfterRenames(int renames);
 WP11_API void WP11_Test_StoreCloseFailAfter(int closes);
+WP11_API void WP11_Test_StoreDirSyncEinval(int on);
 #endif
 #ifndef WOLFPKCS11_NO_STORE
 WP11_API int WP11_Test_StoreWriteFailAfter(int writes);
@@ -512,6 +536,12 @@ WP11_API void WP11_Test_SetEmptyPinCheckHook(void (*hook)(void));
 WP11_API void WP11_Test_SetKeyDecodedHook(void (*hook)(void));
 WP11_API void WP11_Test_SetDiscardHook(void (*hook)(void));
 WP11_API void WP11_Test_SetGetObjectHook(void (*hook)(void));
+#ifdef WOLFPKCS11_STATEFUL_SIG_PRIVATE
+WP11_API int WP11_Test_StatefulPolicy(word64 cls, word64 type, word64 mech,
+    int local, word32 flags, const byte* tmpl, int tmplLen, byte* digest);
+WP11_API int WP11_Test_StatefulRecordKey(const byte* tokenKey,
+    word32 tokenKeySz, const byte* salt, byte* key);
+#endif
 #if defined(WOLFPKCS11_TPM) && (!defined(NO_RSA) || defined(HAVE_ECC))
 WP11_API int WP11_Test_DecodeTpmKey(CK_SLOT_ID slotId, unsigned char* keyData,
     int keyDataLen);
@@ -766,10 +796,21 @@ WP11_LOCAL int WP11_Mldsa_Verify(unsigned char* sig, word32 sigLen, unsigned cha
 #ifdef WOLFPKCS11_LMS
 WP11_LOCAL int WP11_Object_SetHssKey(WP11_Object* object, unsigned char** data,
                                      CK_ULONG* len);
-WP11_LOCAL word32 WP11_Hss_SigLen(WP11_Object* pub);
+WP11_LOCAL word32 WP11_Hss_SigLen(WP11_Object* key);
 WP11_LOCAL int WP11_Hss_Verify(unsigned char* sig, word32 sigLen,
                                unsigned char* data, word32 dataLen, int* stat,
                                WP11_Object* pub);
+#ifdef WOLFPKCS11_LMS_PRIVATE
+WP11_LOCAL int WP11_Hss_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
+                                        CK_ULONG levels, CK_LMS_TYPE lmsType,
+                                        CK_LMOTS_TYPE lmotsType,
+                                        WP11_Slot* slot);
+WP11_LOCAL int WP11_Hss_Sign(unsigned char* data, word32 dataLen,
+                             unsigned char* sig, word32* sigLen,
+                             WP11_Object* priv);
+WP11_LOCAL int WP11_Hss_SigsLeft(WP11_Object* key, word64* remaining);
+WP11_LOCAL int WP11_Hss_IsStored(WP11_Object* key);
+#endif
 #endif
 
 #ifdef WOLFPKCS11_XMSS

@@ -593,6 +593,25 @@ AC_ARG_ENABLE([lms],
     [ ENABLED_LMS=no ]
     )
 
+# LMS/HSS key generation and signing
+AC_ARG_ENABLE([lms-private],
+    [AS_HELP_STRING([--enable-lms-private],[Enable LMS/HSS keygen and signing (EXPERIMENTAL, stateful private keys, default: disabled)])],
+    [ ENABLED_LMS_PRIVATE=$enableval ],
+    [ ENABLED_LMS_PRIVATE=no ]
+    )
+
+if test "$ENABLED_SHA256" = "no" && test "$ENABLED_LMS_PRIVATE" = "yes"
+then
+    echo "LMS/HSS requires SHA-256 support (disabled), disabling LMS/HSS keygen+sign"
+    ENABLED_LMS_PRIVATE=no
+fi
+
+if test "$ENABLED_LMS_PRIVATE" = "yes" && test "$ENABLED_LMS" = "no"
+then
+    AC_MSG_NOTICE([--enable-lms-private implies --enable-lms; enabling])
+    ENABLED_LMS=yes
+fi
+
 if test "$ENABLED_SHA256" = "no"
 then
     if test "$ENABLED_LMS" = "yes"; then
@@ -675,6 +694,29 @@ AM_CONDITIONAL([BUILD_STATIC_WOLFSSL],[test "x$WOLFPKCS11_STATIC_WOLFSSL" = "xye
 AC_SUBST([WOLFPKCS11_STATIC_WOLFSSL])
 AC_SUBST([STATIC_WOLFSSL_DEP])
 
+# A verify-only wolfSSL LMS build has no wc_LmsKey_MakeKey.
+if test "$ENABLED_LMS_PRIVATE" = "yes"
+then
+    AC_MSG_CHECKING([for a sign-capable wolfSSL LMS build])
+    SAVED_LIBS="$LIBS"
+    AS_IF([test "x$WOLFPKCS11_STATIC_WOLFSSL" = "xyes"],
+          [LIBS="$LIBS $STATIC_WOLFSSL -lm"],
+          [LIBS="$LIBS -lwolfssl"])
+    AC_LINK_IFELSE(
+        [AC_LANG_PROGRAM(
+            [[#include <wolfssl/options.h>
+              #include <wolfssl/wolfcrypt/random.h>
+              #include <wolfssl/wolfcrypt/wc_lms.h>]],
+            [[LmsKey* k = (LmsKey*)0; WC_RNG* r = (WC_RNG*)0;
+              return wc_LmsKey_MakeKey(k, r);]])],
+        [AC_MSG_RESULT([yes])],
+        [AC_MSG_RESULT([no])
+         AC_MSG_ERROR([--enable-lms-private needs a sign-capable wolfSSL LMS build; the installed wolfSSL has no LMS support or was configured with --enable-lms=verify-only. Rebuild wolfSSL with --enable-lms=yes.])])
+    LIBS="$SAVED_LIBS"
+
+    AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_LMS_PRIVATE"
+fi
+
 
 
 # HARDEN FLAGS
@@ -684,15 +726,21 @@ OPTION_FLAGS="$CFLAGS $CPPFLAGS $AM_CFLAGS"
 
 # The custom store tests build the library with WOLFPKCS11_CUSTOM_STORE. NSS
 # needs the file store, and a custom store cannot be built with the TPM store.
-# Either macro may be defined with a value.
+# The legacy custom store has no commit report, which LMS/HSS keys need.
 AS_CASE([" $OPTION_FLAGS "],
     [*" -DWOLFPKCS11_NSS "*|*" -DWOLFPKCS11_NSS="*],
     [ENABLED_CUSTOM_STORE_TEST=no],
     [*" -DWOLFPKCS11_TPM_STORE "*|*" -DWOLFPKCS11_TPM_STORE="*],
     [ENABLED_CUSTOM_STORE_TEST=no],
     [ENABLED_CUSTOM_STORE_TEST=yes])
+ENABLED_CUSTOM_STORE_LEGACY_TEST=$ENABLED_CUSTOM_STORE_TEST
+AS_CASE([" $OPTION_FLAGS "],
+    [*" -DWOLFPKCS11_LMS_PRIVATE "*|*" -DWOLFPKCS11_LMS_PRIVATE="*],
+    [ENABLED_CUSTOM_STORE_LEGACY_TEST=no])
 AM_CONDITIONAL([BUILD_CUSTOM_STORE_TEST],
     [test "x$ENABLED_CUSTOM_STORE_TEST" = "xyes"])
+AM_CONDITIONAL([BUILD_CUSTOM_STORE_LEGACY_TEST],
+    [test "x$ENABLED_CUSTOM_STORE_LEGACY_TEST" = "xyes"])
 
 AS_IF([test "x$WOLFPKCS11_STATIC_WOLFSSL" = "xyes"],
       [WOLFPKCS11_CONFIG_LIBS="$LIBS -lm"
@@ -886,6 +934,7 @@ echo "   * Derive length guard:        $ENABLED_DERIVE_LENGTH_GUARD"
 echo "   * ML-DSA:                     $ENABLED_MLDSA"
 echo "   * ML-KEM:                     $ENABLED_MLKEM"
 echo "   * LMS/HSS verify:             $ENABLED_LMS"
+echo "   * LMS/HSS sign+keygen (EXP):  $ENABLED_LMS_PRIVATE"
 echo "   * XMSS/XMSS^MT verify:        $ENABLED_XMSS"
 echo "   * NSS modifications:          $ENABLED_NSS"
 echo "   * Default token path:         $WOLFPKCS11_DEFAULT_TOKEN_PATH"
