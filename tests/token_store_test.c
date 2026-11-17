@@ -63,6 +63,7 @@
 
 #include <dirent.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #define TEST_DIR "./store/token_store_test"
@@ -1017,6 +1018,9 @@ static void test_load_record_without_trailing_fields(void)
 #endif /* TOKEN_STORE_FILE_TEST */
 
 #ifdef TOKEN_STORE_TPM_TEST
+#include <time.h>
+#include <wolftpm/tpm2.h>
+
 /* Debug-only hooks exported by libwolfpkcs11. */
 #ifdef __cplusplus
 extern "C" {
@@ -1276,7 +1280,384 @@ static void test_record_overflow_reports_failure(void)
     close_session(session);
     funcList->C_Finalize(NULL);
 }
+#ifndef WOLFPKCS11_TPM_NV_BASE
+    #if !defined(WOLFPKCS11_TPM_AUTH_TYPE) || WOLFPKCS11_TPM_AUTH_TYPE == 1
+        #define WOLFPKCS11_TPM_NV_BASE TPM_20_OWNER_NV_SPACE
+    #else
+        #define WOLFPKCS11_TPM_NV_BASE TPM_20_PLATFORM_MFG_NV_SPACE
+    #endif
+#endif
+
+/* Count the NV indices of the token's object and key records. */
+static int count_token_nv(CK_SLOT_ID slot)
+{
+    GetCapability_In in;
+    static GetCapability_Out out;
+    TPM_HANDLE base = WOLFPKCS11_TPM_NV_BASE;
+    TPM_HANDLE start = base;
+    TPM_HANDLE last = base + (0x20 << 16) - 1;
+    TPM_HANDLE h;
+    word32 i;
+    int cnt = 0;
+    int more = 1;
+
+    while (more) {
+        XMEMSET(&in, 0, sizeof(in));
+        in.capability = TPM_CAP_HANDLES;
+        in.property = start;
+        in.propertyCount = MAX_CAP_HANDLES;
+        if (TPM2_GetCapability(&in, &out) != TPM_RC_SUCCESS)
+            return -1;
+        more = out.moreData && out.capabilityData.data.handles.count > 0;
+        for (i = 0; i < out.capabilityData.data.handles.count; i++) {
+            h = out.capabilityData.data.handles.handle[i];
+            if (h > last) {
+                more = 0;
+                break;
+            }
+            start = h + 1;
+            if (((h >> 8) & 0xFF) == (slot & 0xFF) && h - base >= 0x10000)
+                cnt++;
+        }
+    }
+    return cnt;
+}
+
+/* C_InitToken removes the NV indices of the records it discards. */
+static void test_tpm_init_token_removes_records(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    unsigned char label[32];
+    struct timespec t0, t1;
+
+    printf("\n--- C_InitToken removes the NV records it discards ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK)
+        rv = create_private_token_secret(session, "nv-first", &obj);
+    if (rv == CKR_OK)
+        rv = create_private_token_secret(session, "nv-second", &obj);
+    CHECK_RV(rv, "create token objects", CKR_OK);
+    close_session(session);
+    if (rv == CKR_OK)
+        CHECK_TRUE(count_token_nv(slot) > 0, "objects have NV records");
+    if (rv == CKR_OK) {
+        XMEMSET(label, ' ', sizeof(label));
+        XMEMCPY(label, tokenLabel, XSTRLEN(tokenLabel));
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        rv = funcList->C_InitToken(slot, (CK_UTF8CHAR_PTR)soPin,
+                                   (CK_ULONG)XSTRLEN(soPin), label);
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        CHECK_RV(rv, "C_InitToken", CKR_OK);
+        printf("C_InitToken took %.1f ms\n",
+               (t1.tv_sec - t0.tv_sec) * 1000.0 +
+               (t1.tv_nsec - t0.tv_nsec) / 1e6);
+    }
+    if (rv == CKR_OK)
+        CHECK_TRUE(count_token_nv(slot) == 0, "no object NV records are left");
+    funcList->C_Finalize(NULL);
+}
+
 #endif /* TOKEN_STORE_TPM_TEST */
+
+#ifdef TOKEN_STORE_FILE_TEST
+/* Count the object and key records left in the store directory. */
+static int count_object_records(void)
+{
+    DIR* dir;
+    struct dirent* ent;
+    int cnt = 0;
+
+    dir = opendir(TEST_DIR);
+    if (dir == NULL)
+        return -1;
+    while ((ent = readdir(dir)) != NULL) {
+        if (strncmp(ent->d_name, "wp11_", 5) == 0 &&
+                strncmp(ent->d_name, "wp11_token_", 11) != 0 &&
+                strncmp(ent->d_name, "wp11_txn_", 9) != 0) {
+            cnt++;
+        }
+    }
+    closedir(dir);
+    return cnt;
+}
+
+/* C_InitToken also removes the records of objects another process stored
+ * after this one loaded the token. */
+static void test_init_token_removes_newer_records(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    unsigned char label[32];
+    pid_t pid;
+    int status = 0;
+
+    printf("\n--- C_InitToken removes records another process stored ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "init-first", &obj);
+        CHECK_RV(rv, "create token object", CKR_OK);
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK) {
+        pid = fork();
+        if (pid == 0) {
+            funcList->C_Finalize(NULL);
+            if (lib_init() != CKR_OK ||
+                    user_session(slot, &session) != CKR_OK ||
+                    create_token_secret(session, "init-second", &obj) !=
+                        CKR_OK ||
+                    create_token_secret(session, "init-third", &obj) !=
+                        CKR_OK) {
+                _exit(1);
+            }
+            close_session(session);
+            funcList->C_Finalize(NULL);
+            _exit(0);
+        }
+        if (pid < 0 || waitpid(pid, &status, 0) < 0 || !WIFEXITED(status) ||
+                WEXITSTATUS(status) != 0) {
+            rv = CKR_GENERAL_ERROR;
+        }
+        CHECK_RV(rv, "other process stores two objects", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        XMEMSET(label, ' ', sizeof(label));
+        XMEMCPY(label, tokenLabel, XSTRLEN(tokenLabel));
+        rv = funcList->C_InitToken(slot, (CK_UTF8CHAR_PTR)soPin,
+                                   (CK_ULONG)XSTRLEN(soPin), label);
+        CHECK_RV(rv, "C_InitToken", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        CHECK_TRUE(count_object_records() == 0,
+                   "no object records are left");
+    }
+    funcList->C_Finalize(NULL);
+}
+#endif
+
+#ifdef TOKEN_STORE_FILE_TEST
+/* C_InitToken removes a record whose type another process changed at an id
+ * this process knows. */
+static void test_init_token_removes_changed_type(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE secret = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE data = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    static byte dataValue[4] = { 1, 2, 3, 4 };
+    CK_ATTRIBUTE dataTmpl[] = {
+        { CKA_CLASS,   &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN,   &ckTrue,    sizeof(ckTrue)    },
+        { CKA_PRIVATE, &ckFalse,   sizeof(ckFalse)   },
+        { CKA_VALUE,   dataValue,  sizeof(dataValue) },
+    };
+    unsigned char label[32];
+    pid_t pid;
+    int status = 0;
+
+    printf("\n--- C_InitToken removes a record of a changed type ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "changed-secret", &secret);
+        CHECK_RV(rv, "create secret key", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, dataTmpl,
+            sizeof(dataTmpl) / sizeof(*dataTmpl), &data);
+        CHECK_RV(rv, "create data object", CKR_OK);
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK)
+        rv = lib_init();
+    /* The other process destroys the secret, so the data object moves into
+     * its id. */
+    if (rv == CKR_OK) {
+        pid = fork();
+        if (pid == 0) {
+            CK_OBJECT_HANDLE found[2];
+            CK_ULONG cnt = 0;
+            CK_ATTRIBUTE byClass = { CKA_CLASS, &secretClass,
+                sizeof(secretClass) };
+
+            funcList->C_Finalize(NULL);
+            if (lib_init() != CKR_OK ||
+                    user_session(slot, &session) != CKR_OK ||
+                    funcList->C_FindObjectsInit(session, &byClass, 1) !=
+                        CKR_OK ||
+                    funcList->C_FindObjects(session, found, 2, &cnt) !=
+                        CKR_OK || cnt != 1 ||
+                    funcList->C_FindObjectsFinal(session) != CKR_OK ||
+                    funcList->C_DestroyObject(session, found[0]) != CKR_OK) {
+                _exit(1);
+            }
+            close_session(session);
+            funcList->C_Finalize(NULL);
+            _exit(0);
+        }
+        if (pid < 0 || waitpid(pid, &status, 0) < 0 || !WIFEXITED(status) ||
+                WEXITSTATUS(status) != 0) {
+            rv = CKR_GENERAL_ERROR;
+        }
+        CHECK_RV(rv, "other process destroys the secret", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        XMEMSET(label, ' ', sizeof(label));
+        XMEMCPY(label, tokenLabel, XSTRLEN(tokenLabel));
+        rv = funcList->C_InitToken(slot, (CK_UTF8CHAR_PTR)soPin,
+                                   (CK_ULONG)XSTRLEN(soPin), label);
+        CHECK_RV(rv, "C_InitToken", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        CHECK_TRUE(count_object_records() == 0,
+                   "no object records are left");
+    }
+    funcList->C_Finalize(NULL);
+}
+#endif
+
+#ifdef TOKEN_STORE_FILE_TEST
+/* Path of a stored record of the given kind at an object id. */
+static void record_path(const char* kind, CK_SLOT_ID slot, int objId,
+                        char* path, size_t pathSz)
+{
+    snprintf(path, pathSz, "%s/wp11_%s_%016lx_%016lx", TEST_DIR, kind,
+             (unsigned long)slot, (unsigned long)objId);
+}
+
+/* A record kind this build does not write. */
+#if !defined(WOLFPKCS11_MLKEM)
+    #define UNWRITTEN_KIND "mlkemkey_priv"
+#elif !defined(WOLFPKCS11_XMSS)
+    #define UNWRITTEN_KIND "xmsskey_pub"
+#elif !defined(WOLFPKCS11_LMS)
+    #define UNWRITTEN_KIND "hsskey_pub"
+#endif
+
+/* C_InitToken removes key records at ids that have no object record, as left
+ * by an interrupted reset. */
+static void test_init_token_removes_orphan_records(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    unsigned char label[32];
+    char path[512];
+#ifdef UNWRITTEN_KIND
+    char unwritten[512];
+#endif
+    static const byte junk[4] = { 1, 2, 3, 4 };
+
+    printf("\n--- C_InitToken removes records without an object record ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK) {
+        record_path("symmkey", slot, 0, path, sizeof(path));
+        CHECK_TRUE(write_store_file(path, junk, sizeof(junk)) == 0,
+                   "write key record 0");
+        record_path("obj", slot, 1, path, sizeof(path));
+        CHECK_TRUE(write_store_file(path, junk, sizeof(junk)) == 0,
+                   "write object record 1");
+        record_path("data", slot, 1, path, sizeof(path));
+        CHECK_TRUE(write_store_file(path, junk, sizeof(junk)) == 0,
+                   "write key record 1");
+    #ifdef UNWRITTEN_KIND
+        record_path(UNWRITTEN_KIND, slot, 2, unwritten, sizeof(unwritten));
+        CHECK_TRUE(write_store_file(unwritten, junk, sizeof(junk)) == 0,
+                   "write a record of a type this build does not write");
+    #endif
+    }
+    if (rv == CKR_OK) {
+        XMEMSET(label, ' ', sizeof(label));
+        XMEMCPY(label, tokenLabel, XSTRLEN(tokenLabel));
+        rv = funcList->C_InitToken(slot, (CK_UTF8CHAR_PTR)soPin,
+                                   (CK_ULONG)XSTRLEN(soPin), label);
+        CHECK_RV(rv, "C_InitToken", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        CHECK_TRUE(count_object_records() == 0,
+                   "no object records are left");
+    #ifdef UNWRITTEN_KIND
+        CHECK_TRUE(access(unwritten, F_OK) != 0,
+                   "record of a type this build does not write is removed");
+    #endif
+    }
+    funcList->C_Finalize(NULL);
+}
+
+/* C_InitToken reports a record it cannot remove, and the next store pass
+ * removes it. */
+static void test_init_token_reports_failed_removal(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    unsigned char label[32];
+    char path[512];
+    char inner[600];
+    static const byte junk[4] = { 1, 2, 3, 4 };
+    struct stat st;
+
+    printf("\n--- C_InitToken reports a record it cannot remove ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    record_path("symmkey", slot, 3, path, sizeof(path));
+    snprintf(inner, sizeof(inner), "%s/x", path);
+    if (rv == CKR_OK) {
+        CHECK_TRUE(mkdir(path, 0700) == 0 &&
+                   write_store_file(inner, junk, sizeof(junk)) == 0,
+                   "make an unremovable key record");
+        XMEMSET(label, ' ', sizeof(label));
+        XMEMCPY(label, tokenLabel, XSTRLEN(tokenLabel));
+        rv = funcList->C_InitToken(slot, (CK_UTF8CHAR_PTR)soPin,
+                                   (CK_ULONG)XSTRLEN(soPin), label);
+        CHECK_RV(rv, "C_InitToken", CKR_FUNCTION_FAILED);
+        rv = (rv == CKR_FUNCTION_FAILED) ? CKR_OK : CKR_GENERAL_ERROR;
+    }
+    (void)remove(inner);
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(session, CKU_SO, (CK_UTF8CHAR_PTR)soPin,
+                               (CK_ULONG)XSTRLEN(soPin));
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_InitPIN(session, (CK_UTF8CHAR_PTR)userPin,
+                                 (CK_ULONG)XSTRLEN(userPin));
+        CHECK_RV(rv, "C_InitPIN stores the token", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        CHECK_TRUE(stat(path, &st) != 0,
+                   "the next store pass removes the record");
+    }
+    close_session(session);
+    (void)rmdir(path);
+    funcList->C_Finalize(NULL);
+}
+#endif
 
 static int run_tests(void)
 {
@@ -1302,6 +1683,10 @@ static int run_tests(void)
     test_token_reset_store_failure();
     test_finalize_reports_store_failure();
     test_init_retry_after_load_failure();
+    test_init_token_removes_newer_records();
+    test_init_token_removes_changed_type();
+    test_init_token_removes_orphan_records();
+    test_init_token_reports_failed_removal();
     test_destroy_reports_unstore_failure();
     test_destroy_unstored_object();
     test_load_record_without_trailing_fields();
@@ -1316,6 +1701,7 @@ static int run_tests(void)
     test_interrupted_pin_change_keeps_stored_pin();
     test_grown_record_reloads();
     test_record_overflow_reports_failure();
+    test_tpm_init_token_removes_records();
 #endif
     pkcs11_unload();
     return 0;

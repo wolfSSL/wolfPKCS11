@@ -626,6 +626,8 @@ typedef struct WP11_Token {
                                         * so the next one writes everything.
                                         * Not a bit-field: guarded by the
                                         * token lock, unlike userPinEmpty.   */
+    byte storePurge;                   /* Records the token does not use are
+                                        * still to be removed                 */
 #endif
 } WP11_Token;
 

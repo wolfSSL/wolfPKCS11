@@ -1576,24 +1576,18 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
         case WOLFPKCS11_STORE_MLDSAKEY_PUB:
             kind = "mldsakey_pub";
             break;
-#ifdef WOLFPKCS11_MLKEM
         case WOLFPKCS11_STORE_MLKEMKEY_PRIV:
             kind = "mlkemkey_priv";
             break;
         case WOLFPKCS11_STORE_MLKEMKEY_PUB:
             kind = "mlkemkey_pub";
             break;
-#endif
-#ifdef WOLFPKCS11_LMS
         case WOLFPKCS11_STORE_HSSKEY_PUB:
             kind = "hsskey_pub";
             break;
-#endif
-#ifdef WOLFPKCS11_XMSS
         case WOLFPKCS11_STORE_XMSSKEY_PUB:
             kind = "xmsskey_pub";
             break;
-#endif
 
         default:
             return -1;
@@ -2109,17 +2103,23 @@ static int wolfPKCS11_StoreStageTemp(WP11_FileStoreCtx* ctx)
  * the staged records are renamed into place; otherwise they are removed.
  * Once the marker exists the pass is committed and reported as such, and any
  * record left unrenamed is finished by the next store or load.
- * Releases the batch locks taken by wolfPKCS11_StoreBatchBegin.
+ * Releases the batch locks taken by wolfPKCS11_StoreBatchBegin, unless held
+ * is given and the pass committed.
  *
- * @param [in]  commit  1 when every record of the pass was written.
+ * @param [in]   commit  1 when every record of the pass was written.
+ * @param [out]  held    When not NULL, slot whose batch locks are kept after
+ *                       a committed pass, for wolfPKCS11_StoreBatchRelease.
  * @return  0 when the pass is committed or there was nothing to commit.
  * @return  READ_ONLY_E when the pass was not committed.
  */
-static int wolfPKCS11_StoreBatchEnd(int commit)
+static int wolfPKCS11_StoreBatchEnd(int commit, WP11_Slot** held)
 {
     int ret = 0;
+    int hold = 0;
     WP11_Slot* slot;
 
+    if (held != NULL)
+        *held = NULL;
     if (storeBatch.active) {
         storeBatch.active = 0;
         if (commit && wolfPKCS11_StoreSyncFile(storeBatch.intent) != 0)
@@ -2153,12 +2153,17 @@ static int wolfPKCS11_StoreBatchEnd(int commit)
                 WP11_BATCH_DISCARD);
             (void)remove(storeBatch.intentName);
         }
-        (void)wolfPKCS11_StoreBatchLockFile(0);
+        hold = (held != NULL && ret == 0 && commit);
+        if (!hold)
+            (void)wolfPKCS11_StoreBatchLockFile(0);
     }
     slot = storeBatch.slot;
     if (slot != NULL) {
         storeBatch.slot = NULL;
-        WP11_Lock_UnlockRW(&slot->storeLock);
+        if (hold)
+            *held = slot;
+        else
+            WP11_Lock_UnlockRW(&slot->storeLock);
     }
 
     return ret;
@@ -8433,6 +8438,195 @@ static int wp11_Token_StorePass(WP11_Token* token, int tokenId, int what,
     return ret;
 }
 
+#ifdef WOLFPKCS11_CUSTOM_STORE
+/**
+ * Check whether this build writes key or value records of a store type.
+ *
+ * @param [in]  type  WOLFPKCS11_STORE_* value.
+ * @return  1 when records of the type can be written and 0 otherwise.
+ */
+static int wp11_StoreType_Written(int type)
+{
+    switch (type) {
+        case WOLFPKCS11_STORE_SYMMKEY:
+        case WOLFPKCS11_STORE_CERT:
+        case WOLFPKCS11_STORE_DATA:
+    #ifndef NO_RSA
+        case WOLFPKCS11_STORE_RSAKEY_PRIV:
+        case WOLFPKCS11_STORE_RSAKEY_PUB:
+    #endif
+    #ifdef HAVE_ECC
+        case WOLFPKCS11_STORE_ECCKEY_PRIV:
+        case WOLFPKCS11_STORE_ECCKEY_PUB:
+    #endif
+    #ifndef NO_DH
+        case WOLFPKCS11_STORE_DHKEY_PRIV:
+        case WOLFPKCS11_STORE_DHKEY_PUB:
+    #endif
+    #ifdef WOLFPKCS11_NSS
+        case WOLFPKCS11_STORE_TRUST:
+    #endif
+    #ifdef WOLFPKCS11_MLDSA
+        case WOLFPKCS11_STORE_MLDSAKEY_PRIV:
+        case WOLFPKCS11_STORE_MLDSAKEY_PUB:
+    #endif
+    #ifdef WOLFPKCS11_MLKEM
+        case WOLFPKCS11_STORE_MLKEMKEY_PRIV:
+        case WOLFPKCS11_STORE_MLKEMKEY_PUB:
+    #endif
+    #ifdef WOLFPKCS11_LMS
+        case WOLFPKCS11_STORE_HSSKEY_PUB:
+    #endif
+    #ifdef WOLFPKCS11_XMSS
+        case WOLFPKCS11_STORE_XMSSKEY_PUB:
+    #endif
+            return 1;
+        default:
+            return 0;
+    }
+}
+#endif
+
+#ifdef WOLFPKCS11_TPM_STORE
+/* Store types that fit the type field of an NV index. */
+#define WP11_TPM_STORE_TYPES   0x20
+
+/**
+ * Mark the records of a token that have an NV index defined, as removing a
+ * record that has none still costs a TPM command.
+ *
+ * @param [in]   tokenId  Id of token.
+ * @param [out]  defined  WP11_TPM_STORE_TYPES * WP11_TOKEN_OBJECT_CNT_MAX
+ *                        entries, set to 1 by store type and object id.
+ * @return  0 on success.
+ * @return  MEMORY_E when dynamic memory allocation fails.
+ * @return  Other value when the defined NV indices cannot be read.
+ */
+static int wp11_TpmStore_Defined(int tokenId, byte* defined)
+{
+    int ret = 0;
+    int more = 1;
+    word32 i;
+    TPM_HANDLE h;
+    word32 rel;
+    TPM_HANDLE start = WOLFPKCS11_TPM_NV_BASE;
+    TPM_HANDLE last = WOLFPKCS11_TPM_NV_BASE + (WP11_TPM_STORE_TYPES << 16) - 1;
+    GetCapability_In in;
+    GetCapability_Out* out;
+
+    out = (GetCapability_Out*)XMALLOC(sizeof(*out), NULL,
+        DYNAMIC_TYPE_TMP_BUFFER);
+    if (out == NULL)
+        return MEMORY_E;
+    while (ret == 0 && more) {
+        XMEMSET(&in, 0, sizeof(in));
+        in.capability = TPM_CAP_HANDLES;
+        in.property = start;
+        in.propertyCount = MAX_CAP_HANDLES;
+        ret = TPM2_GetCapability(&in, out);
+        more = (ret == 0 && out->moreData &&
+            out->capabilityData.data.handles.count > 0);
+        for (i = 0; ret == 0 && i < out->capabilityData.data.handles.count;
+                i++) {
+            h = out->capabilityData.data.handles.handle[i];
+            if (h > last) {
+                more = 0;
+                break;
+            }
+            start = h + 1;
+            /* Fields as wolfPKCS11_Store_Handle adds them to the base. */
+            rel = h - WOLFPKCS11_TPM_NV_BASE;
+            if (((rel >> 8) & 0xFF) == ((word32)tokenId & 0xFF) &&
+                    (rel & 0xFF) < WP11_TOKEN_OBJECT_CNT_MAX) {
+                defined[(rel >> 16) * WP11_TOKEN_OBJECT_CNT_MAX +
+                    (rel & 0xFF)] = 1;
+            }
+        }
+    }
+    XFREE(out, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    return ret;
+}
+#endif
+
+#ifdef WOLFPKCS11_TPM_STORE
+/* NV index handles keep only the low 8 bits of an object id. */
+#define WP11_PURGE_ID_MAX \
+    ((WP11_TOKEN_OBJECT_CNT_MAX > 0x100) ? 0x100 : WP11_TOKEN_OBJECT_CNT_MAX)
+#else
+#define WP11_PURGE_ID_MAX WP11_TOKEN_OBJECT_CNT_MAX
+#endif
+
+/**
+ * Remove the records at the ids the token has no object at, and the records
+ * of other types at the ids it has.
+ *
+ * @param [in]  token    Token object.
+ * @param [in]  tokenId  Id of token.
+ * @return  0 on success.
+ * @return  Other value when a record could not be removed.
+ */
+static int wp11_Token_Purge(WP11_Token* token, int tokenId)
+{
+    int ret = 0;
+    int err;
+    int i;
+    int t;
+    int keep;
+    WP11_Object* object = token->object;
+#ifdef WOLFPKCS11_TPM_STORE
+    byte* defined;
+
+    defined = (byte*)XMALLOC(WP11_TPM_STORE_TYPES * WP11_TOKEN_OBJECT_CNT_MAX,
+        NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    if (defined != NULL) {
+        XMEMSET(defined, 0, WP11_TPM_STORE_TYPES * WP11_TOKEN_OBJECT_CNT_MAX);
+        /* Without the list every record is removed. */
+        if (wp11_TpmStore_Defined(tokenId, defined) != 0) {
+            XFREE(defined, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            defined = NULL;
+        }
+    }
+#endif
+
+    /* The newest object has the highest id. */
+    for (i = token->objCnt; i > WP11_PURGE_ID_MAX && object != NULL; i--)
+        object = object->next;
+    for (i = WP11_PURGE_ID_MAX - 1; i >= 0; i--) {
+        keep = -1;
+        if (i < token->objCnt && object != NULL) {
+            keep = wp11_Object_StoreType(object);
+            object = object->next;
+        }
+        for (t = WOLFPKCS11_STORE_OBJECT; t <= WOLFPKCS11_STORE_XMSSKEY_PUB;
+                t++) {
+        #ifdef WOLFPKCS11_CUSTOM_STORE
+            /* A custom store may refuse types this build never writes. */
+            if (t != WOLFPKCS11_STORE_OBJECT && !wp11_StoreType_Written(t))
+                continue;
+        #else
+            if (t == WOLFPKCS11_STORE_HSSKEY_PRIV ||
+                    t == WOLFPKCS11_STORE_XMSSKEY_PRIV) {
+                continue;
+            }
+        #endif
+            if (keep != -1 && (t == WOLFPKCS11_STORE_OBJECT || t == keep))
+                continue;
+        #ifdef WOLFPKCS11_TPM_STORE
+            if (defined != NULL && !defined[t * WP11_TOKEN_OBJECT_CNT_MAX + i])
+                continue;
+        #endif
+            err = wp11_storage_remove(t, tokenId, i);
+            if (err != 0 && err != NOT_AVAILABLE_E && ret == 0)
+                ret = err;
+        }
+    }
+
+#ifdef WOLFPKCS11_TPM_STORE
+    XFREE(defined, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+#endif
+    return ret;
+}
+
 /**
  * Store records of the token as one pass that commits as a unit.
  *
@@ -8452,6 +8646,7 @@ static int wp11_Token_StoreSome(WP11_Token* token, int tokenId, int what,
     int ret;
 #ifdef WP11_STORE_BATCH
     int endRet;
+    WP11_Slot* held = NULL;
 #endif
 
     if (token->storeDirty)
@@ -8461,12 +8656,19 @@ static int wp11_Token_StoreSome(WP11_Token* token, int tokenId, int what,
     ret = wolfPKCS11_StoreBatchBegin(tokenId);
     if (ret == 0) {
         ret = wp11_Token_StorePass(token, tokenId, what, only);
-        endRet = wolfPKCS11_StoreBatchEnd(ret == 0 || ret == NOT_AVAILABLE_E);
+        endRet = wolfPKCS11_StoreBatchEnd(ret == 0 || ret == NOT_AVAILABLE_E,
+            token->storePurge ? &held : NULL);
         if (ret == 0)
             ret = endRet;
     }
 #else
     ret = wp11_Token_StorePass(token, tokenId, what, only);
+#endif
+    /* Under the batch locks, so no other process stores in between. */
+    if (ret == 0 && token->storePurge && wp11_Token_Purge(token, tokenId) == 0)
+        token->storePurge = 0;
+#ifdef WP11_STORE_BATCH
+    wolfPKCS11_StoreBatchRelease(held);
 #endif
 
     if (ret == 0) {
@@ -9296,6 +9498,11 @@ int WP11_Slot_TokenReset(WP11_Slot* slot, char* pin, int pinLen, char* label)
     token = &slot->token;
     wp11_Token_Final(token);
     ret = wp11_Token_Init(token, label);
+#ifndef WOLFPKCS11_NO_STORE
+    /* Records are named by id, so ids the new token does not reuse would keep
+     * the old keys on storage. */
+    token->storePurge = 1;
+#endif
     /* C_InitToken is the canonical provisioning step. Mark the token as
      * initialized here rather than in wp11_Token_Init so a fresh slot stays
      * UNKNOWN until either init or load (Fenrir 3407). */
@@ -9323,6 +9530,15 @@ int WP11_Slot_TokenReset(WP11_Slot* slot, char* pin, int pinLen, char* label)
         }
 #endif
     }
+#ifndef WOLFPKCS11_NO_STORE
+    if (ret == 0) {
+        WP11_Lock_LockRO(&token->lock);
+        /* The pass stored the token but left records it could not remove. */
+        if (token->storePurge && !token->storeDirty)
+            ret = READ_ONLY_E;
+        WP11_Lock_UnlockRO(&token->lock);
+    }
+#endif
 
     return ret;
 }

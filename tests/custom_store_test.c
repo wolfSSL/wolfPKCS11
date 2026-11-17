@@ -106,6 +106,7 @@ static int failWriteAt = -1;    /* Write to fail, counted by writeCnt */
 static int failReadOpenAt = -1; /* Open to fail, counted by readOpenCnt */
 static int failReadAt = -1;     /* Read to fail, counted by readCnt */
 static int failRemoveAt = -1;   /* Remove to fail, counted by removeCnt */
+static int rejectReserved;       /* Remove fails for reserved types */
 static int failCommitCode = STORE_FAIL_E;   /* Code of a failed commit */
 static int failOpenCode = STORE_FAIL_E;     /* Code of a failed write open */
 
@@ -214,6 +215,10 @@ int wolfPKCS11_Store_Remove(int type, CK_ULONG id1, CK_ULONG id2)
 
     if (removeCnt++ == failRemoveAt) {
         injectCnt++;
+        return STORE_FAIL_E;
+    }
+    if (rejectReserved && (type == WOLFPKCS11_STORE_HSSKEY_PRIV ||
+            type == WOLFPKCS11_STORE_XMSSKEY_PRIV)) {
         return STORE_FAIL_E;
     }
     if (rec == NULL)
@@ -684,6 +689,17 @@ static int custom_store_test(void)
         (void)funcList->C_Finalize(NULL);
     CHECK(rv != CKR_OK, "Missing record fails the load");
     CHECK(nullCloseCnt == 0, "Record that did not open not closed");
+
+    /* A token reset only removes record types the library writes. */
+    store_free();
+    rejectReserved = 1;
+    rv = pkcs11_init();
+    if (rv == CKR_OK) {
+        rv = funcList->C_InitToken(slot, soPin, soPinLen, tokenName);
+        (void)funcList->C_Finalize(NULL);
+    }
+    rejectReserved = 0;
+    CHECK_RV(rv, "Token reset with a store that rejects reserved types");
 
     return 0;
 }
