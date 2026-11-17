@@ -31,6 +31,14 @@
 #endif
 #include <wolfssl/wolfcrypt/settings.h>
 #include <wolfssl/wolfcrypt/misc.h>
+#include <wolfssl/version.h>
+#ifdef WOLF_CRYPTO_CB
+    #include <wolfssl/wolfcrypt/cryptocb.h>
+    #include <wolfssl/wolfcrypt/error-crypt.h>
+#endif
+#ifdef WOLFSSL_HAVE_LMS
+    #include <wolfssl/wolfcrypt/wc_lms.h>
+#endif
 
 #ifndef WOLFPKCS11_USER_SETTINGS
     #include <wolfpkcs11/options.h>
@@ -5400,6 +5408,1137 @@ static CK_RV test_pending_reseal_set_pin(void)
 
 #endif /* DEBUG_WOLFPKCS11 */
 
+/* Generate a key with devId as CKA_WOLFSSL_DEVID in an open session. */
+static CK_RV gen_dev_key_in(CK_SESSION_HANDLE session, CK_BYTE* id,
+    CK_ULONG idLen, CK_ULONG devId, CK_OBJECT_HANDLE* priv)
+{
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_HSS_KEY_PAIR_GEN, NULL, 0 };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_TOKEN,          &ckTrue,       sizeof(ckTrue)       },
+        { CKA_VERIFY,         &ckTrue,       sizeof(ckTrue)       },
+        { CKA_ID,             id,            idLen                },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_TOKEN,           &ckTrue,       sizeof(ckTrue)       },
+        { CKA_SIGN,            &ckTrue,       sizeof(ckTrue)       },
+        { CKA_ID,              id,            idLen                },
+        { CKA_WOLFSSL_DEVID,   &devId,        sizeof(devId)        },
+        { CKA_HSS_LEVELS,      &hssLevels,    sizeof(hssLevels)    },
+        { CKA_HSS_LMS_TYPES,   &hssLmsType,   sizeof(hssLmsType)   },
+        { CKA_HSS_LMOTS_TYPES, &hssLmotsType, sizeof(hssLmotsType) },
+    };
+
+    return funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+        sizeof(pubTmpl) / sizeof(*pubTmpl), privTmpl,
+        sizeof(privTmpl) / sizeof(*privTmpl), &pub, priv);
+}
+
+#if defined(WOLF_CRYPTO_CB) && defined(WOLF_PRIVATE_KEY_ID) && \
+    !defined(WOLF_CRYPTO_CB_FIND) && defined(LIBWOLFSSL_VERSION_HEX) && \
+    LIBWOLFSSL_VERSION_HEX >= 0x05009004 && LMS_MAX_ID_LEN >= 16
+#define HSS_TEST_DEVICE
+
+#define HSS_TEST_DEV_ID    0x484D
+#define HSS_TEST_DEV_KEYS  2
+
+/* Keys of the test device, which holds their state in memory. */
+typedef struct HssDevKey {
+    int used;
+    byte id[LMS_MAX_ID_LEN];
+    int idLen;
+    LmsKey key;
+    byte priv[HSS_MAX_PRIVATE_KEY_LEN];
+    word32 privLen;
+} HssDevKey;
+
+static HssDevKey devKeys[HSS_TEST_DEV_KEYS];
+static int devCalls = 0;
+static int devKeyGens = 0;
+static int devSigns = 0;
+static int devShared = 0;
+
+enum {
+    HSS_DEV_NORMAL,
+    HSS_DEV_DECLINE,
+    HSS_DEV_NO_SIGS_LEFT,
+    HSS_DEV_EXHAUSTED,
+    HSS_DEV_FAIL,
+    HSS_DEV_GROW,
+    HSS_DEV_GROW_OK
+};
+static int devMode = HSS_DEV_NORMAL;
+
+static int dev_write(const byte* priv, word32 privSz, void* ctx)
+{
+    HssDevKey* d = (HssDevKey*)ctx;
+
+    if (privSz > sizeof(d->priv))
+        return WC_LMS_RC_WRITE_FAIL;
+    XMEMCPY(d->priv, priv, privSz);
+    d->privLen = privSz;
+    return WC_LMS_RC_SAVED_TO_NV_MEMORY;
+}
+
+static int dev_read(byte* priv, word32 privSz, void* ctx)
+{
+    HssDevKey* d = (HssDevKey*)ctx;
+
+    if (privSz != d->privLen)
+        return WC_LMS_RC_READ_FAIL;
+    XMEMCPY(priv, d->priv, privSz);
+    return WC_LMS_RC_READ_TO_MEMORY;
+}
+
+static HssDevKey* dev_find(LmsKey* lk)
+{
+    int i;
+
+    for (i = 0; i < HSS_TEST_DEV_KEYS; i++) {
+        if (devKeys[i].used && devKeys[i].idLen == lk->idLen &&
+                XMEMCMP(devKeys[i].id, lk->id, (size_t)lk->idLen) == 0) {
+            return &devKeys[i];
+        }
+    }
+    return NULL;
+}
+
+/* Free the keys of the test device and forget them. */
+static void dev_reset(void)
+{
+    int i;
+
+    for (i = 0; i < HSS_TEST_DEV_KEYS; i++) {
+        if (devKeys[i].used)
+            wc_LmsKey_Free(&devKeys[i].key);
+    }
+    XMEMSET(devKeys, 0, sizeof(devKeys));
+    devCalls = devKeyGens = devSigns = 0;
+}
+
+static int dev_cb(int devId, wc_CryptoInfo* info, void* ctx)
+{
+    int ret = CRYPTOCB_UNAVAILABLE;
+    LmsKey* lk;
+    HssDevKey* d = NULL;
+    int levels, height, winternitz, i;
+    word32 pubLen = HSS_MAX_PUBLIC_KEY_LEN;
+
+    (void)devId;
+    (void)ctx;
+    devCalls++;
+    if (info->algo_type != WC_ALGO_TYPE_PK || devMode == HSS_DEV_DECLINE)
+        return ret;
+    if (info->pk.type == WC_PK_TYPE_PQC_STATEFUL_SIG_KEYGEN &&
+            info->pk.pqc_stateful_sig_kg.type == WC_PQC_STATEFUL_SIG_TYPE_LMS) {
+        lk = (LmsKey*)info->pk.pqc_stateful_sig_kg.key;
+        if (devMode == HSS_DEV_FAIL)
+            return BAD_FUNC_ARG;
+        for (i = 0; i < HSS_TEST_DEV_KEYS && d == NULL; i++) {
+            if (!devKeys[i].used)
+                d = &devKeys[i];
+        }
+        if (d == NULL || lk->idLen <= 0)
+            return BUFFER_E;
+        ret = wc_LmsKey_GetParameters(lk, &levels, &height, &winternitz);
+        if (ret == 0)
+            ret = wc_LmsKey_Init(&d->key, NULL, INVALID_DEVID);
+        if (ret != 0)
+            return ret;
+        ret = wc_LmsKey_SetParameters(&d->key, levels, height, winternitz);
+        if (ret == 0)
+            ret = wc_LmsKey_SetWriteCb(&d->key, dev_write);
+        if (ret == 0)
+            ret = wc_LmsKey_SetReadCb(&d->key, dev_read);
+        if (ret == 0)
+            ret = wc_LmsKey_SetContext(&d->key, d);
+        if (ret == 0)
+            ret = wc_LmsKey_MakeKey(&d->key, info->pk.pqc_stateful_sig_kg.rng);
+        if (ret == 0)
+            ret = wc_LmsKey_ExportPubRaw(&d->key, lk->pub, &pubLen);
+        if (ret == 0) {
+            d->used = 1;
+            XMEMCPY(d->id, lk->id, (size_t)lk->idLen);
+            d->idLen = lk->idLen;
+            devKeyGens++;
+        }
+        else {
+            wc_LmsKey_Free(&d->key);
+        }
+    }
+    else if (info->pk.type == WC_PK_TYPE_PQC_STATEFUL_SIG_SIGN &&
+            info->pk.pqc_stateful_sig_sign.type ==
+                WC_PQC_STATEFUL_SIG_TYPE_LMS) {
+        d = dev_find((LmsKey*)info->pk.pqc_stateful_sig_sign.key);
+        if (d == NULL)
+            return BAD_FUNC_ARG;
+        if (devMode == HSS_DEV_EXHAUSTED)
+            return KEY_EXHAUSTED_E;
+        if (devMode == HSS_DEV_FAIL)
+            return WC_HW_E;
+        if (devMode == HSS_DEV_GROW) {
+            *info->pk.pqc_stateful_sig_sign.outSz += 4096;
+            return BUFFER_E;
+        }
+        ret = wc_LmsKey_Sign(&d->key, info->pk.pqc_stateful_sig_sign.out,
+            info->pk.pqc_stateful_sig_sign.outSz,
+            info->pk.pqc_stateful_sig_sign.msg,
+            (int)info->pk.pqc_stateful_sig_sign.msgSz);
+        if (ret == 0)
+            devSigns++;
+        if (ret == 0 && devMode == HSS_DEV_GROW_OK)
+            *info->pk.pqc_stateful_sig_sign.outSz += 4096;
+    }
+    else if (info->pk.type == WC_PK_TYPE_PQC_STATEFUL_SIG_SIGS_LEFT &&
+            info->pk.pqc_stateful_sig_sigs_left.type ==
+                WC_PQC_STATEFUL_SIG_TYPE_LMS && devMode != HSS_DEV_NO_SIGS_LEFT) {
+        d = dev_find((LmsKey*)info->pk.pqc_stateful_sig_sigs_left.key);
+        if (d == NULL)
+            return BAD_FUNC_ARG;
+        *info->pk.pqc_stateful_sig_sigs_left.sigsLeft =
+            (word32)wc_LmsKey_SigsLeft(&d->key);
+        ret = 0;
+    }
+    return ret;
+}
+
+static CK_RV dev_register(int devId)
+{
+    if (wc_CryptoCb_RegisterDevice(devId, dev_cb, NULL) != 0) {
+        fprintf(stderr, "\nregister device %d - FAIL\n", devId);
+        return CKR_GENERAL_ERROR;
+    }
+    return CKR_OK;
+}
+
+/* Generate a key on the test device in a fresh token. */
+static CK_RV gen_dev_key(CK_SESSION_HANDLE* session, CK_BYTE* id,
+    CK_ULONG idLen, CK_OBJECT_HANDLE* priv)
+{
+    CK_RV ret;
+
+    dev_reset();
+    ret = fresh_token(session);
+    if (ret == CKR_OK)
+        ret = dev_register(HSS_TEST_DEV_ID);
+    if (ret == CKR_OK) {
+        ret = gen_dev_key_in(*session, id, idLen, HSS_TEST_DEV_ID, priv);
+        CHECK_CKR(ret, "keygen with a device id");
+    }
+    return ret;
+}
+
+static CK_RV relogin(CK_SESSION_HANDLE session)
+{
+    CK_RV ret;
+
+    ret = funcList->C_Logout(session);
+    CHECK_CKR(ret, "C_Logout");
+    if (ret == CKR_OK) {
+        ret = funcList->C_Login(session, CKU_USER, userPin, userPinLen);
+        CHECK_CKR(ret, "C_Login");
+    }
+    return ret;
+}
+
+/* Keygen on devId fails in a fresh token and leaves no key behind. */
+static CK_RV dev_keygen_refused(CK_BYTE* id, CK_ULONG idLen, CK_ULONG devId,
+    const char* label)
+{
+    CK_RV ret;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+
+    dev_reset();
+    (void)wc_CryptoCb_UnRegisterDevice(HSS_TEST_DEV_ID);
+    ret = fresh_token(&session);
+    if (ret == CKR_OK && devId == HSS_TEST_DEV_ID)
+        ret = dev_register(HSS_TEST_DEV_ID);
+    if (ret == CKR_OK) {
+        ret = gen_dev_key_in(session, id, idLen, devId, &obj);
+        CHECK_CKR_FAIL(ret, CKR_DEVICE_ERROR, label);
+        ret = (ret == CKR_DEVICE_ERROR) ? CKR_OK : CKR_GENERAL_ERROR;
+    }
+    if (ret == CKR_OK && devKeyGens != 0) {
+        fprintf(stderr, "\ndevice kept %d keys - FAIL\n", devKeyGens);
+        ret = CKR_GENERAL_ERROR;
+    }
+    if (ret == CKR_OK && (find_by_id_quiet(session, CKO_PRIVATE_KEY, id,
+            idLen, &obj) == CKR_OK || find_by_id_quiet(session,
+            CKO_PUBLIC_KEY, id, idLen, &obj) == CKR_OK ||
+            count_store_files("wp11_hsskey_priv_") != 0)) {
+        fprintf(stderr, "\nrefused keygen left a key - FAIL\n");
+        ret = CKR_GENERAL_ERROR;
+    }
+    close_session(session);
+    pkcs11_final();
+    (void)wc_CryptoCb_UnRegisterDevice(HSS_TEST_DEV_ID);
+    return ret;
+}
+
+/* A device key that has not reported itself spent has no count. */
+static CK_RV check_no_keys_remaining(CK_SESSION_HANDLE session,
+    CK_OBJECT_HANDLE priv, const char* when)
+{
+    CK_RV ret;
+    CK_ULONG left = 0;
+    CK_ATTRIBUTE a = { CKA_KEYS_REMAINING, NULL, sizeof(CK_ULONG) };
+
+    a.pValue = &left;
+    ret = funcList->C_GetAttributeValue(session, priv, &a, 1);
+    if (ret != CKR_ATTRIBUTE_TYPE_INVALID || a.ulValueLen != (CK_ULONG)-1) {
+        fprintf(stderr, "\ndevice key count %s: 0x%lx, %lu - FAIL\n", when,
+            (unsigned long)ret, (unsigned long)left);
+        return CKR_GENERAL_ERROR;
+    }
+    return CKR_OK;
+}
+
+/* Kind byte of the key record at path, or -1. */
+static int dev_record_kind(const char* path)
+{
+    static CK_BYTE rec[4096];
+    size_t recLen = 0;
+    unsigned long shellLen;
+
+    if (read_file(path, rec, sizeof(rec), &recLen) != CKR_OK || recLen < 8)
+        return -1;
+    shellLen = ((unsigned long)rec[4] << 24) | ((unsigned long)rec[5] << 16) |
+               ((unsigned long)rec[6] << 8) | rec[7];
+    if (8 + shellLen + 4 > recLen)
+        return -1;
+    return rec[8 + shellLen + 3];
+}
+
+/* A key made on a device keeps no sealed state in its record and signs on
+ * the device, also after the token is loaded again. */
+static CK_RV test_device_held_state(void)
+{
+    CK_RV ret;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_BYTE id[] = "hss-device";
+    CK_ULONG devId = HSS_TEST_DEV_ID;
+    CK_ULONG otherId = 5;
+    CK_ATTRIBUTE other = { CKA_WOLFSSL_DEVID, &otherId, sizeof(otherId) };
+    CK_ATTRIBUTE same = { CKA_WOLFSSL_DEVID, &devId, sizeof(devId) };
+    char recPath[512];
+
+    printf("  a device holds the signature state...\n");
+    devShared = 1;
+    dev_reset();
+    ret = fresh_token(&session);
+    if (ret == CKR_OK)
+        ret = dev_register(HSS_TEST_DEV_ID);
+    if (ret == CKR_OK) {
+        ret = gen_dev_key_in(session, id, sizeof(id) - 1, HSS_TEST_DEV_ID,
+            &priv);
+        if (devCalls == 0) {
+            /* A library with its own wolfSSL never sees this device. */
+            printf("    skipped: the library does not share this wolfSSL\n");
+            devShared = 0;
+            close_session(session);
+            pkcs11_final();
+            (void)wc_CryptoCb_UnRegisterDevice(HSS_TEST_DEV_ID);
+            return CKR_OK;
+        }
+        CHECK_CKR(ret, "keygen with a device id");
+    }
+    if (ret == CKR_OK) {
+        ret = sign_verify_by_id(session, id, sizeof(id) - 1);
+        CHECK_CKR(ret, "sign on the device");
+    }
+    if (ret == CKR_OK)
+        ret = check_no_keys_remaining(session, priv, "after a sign");
+    if (ret == CKR_OK)
+        ret = find_key_record(recPath, sizeof(recPath));
+    if (ret == CKR_OK && dev_record_kind(recPath) != 1) {
+        fprintf(stderr, "\nrecord holds a sealed state - FAIL\n");
+        ret = CKR_GENERAL_ERROR;
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_SetAttributeValue(session, priv, &other, 1);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_READ_ONLY, "change the device id");
+        ret = (ret == CKR_ATTRIBUTE_READ_ONLY) ? CKR_OK : CKR_GENERAL_ERROR;
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_SetAttributeValue(session, priv, &same, 1);
+        CHECK_CKR(ret, "set the same device id");
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    pkcs11_final();
+
+    if (ret == CKR_OK)
+        ret = reopen_token(&session);
+    if (ret == CKR_OK)
+        ret = dev_register(HSS_TEST_DEV_ID);
+    if (ret == CKR_OK) {
+        ret = sign_verify_by_id(session, id, sizeof(id) - 1);
+        CHECK_CKR(ret, "sign on the device after reload");
+    }
+    if (ret == CKR_OK)
+        ret = find_by_id(session, CKO_PRIVATE_KEY, id, sizeof(id) - 1, &priv);
+    if (ret == CKR_OK) {
+        CK_ATTRIBUTE a = { CKA_WOLFSSL_DEVID, &devId, sizeof(devId) };
+
+        devId = 0;
+        ret = funcList->C_GetAttributeValue(session, priv, &a, 1);
+        if (ret == CKR_OK && devId != HSS_TEST_DEV_ID) {
+            fprintf(stderr, "\ndevice id %lu after reload - FAIL\n",
+                (unsigned long)devId);
+            ret = CKR_GENERAL_ERROR;
+        }
+    }
+    if (ret == CKR_OK)
+        ret = check_no_keys_remaining(session, priv, "after reload");
+    if (ret == CKR_OK && devSigns != 2) {
+        fprintf(stderr, "\ndevice made %d signatures, expected 2 - FAIL\n",
+            devSigns);
+        ret = CKR_GENERAL_ERROR;
+    }
+    close_session(session);
+    pkcs11_final();
+    return ret;
+}
+
+/* Devices that leave out the signature count, report a spent key or do not
+ * do LMS at all. */
+static CK_RV test_device_variants(void)
+{
+    CK_RV ret;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    static CK_BYTE id[] = "hss-device-var";
+    CK_ULONG left = 1;
+    CK_ATTRIBUTE a = { CKA_DERIVE, NULL, sizeof(CK_BBOOL) };
+    char recPath[512];
+    char objPath[520];
+    static CK_BYTE objRec[4096];
+    size_t objLen = 0;
+    const char* suffix;
+
+    if (!devShared)
+        return CKR_OK;
+    a.pValue = &ckTrue;
+    printf("  a device without a signature count signs again...\n");
+    devMode = HSS_DEV_NO_SIGS_LEFT;
+    ret = gen_dev_key(&session, id, sizeof(id) - 1, &priv);
+    if (ret == CKR_OK) {
+        ret = sign_verify_by_id(session, id, sizeof(id) - 1);
+        CHECK_CKR(ret, "first sign");
+    }
+    if (ret == CKR_OK) {
+        ret = sign_verify_by_id(session, id, sizeof(id) - 1);
+        CHECK_CKR(ret, "second sign");
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    pkcs11_final();
+
+    if (ret == CKR_OK) {
+        printf("  a device reporting a spent key...\n");
+        devMode = HSS_DEV_NORMAL;
+        ret = gen_dev_key(&session, id, sizeof(id) - 1, &priv);
+    }
+    if (ret == CKR_OK) {
+        devMode = HSS_DEV_EXHAUSTED;
+        ret = sign_expect(session, priv, CKR_KEY_EXHAUSTED, "first sign");
+    }
+    if (ret == CKR_OK)
+        ret = sign_expect(session, priv, CKR_KEY_EXHAUSTED, "second sign");
+    if (ret == CKR_OK)
+        ret = get_keys_remaining(session, priv, &left);
+    if (ret == CKR_OK && left != 0) {
+        fprintf(stderr, "\n%lu left on a spent key - FAIL\n",
+            (unsigned long)left);
+        ret = CKR_GENERAL_ERROR;
+    }
+    if (ret == CKR_OK)
+        ret = relogin(session);
+    if (ret == CKR_OK)
+        ret = check_no_keys_remaining(session, priv, "spent, after login");
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    pkcs11_final();
+
+    if (ret == CKR_OK) {
+        printf("  a device without LMS fails keygen...\n");
+        devMode = HSS_DEV_DECLINE;
+        ret = dev_keygen_refused(id, sizeof(id) - 1, HSS_TEST_DEV_ID,
+            "keygen on a device without LMS");
+        devMode = HSS_DEV_NORMAL;
+    }
+
+    if (ret == CKR_OK) {
+        printf("  a device key record is bound to the policy...\n");
+        ret = gen_dev_key(&session, id, sizeof(id) - 1, &priv);
+    }
+    if (ret == CKR_OK)
+        ret = find_key_record(recPath, sizeof(recPath));
+    if (ret == CKR_OK) {
+        suffix = strrchr(recPath, '/') + 1 + strlen("wp11_hsskey_priv_");
+        snprintf(objPath, sizeof(objPath), "%s/wp11_obj_%s", storeDir, suffix);
+        ret = read_file(objPath, objRec, sizeof(objRec), &objLen);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_SetAttributeValue(session, priv, &a, 1);
+        CHECK_CKR(ret, "change CKA_DERIVE");
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    pkcs11_final();
+    if (ret == CKR_OK)
+        ret = write_file(objPath, objRec, objLen);
+    if (ret == CKR_OK)
+        ret = reopen_token_quiet(&session);
+    if (ret == CKR_OK)
+        ret = dev_register(HSS_TEST_DEV_ID);
+    if (ret == CKR_OK)
+        ret = find_by_id(session, CKO_PRIVATE_KEY, id, sizeof(id) - 1, &priv);
+    if (ret == CKR_OK) {
+        ret = sign_expect(session, priv, CKR_DEVICE_ERROR,
+            "sign with the old policy in the object record");
+    }
+    close_session(session);
+    pkcs11_final();
+    return ret;
+}
+
+/* A device that declines a sign uses no leaf, so the key signs once the
+ * device answers again, whether it was made in this session or loaded. */
+static CK_RV test_device_declines_sign(void)
+{
+    CK_RV ret;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    static CK_BYTE id[] = "hss-device-decline";
+    int pass;
+
+    if (!devShared)
+        return CKR_OK;
+    printf("  a device declining a sign...\n");
+    ret = gen_dev_key(&session, id, sizeof(id) - 1, &priv);
+    for (pass = 0; ret == CKR_OK && pass < 2; pass++) {
+        if (pass == 1) {
+            close_session(session);
+            session = CK_INVALID_HANDLE;
+            pkcs11_final();
+            ret = reopen_token(&session);
+            if (ret == CKR_OK)
+                ret = dev_register(HSS_TEST_DEV_ID);
+            if (ret == CKR_OK) {
+                ret = find_by_id(session, CKO_PRIVATE_KEY, id, sizeof(id) - 1,
+                    &priv);
+            }
+        }
+        if (ret == CKR_OK) {
+            devMode = HSS_DEV_DECLINE;
+            ret = sign_expect(session, priv, CKR_DEVICE_ERROR,
+                pass ? "declined sign after reload" : "declined sign");
+            devMode = HSS_DEV_NORMAL;
+        }
+        if (ret == CKR_OK) {
+            ret = sign_verify_by_id(session, id, sizeof(id) - 1);
+            CHECK_CKR(ret, "sign once the device answers");
+        }
+    }
+    close_session(session);
+    pkcs11_final();
+    return ret;
+}
+
+/* A device that fails a sign may have used a leaf, so the key stays disabled
+ * until the token is loaded again. */
+static CK_RV test_device_sign_error(void)
+{
+    CK_RV ret;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    static CK_BYTE id[] = "hss-device-error";
+
+    if (!devShared)
+        return CKR_OK;
+    printf("  a device failing a sign...\n");
+    ret = gen_dev_key(&session, id, sizeof(id) - 1, &priv);
+    if (ret == CKR_OK) {
+        devMode = HSS_DEV_FAIL;
+        ret = sign_expect(session, priv, CKR_DEVICE_ERROR, "failed sign");
+        devMode = HSS_DEV_NORMAL;
+    }
+    if (ret == CKR_OK) {
+        ret = sign_expect(session, priv, CKR_DEVICE_ERROR,
+            "sign after the failure");
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    pkcs11_final();
+    if (ret == CKR_OK)
+        ret = reopen_token(&session);
+    if (ret == CKR_OK)
+        ret = dev_register(HSS_TEST_DEV_ID);
+    if (ret == CKR_OK) {
+        ret = sign_verify_by_id(session, id, sizeof(id) - 1);
+        CHECK_CKR(ret, "sign after reload");
+    }
+    close_session(session);
+    pkcs11_final();
+    return ret;
+}
+
+/* A logout and login rebuild the device key from its record, and re-enable
+ * it after a device error. */
+static CK_RV test_device_relogin(void)
+{
+    CK_RV ret;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_ULONG devId = 0;
+    static CK_BYTE id[] = "hss-device-relogin";
+
+    if (!devShared)
+        return CKR_OK;
+    printf("  a device key across a logout...\n");
+    ret = gen_dev_key(&session, id, sizeof(id) - 1, &priv);
+    if (ret == CKR_OK)
+        ret = sign_expect(session, priv, CKR_OK, "sign before the logout");
+    if (ret == CKR_OK)
+        ret = relogin(session);
+    if (ret == CKR_OK) {
+        CK_ATTRIBUTE a = { CKA_WOLFSSL_DEVID, &devId, sizeof(devId) };
+
+        ret = funcList->C_GetAttributeValue(session, priv, &a, 1);
+        CHECK_CKR(ret, "get CKA_WOLFSSL_DEVID");
+        if (ret == CKR_OK && devId != HSS_TEST_DEV_ID) {
+            fprintf(stderr, "\ndevice id %lu after login - FAIL\n",
+                (unsigned long)devId);
+            ret = CKR_GENERAL_ERROR;
+        }
+    }
+    if (ret == CKR_OK)
+        ret = check_no_keys_remaining(session, priv, "after login");
+    if (ret == CKR_OK)
+        ret = sign_expect(session, priv, CKR_OK, "sign after the login");
+    if (ret == CKR_OK) {
+        devMode = HSS_DEV_FAIL;
+        ret = sign_expect(session, priv, CKR_DEVICE_ERROR, "failed sign");
+        devMode = HSS_DEV_NORMAL;
+    }
+    if (ret == CKR_OK) {
+        ret = sign_expect(session, priv, CKR_DEVICE_ERROR,
+            "sign after the failure");
+    }
+    if (ret == CKR_OK)
+        ret = relogin(session);
+    if (ret == CKR_OK)
+        ret = sign_expect(session, priv, CKR_OK, "sign after the next login");
+    if (ret == CKR_OK && devSigns != 3) {
+        fprintf(stderr, "\ndevice made %d signatures, expected 3 - FAIL\n",
+            devSigns);
+        ret = CKR_GENERAL_ERROR;
+    }
+    close_session(session);
+    pkcs11_final();
+    return ret;
+}
+
+/* A device that fails keygen gives CKR_DEVICE_ERROR. */
+static CK_RV test_device_keygen_error(void)
+{
+    CK_RV ret;
+    static CK_BYTE id[] = "hss-device-keygen-error";
+
+    if (!devShared)
+        return CKR_OK;
+    printf("  a device failing keygen...\n");
+    devMode = HSS_DEV_FAIL;
+    ret = dev_keygen_refused(id, sizeof(id) - 1, HSS_TEST_DEV_ID,
+        "keygen on a failing device");
+    devMode = HSS_DEV_NORMAL;
+    return ret;
+}
+
+/* A device id with no device behind it fails keygen. */
+static CK_RV test_device_unregistered(void)
+{
+    static CK_BYTE id[] = "hss-device-none";
+
+    if (!devShared)
+        return CKR_OK;
+    printf("  a device id with no device...\n");
+    return dev_keygen_refused(id, sizeof(id) - 1, HSS_TEST_DEV_ID + 1,
+        "keygen with an unregistered device id");
+}
+
+/* A device key moved into a freed id still signs, also after a reload. */
+static CK_RV test_device_key_moved(void)
+{
+    CK_RV ret;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE, priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE devPriv = CK_INVALID_HANDLE;
+    static CK_BYTE idX[] = "hss-device-older";
+    static CK_BYTE id[] = "hss-device-moved";
+
+    if (!devShared)
+        return CKR_OK;
+    printf("  a device key moved by a destroy...\n");
+    dev_reset();
+    ret = fresh_token(&session);
+    if (ret == CKR_OK)
+        ret = dev_register(HSS_TEST_DEV_ID);
+    if (ret == CKR_OK) {
+        ret = gen_hss_key(session, hssLevels, hssLmsType, hssLmotsType,
+            idX, sizeof(idX) - 1, &pub, &priv);
+        CHECK_CKR(ret, "keygen in software");
+    }
+    if (ret == CKR_OK) {
+        ret = gen_dev_key_in(session, id, sizeof(id) - 1, HSS_TEST_DEV_ID,
+            &devPriv);
+        CHECK_CKR(ret, "keygen on the device");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_DestroyObject(session, priv);
+        CHECK_CKR(ret, "destroy the older key");
+    }
+    if (ret == CKR_OK) {
+        ret = sign_verify_by_id(session, id, sizeof(id) - 1);
+        CHECK_CKR(ret, "sign the moved key");
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    pkcs11_final();
+    if (ret == CKR_OK)
+        ret = reopen_token(&session);
+    if (ret == CKR_OK)
+        ret = dev_register(HSS_TEST_DEV_ID);
+    if (ret == CKR_OK) {
+        ret = sign_verify_by_id(session, id, sizeof(id) - 1);
+        CHECK_CKR(ret, "sign the moved key after reload");
+    }
+    close_session(session);
+    pkcs11_final();
+    return ret;
+}
+
+/* A process still holding a device key that another process destroyed does
+ * not sign with it. */
+static CK_RV test_device_destroyed_elsewhere(void)
+{
+    CK_RV ret;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    static CK_BYTE id[] = "hss-device-gone";
+    pid_t pid;
+    int status = 0;
+
+    if (!devShared)
+        return CKR_OK;
+    printf("  a device key destroyed by another process...\n");
+    ret = gen_dev_key(&session, id, sizeof(id) - 1, &priv);
+    if (ret == CKR_OK)
+        ret = sign_expect(session, priv, CKR_OK, "first sign");
+    if (ret == CKR_OK) {
+        pid = fork();
+        if (pid == 0) {
+            CK_SESSION_HANDLE s2 = CK_INVALID_HANDLE;
+            CK_OBJECT_HANDLE p2 = CK_INVALID_HANDLE;
+
+            funcList->C_Finalize(NULL);
+            if (reopen_token(&s2) != CKR_OK ||
+                    find_by_id(s2, CKO_PRIVATE_KEY, id, sizeof(id) - 1,
+                        &p2) != CKR_OK ||
+                    funcList->C_DestroyObject(s2, p2) != CKR_OK) {
+                _exit(1);
+            }
+            close_session(s2);
+            pkcs11_final();
+            _exit(0);
+        }
+        if (pid < 0 || waitpid(pid, &status, 0) < 0 || !WIFEXITED(status) ||
+                WEXITSTATUS(status) != 0) {
+            fprintf(stderr, "\nchild destroy failed - FAIL\n");
+            ret = CKR_GENERAL_ERROR;
+        }
+    }
+    if (ret == CKR_OK)
+        ret = sign_expect(session, priv, CKR_DEVICE_ERROR, "sign a key "
+            "destroyed elsewhere");
+    close_session(session);
+    pkcs11_final();
+    return ret;
+}
+
+/* A device key signs after a PIN change and after a policy change, each
+ * followed by a reload. */
+static CK_RV test_device_reseal(void)
+{
+    CK_RV ret;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    static CK_BYTE id[] = "hss-device-reseal";
+    CK_UTF8CHAR newPin[] = "hss-new-user-pin";
+    CK_ULONG newPinLen = sizeof(newPin) - 1;
+    CK_ATTRIBUTE a = { CKA_DERIVE, NULL, sizeof(CK_BBOOL) };
+    char recPath[512];
+
+    if (!devShared)
+        return CKR_OK;
+    a.pValue = &ckTrue;
+    printf("  a device key after PIN and policy changes...\n");
+    ret = gen_dev_key(&session, id, sizeof(id) - 1, &priv);
+    if (ret == CKR_OK) {
+        ret = funcList->C_SetPIN(session, userPin, userPinLen, newPin,
+            newPinLen);
+        CHECK_CKR(ret, "C_SetPIN");
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    pkcs11_final();
+    if (ret == CKR_OK)
+        ret = pkcs11_init();
+    if (ret == CKR_OK) {
+        ret = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+            NULL, NULL, &session);
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_Login(session, CKU_USER, newPin, newPinLen);
+        CHECK_CKR(ret, "login with the new PIN");
+    }
+    if (ret == CKR_OK)
+        ret = dev_register(HSS_TEST_DEV_ID);
+    if (ret == CKR_OK) {
+        ret = sign_verify_by_id(session, id, sizeof(id) - 1);
+        CHECK_CKR(ret, "sign after the PIN change");
+    }
+    if (ret == CKR_OK)
+        ret = find_key_record(recPath, sizeof(recPath));
+    if (ret == CKR_OK && dev_record_kind(recPath) != 1) {
+        fprintf(stderr, "\nrecord kind changed by C_SetPIN - FAIL\n");
+        ret = CKR_GENERAL_ERROR;
+    }
+    if (ret == CKR_OK)
+        ret = find_by_id(session, CKO_PRIVATE_KEY, id, sizeof(id) - 1, &priv);
+    if (ret == CKR_OK) {
+        ret = funcList->C_SetAttributeValue(session, priv, &a, 1);
+        CHECK_CKR(ret, "change CKA_DERIVE");
+    }
+    if (ret == CKR_OK) {
+        ret = sign_verify_by_id(session, id, sizeof(id) - 1);
+        CHECK_CKR(ret, "sign right after the policy change");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_SetPIN(session, newPin, newPinLen, userPin,
+            userPinLen);
+        CHECK_CKR(ret, "C_SetPIN back");
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    pkcs11_final();
+    if (ret == CKR_OK)
+        ret = reopen_token(&session);
+    if (ret == CKR_OK)
+        ret = dev_register(HSS_TEST_DEV_ID);
+    if (ret == CKR_OK) {
+        ret = sign_verify_by_id(session, id, sizeof(id) - 1);
+        CHECK_CKR(ret, "sign after the policy change");
+    }
+    if (ret == CKR_OK && dev_record_kind(recPath) != 1) {
+        fprintf(stderr, "\nrecord kind changed by the policy change - FAIL\n");
+        ret = CKR_GENERAL_ERROR;
+    }
+    close_session(session);
+    pkcs11_final();
+    dev_reset();
+    (void)wc_CryptoCb_UnRegisterDevice(HSS_TEST_DEV_ID);
+    return ret;
+}
+
+/* A device key does not sign once its record is bound to another policy. */
+static CK_RV test_device_policy_record(void)
+{
+    CK_RV ret;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    static CK_BYTE id[] = "hss-device-policy";
+    CK_ATTRIBUTE a = { CKA_DERIVE, NULL, sizeof(CK_BBOOL) };
+    char recPath[512];
+    static CK_BYTE rec[4096];
+    size_t recLen = 0;
+
+    if (!devShared)
+        return CKR_OK;
+    a.pValue = &ckTrue;
+    printf("  a device key record of another policy...\n");
+    ret = gen_dev_key(&session, id, sizeof(id) - 1, &priv);
+    if (ret == CKR_OK)
+        ret = find_key_record(recPath, sizeof(recPath));
+    if (ret == CKR_OK)
+        ret = read_file(recPath, rec, sizeof(rec), &recLen);
+    if (ret == CKR_OK) {
+        ret = funcList->C_SetAttributeValue(session, priv, &a, 1);
+        CHECK_CKR(ret, "change CKA_DERIVE");
+    }
+    if (ret == CKR_OK)
+        ret = write_file(recPath, rec, recLen);
+    if (ret == CKR_OK) {
+        ret = sign_expect(session, priv, CKR_DEVICE_ERROR,
+            "sign with a record of the old policy");
+    }
+    close_session(session);
+    pkcs11_final();
+    dev_reset();
+    (void)wc_CryptoCb_UnRegisterDevice(HSS_TEST_DEV_ID);
+    return ret;
+}
+/* A device key signs from a record re-sealed elsewhere to the same policy. */
+static CK_RV test_device_record_resealed(void)
+{
+    CK_RV ret;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    static CK_BYTE id[] = "hss-device-resealed";
+    CK_ATTRIBUTE a = { CKA_DERIVE, NULL, sizeof(CK_BBOOL) };
+    char recPath[512];
+    static CK_BYTE rec[4096];
+    static CK_BYTE now[4096];
+    size_t recLen = 0;
+    size_t nowLen = 0;
+
+    if (!devShared)
+        return CKR_OK;
+    printf("  a device key record re-sealed to the same policy...\n");
+    ret = gen_dev_key(&session, id, sizeof(id) - 1, &priv);
+    if (ret == CKR_OK)
+        ret = find_key_record(recPath, sizeof(recPath));
+    if (ret == CKR_OK)
+        ret = read_file(recPath, rec, sizeof(rec), &recLen);
+    if (ret == CKR_OK) {
+        a.pValue = &ckTrue;
+        ret = funcList->C_SetAttributeValue(session, priv, &a, 1);
+        CHECK_CKR(ret, "change CKA_DERIVE");
+    }
+    if (ret == CKR_OK) {
+        a.pValue = &ckFalse;
+        ret = funcList->C_SetAttributeValue(session, priv, &a, 1);
+        CHECK_CKR(ret, "change CKA_DERIVE back");
+    }
+    if (ret == CKR_OK)
+        ret = read_file(recPath, now, sizeof(now), &nowLen);
+    if (ret == CKR_OK && nowLen == recLen &&
+            XMEMCMP(now, rec, recLen) == 0) {
+        fprintf(stderr, "\nrecord was not re-sealed - FAIL\n");
+        ret = CKR_GENERAL_ERROR;
+    }
+    /* The loaded record now differs from the stored one. */
+    if (ret == CKR_OK)
+        ret = write_file(recPath, rec, recLen);
+    if (ret == CKR_OK) {
+        ret = sign_expect(session, priv, CKR_OK,
+            "sign with a record of the same policy");
+    }
+    close_session(session);
+    pkcs11_final();
+    dev_reset();
+    (void)wc_CryptoCb_UnRegisterDevice(HSS_TEST_DEV_ID);
+    return ret;
+}
+
+/* A device key does not sign while its record fails to unseal. */
+static CK_RV test_device_record_tampered(void)
+{
+    CK_RV ret;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    static CK_BYTE id[] = "hss-device-tampered";
+    char recPath[512];
+    static CK_BYTE rec[4096];
+    size_t recLen = 0;
+
+    if (!devShared)
+        return CKR_OK;
+    printf("  a device key record with a changed ciphertext...\n");
+    ret = gen_dev_key(&session, id, sizeof(id) - 1, &priv);
+    if (ret == CKR_OK)
+        ret = find_key_record(recPath, sizeof(recPath));
+    if (ret == CKR_OK)
+        ret = read_file(recPath, rec, sizeof(rec), &recLen);
+    if (ret == CKR_OK) {
+        rec[recLen - 1] ^= 0x01;
+        ret = write_file(recPath, rec, recLen);
+    }
+    if (ret == CKR_OK) {
+        ret = sign_expect(session, priv, CKR_DEVICE_ERROR,
+            "sign with a changed record");
+    }
+    if (ret == CKR_OK && devSigns != 0) {
+        fprintf(stderr, "\ndevice signed with a changed record - FAIL\n");
+        ret = CKR_GENERAL_ERROR;
+    }
+    if (ret == CKR_OK) {
+        rec[recLen - 1] ^= 0x01;
+        ret = write_file(recPath, rec, recLen);
+    }
+    if (ret == CKR_OK)
+        ret = sign_expect(session, priv, CKR_OK, "sign once restored");
+    close_session(session);
+    pkcs11_final();
+    dev_reset();
+    (void)wc_CryptoCb_UnRegisterDevice(HSS_TEST_DEV_ID);
+    return ret;
+}
+/* A device that raises the signature length and fails does not get the
+ * caller's buffer written past its end. */
+static CK_RV test_device_sign_grows(void)
+{
+    CK_RV ret;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    static CK_BYTE id[] = "hss-device-grow";
+
+    if (!devShared)
+        return CKR_OK;
+    printf("  a device raising the signature length and failing...\n");
+    ret = gen_dev_key(&session, id, sizeof(id) - 1, &priv);
+    if (ret == CKR_OK) {
+        devMode = HSS_DEV_GROW;
+        ret = sign_expect(session, priv, CKR_DEVICE_ERROR,
+            "sign with a raised length");
+        devMode = HSS_DEV_NORMAL;
+    }
+    close_session(session);
+    pkcs11_final();
+    dev_reset();
+    (void)wc_CryptoCb_UnRegisterDevice(HSS_TEST_DEV_ID);
+    return ret;
+}
+
+/* A device that signs and reports a length past the buffer gives no
+ * signature. */
+static CK_RV test_device_sign_grows_ok(void)
+{
+    CK_RV ret;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    static CK_BYTE id[] = "hss-device-grow-ok";
+
+    if (!devShared)
+        return CKR_OK;
+    printf("  a device signing with a raised signature length...\n");
+    ret = gen_dev_key(&session, id, sizeof(id) - 1, &priv);
+    if (ret == CKR_OK) {
+        devMode = HSS_DEV_GROW_OK;
+        ret = sign_expect(session, priv, CKR_DEVICE_ERROR,
+            "sign succeeding with a raised length");
+        devMode = HSS_DEV_NORMAL;
+    }
+    close_session(session);
+    pkcs11_final();
+    dev_reset();
+    (void)wc_CryptoCb_UnRegisterDevice(HSS_TEST_DEV_ID);
+    return ret;
+}
+
+/* A device with no room for another key fails keygen with
+ * CKR_DEVICE_ERROR and leaves no key behind. */
+static CK_RV test_device_keygen_full(void)
+{
+    CK_RV ret;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    static CK_BYTE id1[] = "hss-device-full-1";
+    static CK_BYTE id2[] = "hss-device-full-2";
+    static CK_BYTE id3[] = "hss-device-full-3";
+
+    if (!devShared)
+        return CKR_OK;
+    printf("  a device with no room for another key...\n");
+    ret = gen_dev_key(&session, id1, sizeof(id1) - 1, &priv);
+    if (ret == CKR_OK) {
+        ret = gen_dev_key_in(session, id2, sizeof(id2) - 1, HSS_TEST_DEV_ID,
+            &priv);
+        CHECK_CKR(ret, "second keygen on the device");
+    }
+    if (ret == CKR_OK) {
+        ret = gen_dev_key_in(session, id3, sizeof(id3) - 1, HSS_TEST_DEV_ID,
+            &priv);
+        CHECK_CKR_FAIL(ret, CKR_DEVICE_ERROR, "keygen on a full device");
+        ret = (ret == CKR_DEVICE_ERROR) ? CKR_OK : CKR_GENERAL_ERROR;
+    }
+    if (ret == CKR_OK && (devKeyGens != HSS_TEST_DEV_KEYS ||
+            find_by_id_quiet(session, CKO_PRIVATE_KEY, id3, sizeof(id3) - 1,
+            &priv) == CKR_OK || find_by_id_quiet(session, CKO_PUBLIC_KEY,
+            id3, sizeof(id3) - 1, &priv) == CKR_OK)) {
+        fprintf(stderr, "\nrefused keygen left a key - FAIL\n");
+        ret = CKR_GENERAL_ERROR;
+    }
+    close_session(session);
+    pkcs11_final();
+    dev_reset();
+    (void)wc_CryptoCb_UnRegisterDevice(HSS_TEST_DEV_ID);
+    return ret;
+}
+#else
+/* A build without the device path refuses a key that names a device. */
+static CK_RV test_device_unavailable(void)
+{
+    CK_RV ret;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    static CK_BYTE id[] = "hss-device-unavailable";
+
+    printf("  a device id in a build without devices...\n");
+    ret = fresh_token(&session);
+    if (ret == CKR_OK) {
+        ret = gen_dev_key_in(session, id, sizeof(id) - 1, 1, &priv);
+        CHECK_CKR_FAIL(ret, CKR_DEVICE_ERROR, "keygen with a device id");
+        ret = (ret == CKR_DEVICE_ERROR) ? CKR_OK : CKR_GENERAL_ERROR;
+    }
+    if (ret == CKR_OK && (find_by_id_quiet(session, CKO_PRIVATE_KEY, id,
+            sizeof(id) - 1, &priv) == CKR_OK || find_by_id_quiet(session,
+            CKO_PUBLIC_KEY, id, sizeof(id) - 1, &priv) == CKR_OK ||
+            count_store_files("wp11_hsskey_priv_") != 0)) {
+        fprintf(stderr, "\nrefused keygen left a key - FAIL\n");
+        ret = CKR_GENERAL_ERROR;
+    }
+    close_session(session);
+    pkcs11_final();
+    return ret;
+}
+#endif
+
+/* A CKA_WOLFSSL_DEVID of INVALID_DEVID makes a software key. */
+static CK_RV test_invalid_devid_software(void)
+{
+    CK_RV ret;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_ULONG left = 0;
+    static CK_BYTE id[] = "hss-invalid-devid";
+
+    printf("  CKA_WOLFSSL_DEVID of INVALID_DEVID...\n");
+    ret = fresh_token(&session);
+    if (ret == CKR_OK) {
+        ret = gen_dev_key_in(session, id, sizeof(id) - 1,
+            (CK_ULONG)INVALID_DEVID, &priv);
+        CHECK_CKR(ret, "keygen with INVALID_DEVID");
+    }
+    if (ret == CKR_OK) {
+        ret = sign_verify_by_id(session, id, sizeof(id) - 1);
+        CHECK_CKR(ret, "sign in software");
+    }
+    if (ret == CKR_OK)
+        ret = get_keys_remaining(session, priv, &left);
+    if (ret == CKR_OK && left != HSS_H5_SIGS - 1) {
+        fprintf(stderr, "\n%lu left after one signature - FAIL\n",
+            (unsigned long)left);
+        ret = CKR_GENERAL_ERROR;
+    }
+    close_session(session);
+    pkcs11_final();
+    return ret;
+}
+
 #endif /* !_WIN32 */
 
 static CK_RV run_all(void)
@@ -5537,6 +6676,45 @@ static CK_RV run_all(void)
     if (ret == CKR_OK)
         ret = test_pending_reseal_set_pin();
 #endif
+#ifdef HSS_TEST_DEVICE
+    if (ret == CKR_OK)
+        ret = test_device_held_state();
+    if (ret == CKR_OK)
+        ret = test_device_variants();
+    if (ret == CKR_OK)
+        ret = test_device_declines_sign();
+    if (ret == CKR_OK)
+        ret = test_device_sign_error();
+    if (ret == CKR_OK)
+        ret = test_device_relogin();
+    if (ret == CKR_OK)
+        ret = test_device_keygen_error();
+    if (ret == CKR_OK)
+        ret = test_device_unregistered();
+    if (ret == CKR_OK)
+        ret = test_device_key_moved();
+    if (ret == CKR_OK)
+        ret = test_device_destroyed_elsewhere();
+    if (ret == CKR_OK)
+        ret = test_device_reseal();
+    if (ret == CKR_OK)
+        ret = test_device_policy_record();
+    if (ret == CKR_OK)
+        ret = test_device_record_tampered();
+    if (ret == CKR_OK)
+        ret = test_device_record_resealed();
+    if (ret == CKR_OK)
+        ret = test_device_sign_grows();
+    if (ret == CKR_OK)
+        ret = test_device_sign_grows_ok();
+    if (ret == CKR_OK)
+        ret = test_device_keygen_full();
+#else
+    if (ret == CKR_OK)
+        ret = test_device_unavailable();
+#endif
+    if (ret == CKR_OK)
+        ret = test_invalid_devid_software();
 #ifdef DEBUG_WOLFPKCS11
     if (ret == CKR_OK)
         ret = test_keygen_set_pin_race();
