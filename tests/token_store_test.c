@@ -81,10 +81,21 @@ static byte keyData[16] = { 0 };
     !defined(WOLFSSL_DEBUG_MEMORY) && !defined(NO_WOLFSSL_MEMORY)
 #define TEST_ALLOC_FAILURE
 static int failAllocs = 0;
+/* Allocations left before they fail, or -1 for no limit. */
+static int allocsLeft = -1;
+
+static int test_alloc_fails(void)
+{
+    if (allocsLeft == 0)
+        return 1;
+    if (allocsLeft > 0)
+        allocsLeft--;
+    return failAllocs;
+}
 
 static void* test_malloc(size_t n)
 {
-    if (failAllocs)
+    if (test_alloc_fails())
         return NULL;
     return malloc(n);
 }
@@ -96,7 +107,7 @@ static void test_free(void* p)
 
 static void* test_realloc(void* p, size_t n)
 {
-    if (failAllocs)
+    if (test_alloc_fails())
         return NULL;
     return realloc(p, n);
 }
@@ -1538,6 +1549,527 @@ static void test_init_token_removes_changed_type(void)
 #endif
 
 #ifdef TOKEN_STORE_FILE_TEST
+/* Close a pipe end once and mark it closed. */
+static void close_fd(int* fd)
+{
+    if (*fd >= 0) {
+        close(*fd);
+        *fd = -1;
+    }
+}
+
+/* A process that loaded the token before another one changed it does not
+ * write its older token back, and cannot change the token itself. */
+static void test_stale_process_does_not_store(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE first = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE second = CK_INVALID_HANDLE;
+    int toChild[2] = { -1, -1 };
+    int fromChild[2] = { -1, -1 };
+    pid_t pid = -1;
+    int status = 0;
+    char c = 0;
+
+    printf("\n--- a stale process does not store its older token ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "stale-first", &first);
+        CHECK_RV(rv, "create first token object", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "stale-second", &second);
+        CHECK_RV(rv, "create second token object", CKR_OK);
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK && (pipe(toChild) != 0 || pipe(fromChild) != 0))
+        rv = CKR_GENERAL_ERROR;
+
+    /* The child loads the token, waits for the parent's change, then tries
+     * to rename, destroy, create and change the PIN, and finalizes. */
+    if (rv == CKR_OK)
+        pid = fork();
+    if (pid == 0) {
+        CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+        CK_ULONG n = 0;
+        CK_ATTRIBUTE find = { CKA_LABEL, (CK_VOID_PTR)"stale-second", 12 };
+        CK_ATTRIBUTE rename = { CKA_LABEL, (CK_VOID_PTR)"stale-renamed", 13 };
+        int code = 0;
+
+        close_fd(&toChild[1]);
+        close_fd(&fromChild[0]);
+        if (lib_init() != CKR_OK || user_session(slot, &session) != CKR_OK ||
+                write(fromChild[1], &c, 1) != 1 ||
+                read(toChild[0], &c, 1) != 1) {
+            _exit(10);
+        }
+        if (funcList->C_FindObjectsInit(session, &find, 1) != CKR_OK ||
+                funcList->C_FindObjects(session, &obj, 1, &n) != CKR_OK ||
+                funcList->C_FindObjectsFinal(session) != CKR_OK || n != 1) {
+            _exit(11);
+        }
+        if (funcList->C_SetAttributeValue(session, obj, &rename, 1) == CKR_OK)
+            code |= 4;
+        if (count_label(session, "stale-second") != 1)
+            code |= 8;
+        if (funcList->C_DestroyObject(session, obj) == CKR_OK ||
+                count_label(session, "stale-second") != 1) {
+            code |= 16;
+        }
+        if (create_token_secret(session, "stale-child", &obj) == CKR_OK)
+            code |= 1;
+        if (funcList->C_SetPIN(session, (CK_UTF8CHAR_PTR)userPin,
+                (CK_ULONG)XSTRLEN(userPin), (CK_UTF8CHAR_PTR)"stale-new-pin",
+                13) == CKR_OK) {
+            code |= 32;
+        }
+        close_session(session);
+        if (funcList->C_Finalize(NULL) != CKR_OK)
+            code |= 2;
+        _exit(code);
+    }
+    close_fd(&toChild[0]);
+    close_fd(&fromChild[1]);
+    if (rv == CKR_OK && (pid < 0 || read(fromChild[0], &c, 1) != 1))
+        rv = CKR_GENERAL_ERROR;
+    if (rv == CKR_OK)
+        rv = reload(slot, &session);
+    if (rv == CKR_OK) {
+        rv = funcList->C_DestroyObject(session, first);
+        CHECK_RV(rv, "destroy in the other process", CKR_OK);
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    if (pid > 0) {
+        if (rv == CKR_OK && write(toChild[1], &c, 1) != 1)
+            rv = CKR_GENERAL_ERROR;
+        close_fd(&toChild[1]);
+        if (waitpid(pid, &status, 0) < 0 || !WIFEXITED(status))
+            status = -1;
+        CHECK_TRUE(status == 0,
+                   "stale process could not change the token, finalized");
+    }
+    if (rv == CKR_OK)
+        rv = reload(slot, &session);
+    CHECK_RV(rv, "reload with the old PIN", CKR_OK);
+    if (rv == CKR_OK) {
+        CHECK_TRUE(count_label(session, "stale-first") == 0,
+                   "destroyed object stays destroyed");
+        CHECK_TRUE(count_label(session, "stale-second") == 1,
+                   "other object is kept");
+        CHECK_TRUE(count_label(session, "stale-child") == 0,
+                   "stale process stored nothing");
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+    close_fd(&toChild[0]);
+    close_fd(&toChild[1]);
+    close_fd(&fromChild[0]);
+    close_fd(&fromChild[1]);
+}
+
+/* A stale process whose change is still waiting to be stored reports the
+ * loss at C_Finalize. */
+static void test_stale_finalize_reports_pending(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE rename = { CKA_LABEL, (CK_VOID_PTR)"pending-renamed", 15 };
+    int toChild[2] = { -1, -1 };
+    pid_t pid = -1;
+    int status = 0;
+    int blocked = 0;
+    char c = 0;
+
+    if (geteuid() == 0) {
+        printf("\nSkipping stale pending finalize test when run as root\n");
+        return;
+    }
+    printf("\n--- a stale C_Finalize reports a pending change ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "pending-first", &obj);
+        CHECK_RV(rv, "create token object", CKR_OK);
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK && pipe(toChild) != 0)
+        rv = CKR_GENERAL_ERROR;
+    if (rv == CKR_OK)
+        pid = fork();
+    if (pid == 0) {
+        close_fd(&toChild[1]);
+        if (read(toChild[0], &c, 1) != 1 || lib_init() != CKR_OK ||
+                user_session(slot, &session) != CKR_OK ||
+                create_token_secret(session, "pending-child", &obj) !=
+                    CKR_OK) {
+            _exit(1);
+        }
+        close_session(session);
+        _exit(funcList->C_Finalize(NULL) == CKR_OK ? 0 : 2);
+    }
+    close_fd(&toChild[0]);
+    if (rv == CKR_OK && pid < 0)
+        rv = CKR_GENERAL_ERROR;
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        CK_ULONG n = 0;
+        CK_ATTRIBUTE find = { CKA_LABEL, (CK_VOID_PTR)"pending-first", 13 };
+
+        rv = funcList->C_FindObjectsInit(session, &find, 1);
+        if (rv == CKR_OK)
+            rv = funcList->C_FindObjects(session, &obj, 1, &n);
+        (void)funcList->C_FindObjectsFinal(session);
+        if (rv == CKR_OK && n != 1)
+            rv = CKR_GENERAL_ERROR;
+    }
+    /* The change is kept in memory and left for a later pass. */
+    if (rv == CKR_OK && block_store_dir()) {
+        blocked = 1;
+        rv = funcList->C_SetAttributeValue(session, obj, &rename, 1);
+        (void)chmod(TEST_DIR, 0700);
+        CHECK_RV(rv, "rename while the store is blocked", CKR_OK);
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    if (pid > 0) {
+        if (rv == CKR_OK && write(toChild[1], &c, 1) != 1)
+            rv = CKR_GENERAL_ERROR;
+        close_fd(&toChild[1]);
+        if (waitpid(pid, &status, 0) < 0 || !WIFEXITED(status))
+            status = -1;
+        CHECK_TRUE(status == 0, "other process stores an object");
+    }
+    if (rv == CKR_OK && blocked) {
+        rv = funcList->C_Finalize(NULL);
+        CHECK_RV(rv, "stale finalize with a pending change",
+                 CKR_FUNCTION_FAILED);
+    }
+    else {
+        funcList->C_Finalize(NULL);
+    }
+    close_fd(&toChild[1]);
+}
+
+#ifdef TEST_ALLOC_FAILURE
+/* A C_SetAttributeValue that fails after changing an attribute leaves other
+ * processes out of date, so they cannot write the old attribute back. */
+static void test_partial_set_attr_advances(void)
+{
+    CK_RV rv;
+    CK_RV setRv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    static byte newId[32] = { 1 };
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_LABEL, (CK_VOID_PTR)"partial-renamed", 15            },
+        { CKA_ID,    newId,                          sizeof(newId) },
+    };
+    int toChild[2] = { -1, -1 };
+    int fromChild[2] = { -1, -1 };
+    pid_t pid = -1;
+    int status = 0;
+    int changed = 0;
+    int left;
+    char c = 0;
+
+    printf("\n--- a partly applied attribute change advances the count ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "partial-first", &obj);
+        CHECK_RV(rv, "create token object", CKR_OK);
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK && (pipe(toChild) != 0 || pipe(fromChild) != 0))
+        rv = CKR_GENERAL_ERROR;
+    if (rv == CKR_OK)
+        pid = fork();
+    if (pid == 0) {
+        int code = 0;
+
+        close_fd(&toChild[1]);
+        close_fd(&fromChild[0]);
+        if (lib_init() != CKR_OK || user_session(slot, &session) != CKR_OK ||
+                write(fromChild[1], &c, 1) != 1 ||
+                read(toChild[0], &c, 1) != 1) {
+            _exit(10);
+        }
+        if (create_token_secret(session, "partial-child", &obj) == CKR_OK)
+            code = 1;
+        close_session(session);
+        funcList->C_Finalize(NULL);
+        _exit(code);
+    }
+    close_fd(&toChild[0]);
+    close_fd(&fromChild[1]);
+    if (rv == CKR_OK && pid < 0)
+        rv = CKR_GENERAL_ERROR;
+    if (rv == CKR_OK && read(fromChild[0], &c, 1) != 1)
+        rv = CKR_GENERAL_ERROR;
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        CK_ULONG n = 0;
+        CK_ATTRIBUTE find = { CKA_LABEL, (CK_VOID_PTR)"partial-first", 13 };
+
+        rv = funcList->C_FindObjectsInit(session, &find, 1);
+        if (rv == CKR_OK)
+            rv = funcList->C_FindObjects(session, &obj, 1, &n);
+        (void)funcList->C_FindObjectsFinal(session);
+        if (rv == CKR_OK && n != 1)
+            rv = CKR_GENERAL_ERROR;
+    }
+    /* Fail one more allocation each time until the label is set first. */
+    for (left = 0; rv == CKR_OK && !changed && left < 16; left++) {
+        allocsLeft = left;
+        setRv = funcList->C_SetAttributeValue(session, obj, tmpl,
+                                              sizeof(tmpl) / sizeof(*tmpl));
+        allocsLeft = -1;
+        if (setRv == CKR_OK)
+            break;
+        changed = count_label(session, "partial-renamed") == 1;
+    }
+    CHECK_TRUE(changed, "set fails after changing the label");
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    if (rv == CKR_OK) {
+        rv = funcList->C_Finalize(NULL);
+        CHECK_RV(rv, "finalize stores the changed label", CKR_OK);
+    }
+    else {
+        funcList->C_Finalize(NULL);
+    }
+    if (pid > 0) {
+        if (write(toChild[1], &c, 1) != 1)
+            rv = CKR_GENERAL_ERROR;
+        close_fd(&toChild[1]);
+        if (waitpid(pid, &status, 0) < 0 || !WIFEXITED(status))
+            status = -1;
+        CHECK_TRUE(status == 0, "other process can no longer store");
+    }
+    if (rv == CKR_OK)
+        rv = reload(slot, &session);
+    CHECK_RV(rv, "reload", CKR_OK);
+    if (rv == CKR_OK) {
+        CHECK_TRUE(count_label(session, "partial-renamed") == 1,
+                   "changed label is stored");
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+    close_fd(&toChild[1]);
+    close_fd(&fromChild[0]);
+}
+#endif
+
+/* A process that finalizes with nothing to store leaves other processes able
+ * to change the token. */
+static void test_clean_finalize_keeps_others_current(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    int toChild[2] = { -1, -1 };
+    int fromChild[2] = { -1, -1 };
+    pid_t pid = -1;
+    int status = 0;
+    char c = 0;
+
+    printf("\n--- a clean C_Finalize keeps other processes current ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "clean-first", &obj);
+        CHECK_RV(rv, "create token object", CKR_OK);
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK && (pipe(toChild) != 0 || pipe(fromChild) != 0))
+        rv = CKR_GENERAL_ERROR;
+    if (rv == CKR_OK)
+        pid = fork();
+    if (pid == 0) {
+        int code = 0;
+
+        close_fd(&toChild[1]);
+        close_fd(&fromChild[0]);
+        if (lib_init() != CKR_OK || user_session(slot, &session) != CKR_OK ||
+                write(fromChild[1], &c, 1) != 1 ||
+                read(toChild[0], &c, 1) != 1) {
+            _exit(10);
+        }
+        if (create_token_secret(session, "clean-child", &obj) != CKR_OK)
+            code |= 1;
+        close_session(session);
+        if (funcList->C_Finalize(NULL) != CKR_OK)
+            code |= 2;
+        _exit(code);
+    }
+    close_fd(&toChild[0]);
+    close_fd(&fromChild[1]);
+    if (rv == CKR_OK && pid < 0)
+        rv = CKR_GENERAL_ERROR;
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK && read(fromChild[0], &c, 1) != 1)
+        rv = CKR_GENERAL_ERROR;
+    /* A rejected template changes nothing, so leaves nothing to store. */
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        CK_ULONG n = 0;
+        CK_ATTRIBUTE find = { CKA_LABEL, (CK_VOID_PTR)"clean-first", 11 };
+        CK_ATTRIBUTE uniqueId = { CKA_UNIQUE_ID, (CK_VOID_PTR)"x", 1 };
+
+        rv = funcList->C_FindObjectsInit(session, &find, 1);
+        if (rv == CKR_OK)
+            rv = funcList->C_FindObjects(session, &obj, 1, &n);
+        (void)funcList->C_FindObjectsFinal(session);
+        if (rv == CKR_OK && n != 1)
+            rv = CKR_GENERAL_ERROR;
+        if (rv == CKR_OK) {
+            rv = funcList->C_SetAttributeValue(session, obj, &uniqueId, 1);
+            CHECK_RV(rv, "rejected attribute change",
+                     CKR_ATTRIBUTE_READ_ONLY);
+            rv = CKR_OK;
+        }
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    if (rv == CKR_OK) {
+        rv = funcList->C_Finalize(NULL);
+        CHECK_RV(rv, "finalize with nothing to store", CKR_OK);
+    }
+    if (pid > 0) {
+        if (rv == CKR_OK && write(toChild[1], &c, 1) != 1)
+            rv = CKR_GENERAL_ERROR;
+        close_fd(&toChild[1]);
+        if (waitpid(pid, &status, 0) < 0 || !WIFEXITED(status))
+            status = -1;
+        CHECK_TRUE(status == 0, "other process can still create an object");
+    }
+    if (rv == CKR_OK)
+        rv = reload(slot, &session);
+    CHECK_RV(rv, "reload", CKR_OK);
+    if (rv == CKR_OK) {
+        CHECK_TRUE(count_label(session, "clean-child") == 1,
+                   "other process's object is stored");
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+    close_fd(&toChild[1]);
+    close_fd(&fromChild[0]);
+}
+#endif
+
+#if defined(TOKEN_STORE_FILE_TEST) && !defined(WOLFPKCS11_NO_TIME)
+/* A C_Finalize that stores a changed failed login count leaves other
+ * processes out of date, so they cannot write the old count back. */
+static void test_failed_login_finalize_advances(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    int toChild[2] = { -1, -1 };
+    int fromChild[2] = { -1, -1 };
+    pid_t pid = -1;
+    int status = 0;
+    char c = 0;
+    static const char wrongPin[] = "wrong-user-pin-1234";
+
+    printf("\n--- C_Finalize storing a failed login advances the count ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK && (pipe(toChild) != 0 || pipe(fromChild) != 0))
+        rv = CKR_GENERAL_ERROR;
+    if (rv == CKR_OK)
+        pid = fork();
+    if (pid == 0) {
+        int code = 0;
+
+        close_fd(&toChild[1]);
+        close_fd(&fromChild[0]);
+        if (lib_init() != CKR_OK || user_session(slot, &session) != CKR_OK ||
+                write(fromChild[1], &c, 1) != 1 ||
+                read(toChild[0], &c, 1) != 1) {
+            _exit(10);
+        }
+        if (create_token_secret(session, "login-child", &obj) == CKR_OK)
+            code |= 1;
+        close_session(session);
+        funcList->C_Finalize(NULL);
+        _exit(code);
+    }
+    close_fd(&toChild[0]);
+    close_fd(&fromChild[1]);
+    if (rv == CKR_OK && pid < 0)
+        rv = CKR_GENERAL_ERROR;
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK && read(fromChild[0], &c, 1) != 1)
+        rv = CKR_GENERAL_ERROR;
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(session, CKU_USER, (CK_UTF8CHAR_PTR)wrongPin,
+                               (CK_ULONG)XSTRLEN(wrongPin));
+        CHECK_RV(rv, "login with a wrong PIN", CKR_PIN_INCORRECT);
+        rv = (rv == CKR_PIN_INCORRECT) ? CKR_OK : CKR_GENERAL_ERROR;
+    }
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    session = CK_INVALID_HANDLE;
+    if (rv == CKR_OK) {
+        rv = funcList->C_Finalize(NULL);
+        CHECK_RV(rv, "finalize stores the failed login", CKR_OK);
+    }
+    if (pid > 0) {
+        if (rv == CKR_OK && write(toChild[1], &c, 1) != 1)
+            rv = CKR_GENERAL_ERROR;
+        close_fd(&toChild[1]);
+        if (waitpid(pid, &status, 0) < 0 || !WIFEXITED(status))
+            status = -1;
+        CHECK_TRUE(status == 0, "other process can no longer store");
+    }
+    close_fd(&toChild[1]);
+    close_fd(&fromChild[0]);
+}
+#endif
+
+#ifdef TOKEN_STORE_FILE_TEST
 /* Path of a stored record of the given kind at an object id. */
 static void record_path(const char* kind, CK_SLOT_ID slot, int objId,
                         char* path, size_t pathSz)
@@ -1690,9 +2222,16 @@ static int run_tests(void)
     test_destroy_reports_unstore_failure();
     test_destroy_unstored_object();
     test_load_record_without_trailing_fields();
+    test_stale_process_does_not_store();
+    test_clean_finalize_keeps_others_current();
+#ifndef WOLFPKCS11_NO_TIME
+    test_failed_login_finalize_advances();
+#endif
+    test_stale_finalize_reports_pending();
 #ifdef TEST_ALLOC_FAILURE
     test_init_out_of_memory();
     test_create_object_out_of_memory();
+    test_partial_set_attr_advances();
 #endif
 
     clear_store_dir();

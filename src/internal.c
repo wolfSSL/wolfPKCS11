@@ -1640,6 +1640,8 @@ typedef struct WP11_StoreBatch {
     int locked;
     int active;
     int failed;
+    word64 gen;
+    WP11_Token* genToken;
     size_t dirLen;
     char dir[WP11_STORE_MAX_PATH];
     char intentName[WP11_STORE_STAGED_MAX];
@@ -1926,6 +1928,77 @@ static int wolfPKCS11_StoreBatchRecover(void)
 }
 
 /**
+ * Read the count of committed store passes, kept in the lock file.
+ * Caller holds the lock file.
+ *
+ * @param [out]  gen  Count of passes, 0 when none was written.
+ * @return  0 on success.
+ * @return  READ_ONLY_E when the lock file cannot be read.
+ */
+static int wolfPKCS11_StoreBatchGen(word64* gen)
+{
+    byte buf[8];
+    int i;
+#if defined(_WIN32) || defined(_MSC_VER)
+    OVERLAPPED ov;
+    DWORD got = 0;
+
+    XMEMSET(&ov, 0, sizeof(ov));
+    if (!ReadFile(storeBatch.lockFile, buf, sizeof(buf), &got, &ov) &&
+            GetLastError() != ERROR_HANDLE_EOF) {
+        return READ_ONLY_E;
+    }
+#else
+    ssize_t got = pread(storeBatch.lockFd, buf, sizeof(buf), 0);
+
+    if (got < 0)
+        return READ_ONLY_E;
+#endif
+    *gen = 0;
+    if ((size_t)got == sizeof(buf)) {
+        for (i = 0; i < (int)sizeof(buf); i++)
+            *gen = (*gen << 8) | buf[i];
+    }
+    return 0;
+}
+
+/**
+ * Write the count of committed store passes durably to the lock file.
+ * Caller holds the lock file.
+ *
+ * @param [in]  gen  Count of passes.
+ * @return  0 on success.
+ * @return  READ_ONLY_E when the lock file cannot be written.
+ */
+static int wolfPKCS11_StoreBatchSetGen(word64 gen)
+{
+    byte buf[8];
+    int i;
+#if defined(_WIN32) || defined(_MSC_VER)
+    OVERLAPPED ov;
+    DWORD put = 0;
+#endif
+
+    for (i = (int)sizeof(buf) - 1; i >= 0; i--) {
+        buf[i] = (byte)gen;
+        gen >>= 8;
+    }
+#if defined(_WIN32) || defined(_MSC_VER)
+    XMEMSET(&ov, 0, sizeof(ov));
+    if (!WriteFile(storeBatch.lockFile, buf, sizeof(buf), &put, &ov) ||
+            put != sizeof(buf) || !FlushFileBuffers(storeBatch.lockFile)) {
+        return READ_ONLY_E;
+    }
+#else
+    if (pwrite(storeBatch.lockFd, buf, sizeof(buf), 0) !=
+            (ssize_t)sizeof(buf) || fsync(storeBatch.lockFd) != 0) {
+        return READ_ONLY_E;
+    }
+#endif
+    return 0;
+}
+
+/**
  * Bring the store for a token to a committed state before it is read. On
  * return the batch locks are held, so the token and object records read
  * until wolfPKCS11_StoreBatchRelease belong to one committed pass.
@@ -1982,6 +2055,33 @@ static void wolfPKCS11_StoreBatchRelease(WP11_Slot* held)
 }
 
 /**
+ * Read the count of committed store passes while the lock file is held.
+ *
+ * @param [in]   held  Slot returned by wolfPKCS11_StoreBatchCheck.
+ * @param [out]  gen   Count of passes.
+ * @return  0 on success.
+ * @return  READ_ONLY_E when the lock file is not held or cannot be read.
+ */
+static int wolfPKCS11_StoreBatchHeldGen(WP11_Slot* held, word64* gen)
+{
+    if (held == NULL || !storeBatch.locked)
+        return READ_ONLY_E;
+    return wolfPKCS11_StoreBatchGen(gen);
+}
+
+/**
+ * Check whether a store pass committed since the token read the count.
+ *
+ * @param [in]  token  Token object.
+ * @param [in]  gen    Count of passes on storage.
+ * @return  1 when the count moved or was never read, 0 otherwise.
+ */
+static int wp11_Token_GenMoved(WP11_Token* token, word64 gen)
+{
+    return !token->storeGenKnown || token->storeGen != gen;
+}
+
+/**
  * Start a store pass: records closed from now on are staged, not committed.
  * On success the batch locks are held until wolfPKCS11_StoreBatchEnd. When
  * the pass cannot start, nothing is written and the error is returned.
@@ -2020,6 +2120,9 @@ static int wolfPKCS11_StoreBatchBegin(int tokenId)
         ret = wolfPKCS11_StoreBatchLockFile(1);
     if (ret == 0)
         ret = wolfPKCS11_StoreBatchRecover();
+    if (ret == 0)
+        ret = wolfPKCS11_StoreBatchGen(&storeBatch.gen);
+    storeBatch.genToken = NULL;
     if (ret == 0) {
     #if defined(_WIN32) || defined(_MSC_VER)
         /* Create afresh without following a link planted at the name. */
@@ -2116,6 +2219,7 @@ static int wolfPKCS11_StoreBatchEnd(int commit, WP11_Slot** held)
 {
     int ret = 0;
     int hold = 0;
+    int bumped = 0;
     WP11_Slot* slot;
 
     if (held != NULL)
@@ -2136,6 +2240,11 @@ static int wolfPKCS11_StoreBatchEnd(int commit, WP11_Slot** held)
         /* The staged records must be durable before the marker can be. */
         if (ret == 0 && commit)
             ret = wolfPKCS11_StoreSyncDir(storeBatch.dir);
+        /* Written before the marker so a committed pass is always counted. */
+        if (ret == 0 && commit && storeBatch.genToken != NULL) {
+            bumped = 1;
+            ret = wolfPKCS11_StoreBatchSetGen(storeBatch.gen + 1);
+        }
         if (ret == 0 && commit) {
             ret = wolfPKCS11_StoreRename(storeBatch.intentName,
                 storeBatch.commitName);
@@ -2147,12 +2256,20 @@ static int wolfPKCS11_StoreBatchEnd(int commit, WP11_Slot** held)
                     wolfPKCS11_StoreSyncDir(storeBatch.dir) == 0) {
                 (void)remove(storeBatch.commitName);
             }
+            if (bumped) {
+                storeBatch.genToken->storeGen = storeBatch.gen + 1;
+                storeBatch.genToken->storeGenKnown = 1;
+                storeBatch.genToken->storeGenAdopt = 0;
+            }
         }
         else {
             (void)wolfPKCS11_StoreBatchApply(storeBatch.intentName,
                 WP11_BATCH_DISCARD);
             (void)remove(storeBatch.intentName);
+            if (bumped && wolfPKCS11_StoreBatchSetGen(storeBatch.gen) != 0)
+                storeBatch.genToken->storeGen = storeBatch.gen + 1;
         }
+        storeBatch.genToken = NULL;
         hold = (held != NULL && ret == 0 && commit);
         if (!hold)
             (void)wolfPKCS11_StoreBatchLockFile(0);
@@ -8108,6 +8225,10 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token)
 #ifdef WP11_STORE_BATCH
     /* Finish or drop an interrupted pass, then keep passes out until read. */
     ret = wolfPKCS11_StoreBatchCheck(tokenId, &batchHeld);
+    if (ret == 0 && wolfPKCS11_StoreBatchHeldGen(batchHeld,
+            &token->storeGen) == 0) {
+        token->storeGenKnown = 1;
+    }
 #endif
     /* Open access to token object. */
     if (ret == 0) {
@@ -8644,6 +8765,7 @@ static int wp11_Token_StoreSome(WP11_Token* token, int tokenId, int what,
     WP11_Object* only)
 {
     int ret;
+    int stale = 0;
 #ifdef WP11_STORE_BATCH
     int endRet;
     WP11_Slot* held = NULL;
@@ -8654,8 +8776,22 @@ static int wp11_Token_StoreSome(WP11_Token* token, int tokenId, int what,
 
 #ifdef WP11_STORE_BATCH
     ret = wolfPKCS11_StoreBatchBegin(tokenId);
-    if (ret == 0) {
-        ret = wp11_Token_StorePass(token, tokenId, what, only);
+    if (ret == 0 && storeBatch.active) {
+        /* Another process committed since this token was loaded, so this
+         * token would write over its changes. */
+        if (!token->storeGenAdopt && wp11_Token_GenMoved(token,
+                storeBatch.gen)) {
+            token->storeStale = 1;
+            stale = 1;
+            ret = BAD_STATE_E;
+        }
+        else if (!token->storeKeepGen) {
+            storeBatch.genToken = token;
+        }
+    }
+    if (ret == 0 || stale) {
+        if (ret == 0)
+            ret = wp11_Token_StorePass(token, tokenId, what, only);
         endRet = wolfPKCS11_StoreBatchEnd(ret == 0 || ret == NOT_AVAILABLE_E,
             token->storePurge ? &held : NULL);
         if (ret == 0)
@@ -8674,8 +8810,10 @@ static int wp11_Token_StoreSome(WP11_Token* token, int tokenId, int what,
     if (ret == 0) {
         if (what == WP11_STORE_PASS_ALL)
             token->storeDirty = 0;
+        if (what != WP11_STORE_PASS_OBJECT)
+            token->storeLoginDirty = 0;
     }
-    else {
+    else if (!stale) {
         token->storeDirty = 1;
         /* Storage is turned off: nothing to write is not an error. */
         if (ret == NOT_AVAILABLE_E)
@@ -9070,12 +9208,21 @@ int WP11_Library_Final(void)
 #ifndef WOLFPKCS11_NO_STORE
         /* Store the slots. */
         for (i = 0; i < slotCnt; i++) {
-            int storeRet = wp11_Slot_Store(&slotList[i], i + 1);
+            int storeRet;
+
+            /* A pass with nothing pending keeps other processes current. */
+            slotList[i].token.storeKeepGen = !slotList[i].token.storeDirty &&
+                !slotList[i].token.storeLoginDirty;
+            storeRet = wp11_Slot_Store(&slotList[i], i + 1);
+            slotList[i].token.storeKeepGen = 0;
         #ifdef DEBUG_WOLFPKCS11
             if (storeRet != 0) {
                 printf("Failed to store slot %d, ret: %d\n", i + 1, storeRet);
             }
         #endif
+            /* A stale token with nothing pending has nothing to store. */
+            if (slotList[i].token.storeStale && !slotList[i].token.storeDirty)
+                storeRet = 0;
             if (ret == 0)
                 ret = storeRet;
         }
@@ -9502,6 +9649,8 @@ int WP11_Slot_TokenReset(WP11_Slot* slot, char* pin, int pinLen, char* label)
     /* Records are named by id, so ids the new token does not reuse would keep
      * the old keys on storage. */
     token->storePurge = 1;
+    /* A new token replaces whatever another process stored. */
+    token->storeGenAdopt = 1;
 #endif
     /* C_InitToken is the canonical provisioning step. Mark the token as
      * initialized here rather than in wp11_Token_Init so a fresh slot stays
@@ -9590,11 +9739,14 @@ static int wp11_PinCheckReserve(int* failed, int* inFlight, time_t last,
  * @param  now         [in]      Current time.
  * @param  timeoutInc  [in]      Lockout duration added on each lockout.
  * @param  ret         [in]      Result of the PIN check.
+ * @return  1 when the counts changed, 0 otherwise.
  */
-static void wp11_PinCheckDone(int* failed, int* inFlight, time_t* last,
-                              time_t* timeout, int max, time_t now,
-                              time_t timeoutInc, int ret)
+static int wp11_PinCheckDone(int* failed, int* inFlight, time_t* last,
+                             time_t* timeout, int max, time_t now,
+                             time_t timeoutInc, int ret)
 {
+    int changed = 0;
+
     (*inFlight)--;
     if (ret == PIN_INVALID_E) {
         /* Concurrent failures must not push the count past the limit. */
@@ -9604,13 +9756,37 @@ static void wp11_PinCheckDone(int* failed, int* inFlight, time_t* last,
                 *last = now;
                 *timeout += timeoutInc;
             }
+            changed = 1;
         }
     }
-    else if (ret == 0) {
+    else if (ret == 0 && (*failed != 0 || *last != 0 || *timeout != 0)) {
         *failed = 0;
         *last = 0;
         *timeout = 0;
+        changed = 1;
     }
+
+    return changed;
+}
+
+/**
+ * Mark the failed login counts as changed since the token was stored.
+ *
+ * @param  token   [in]  Token object.
+ * @param  locked  [in]  1 when the caller holds the token lock.
+ */
+static void wp11_Token_LoginChanged(WP11_Token* token, int locked)
+{
+#ifndef WOLFPKCS11_NO_STORE
+    if (!locked)
+        WP11_Lock_LockRW(&token->lock);
+    token->storeLoginDirty = 1;
+    if (!locked)
+        WP11_Lock_UnlockRW(&token->lock);
+#else
+    (void)token;
+    (void)locked;
+#endif
 }
 #endif
 
@@ -9741,10 +9917,12 @@ int WP11_Slot_CheckSOPinLockout(WP11_Slot* slot, char* pin, int pinLen)
 
 #ifndef WOLFPKCS11_NO_TIME
     WP11_Lock_LockRW(&slot->lock);
-    wp11_PinCheckDone(&token->soFailedLogin, &token->soPinInFlight,
-                      &token->soLastFailedLogin, &token->soFailLoginTimeout,
-                      WP11_MAX_LOGIN_FAILS_SO, now, WP11_SO_LOGIN_FAIL_TIMEOUT,
-                      ret);
+    if (wp11_PinCheckDone(&token->soFailedLogin, &token->soPinInFlight,
+                          &token->soLastFailedLogin,
+                          &token->soFailLoginTimeout, WP11_MAX_LOGIN_FAILS_SO,
+                          now, WP11_SO_LOGIN_FAIL_TIMEOUT, ret)) {
+        wp11_Token_LoginChanged(token, 0);
+    }
     WP11_Lock_UnlockRW(&slot->lock);
 #endif
 
@@ -9878,10 +10056,13 @@ int WP11_Slot_SOLogin(WP11_Slot* slot, char* pin, int pinLen)
         ret = WP11_Slot_CheckSOPin(slot, pin, pinLen);
     #ifndef WOLFPKCS11_NO_TIME
         WP11_Lock_LockRW(&slot->lock);
-        wp11_PinCheckDone(&token->soFailedLogin, &token->soPinInFlight,
-                          &token->soLastFailedLogin,
-                          &token->soFailLoginTimeout, WP11_MAX_LOGIN_FAILS_SO,
-                          now, WP11_SO_LOGIN_FAIL_TIMEOUT, ret);
+        if (wp11_PinCheckDone(&token->soFailedLogin, &token->soPinInFlight,
+                              &token->soLastFailedLogin,
+                              &token->soFailLoginTimeout,
+                              WP11_MAX_LOGIN_FAILS_SO, now,
+                              WP11_SO_LOGIN_FAIL_TIMEOUT, ret)) {
+            wp11_Token_LoginChanged(token, 0);
+        }
         WP11_Lock_UnlockRW(&slot->lock);
     #endif
     }
@@ -10280,11 +10461,14 @@ int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen)
     }
 #ifndef WOLFPKCS11_NO_TIME
     /* A PIN changed during the check is not a failed guess. */
-    wp11_PinCheckDone(&token->userFailedLogin, &token->userPinInFlight,
-                      &token->userLastFailedLogin,
-                      &token->userFailLoginTimeout, WP11_MAX_LOGIN_FAILS_USER,
-                      now, WP11_USER_LOGIN_FAIL_TIMEOUT,
-                      pinChanged ? BAD_STATE_E : ret);
+    if (wp11_PinCheckDone(&token->userFailedLogin, &token->userPinInFlight,
+                          &token->userLastFailedLogin,
+                          &token->userFailLoginTimeout,
+                          WP11_MAX_LOGIN_FAILS_USER, now,
+                          WP11_USER_LOGIN_FAIL_TIMEOUT,
+                          pinChanged ? BAD_STATE_E : ret)) {
+        wp11_Token_LoginChanged(token, 1);
+    }
 #endif
     if (ret == 0) {
     #ifndef WOLFPKCS11_NO_STORE
@@ -10608,11 +10792,14 @@ static int wp11_Slot_SetUserPin(WP11_Slot* slot, char* oldPin, int oldPinLen,
     WP11_Lock_LockRW(&token->lock);
 #ifndef WOLFPKCS11_NO_TIME
     if (reserved) {
-        wp11_PinCheckDone(&token->userFailedLogin, &token->userPinInFlight,
-                          &token->userLastFailedLogin,
-                          &token->userFailLoginTimeout,
-                          WP11_MAX_LOGIN_FAILS_USER, now,
-                          WP11_USER_LOGIN_FAIL_TIMEOUT, oldPinRet);
+        if (wp11_PinCheckDone(&token->userFailedLogin,
+                              &token->userPinInFlight,
+                              &token->userLastFailedLogin,
+                              &token->userFailLoginTimeout,
+                              WP11_MAX_LOGIN_FAILS_USER, now,
+                              WP11_USER_LOGIN_FAIL_TIMEOUT, oldPinRet)) {
+            wp11_Token_LoginChanged(token, 1);
+        }
     }
 #endif
     if (ret == 0 && oldPin != NULL) {
@@ -13290,23 +13477,88 @@ int WP11_Object_OnToken(WP11_Object* object)
 }
 
 /**
- * Write a token object to storage after its attributes have changed.
- * Only the object's own records are written. Session objects are not stored.
- * The change is already live, so when the write fails the token is left
- * marked for a full store by its next store pass or C_Finalize.
+ * Check that a token object can be changed: no other process has committed
+ * a store pass since this process loaded the token.
+ *
+ * @param  object  [in]  Object object.
+ * @return  0 when the object can be changed or is not stored.
+ * @return  BAD_STATE_E when the token is out of date.
+ */
+int WP11_Object_CheckFresh(WP11_Object* object)
+{
+    int ret = 0;
+#if !defined(WOLFPKCS11_NO_STORE) && defined(WP11_STORE_BATCH)
+    WP11_Slot* slot = object->slot;
+    WP11_Token* token;
+    WP11_Slot* held = NULL;
+    word64 gen = 0;
+
+    if (!object->onToken || slot == NULL)
+        return 0;
+
+    token = &slot->token;
+    WP11_Lock_LockRW(&token->lock);
+    if (token->storeStale) {
+        ret = BAD_STATE_E;
+    }
+    else if (!token->storeGenAdopt) {
+        if (wolfPKCS11_StoreBatchCheck((int)slot->id, &held) == 0 &&
+                wolfPKCS11_StoreBatchHeldGen(held, &gen) == 0 &&
+                wp11_Token_GenMoved(token, gen)) {
+            token->storeStale = 1;
+            ret = BAD_STATE_E;
+        }
+        wolfPKCS11_StoreBatchRelease(held);
+    }
+    WP11_Lock_UnlockRW(&token->lock);
+#else
+    (void)object;
+#endif
+    return ret;
+}
+
+/**
+ * Mark the token of a token object as changed in memory and not yet stored,
+ * so the next store pass writes everything.
  *
  * @param  object  [in]  Object object.
  */
-void WP11_Object_Persist(WP11_Object* object)
+void WP11_Object_MarkDirty(WP11_Object* object)
 {
+#ifndef WOLFPKCS11_NO_STORE
+    WP11_Slot* slot = object->slot;
+
+    if (!object->onToken || slot == NULL)
+        return;
+
+    WP11_Lock_LockRW(&slot->token.lock);
+    slot->token.storeDirty = 1;
+    WP11_Lock_UnlockRW(&slot->token.lock);
+#else
+    (void)object;
+#endif
+}
+
+/**
+ * Write a token object to storage after its attributes have changed.
+ * Only the object's own records are written. Session objects are not stored.
+ * The change is already live, so a failed write leaves the token marked for a
+ * full store by a later pass, unless the token is out of date.
+ *
+ * @param  object  [in]  Object object.
+ * @return  0 when written, or when a failed write is left for a later pass.
+ * @return  BAD_STATE_E when the token is out of date and nothing is written.
+ */
+int WP11_Object_Persist(WP11_Object* object)
+{
+    int ret = 0;
 #ifndef WOLFPKCS11_NO_STORE
     WP11_Slot* slot = object->slot;
     WP11_Token* token;
     WP11_Object* curr;
-    int ret;
 
     if (!object->onToken || slot == NULL)
-        return;
+        return 0;
 
     token = &slot->token;
     WP11_Lock_LockRW(&token->lock);
@@ -13323,14 +13575,15 @@ void WP11_Object_Persist(WP11_Object* object)
             printf("Failed to store changed object, slot %d, ret: %d\n",
                 (int)slot->id, ret);
         }
-    #else
-        (void)ret;
     #endif
+        if (ret != 0 && !token->storeStale)
+            ret = 0;
     }
     WP11_Lock_UnlockRW(&token->lock);
 #else
     (void)object;
 #endif
+    return ret;
 }
 
 /**

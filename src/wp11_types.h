@@ -628,6 +628,13 @@ typedef struct WP11_Token {
                                         * token lock, unlike userPinEmpty.   */
     byte storePurge;                   /* Records the token does not use are
                                         * still to be removed                 */
+    byte storeLoginDirty;              /* Failed login counts changed since
+                                        * the token record was stored         */
+    word64 storeGen;                   /* Committed store passes when loaded  */
+    byte storeGenKnown;                /* storeGen was read from storage      */
+    byte storeGenAdopt;                /* Next pass takes the stored count    */
+    byte storeStale;                   /* Another process changed the store   */
+    byte storeKeepGen;                 /* Pass rewrites what is stored        */
 #endif
 } WP11_Token;
 

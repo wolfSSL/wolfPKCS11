@@ -1760,6 +1760,9 @@ static CK_RV CheckAttributeUpdate(WP11_Session* session, WP11_Object* obj,
  * @param  obj        [in]  Object to set value against.
  * @param  pTemplate  [in]  Template of attributes set against object.
  * @param  ulCount    [in]  Number of attribute triplets in template.
+ * @param  newObject  [in]  Whether the object is being created.
+ * @param  applied    [out] Set to 1 once the object starts to change. May be
+ *                          NULL.
  * @return  CKR_ARGUMENTS_BAD when pTemplate is NULL or ulCount is too large.
  *          CKR_SESSION_READ_ONLY when the session cannot modify objects.
  *          CKR_ATTRIBUTE_TYPE_INVALID if the attribute type is not supported.
@@ -1773,7 +1776,7 @@ static CK_RV CheckAttributeUpdate(WP11_Session* session, WP11_Object* obj,
  */
 static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
                                CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
-                               CK_BBOOL newObject)
+                               CK_BBOOL newObject, int* applied)
 {
     int ret = 0;
     CK_RV rv;
@@ -1950,6 +1953,8 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
         }
     }
 
+    if (applied != NULL)
+        *applied = 1;
     if (newObject == CK_TRUE || attrsFound == 1) {
         if (objClass == CKO_CERTIFICATE) {
             ret = WP11_Object_SetCert(obj, data, len);
@@ -2130,7 +2135,7 @@ static CK_RV NewObject(WP11_Session* session, CK_KEY_TYPE keyType,
         return CKR_FUNCTION_FAILED;
     }
 
-    rv = SetAttributeValue(session, obj, pTemplate, ulCount, CK_TRUE);
+    rv = SetAttributeValue(session, obj, pTemplate, ulCount, CK_TRUE, NULL);
     if (rv != CKR_OK) {
         WP11_Object_Free(obj);
         return rv;
@@ -2991,7 +2996,8 @@ static CK_RV wp11_C_CopyObject(CK_SESSION_HANDLE hSession,
     }
 
     if (pTemplate != NULL) {
-        rv = SetAttributeValue(session, newObj, pTemplate, ulCount, CK_FALSE);
+        rv = SetAttributeValue(session, newObj, pTemplate, ulCount, CK_FALSE,
+                               NULL);
         if (rv != CKR_OK) {
             WP11_Object_Free(newObj);
             return rv;
@@ -3078,6 +3084,11 @@ static CK_RV wp11_C_DestroyObject(CK_SESSION_HANDLE hSession,
     /* Only require R/W session for token objects */
     if (!WP11_Session_IsRW(session) && onToken) {
         rv = CKR_SESSION_READ_ONLY;
+        WOLFPKCS11_LEAVE("C_DestroyObject", rv);
+        return rv;
+    }
+    if (onToken && WP11_Object_CheckFresh(obj) != 0) {
+        rv = CKR_FUNCTION_FAILED;
         WOLFPKCS11_LEAVE("C_DestroyObject", rv);
         return rv;
     }
@@ -3397,6 +3408,7 @@ static CK_RV wp11_C_SetAttributeValue(CK_SESSION_HANDLE hSession,
     int ret;
     WP11_Session* session;
     WP11_Object* obj;
+    int applied = 0;
 
     WOLFPKCS11_ENTER("C_SetAttributeValue");
     #ifdef DEBUG_WOLFPKCS11
@@ -3448,11 +3460,18 @@ static CK_RV wp11_C_SetAttributeValue(CK_SESSION_HANDLE hSession,
     }
 
     rv = CheckCopyOnlyAttributes(obj, pTemplate, ulCount);
-    if (rv == CKR_OK)
-        rv = SetAttributeValue(session, obj, pTemplate, ulCount, CK_FALSE);
+    if (rv == CKR_OK && WP11_Object_CheckFresh(obj) != 0)
+        rv = CKR_FUNCTION_FAILED;
+    if (rv == CKR_OK) {
+        rv = SetAttributeValue(session, obj, pTemplate, ulCount, CK_FALSE,
+                               &applied);
+        /* A template that fails part way can leave attributes changed. */
+        if (rv != CKR_OK && applied)
+            WP11_Object_MarkDirty(obj);
+    }
     /* Token objects are only rewritten when they change, so write it now. */
-    if (rv == CKR_OK)
-        WP11_Object_Persist(obj);
+    if (rv == CKR_OK && WP11_Object_Persist(obj) != 0)
+        rv = CKR_FUNCTION_FAILED;
     WOLFPKCS11_LEAVE("C_SetAttributeValue", rv);
     return rv;
 }
