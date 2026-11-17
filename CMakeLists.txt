@@ -863,6 +863,16 @@ if(WOLFPKCS11_TESTS)
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/hbs_persistence_test.c)
         set_tests_properties(hbs_persistence_test PROPERTIES SKIP_RETURN_CODE 77)
     endif()
+
+    # LMS/HSS keygen and signing tests; each uses its own token directory.
+    add_wpkcs11_test(hbs_private_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/hbs_private_test.c)
+    set_tests_properties(hbs_private_test PROPERTIES SKIP_RETURN_CODE 77)
+    # Debug builds of the test call the library's WP11_Test_* hooks.
+    target_link_libraries(hbs_private_test wolfpkcs11)
+    add_wpkcs11_test(hss_concurrency_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/hss_concurrency_test.c)
+    set_tests_properties(hss_concurrency_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 if(WOLFPKCS11_EXAMPLES)
