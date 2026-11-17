@@ -109,6 +109,119 @@ With CMake, build wolfSSL with `-DBUILD_SHARED_LIBS=OFF` and
 `-DCMAKE_POSITION_INDEPENDENT_CODE=ON`, then configure wolfPKCS11 with
 `-DWOLFPKCS11_STATIC_WOLFSSL=yes`.
 
+### Optional: LMS/HSS Hash-Based Signatures (RFC 8554)
+
+Verification and public-key import for LMS/HSS are enabled with `--enable-lms`
+(or `WOLFPKCS11_LMS=yes` in CMake) and require a wolfSSL build with LMS support
+(`--enable-lms`, `WOLFSSL_HAVE_LMS`). LMS/HSS is a feature of PKCS#11 version
+3.2, so that support is enabled automatically.
+
+Key generation and signing are **EXPERIMENTAL** and off by default. Enable them
+with `--enable-lms-private` (or `WOLFPKCS11_LMS_PRIVATE=yes` in CMake), which
+implies `--enable-lms` and requires a *sign-capable* wolfSSL LMS build (full
+`--enable-lms`, not `--enable-lms=verify-only`). A token that holds an LMS/HSS
+private key loads only in builds with `--enable-lms-private`.
+
+LMS/HSS is a **stateful** signature scheme: every one-time-signature (OTS) leaf
+index must be used at most once, and reusing an index catastrophically breaks
+security. wolfPKCS11 therefore:
+
+* Requires stateful private keys to be token-resident (`CKA_TOKEN=TRUE`); a
+  session-only key that vanished on a crash could release a signature whose OTS
+  index was never persisted.
+* Stores the advanced key state durably (fsync plus atomic rename of the key
+  record) *before* each signature is released, so a crash or power loss cannot
+  roll the OTS index backwards. On a filesystem that cannot flush a directory,
+  signing fails.
+* Requires the user to be logged in for `C_GenerateKeyPair`, or a token with
+  an empty user PIN, because the state is encrypted with the user's token key.
+  Private keys cannot be imported with `C_CreateObject`, and cannot be copied
+  (`CKA_COPYABLE` is `CK_FALSE`).
+
+Because the signature state is durable and per-key, do not clone, snapshot, or
+restore the token storage directory of a machine that signs with LMS/HSS keys -
+rolling the key records back to an earlier point would reuse OTS indices.
+
+Key generation builds a whole tree at each level, so a single-level key of
+height 20 or 25 takes minutes to hours, and `C_GenerateKeyPair` blocks for that
+long. More levels of a lower height give as many signatures far faster, for
+example two levels of height 10 instead of one of height 20.
+
+#### Security model for stateful private keys
+
+The key record of each HSS private key holds its state, encrypted with AES-GCM
+under a key derived from the token key (itself derived from the user PIN) and a
+random salt, fresh for every write. The Additional Authenticated Data (AAD)
+binds the key's parameters (levels, LMS height, LMOTS Winternitz), its public
+key, a digest of its policy attributes and the running signature counter. The
+decrypted state is cleared with `wc_ForceZero` on every path.
+
+What this **detects and refuses** (fail-closed):
+
+* Tampering with or corruption of a key record - a flipped byte, a truncated
+  record, changed parameters or policy attributes - fails the AES-GCM
+  authentication or the record checks, and the key will not sign.
+* A state write that does not become durable (fsync/rename failure) - no
+  signature is released, and the next signature reloads the last durable state
+  first.
+* A stored state that moves backwards, or a record of another key at the key's
+  place, while the key is loaded - checked before every signature.
+
+Several processes can sign with the same key in one token directory. With the
+default file store, each signature takes a lock on the token directory and
+first reloads the state when another process, or a forked child, has signed
+since. When the lock file cannot be taken, the signature fails. A process that
+loaded the token before another process created, destroyed or changed an
+object loads the token again before its next change or login. Until then it
+can still sign, except with a key the other process moved, re-sealed after
+`C_SetPIN` or gave a new policy: those keys return `CKR_DEVICE_ERROR`. A
+signature started before the token was loaded again also returns
+`CKR_DEVICE_ERROR`; a new `C_SignInit` with the same handle signs from the
+current state. A signature first retries a store pass of its own that failed
+and is still pending; in a process that is behind another, that pass cannot
+succeed, so it cannot sign with any key until it initializes the library again.
+`C_DestroyObject` of any object other than the newest one moves the newest
+object into the freed place.
+`CKA_HSS_KEYS_REMAINING` shows the count as of the last signature in the
+reading process. Every process sharing a token directory must run the same
+wolfPKCS11 version. A custom store or the TPM store has no such lock, so use
+one signing process per token with those.
+
+Each signature waits for the state to be written durably, so a token makes
+about one signature per fsync; signatures of all HSS keys of a token run one
+at a time.
+
+What this **cannot** protect against (inherent to any software-only stateful
+scheme - handle operationally):
+
+* **Offline state rollback.** Anyone who can copy the token directory and later
+  restore it - a filesystem backup/restore, a VM or container snapshot, `cp`,
+  or block-level replication - resets the OTS counter and causes one-time-key
+  **reuse**, which breaks the signatures irrecoverably. Only a device with a
+  hardware monotonic counter can prevent this. Never restore or duplicate a
+  signing machine's token directory.
+
+HSS signing is not secret-input timing-sensitive the way an RSA/ECC private
+scalar is (the message and the tree position are not confidential), so no
+constant-time treatment beyond the existing token-key handling is required.
+
+A key that has used all its signatures, or whose record is damaged, stays
+visible: `C_FindObjects` returns it and `C_DestroyObject` removes it. A spent
+key reports `CKA_HSS_KEYS_REMAINING` of 0 and `C_Sign` returns
+`CKR_KEY_EXHAUSTED`; a damaged one returns `CKR_DEVICE_ERROR`. The other keys
+and the rest of the token, `C_SetPIN` included, keep working. A record that is
+there but cannot be read is not treated as damaged: the token does not load
+while it cannot be read, and once loaded, `C_SetPIN` fails and changes to that
+key are not stored until it can be read again.
+
+#### Stores
+
+With `WOLFPKCS11_CUSTOM_STORE`, keygen and signing also need
+`WOLFPKCS11_CUSTOM_STORE_CLOSE_COMMIT`, so that a signature is only released
+once the store reports the state committed. With `WOLFPKCS11_TPM_STORE`, each
+signature rewrites the key's NV index; consider the NV write endurance of the
+TPM.
+
 ### Build options and defines
 
 #### Define WOLFPKCS11_TPM_STORE
@@ -454,6 +567,8 @@ cmake -DCMAKE_PREFIX_PATH=/path/to/wolfssl/install ..
 | `WOLFPKCS11_PKCS11_V3_2` | `no` | PKCS#11 v3.2 support |
 | `WOLFPKCS11_MLDSA` | `no` | ML-DSA support |
 | `WOLFPKCS11_MLKEM` | `no` | ML-KEM support |
+| `WOLFPKCS11_LMS` | `no` | LMS/HSS verification and public-key import |
+| `WOLFPKCS11_LMS_PRIVATE` | `no` | LMS/HSS keygen + signing (EXPERIMENTAL, stateful private keys) |
 | `WOLFPKCS11_EXAMPLES` | `yes` | Build examples |
 | `WOLFPKCS11_TESTS` | `yes` | Build and register tests |
 | `WOLFPKCS11_COVERAGE` | `no` | Code coverage support |
