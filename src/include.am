@@ -8,7 +8,12 @@ src_libwolfpkcs11_la_SOURCES = \
         src/internal.c \
         src/wolfpkcs11.c \
         src/slot.c \
-        src/crypto.c
+        src/crypto.c \
+        src/hbs.c
+
+noinst_HEADERS += \
+        src/wp11_types.h \
+        src/hbs.h
 
 src_libwolfpkcs11_la_CFLAGS       = -DBUILDING_WOLFPKCS11 $(AM_CFLAGS)
 src_libwolfpkcs11_la_CPPFLAGS     = -DBUILDING_WOLFPKCS11 $(AM_CPPFLAGS)

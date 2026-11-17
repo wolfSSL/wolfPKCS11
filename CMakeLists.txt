@@ -618,6 +618,7 @@ set(LIB_SOURCES
     src/wolfpkcs11.c
     src/slot.c
     src/crypto.c
+    src/hbs.c
 )
 
 add_option("WOLFPKCS11_STATIC_WOLFSSL"

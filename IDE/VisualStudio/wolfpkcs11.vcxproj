@@ -36,11 +36,14 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\src\crypto.c" />
+    <ClCompile Include="..\..\src\hbs.c" />
     <ClCompile Include="..\..\src\internal.c" />
     <ClCompile Include="..\..\src\slot.c" />
     <ClCompile Include="..\..\src\wolfpkcs11.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\..\src\hbs.h" />
+    <ClInclude Include="..\..\src\wp11_types.h" />
     <ClInclude Include="..\..\wolfpkcs11\internal.h" />
     <ClInclude Include="..\..\wolfpkcs11\pkcs11.h" />
     <ClInclude Include="..\..\wolfpkcs11\store.h" />

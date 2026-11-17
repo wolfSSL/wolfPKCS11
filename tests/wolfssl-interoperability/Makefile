@@ -54,6 +54,7 @@ WOLFCRYPT_SRCS := \
 
 ENGINE_SRCS := \
     $(WOLFPKCS11_DIR)/src/internal.c \
+    $(WOLFPKCS11_DIR)/src/hbs.c \
     $(WOLFPKCS11_DIR)/src/wolfpkcs11.c \
     $(WOLFPKCS11_DIR)/src/slot.c \
     $(WOLFPKCS11_DIR)/src/crypto.c
