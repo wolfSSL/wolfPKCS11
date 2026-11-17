@@ -106,6 +106,9 @@ static int failWriteAt = -1;    /* Write to fail, counted by writeCnt */
 static int failReadOpenAt = -1; /* Open to fail, counted by readOpenCnt */
 static int failReadAt = -1;     /* Read to fail, counted by readCnt */
 static int failRemoveAt = -1;   /* Remove to fail, counted by removeCnt */
+static int failRemoveHssId = -1;   /* HSS key record id whose remove fails */
+static int failReadOpenHssId = -1; /* HSS key record id whose open fails */
+static int hssRemoveCnt;        /* Removes of HSS key records tried */
 static int rejectReserved;       /* Remove fails for reserved types */
 static int failCommitCode = STORE_FAIL_E;   /* Code of a failed commit */
 static int failOpenCode = STORE_FAIL_E;     /* Code of a failed write open */
@@ -183,7 +186,9 @@ int wolfPKCS11_Store_Open(int type, CK_ULONG id1, CK_ULONG id2, int read,
     StoreHandle* handle;
 
     *store = NULL;
-    if (read && readOpenCnt++ == failReadOpenAt) {
+    if (read && (readOpenCnt++ == failReadOpenAt ||
+            (type == WOLFPKCS11_STORE_HSSKEY_PRIV &&
+             (int)id2 == failReadOpenHssId))) {
         injectCnt++;
         return STORE_FAIL_E;
     }
@@ -213,7 +218,11 @@ int wolfPKCS11_Store_Remove(int type, CK_ULONG id1, CK_ULONG id2)
 {
     StoreRecord* rec = store_find(type, id1, id2);
 
-    if (removeCnt++ == failRemoveAt) {
+    if (type == WOLFPKCS11_STORE_HSSKEY_PRIV)
+        hssRemoveCnt++;
+    if (removeCnt++ == failRemoveAt ||
+            (type == WOLFPKCS11_STORE_HSSKEY_PRIV &&
+             (int)id2 == failRemoveHssId)) {
         injectCnt++;
         return STORE_FAIL_E;
     }
@@ -708,6 +717,368 @@ static int custom_store_test(void)
 
 #endif /* RUN_TEST */
 
+#if defined(WOLFPKCS11_LMS_PRIVATE) && \
+    defined(WOLFPKCS11_CUSTOM_STORE_CLOSE_COMMIT)
+/* Sign once with the HSS private key priv. */
+static CK_RV hss_sign(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE priv)
+{
+    CK_RV rv;
+    CK_MECHANISM mech = { CKM_HSS, NULL, 0 };
+    static CK_BYTE msg[] = "custom store";
+    static CK_BYTE sig[8192];
+    CK_ULONG sigLen = sizeof(sig);
+
+    rv = funcList->C_SignInit(session, &mech, priv);
+    if (rv == CKR_OK) {
+        rv = funcList->C_Sign(session, msg, sizeof(msg) - 1, sig, &sigLen);
+    }
+    return rv;
+}
+
+static CK_RV hss_find(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE* priv)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS privClass = CKO_PRIVATE_KEY;
+    CK_ATTRIBUTE tmpl = { CKA_CLASS, &privClass, sizeof(privClass) };
+    CK_ULONG cnt = 0;
+
+    rv = funcList->C_FindObjectsInit(session, &tmpl, 1);
+    if (rv == CKR_OK)
+        rv = funcList->C_FindObjects(session, priv, 1, &cnt);
+    (void)funcList->C_FindObjectsFinal(session);
+    if (rv == CKR_OK && cnt != 1)
+        rv = CKR_GENERAL_ERROR;
+    return rv;
+}
+
+/* An HSS key signs after a destroy moved it and the token record of that
+ * pass failed to commit, when every other record of the pass committed. */
+static int hss_store_test(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session;
+    CK_OBJECT_HANDLE pub, priv;
+    CK_ULONG levels = 1;
+    CK_ULONG lmsType = CKL_LMS_SHA256_M32_H5;
+    CK_ULONG lmotsType = CKL_LMOTS_SHA256_N32_W4;
+    CK_MECHANISM mech = { CKM_HSS_KEY_PAIR_GEN, NULL, 0 };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_TOKEN,          &ckTrue,    sizeof(ckTrue)    },
+        { CKA_HSS_LEVELS,     &levels,    sizeof(levels)    },
+        { CKA_HSS_LMS_TYPE,   &lmsType,   sizeof(lmsType)   },
+        { CKA_HSS_LMOTS_TYPE, &lmotsType, sizeof(lmotsType) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_TOKEN, &ckTrue, sizeof(ckTrue) },
+    };
+    int injected;
+
+    store_free();
+    rv = pkcs11_init();
+    CHECK_RV(rv, "Initialize");
+    rv = provision();
+    CHECK_RV(rv, "Provision token");
+    rv = open_user_session(&session);
+    CHECK_RV(rv, "Open user session");
+    rv = create_obj(session, "hssOld");
+    CHECK_RV(rv, "Create the object at id 0");
+    rv = funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+        sizeof(pubTmpl) / sizeof(pubTmpl[0]), privTmpl, 1, &pub, &priv);
+    CHECK_RV(rv, "HSS keygen");
+    rv = hss_sign(session, priv);
+    CHECK_RV(rv, "HSS sign");
+
+    /* The key moves into id 0: its object record, its key record and the
+     * old record's overwrite commit, then the token record does not. */
+    injected = injectCnt;
+    failCommitAt = commitCnt + 3;
+    rv = destroy_obj(session, "hssOld");
+    failCommitAt = -1;
+    CHECK(rv == CKR_FUNCTION_FAILED, "Failed commit fails the destroy");
+    CHECK(injectCnt == injected + 1, "Token record commit failed");
+    CHECK(store_find(WOLFPKCS11_STORE_HSSKEY_PRIV, slot, 0) != NULL,
+          "Key record stored at the new id");
+    rv = hss_sign(session, priv);
+    CHECK_RV(rv, "HSS sign after the failed pass");
+
+    (void)funcList->C_Logout(session);
+    (void)funcList->C_CloseSession(session);
+    (void)funcList->C_Finalize(NULL);
+    rv = pkcs11_init();
+    CHECK_RV(rv, "Initialize again");
+    rv = open_user_session(&session);
+    CHECK_RV(rv, "Open user session");
+    rv = hss_find(session, &priv);
+    CHECK_RV(rv, "Find the HSS key");
+    rv = hss_sign(session, priv);
+    CHECK_RV(rv, "HSS sign after a reload");
+    (void)funcList->C_Logout(session);
+    (void)funcList->C_CloseSession(session);
+    (void)funcList->C_Finalize(NULL);
+    return 0;
+}
+
+/* A loaded HSS key whose record is lost and that a destroy then moves stops
+ * signing, and the token keeps storing. */
+static int hss_lost_record_test(void)
+{
+    CK_RV rv;
+    int removes;
+    CK_SESSION_HANDLE session;
+    CK_OBJECT_HANDLE pub, priv;
+    CK_ULONG levels = 1;
+    CK_ULONG lmsType = CKL_LMS_SHA256_M32_H5;
+    CK_ULONG lmotsType = CKL_LMOTS_SHA256_N32_W4;
+    CK_MECHANISM mech = { CKM_HSS_KEY_PAIR_GEN, NULL, 0 };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_TOKEN,          &ckTrue,    sizeof(ckTrue)    },
+        { CKA_HSS_LEVELS,     &levels,    sizeof(levels)    },
+        { CKA_HSS_LMS_TYPE,   &lmsType,   sizeof(lmsType)   },
+        { CKA_HSS_LMOTS_TYPE, &lmotsType, sizeof(lmotsType) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_TOKEN, &ckTrue, sizeof(ckTrue) },
+    };
+
+    store_free();
+    rv = pkcs11_init();
+    CHECK_RV(rv, "Initialize");
+    rv = provision();
+    CHECK_RV(rv, "Provision token");
+    rv = open_user_session(&session);
+    CHECK_RV(rv, "Open user session");
+    rv = create_obj(session, "hssLostOld");
+    CHECK_RV(rv, "Create the object at id 0");
+    rv = funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+        sizeof(pubTmpl) / sizeof(pubTmpl[0]), privTmpl, 1, &pub, &priv);
+    CHECK_RV(rv, "HSS keygen");
+    rv = hss_sign(session, priv);
+    CHECK_RV(rv, "HSS sign");
+    CHECK(store_drop(WOLFPKCS11_STORE_HSSKEY_PRIV, 2), "Drop the key record");
+
+    rv = destroy_obj(session, "hssLostOld");
+    CHECK_RV(rv, "Destroy moves the key with a lost record");
+    CHECK(store_find(WOLFPKCS11_STORE_HSSKEY_PRIV, slot, 0) == NULL,
+          "No key record at the new id");
+    rv = hss_sign(session, priv);
+    CHECK(rv == CKR_DEVICE_ERROR, "Key with a lost record does not sign");
+    removes = hssRemoveCnt;
+    rv = create_obj(session, "hssLostNew");
+    CHECK_RV(rv, "Create after the move");
+    rv = destroy_obj(session, "hssLostNew");
+    CHECK_RV(rv, "Destroy after the move");
+    /* A failed pass makes the next one store every object. */
+    failCommitAt = commitCnt;
+    (void)create_obj(session, "hssLostFail");
+    failCommitAt = -1;
+    rv = create_obj(session, "hssLostRetry");
+    CHECK_RV(rv, "Create after a failed pass");
+    CHECK(hssRemoveCnt == removes, "Cleared id is not cleared again");
+
+    (void)funcList->C_Logout(session);
+    (void)funcList->C_CloseSession(session);
+    (void)funcList->C_Finalize(NULL);
+    rv = pkcs11_init();
+    CHECK_RV(rv, "Initialize again");
+    rv = open_user_session(&session);
+    CHECK_RV(rv, "Open user session");
+    rv = hss_find(session, &priv);
+    CHECK_RV(rv, "Find the HSS key");
+    rv = hss_sign(session, priv);
+    CHECK(rv == CKR_DEVICE_ERROR, "Key does not sign after a reload");
+    (void)funcList->C_Logout(session);
+    (void)funcList->C_CloseSession(session);
+    (void)funcList->C_Finalize(NULL);
+    return 0;
+}
+
+/* A record-less HSS key moved into a destroyed HSS key's id fails the pass
+ * while that key's record cannot be removed, so it never signs from it. */
+static int hss_clear_remove_test(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session;
+    CK_OBJECT_HANDLE pubD, privD, pubK, privK;
+    CK_ULONG levels = 1;
+    CK_ULONG lmsType = CKL_LMS_SHA256_M32_H5;
+    CK_ULONG lmotsType = CKL_LMOTS_SHA256_N32_W4;
+    CK_MECHANISM mech = { CKM_HSS_KEY_PAIR_GEN, NULL, 0 };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_TOKEN,          &ckTrue,    sizeof(ckTrue)    },
+        { CKA_HSS_LEVELS,     &levels,    sizeof(levels)    },
+        { CKA_HSS_LMS_TYPE,   &lmsType,   sizeof(lmsType)   },
+        { CKA_HSS_LMOTS_TYPE, &lmotsType, sizeof(lmotsType) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_TOKEN, &ckTrue, sizeof(ckTrue) },
+    };
+
+    store_free();
+    rv = pkcs11_init();
+    CHECK_RV(rv, "Initialize");
+    rv = provision();
+    CHECK_RV(rv, "Provision token");
+    rv = open_user_session(&session);
+    CHECK_RV(rv, "Open user session");
+    rv = funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+        sizeof(pubTmpl) / sizeof(pubTmpl[0]), privTmpl, 1, &pubD, &privD);
+    CHECK_RV(rv, "HSS keygen of the destroyed key");
+    rv = funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+        sizeof(pubTmpl) / sizeof(pubTmpl[0]), privTmpl, 1, &pubK, &privK);
+    CHECK_RV(rv, "HSS keygen of the moved key");
+    rv = hss_sign(session, privK);
+    CHECK_RV(rv, "HSS sign");
+    CHECK(store_drop(WOLFPKCS11_STORE_HSSKEY_PRIV, 3), "Drop the key record");
+
+    failRemoveHssId = 1;
+    rv = funcList->C_DestroyObject(session, privD);
+    failRemoveHssId = -1;
+    CHECK(rv == CKR_FUNCTION_FAILED, "Failed remove fails the destroy");
+    rv = create_obj(session, "hssClearNew");
+    CHECK_RV(rv, "Create redoes the pass");
+    CHECK(store_find(WOLFPKCS11_STORE_HSSKEY_PRIV, slot, 1) == NULL,
+          "Destroyed key's record removed");
+    rv = hss_sign(session, privK);
+    CHECK(rv == CKR_DEVICE_ERROR, "Moved key does not sign");
+
+    (void)funcList->C_Logout(session);
+    (void)funcList->C_CloseSession(session);
+    (void)funcList->C_Finalize(NULL);
+    rv = pkcs11_init();
+    CHECK_RV(rv, "Initialize again");
+    rv = open_user_session(&session);
+    CHECK_RV(rv, "Open user session");
+    rv = hss_find(session, &privK);
+    CHECK_RV(rv, "Find the moved key");
+    rv = hss_sign(session, privK);
+    CHECK(rv == CKR_DEVICE_ERROR, "Moved key does not sign after a reload");
+    (void)funcList->C_Logout(session);
+    (void)funcList->C_CloseSession(session);
+    (void)funcList->C_Finalize(NULL);
+    return 0;
+}
+
+/* A destroy that moves an HSS key fails while the key's record cannot be
+ * opened, and the key keeps its state. */
+static int hss_read_open_fail_test(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session;
+    CK_OBJECT_HANDLE pub, priv;
+    CK_ULONG levels = 1;
+    CK_ULONG lmsType = CKL_LMS_SHA256_M32_H5;
+    CK_ULONG lmotsType = CKL_LMOTS_SHA256_N32_W4;
+    CK_MECHANISM mech = { CKM_HSS_KEY_PAIR_GEN, NULL, 0 };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_TOKEN,          &ckTrue,    sizeof(ckTrue)    },
+        { CKA_HSS_LEVELS,     &levels,    sizeof(levels)    },
+        { CKA_HSS_LMS_TYPE,   &lmsType,   sizeof(lmsType)   },
+        { CKA_HSS_LMOTS_TYPE, &lmotsType, sizeof(lmotsType) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_TOKEN, &ckTrue, sizeof(ckTrue) },
+    };
+
+    store_free();
+    rv = pkcs11_init();
+    CHECK_RV(rv, "Initialize");
+    rv = provision();
+    CHECK_RV(rv, "Provision token");
+    rv = open_user_session(&session);
+    CHECK_RV(rv, "Open user session");
+    rv = create_obj(session, "hssOpenOld");
+    CHECK_RV(rv, "Create the object at id 0");
+    rv = funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+        sizeof(pubTmpl) / sizeof(pubTmpl[0]), privTmpl, 1, &pub, &priv);
+    CHECK_RV(rv, "HSS keygen");
+    rv = hss_sign(session, priv);
+    CHECK_RV(rv, "HSS sign");
+
+    failReadOpenHssId = 2;
+    rv = destroy_obj(session, "hssOpenOld");
+    failReadOpenHssId = -1;
+    CHECK(rv == CKR_FUNCTION_FAILED, "Failed open fails the move");
+    CHECK(store_find(WOLFPKCS11_STORE_HSSKEY_PRIV, slot, 2) != NULL,
+          "Key record kept at the old id");
+    rv = create_obj(session, "hssOpenNew");
+    CHECK_RV(rv, "Create redoes the pass");
+    CHECK(store_find(WOLFPKCS11_STORE_HSSKEY_PRIV, slot, 0) != NULL,
+          "Key record stored at the new id");
+    rv = hss_sign(session, priv);
+    CHECK_RV(rv, "HSS sign after the move");
+
+    (void)funcList->C_Logout(session);
+    (void)funcList->C_CloseSession(session);
+    (void)funcList->C_Finalize(NULL);
+    rv = pkcs11_init();
+    CHECK_RV(rv, "Initialize again");
+    rv = open_user_session(&session);
+    CHECK_RV(rv, "Open user session");
+    rv = hss_find(session, &priv);
+    CHECK_RV(rv, "Find the HSS key");
+    rv = hss_sign(session, priv);
+    CHECK_RV(rv, "HSS sign after a reload");
+    (void)funcList->C_Logout(session);
+    (void)funcList->C_CloseSession(session);
+    (void)funcList->C_Finalize(NULL);
+    return 0;
+}
+
+/* After a failed move, a new key stored over the moved key's old id does not
+ * make the moved key drop its state. */
+static int hss_failed_move_keygen_test(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session;
+    CK_OBJECT_HANDLE pub, priv, privN;
+    CK_ULONG levels = 1;
+    CK_ULONG lmsType = CKL_LMS_SHA256_M32_H5;
+    CK_ULONG lmotsType = CKL_LMOTS_SHA256_N32_W4;
+    CK_MECHANISM mech = { CKM_HSS_KEY_PAIR_GEN, NULL, 0 };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_TOKEN,          &ckTrue,    sizeof(ckTrue)    },
+        { CKA_HSS_LEVELS,     &levels,    sizeof(levels)    },
+        { CKA_HSS_LMS_TYPE,   &lmsType,   sizeof(lmsType)   },
+        { CKA_HSS_LMOTS_TYPE, &lmotsType, sizeof(lmotsType) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_TOKEN, &ckTrue, sizeof(ckTrue) },
+    };
+
+    store_free();
+    rv = pkcs11_init();
+    CHECK_RV(rv, "Initialize");
+    rv = provision();
+    CHECK_RV(rv, "Provision token");
+    rv = open_user_session(&session);
+    CHECK_RV(rv, "Open user session");
+    rv = create_obj(session, "hssMoveOld");
+    CHECK_RV(rv, "Create the object at id 0");
+    rv = funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+        sizeof(pubTmpl) / sizeof(pubTmpl[0]), privTmpl, 1, &pub, &priv);
+    CHECK_RV(rv, "HSS keygen");
+    rv = hss_sign(session, priv);
+    CHECK_RV(rv, "HSS sign");
+
+    failCommitAt = commitCnt;
+    rv = destroy_obj(session, "hssMoveOld");
+    failCommitAt = -1;
+    CHECK(rv == CKR_FUNCTION_FAILED, "Failed commit fails the move");
+    /* Only the new private key is a token object; it takes id 2. */
+    pubTmpl[0].pValue = &ckFalse;
+    rv = funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+        sizeof(pubTmpl) / sizeof(pubTmpl[0]), privTmpl, 1, &pub, &privN);
+    CHECK_RV(rv, "HSS keygen over the old id");
+    rv = hss_sign(session, priv);
+    CHECK_RV(rv, "Moved key signs");
+
+    (void)funcList->C_Logout(session);
+    (void)funcList->C_CloseSession(session);
+    (void)funcList->C_Finalize(NULL);
+    return 0;
+}
+#endif
+
 int main(int argc, char* argv[])
 {
 #ifdef RUN_TEST
@@ -722,6 +1093,19 @@ int main(int argc, char* argv[])
     printf("Custom store test (close only)\n");
 #endif
     ret = custom_store_test();
+#if defined(WOLFPKCS11_LMS_PRIVATE) && \
+    defined(WOLFPKCS11_CUSTOM_STORE_CLOSE_COMMIT)
+    if (ret == 0)
+        ret = hss_store_test();
+    if (ret == 0)
+        ret = hss_lost_record_test();
+    if (ret == 0)
+        ret = hss_clear_remove_test();
+    if (ret == 0)
+        ret = hss_failed_move_keygen_test();
+    if (ret == 0)
+        ret = hss_read_open_fail_test();
+#endif
     store_free();
     if (ret == 0)
         printf("All tests passed!\n");
