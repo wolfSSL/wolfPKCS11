@@ -473,6 +473,13 @@ versions may need to update templates or error-handling:
   templates, and after it has written to the token no version can use that
   key. An older wolfPKCS11 drops the `CKA_WRAP_TEMPLATE` of a public key when
   it rewrites the object.
+- Keys no longer default to crypto callback device id 0. Without a device
+  configured, the slot device id is `INVALID_DEVID` and keys use software. An
+  application that registered a callback at device id 0 and relied on that
+  default must build with `WOLFPKCS11_DEFAULT_DEVID=0`. Setting
+  `CKA_WOLFSSL_DEVID` on a key lasts only until the process ends, since the
+  attribute is not stored and keys loaded from the store, ML-DSA keys
+  included, take the slot device id.
 - With the file store, a process that loaded the token before another process
   stored a change loads the token again before it changes the token or logs
   in. Before, the two processes overwrote each other's changes. Object handles

@@ -22,6 +22,12 @@ tests_default_devid_pin_kdf_test_SOURCES = \
     tests/default_devid_pin_kdf_test.c
 tests_default_devid_pin_kdf_test_LDADD =
 
+check_PROGRAMS += tests/slot_devid_default_test
+noinst_PROGRAMS += tests/slot_devid_default_test
+tests_slot_devid_default_test_SOURCES = \
+    tests/slot_devid_default_test.c
+tests_slot_devid_default_test_LDADD =
+
 check_PROGRAMS += tests/token_path_test
 noinst_PROGRAMS += tests/token_path_test
 tests_token_path_test_SOURCES = tests/token_path_test.c
@@ -532,6 +538,7 @@ tests_pkcs11test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11mtt_LDADD  += src/libwolfpkcs11.la
 tests_pkcs11str_LDADD  += src/libwolfpkcs11.la
 tests_default_devid_pin_kdf_test_LDADD += src/libwolfpkcs11.la
+tests_slot_devid_default_test_LDADD += src/libwolfpkcs11.la
 tests_token_path_test_LDADD += src/libwolfpkcs11.la
 tests_rsa_session_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_debug_test_LDADD += src/libwolfpkcs11.la
