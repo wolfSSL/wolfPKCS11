@@ -669,7 +669,6 @@ WP11_LOCAL int WP11_Lock_LockRO(WP11_Lock* lock);
 WP11_LOCAL int WP11_Lock_UnlockRO(WP11_Lock* lock);
 #endif
 
-
 #ifndef WOLFPKCS11_NO_STORE
 WP11_LOCAL int wp11_storage_open_readonly(int type, CK_ULONG id1, CK_ULONG id2,
                                           void** storage);

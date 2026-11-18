@@ -343,8 +343,8 @@ int WP11_Hss_Verify(unsigned char* sig, word32 sigLen, unsigned char* data,
 }
 
 /* Serve HSS-specific attributes from a public-key object. */
-int HssObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
-                      byte* data, CK_ULONG* len)
+int wp11_HssObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
+                           byte* data, CK_ULONG* len)
 {
     int ret = 0;
     int levels = 0, height = 0, winternitz = 0;
@@ -484,14 +484,8 @@ int HssObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
     return ret;
 }
 
-/* Validate a supplied CKA_HSS_LMS_TYPES / CKA_HSS_LMOTS_TYPES array against the
- * imported public key. wolfSSL uses uniform LMS/LMOTS parameters across all HSS
- * levels, so a conforming array holds one CK_ULONG per level, each equal to the
- * single top-level type served by HssObject_GetAttr. A wrong length or any
- * differing entry is rejected so a malformed or mismatched template is not
- * silently accepted; a matching array (as read back from this key) is accepted.
- * Returns 0 when the array matches, BAD_FUNC_ARG otherwise. The caller holds the
- * object lock. */
+/* Check a supplied CKA_HSS_LMS_TYPES or CKA_HSS_LMOTS_TYPES array: one entry
+ * per level, each equal to the key type. Caller holds the object lock. */
 int wp11_HssCheckTypesAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
                            const byte* data, CK_ULONG len)
 {
@@ -799,8 +793,8 @@ int WP11_Xmss_Verify(unsigned char* sig, word32 sigLen, unsigned char* data,
 }
 
 /* Serve XMSS-specific attributes from a public-key object. */
-int XmssObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
-                       byte* data, CK_ULONG* len)
+int wp11_XmssObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
+                            byte* data, CK_ULONG* len)
 {
     int ret = 0;
 

@@ -28,14 +28,17 @@
 
 #ifdef WOLFPKCS11_LMS
 
+#ifndef WOLFPKCS11_NO_STORE
 WP11_LOCAL int wp11_Object_Encode_HssKey(WP11_Object* object);
 WP11_LOCAL int wp11_Object_Decode_HssKey(WP11_Object* object);
 WP11_LOCAL int wp11_Object_Load_HssKey(WP11_Object* object, int tokenId,
                                        int objId);
 WP11_LOCAL int wp11_Object_Store_HssKey(WP11_Object* object, int tokenId,
                                         int objId);
-WP11_LOCAL int HssObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
-                                 byte* data, CK_ULONG* len);
+#endif
+WP11_LOCAL int wp11_HssObject_GetAttr(WP11_Object* object,
+                                      CK_ATTRIBUTE_TYPE type,
+                                      byte* data, CK_ULONG* len);
 WP11_LOCAL int wp11_HssCheckTypesAttr(WP11_Object* object,
                                       CK_ATTRIBUTE_TYPE type, const byte* data,
                                       CK_ULONG len);
@@ -44,14 +47,17 @@ WP11_LOCAL int wp11_HssCheckTypesAttr(WP11_Object* object,
 
 #ifdef WOLFPKCS11_XMSS
 
+#ifndef WOLFPKCS11_NO_STORE
 WP11_LOCAL int wp11_Object_Encode_XmssKey(WP11_Object* object);
 WP11_LOCAL int wp11_Object_Decode_XmssKey(WP11_Object* object);
 WP11_LOCAL int wp11_Object_Load_XmssKey(WP11_Object* object, int tokenId,
                                         int objId);
 WP11_LOCAL int wp11_Object_Store_XmssKey(WP11_Object* object, int tokenId,
                                          int objId);
-WP11_LOCAL int XmssObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
-                                  byte* data, CK_ULONG* len);
+#endif
+WP11_LOCAL int wp11_XmssObject_GetAttr(WP11_Object* object,
+                                       CK_ATTRIBUTE_TYPE type,
+                                       byte* data, CK_ULONG* len);
 
 #endif /* WOLFPKCS11_XMSS */
 

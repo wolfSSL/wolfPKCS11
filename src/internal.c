@@ -15749,13 +15749,15 @@ int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
 #endif
 #ifdef WOLFPKCS11_LMS
                         case CKK_HSS:
-                            ret = HssObject_GetAttr(object, type, data, len);
+                            ret = wp11_HssObject_GetAttr(object, type, data,
+                                                         len);
                             break;
 #endif
 #ifdef WOLFPKCS11_XMSS
                         case CKK_XMSS:
                         case CKK_XMSSMT:
-                            ret = XmssObject_GetAttr(object, type, data, len);
+                            ret = wp11_XmssObject_GetAttr(object, type, data,
+                                                          len);
                             break;
 #endif
 #ifndef NO_AES
@@ -16342,23 +16344,15 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
             break;
         case CKA_HSS_LMS_TYPES:
         case CKA_HSS_LMOTS_TYPES:
-            /* Per-level type arrays are read-only and served uniformly by
-             * HssObject_GetAttr, but are not collected by the import pass, so a
-             * supplied array is validated against the key here: a malformed or
-             * mismatched one is rejected (CKR_ATTRIBUTE_VALUE_INVALID) rather
-             * than silently ignored, while a matching array read back from this
-             * key is accepted so recreating one from its own attributes works. */
+            /* Read-only, but the import pass does not check them, so a
+             * supplied array is checked against the key here. */
             if (object->type != CKK_HSS)
                 ret = BAD_FUNC_ARG;
             else
                 ret = wp11_HssCheckTypesAttr(object, type, data, len);
             break;
         case CKA_HSS_KEYS_REMAINING:
-            /* Remaining-signature count is a private-key/state property that a
-             * verify-only build never exposes (HssObject_GetAttr reports it
-             * unavailable, so a read-back template never carries it). It is not
-             * a settable value; reject any attempt to supply one rather than
-             * accepting it as a no-op. */
+            /* Read-only, and a verify-only build never reports it. */
             ret = BAD_FUNC_ARG;
             break;
 #endif
