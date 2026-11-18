@@ -309,10 +309,16 @@ versions may need to update templates or error-handling:
   key. An older wolfPKCS11 drops the `CKA_WRAP_TEMPLATE` of a public key when
   it rewrites the object.
 - With the file store, a process that loaded the token before another process
-  stored a change can no longer change the token until it initializes the
-  library again: its object creation, destruction, attribute changes and PIN
-  changes fail, and its `C_Finalize` writes nothing. Before, the two processes
-  overwrote each other's changes.
+  stored a change loads the token again before it changes the token or logs
+  in. Before, the two processes overwrote each other's changes. Object handles
+  stay valid, and a login ends when the other process changed its PIN. A
+  process that still holds a change it could not store cannot load the token
+  again: until it initializes the library again, changing the token returns
+  `CKR_TOKEN_WRITE_PROTECTED`, `C_GetTokenInfo` reports `CKF_WRITE_PROTECTED`
+  and `C_Finalize` fails. Calls that only read the token use it as loaded.
+  Older wolfPKCS11 versions do not take part in this, so processes sharing a
+  token directory should use the same version, and the lock file in that
+  directory must not be removed while they run.
 
 One known gap remains: `CKM_RSA_PKCS_OAEP` does not support an empty message,
 although PKCS#11 and RFC 8017 allow one. wolfCrypt rejects it on both sides, so

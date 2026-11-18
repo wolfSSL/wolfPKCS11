@@ -62,11 +62,19 @@
 #if defined(TOKEN_STORE_FILE_TEST) || defined(TOKEN_STORE_TPM_TEST)
 
 #include <dirent.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #define TEST_DIR "./store/token_store_test"
+
+/* A FIPS PBKDF2 does not hash a PIN shorter than 14 bytes. */
+#ifdef HAVE_FIPS
+    #define EMPTY_PIN_REFUSED(rv) ((rv) != CKR_OK)
+#else
+    #define EMPTY_PIN_REFUSED(rv) ((rv) == CKR_PIN_LEN_RANGE)
+#endif
 
 static const char* soPin = "password123456";
 static const char* userPin = "wolfpkcs11-test";
@@ -83,9 +91,14 @@ static byte keyData[16] = { 0 };
 static int failAllocs = 0;
 /* Allocations left before they fail, or -1 for no limit. */
 static int allocsLeft = -1;
+/* Allocation that fails alone, counted by allocCnt, or -1 for none. */
+static int failOnceAt = -1;
+static int allocCnt = 0;
 
 static int test_alloc_fails(void)
 {
+    if (failOnceAt >= 0 && allocCnt++ == failOnceAt)
+        return 1;
     if (allocsLeft == 0)
         return 1;
     if (allocsLeft > 0)
@@ -1558,22 +1571,23 @@ static void close_fd(int* fd)
     }
 }
 
-/* A process that loaded the token before another one changed it does not
- * write its older token back, and cannot change the token itself. */
-static void test_stale_process_does_not_store(void)
+/* A process that loaded the token before another one changed it loads the
+ * token again before changing it, so it does not write its older token back
+ * and its own changes are kept. */
+static void test_stale_process_reloads(void)
 {
     CK_RV rv;
     CK_SLOT_ID slot = 0;
     CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE first = CK_INVALID_HANDLE;
-    CK_OBJECT_HANDLE second = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
     int toChild[2] = { -1, -1 };
     int fromChild[2] = { -1, -1 };
     pid_t pid = -1;
     int status = 0;
     char c = 0;
 
-    printf("\n--- a stale process does not store its older token ---\n");
+    printf("\n--- a stale process loads the token again ---\n");
     rv = token_setup(&slot);
     CHECK_RV(rv, "token setup", CKR_OK);
     if (rv == CKR_OK)
@@ -1583,8 +1597,12 @@ static void test_stale_process_does_not_store(void)
         CHECK_RV(rv, "create first token object", CKR_OK);
     }
     if (rv == CKR_OK) {
-        rv = create_token_secret(session, "stale-second", &second);
+        rv = create_token_secret(session, "stale-second", &obj);
         CHECK_RV(rv, "create second token object", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "stale-third", &obj);
+        CHECK_RV(rv, "create third token object", CKR_OK);
     }
     close_session(session);
     session = CK_INVALID_HANDLE;
@@ -1592,47 +1610,46 @@ static void test_stale_process_does_not_store(void)
     if (rv == CKR_OK && (pipe(toChild) != 0 || pipe(fromChild) != 0))
         rv = CKR_GENERAL_ERROR;
 
-    /* The child loads the token, waits for the parent's change, then tries
-     * to rename, destroy, create and change the PIN, and finalizes. */
+    /* The child finds its objects, waits for the parent's destroy, then
+     * renames, destroys and creates through the handles it already has. */
     if (rv == CKR_OK)
         pid = fork();
     if (pid == 0) {
-        CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+        CK_OBJECT_HANDLE second = CK_INVALID_HANDLE;
+        CK_OBJECT_HANDLE third = CK_INVALID_HANDLE;
         CK_ULONG n = 0;
-        CK_ATTRIBUTE find = { CKA_LABEL, (CK_VOID_PTR)"stale-second", 12 };
+        CK_ATTRIBUTE find2 = { CKA_LABEL, (CK_VOID_PTR)"stale-second", 12 };
+        CK_ATTRIBUTE find3 = { CKA_LABEL, (CK_VOID_PTR)"stale-third", 11 };
         CK_ATTRIBUTE rename = { CKA_LABEL, (CK_VOID_PTR)"stale-renamed", 13 };
         int code = 0;
 
         close_fd(&toChild[1]);
         close_fd(&fromChild[0]);
-        if (lib_init() != CKR_OK || user_session(slot, &session) != CKR_OK ||
-                write(fromChild[1], &c, 1) != 1 ||
-                read(toChild[0], &c, 1) != 1) {
+        if (lib_init() != CKR_OK || user_session(slot, &session) != CKR_OK)
             _exit(10);
-        }
-        if (funcList->C_FindObjectsInit(session, &find, 1) != CKR_OK ||
-                funcList->C_FindObjects(session, &obj, 1, &n) != CKR_OK ||
+        if (funcList->C_FindObjectsInit(session, &find2, 1) != CKR_OK ||
+                funcList->C_FindObjects(session, &second, 1, &n) != CKR_OK ||
+                funcList->C_FindObjectsFinal(session) != CKR_OK || n != 1 ||
+                funcList->C_FindObjectsInit(session, &find3, 1) != CKR_OK ||
+                funcList->C_FindObjects(session, &third, 1, &n) != CKR_OK ||
                 funcList->C_FindObjectsFinal(session) != CKR_OK || n != 1) {
             _exit(11);
         }
-        if (funcList->C_SetAttributeValue(session, obj, &rename, 1) == CKR_OK)
-            code |= 4;
-        if (count_label(session, "stale-second") != 1)
-            code |= 8;
-        if (funcList->C_DestroyObject(session, obj) == CKR_OK ||
-                count_label(session, "stale-second") != 1) {
-            code |= 16;
-        }
-        if (create_token_secret(session, "stale-child", &obj) == CKR_OK)
+        if (write(fromChild[1], &c, 1) != 1 || read(toChild[0], &c, 1) != 1)
+            _exit(12);
+        if (funcList->C_SetAttributeValue(session, second, &rename, 1) !=
+                CKR_OK) {
             code |= 1;
-        if (funcList->C_SetPIN(session, (CK_UTF8CHAR_PTR)userPin,
-                (CK_ULONG)XSTRLEN(userPin), (CK_UTF8CHAR_PTR)"stale-new-pin",
-                13) == CKR_OK) {
-            code |= 32;
         }
+        if (funcList->C_DestroyObject(session, third) != CKR_OK)
+            code |= 2;
+        if (create_token_secret(session, "stale-child", &obj) != CKR_OK)
+            code |= 4;
+        if (count_label(session, "stale-first") != 0)
+            code |= 8;
         close_session(session);
         if (funcList->C_Finalize(NULL) != CKR_OK)
-            code |= 2;
+            code |= 16;
         _exit(code);
     }
     close_fd(&toChild[0]);
@@ -1654,19 +1671,20 @@ static void test_stale_process_does_not_store(void)
         close_fd(&toChild[1]);
         if (waitpid(pid, &status, 0) < 0 || !WIFEXITED(status))
             status = -1;
-        CHECK_TRUE(status == 0,
-                   "stale process could not change the token, finalized");
+        CHECK_TRUE(status == 0, "stale process changed the current token");
     }
     if (rv == CKR_OK)
         rv = reload(slot, &session);
-    CHECK_RV(rv, "reload with the old PIN", CKR_OK);
+    CHECK_RV(rv, "reload", CKR_OK);
     if (rv == CKR_OK) {
         CHECK_TRUE(count_label(session, "stale-first") == 0,
                    "destroyed object stays destroyed");
-        CHECK_TRUE(count_label(session, "stale-second") == 1,
-                   "other object is kept");
-        CHECK_TRUE(count_label(session, "stale-child") == 0,
-                   "stale process stored nothing");
+        CHECK_TRUE(count_label(session, "stale-renamed") == 1,
+                   "stale process's rename is stored");
+        CHECK_TRUE(count_label(session, "stale-third") == 0,
+                   "stale process's destroy is stored");
+        CHECK_TRUE(count_label(session, "stale-child") == 1,
+                   "stale process's object is stored");
     }
     close_session(session);
     funcList->C_Finalize(NULL);
@@ -1675,6 +1693,3202 @@ static void test_stale_process_does_not_store(void)
     close_fd(&fromChild[0]);
     close_fd(&fromChild[1]);
 }
+
+static const char reloadPin[] = "reload-new-pin";
+static byte reloadKey[16] = {
+    0x52, 0x45, 0x4c, 0x4f, 0x41, 0x44, 0x2d, 0x4b,
+    0x45, 0x59, 0x2d, 0x56, 0x41, 0x4c, 0x55, 0x45
+};
+
+/* Fork a child that waits for a byte on *go, then makes its change with its
+ * own library instance and exits with the change's result. */
+static pid_t fork_changer(int (*change)(CK_SLOT_ID slot), CK_SLOT_ID slot,
+                          int* go)
+{
+    int fds[2];
+    pid_t pid;
+    char c;
+
+    if (pipe(fds) != 0)
+        return -1;
+    pid = fork();
+    if (pid == 0) {
+        close(fds[1]);
+        if (read(fds[0], &c, 1) != 1)
+            _exit(10);
+        _exit(change(slot));
+    }
+    close(fds[0]);
+    if (pid < 0) {
+        close(fds[1]);
+        return -1;
+    }
+    *go = fds[1];
+    return pid;
+}
+
+/* Let the child of fork_changer make its change and wait for it.
+ * Returns its exit code, or -1 when it did not exit normally. */
+static int run_changer(pid_t pid, int go)
+{
+    char c = 0;
+    int status = 0;
+
+    if (write(go, &c, 1) != 1)
+        status = -1;
+    close(go);
+    if (waitpid(pid, &status, 0) < 0 || !WIFEXITED(status))
+        return -1;
+    return WEXITSTATUS(status);
+}
+
+static int change_pin(CK_SLOT_ID slot)
+{
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    int code = 0;
+
+    if (lib_init() != CKR_OK || user_session(slot, &session) != CKR_OK)
+        return 20;
+    if (funcList->C_SetPIN(session, (CK_UTF8CHAR_PTR)userPin,
+            (CK_ULONG)XSTRLEN(userPin), (CK_UTF8CHAR_PTR)reloadPin,
+            (CK_ULONG)XSTRLEN(reloadPin)) != CKR_OK) {
+        code |= 1;
+    }
+    close_session(session);
+    if (funcList->C_Finalize(NULL) != CKR_OK)
+        code |= 2;
+    return code;
+}
+
+/* Store a public object without logging in, so the failed logins stay. */
+static int change_add_public(CK_SLOT_ID slot)
+{
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,   &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN,   &ckTrue,    sizeof(ckTrue)    },
+        { CKA_PRIVATE, &ckFalse,   sizeof(ckFalse)   },
+    };
+    int code = 0;
+
+    if (lib_init() != CKR_OK)
+        return 20;
+    if (funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+            NULL, NULL, &session) != CKR_OK ||
+            funcList->C_CreateObject(session, tmpl,
+            sizeof(tmpl) / sizeof(*tmpl), &obj) != CKR_OK) {
+        code |= 1;
+    }
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    if (funcList->C_Finalize(NULL) != CKR_OK)
+        code |= 2;
+    return code;
+}
+
+/* A PIN change that cannot be stored leaves no change to store, so the
+ * token loads again after another process stores. */
+static void test_failed_pin_change_reloads(int so)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,   &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN,   &ckTrue,    sizeof(ckTrue)    },
+        { CKA_PRIVATE, &ckFalse,   sizeof(ckFalse)   },
+    };
+    const char* pin = so ? soPin : userPin;
+    static const char newPin[] = "unstored-new-pin";
+    pid_t pid = -1;
+    int go = -1;
+
+    if (geteuid() == 0) {
+        printf("\nSkipping failed PIN change reload test when run as root\n");
+        return;
+    }
+    printf("\n--- %s PIN change that cannot be stored keeps reloading ---\n",
+           so ? "SO" : "user");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        pid = fork_changer(change_add_public, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(session, so ? CKU_SO : CKU_USER,
+                               (CK_UTF8CHAR_PTR)pin, (CK_ULONG)XSTRLEN(pin));
+        CHECK_RV(rv, "login", CKR_OK);
+    }
+    if (rv == CKR_OK && block_store_dir()) {
+        rv = funcList->C_SetPIN(session, (CK_UTF8CHAR_PTR)pin,
+                                (CK_ULONG)XSTRLEN(pin),
+                                (CK_UTF8CHAR_PTR)newPin,
+                                (CK_ULONG)XSTRLEN(newPin));
+        (void)chmod(TEST_DIR, 0700);
+        CHECK_TRUE(rv != CKR_OK, "PIN change reports the store failure");
+        if (pid > 0) {
+            CHECK_TRUE(run_changer(pid, go) == 0, "other process stores");
+            pid = -1;
+        }
+        rv = funcList->C_CreateObject(session, tmpl,
+            sizeof(tmpl) / sizeof(*tmpl), &obj);
+        CHECK_RV(rv, "token loads again and stores", CKR_OK);
+    }
+    if (pid > 0)
+        (void)run_changer(pid, go);
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+/* Log in as the user in a new session and close it. */
+static CK_RV login_user(CK_SLOT_ID slot)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+
+    rv = user_session(slot, &session);
+    close_session(session);
+    return rv;
+}
+
+/* A store whose freshness cannot be checked refuses a login. */
+static void test_unchecked_store_refuses_login(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    char path[256];
+    FILE* f;
+    int fd;
+
+    printf("\n--- a store that cannot be checked refuses a login ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK) {
+        /* A commit marker naming a cut-short line cannot be finished. */
+        (void)snprintf(path, sizeof(path), "%s/wp11_txn_%016lx_commit",
+                       TEST_DIR, (unsigned long)slot);
+        f = fopen(path, "wb");
+        if (f != NULL) {
+            (void)fputs("wp11_cut", f);
+            fclose(f);
+        }
+        CHECK_TRUE(login_user(slot) != CKR_OK,
+                   "unfinished pass refuses login");
+        (void)remove(path);
+        CHECK_RV(login_user(slot), "login once the pass is gone", CKR_OK);
+    }
+    (void)snprintf(path, sizeof(path), "%s/wp11_txn_%016lx_lock", TEST_DIR,
+                   (unsigned long)slot);
+    if (rv == CKR_OK && geteuid() != 0 && chmod(path, 0) == 0) {
+        fd = open(path, O_RDWR);
+        if (fd >= 0) {
+            close(fd);
+            printf("Skipping: lock file cannot be made unreadable\n");
+        }
+        else {
+            CHECK_TRUE(login_user(slot) != CKR_OK,
+                       "unreadable lock file refuses login");
+        }
+        (void)chmod(path, 0600);
+        CHECK_RV(login_user(slot), "login once the lock is readable", CKR_OK);
+    }
+    funcList->C_Finalize(NULL);
+}
+
+static int change_user_pin_empty(CK_SLOT_ID slot)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    int code = 0;
+
+    if (lib_init() != CKR_OK || user_session(slot, &session) != CKR_OK)
+        return 20;
+    rv = funcList->C_SetPIN(session, (CK_UTF8CHAR_PTR)userPin,
+                            (CK_ULONG)XSTRLEN(userPin), (CK_UTF8CHAR_PTR)"", 0);
+    if (EMPTY_PIN_REFUSED(rv))
+        code = 30;
+    else if (rv != CKR_OK)
+        code |= 1;
+    close_session(session);
+    if (funcList->C_Finalize(NULL) != CKR_OK)
+        code |= 2;
+    return code;
+}
+
+/* A user PIN emptied by another process leaves the token key usable. */
+static void test_reload_to_empty_pin_keeps_key(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE found = CK_INVALID_HANDLE;
+    CK_ULONG cnt = 0;
+    byte value[sizeof(keyData)];
+    CK_ATTRIBUTE label = { CKA_LABEL, (CK_VOID_PTR)"emptied-pin-key", 15 };
+    CK_ATTRIBUTE get = { CKA_VALUE, value, sizeof(value) };
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,     &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE,  &genericType, sizeof(genericType) },
+        { CKA_VALUE,     keyData,      sizeof(keyData)     },
+        { CKA_TOKEN,     &ckTrue,      sizeof(ckTrue)      },
+        { CKA_PRIVATE,   &ckFalse,     sizeof(ckFalse)     },
+        { CKA_SENSITIVE,   &ckFalse,   sizeof(ckFalse)     },
+        { CKA_EXTRACTABLE, &ckTrue,    sizeof(ckTrue)      },
+        { CKA_LABEL,     (CK_VOID_PTR)"emptied-pin-key", 15 },
+    };
+    pid_t pid = -1;
+    int go = -1;
+    int code = -1;
+
+    printf("\n--- a user PIN emptied by another process ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        pid = fork_changer(change_user_pin_empty, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (pid > 0)
+        code = run_changer(pid, go);
+    if (code == 30) {
+        printf("Skipping: empty PINs are not allowed\n");
+        rv = CKR_GENERAL_ERROR;
+    }
+    else {
+        CHECK_TRUE(code == 0, "other process empties the PIN");
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, tmpl,
+            sizeof(tmpl) / sizeof(*tmpl), &obj);
+        CHECK_RV(rv, "login ended by the PIN change", CKR_USER_NOT_LOGGED_IN);
+        rv = funcList->C_CreateObject(session, tmpl,
+            sizeof(tmpl) / sizeof(*tmpl), &obj);
+        CHECK_RV(rv, "key created after the reload", CKR_OK);
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION, NULL, NULL,
+                                     &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(session, CKU_USER, (CK_UTF8CHAR_PTR)"", 0);
+        CHECK_RV(rv, "login with the empty PIN", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_FindObjectsInit(session, &label, 1);
+        if (rv == CKR_OK) {
+            rv = funcList->C_FindObjects(session, &found, 1, &cnt);
+            funcList->C_FindObjectsFinal(session);
+        }
+        CHECK_TRUE(rv == CKR_OK && cnt == 1, "key found after reloading");
+        if (cnt == 1) {
+            XMEMSET(value, 0xff, sizeof(value));
+            rv = funcList->C_GetAttributeValue(session, found, &get, 1);
+            CHECK_TRUE(rv == CKR_OK &&
+                       XMEMCMP(value, keyData, sizeof(value)) == 0,
+                       "key value readable after reloading");
+        }
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+#ifdef WOLFPKCS11_NSS
+/* NSS sets the first user PIN in a SO session with an empty PIN. */
+static void test_nss_init_pin_without_store_dir(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+
+    printf("\n--- NSS sets the first PIN before the store exists ---\n");
+    clear_store_dir();
+    (void)rmdir(TEST_DIR);
+    rv = lib_init();
+    if (rv == CKR_OK)
+        rv = first_slot(&slot);
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(session, CKU_SO, (CK_UTF8CHAR_PTR)"", 0);
+        CHECK_RV(rv, "empty SO PIN login", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_InitPIN(session, (CK_UTF8CHAR_PTR)userPin,
+                                 (CK_ULONG)XSTRLEN(userPin));
+        CHECK_RV(rv, "first user PIN set", CKR_OK);
+        funcList->C_Logout(session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(session, CKU_USER, (CK_UTF8CHAR_PTR)userPin,
+                               (CK_ULONG)XSTRLEN(userPin));
+        CHECK_RV(rv, "login with the first user PIN", CKR_OK);
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+    (void)mkdir(TEST_DIR, 0700);
+}
+#endif
+
+static int change_add(CK_SLOT_ID slot)
+{
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,       &secretClass,   sizeof(secretClass) },
+        { CKA_KEY_TYPE,    &genericType,   sizeof(genericType) },
+        { CKA_VALUE,       reloadKey,      sizeof(reloadKey)   },
+        { CKA_TOKEN,       &ckTrue,        sizeof(ckTrue)      },
+        { CKA_SENSITIVE,   &ckFalse,       sizeof(ckFalse)     },
+        { CKA_EXTRACTABLE, &ckTrue,        sizeof(ckTrue)      },
+        { CKA_LABEL,       (CK_VOID_PTR)"reload-child", 12     },
+    };
+    int code = 0;
+
+    if (lib_init() != CKR_OK || user_session(slot, &session) != CKR_OK)
+        return 20;
+    if (funcList->C_CreateObject(session, tmpl, sizeof(tmpl) / sizeof(*tmpl),
+            &obj) != CKR_OK) {
+        code |= 1;
+    }
+    close_session(session);
+    if (funcList->C_Finalize(NULL) != CKR_OK)
+        code |= 2;
+    return code;
+}
+
+/* C_Login checks the PIN another process stored after this one loaded the
+ * token. */
+static void test_stale_login_sees_new_pin(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    pid_t pid = -1;
+    int go = -1;
+
+    printf("\n--- login checks a PIN another process changed ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        pid = fork_changer(change_pin, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (pid > 0) {
+        CHECK_TRUE(run_changer(pid, go) == 0, "other process changes the PIN");
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(session, CKU_USER, (CK_UTF8CHAR_PTR)userPin,
+                               (CK_ULONG)XSTRLEN(userPin));
+        CHECK_RV(rv, "old PIN is refused", CKR_PIN_INCORRECT);
+        rv = funcList->C_Login(session, CKU_USER, (CK_UTF8CHAR_PTR)reloadPin,
+                               (CK_ULONG)XSTRLEN(reloadPin));
+        CHECK_RV(rv, "new PIN logs in", CKR_OK);
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+/* Loading the token again keeps the login when the PIN is unchanged, and the
+ * objects it loads are usable. */
+static void test_reload_keeps_login(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    CK_SESSION_INFO info;
+    pid_t pid = -1;
+    int go = -1;
+
+    printf("\n--- loading the token again keeps the login ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        pid = fork_changer(change_add, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (pid > 0) {
+        CHECK_TRUE(run_changer(pid, go) == 0,
+                   "other process stores an object");
+    }
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "reload-parent", &obj);
+        CHECK_RV(rv, "create after the other process stored", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        CK_ULONG n = 0;
+        CK_ATTRIBUTE find = { CKA_LABEL, (CK_VOID_PTR)"reload-child", 12 };
+        byte value[sizeof(reloadKey)];
+        CK_ATTRIBUTE get = { CKA_VALUE, value, sizeof(value) };
+
+        XMEMSET(value, 0xff, sizeof(value));
+        rv = funcList->C_FindObjectsInit(session, &find, 1);
+        if (rv == CKR_OK)
+            rv = funcList->C_FindObjects(session, &obj, 1, &n);
+        (void)funcList->C_FindObjectsFinal(session);
+        if (rv == CKR_OK && n != 1)
+            rv = CKR_GENERAL_ERROR;
+        if (rv == CKR_OK)
+            rv = funcList->C_GetAttributeValue(session, obj, &get, 1);
+        CHECK_TRUE(rv == CKR_OK && get.ulValueLen == sizeof(reloadKey) &&
+                   XMEMCMP(value, reloadKey, sizeof(reloadKey)) == 0,
+                   "other process's key is usable");
+        rv = funcList->C_GetSessionInfo(session, &info);
+        CHECK_TRUE(rv == CKR_OK && info.state == CKS_RW_USER_FUNCTIONS,
+                   "session is still logged in");
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK)
+        rv = reload(slot, &session);
+    CHECK_RV(rv, "reload", CKR_OK);
+    if (rv == CKR_OK) {
+        CHECK_TRUE(count_label(session, "reload-child") == 1,
+                   "other process's object is stored");
+        CHECK_TRUE(count_label(session, "reload-parent") == 1,
+                   "this process's object is stored");
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+/* Loading the token again after another process changed the PIN ends the
+ * login, and the private object being created is not added. */
+static void test_reload_ends_login_on_pin_change(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    CK_SESSION_INFO info;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    static byte dataValue[4] = { 1, 2, 3, 4 };
+    CK_ATTRIBUTE dataTmpl[] = {
+        { CKA_CLASS,   &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN,   &ckTrue,    sizeof(ckTrue)    },
+        { CKA_PRIVATE, &ckTrue,    sizeof(ckTrue)    },
+        { CKA_VALUE,   dataValue,  sizeof(dataValue) },
+    };
+    pid_t pid = -1;
+    int go = -1;
+
+    printf("\n--- a PIN changed by another process ends the login ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        pid = fork_changer(change_pin, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (pid > 0) {
+        CHECK_TRUE(run_changer(pid, go) == 0, "other process changes the PIN");
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, dataTmpl,
+            sizeof(dataTmpl) / sizeof(*dataTmpl), &obj);
+        CHECK_RV(rv, "private object is not added", CKR_USER_NOT_LOGGED_IN);
+        rv = (rv == CKR_USER_NOT_LOGGED_IN) ? CKR_OK : CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_GetSessionInfo(session, &info);
+        CHECK_TRUE(rv == CKR_OK && info.state == CKS_RW_PUBLIC_SESSION,
+                   "session is logged out");
+        rv = funcList->C_Login(session, CKU_USER, (CK_UTF8CHAR_PTR)reloadPin,
+                               (CK_ULONG)XSTRLEN(reloadPin));
+        CHECK_RV(rv, "login with the new PIN", CKR_OK);
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+static const char reloadSoPin[] = "reload-new-so-pin";
+
+static int change_so_pin(CK_SLOT_ID slot)
+{
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    int code = 0;
+
+    if (lib_init() != CKR_OK)
+        return 20;
+    if (funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+            NULL, NULL, &session) != CKR_OK ||
+            funcList->C_Login(session, CKU_SO, (CK_UTF8CHAR_PTR)soPin,
+            (CK_ULONG)XSTRLEN(soPin)) != CKR_OK) {
+        code |= 1;
+    }
+    else if (funcList->C_SetPIN(session, (CK_UTF8CHAR_PTR)soPin,
+            (CK_ULONG)XSTRLEN(soPin), (CK_UTF8CHAR_PTR)reloadSoPin,
+            (CK_ULONG)XSTRLEN(reloadSoPin)) != CKR_OK) {
+        code |= 2;
+    }
+    close_session(session);
+    if (funcList->C_Finalize(NULL) != CKR_OK)
+        code |= 4;
+    return code;
+}
+
+/* C_InitPIN does not set the user PIN once loading the token again ended the
+ * SO login. */
+static void test_init_pin_after_so_pin_change(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    static const char newPin[] = "init-pin-stale";
+    pid_t pid = -1;
+    int go = -1;
+
+    printf("\n--- C_InitPIN after another process changed the SO PIN ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        pid = fork_changer(change_so_pin, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(session, CKU_SO, (CK_UTF8CHAR_PTR)soPin,
+                               (CK_ULONG)XSTRLEN(soPin));
+        CHECK_RV(rv, "SO login", CKR_OK);
+    }
+    if (pid > 0) {
+        CHECK_TRUE(run_changer(pid, go) == 0,
+                   "other process changes the SO PIN");
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_InitPIN(session, (CK_UTF8CHAR_PTR)newPin,
+                                 (CK_ULONG)XSTRLEN(newPin));
+        CHECK_RV(rv, "user PIN is not set", CKR_USER_NOT_LOGGED_IN);
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+/* C_SetPIN does not change the user PIN once loading the token again ended
+ * the SO login. */
+static void test_set_pin_after_so_pin_change(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    static const char newPin[] = "set-pin-stale";
+    pid_t pid = -1;
+    int go = -1;
+
+    printf("\n--- C_SetPIN after another process changed the SO PIN ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        pid = fork_changer(change_so_pin, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(session, CKU_SO, (CK_UTF8CHAR_PTR)soPin,
+                               (CK_ULONG)XSTRLEN(soPin));
+        CHECK_RV(rv, "SO login", CKR_OK);
+    }
+    if (pid > 0) {
+        CHECK_TRUE(run_changer(pid, go) == 0,
+                   "other process changes the SO PIN");
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_SetPIN(session, (CK_UTF8CHAR_PTR)soPin,
+                                (CK_ULONG)XSTRLEN(soPin),
+                                (CK_UTF8CHAR_PTR)newPin,
+                                (CK_ULONG)XSTRLEN(newPin));
+        CHECK_RV(rv, "no PIN is changed", CKR_USER_NOT_LOGGED_IN);
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+#ifdef HAVE_ECC
+static CK_OBJECT_HANDLE endKey = CK_INVALID_HANDLE;
+
+/* Destroy the key whose operation this process runs. */
+static int change_destroy_key(CK_SLOT_ID slot)
+{
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    int code = 0;
+
+    if (lib_init() != CKR_OK || user_session(slot, &session) != CKR_OK)
+        return 20;
+    if (funcList->C_DestroyObject(session, endKey) != CKR_OK)
+        code |= 1;
+    close_session(session);
+    if (funcList->C_Finalize(NULL) != CKR_OK)
+        code |= 2;
+    return code;
+}
+
+/* Destroying a key ends an operation that runs on the copy a reload
+ * replaced, whether this process or another one destroys it. */
+static void test_op_ends_on_destroyed_key(int elsewhere)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_SESSION_HANDLE other = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    CK_MECHANISM genMech = { CKM_EC_KEY_PAIR_GEN, NULL, 0 };
+    CK_MECHANISM mech = { CKM_ECDSA_SHA256, NULL, 0 };
+    static CK_BYTE p256[] = {
+        0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07
+    };
+    static CK_BYTE msg[] = "message";
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_EC_PARAMS, p256,    sizeof(p256)   },
+        { CKA_TOKEN,     &ckTrue, sizeof(ckTrue) },
+        { CKA_VERIFY,    &ckTrue, sizeof(ckTrue) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_TOKEN,     &ckTrue, sizeof(ckTrue) },
+        { CKA_SIGN,      &ckTrue, sizeof(ckTrue) },
+    };
+    pid_t pid = -1;
+    int go = -1;
+
+    printf("\n--- destroying a key %s ends its operation ---\n",
+           elsewhere ? "in another process" : "after a reload");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = funcList->C_GenerateKeyPair(session, &genMech, pubTmpl,
+            sizeof(pubTmpl) / sizeof(*pubTmpl), privTmpl,
+            sizeof(privTmpl) / sizeof(*privTmpl), &pub, &endKey);
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        pid = fork_changer(elsewhere ? change_destroy_key : change_add, slot,
+                           &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &other);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_SignInit(session, &mech, endKey);
+        if (rv == CKR_OK)
+            rv = funcList->C_SignUpdate(session, msg, sizeof(msg) - 1);
+        CHECK_RV(rv, "sign started", CKR_OK);
+    }
+    if (pid > 0) {
+        CHECK_TRUE(run_changer(pid, go) == 0, "other process stores");
+    }
+    if (rv == CKR_OK) {
+        rv = create_token_secret(other, "end-reload", &obj);
+        CHECK_RV(rv, "token loaded again", CKR_OK);
+    }
+    if (rv == CKR_OK && !elsewhere) {
+        rv = funcList->C_DestroyObject(other, endKey);
+        CHECK_RV(rv, "key destroyed", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_SignUpdate(session, msg, sizeof(msg) - 1);
+        CHECK_TRUE(rv != CKR_OK, "operation on the destroyed key ended");
+    }
+    close_session(other);
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
+#if !defined(NO_AES) && defined(HAVE_AES_CBC)
+/* A derive from a token key another process stored after this one loaded
+ * the token takes the key's handle as valid. */
+static void test_derive_after_other_store(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE baseTmpl[] = {
+        { CKA_CLASS,    &secretClass,  sizeof(secretClass)   },
+        { CKA_KEY_TYPE, &aesType,      sizeof(aesType)       },
+        { CKA_VALUE,    deriveBaseKey, sizeof(deriveBaseKey) },
+        { CKA_TOKEN,    &ckTrue,       sizeof(ckTrue)        },
+        { CKA_DERIVE,   &ckTrue,       sizeof(ckTrue)        },
+        { CKA_LABEL,    (CK_VOID_PTR)"stale-base", 10        },
+    };
+    pid_t pid = -1;
+    int go = -1;
+
+    printf("\n--- derive after another process stored ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, baseTmpl,
+                                      sizeof(baseTmpl) / sizeof(*baseTmpl),
+                                      &base);
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        pid = fork_changer(change_add, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (pid > 0) {
+        CHECK_TRUE(run_changer(pid, go) == 0, "other process stores");
+    }
+    if (rv == CKR_OK) {
+        rv = derive_token_secret(session, base, "stale-derived", &derived);
+        CHECK_RV(rv, "derive from the stored key", CKR_OK);
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
+/* C_InitToken checks the SO PIN another process stored. */
+static void test_init_token_sees_new_so_pin(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    unsigned char label[32];
+    pid_t pid = -1;
+    int go = -1;
+
+    printf("\n--- C_InitToken checks an SO PIN another process changed ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        pid = fork_changer(change_so_pin, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (pid > 0) {
+        CHECK_TRUE(run_changer(pid, go) == 0,
+                   "other process changes the SO PIN");
+    }
+    XMEMSET(label, ' ', sizeof(label));
+    XMEMCPY(label, tokenLabel, XSTRLEN(tokenLabel));
+    if (rv == CKR_OK) {
+        rv = funcList->C_InitToken(slot, (CK_UTF8CHAR_PTR)soPin,
+                                   (CK_ULONG)XSTRLEN(soPin), label);
+        CHECK_RV(rv, "old SO PIN is refused", CKR_PIN_INCORRECT);
+        rv = funcList->C_InitToken(slot, (CK_UTF8CHAR_PTR)reloadSoPin,
+                                   (CK_ULONG)XSTRLEN(reloadSoPin), label);
+        CHECK_RV(rv, "new SO PIN resets the token", CKR_OK);
+    }
+    funcList->C_Finalize(NULL);
+}
+
+#ifdef TEST_ALLOC_FAILURE
+/* A template that fails after changing an attribute is undone. */
+static void test_partial_set_attr_undone(void)
+{
+    CK_RV rv;
+    CK_RV setRv = CKR_GENERAL_ERROR;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    static byte newId[32] = { 2 };
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_LABEL, (CK_VOID_PTR)"undo-renamed", 12            },
+        { CKA_ID,    newId,                       sizeof(newId) },
+    };
+    int at;
+    int partial = 0;
+
+    printf("\n--- a partly applied attribute change is undone ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "undo-first", &obj);
+        CHECK_RV(rv, "create token object", CKR_OK);
+    }
+    /* Fail each allocation in turn until the template is set. */
+    for (at = 0; rv == CKR_OK && setRv != CKR_OK && at < 32; at++) {
+        allocCnt = 0;
+        failOnceAt = at;
+        setRv = funcList->C_SetAttributeValue(session, obj, tmpl,
+            sizeof(tmpl) / sizeof(*tmpl));
+        failOnceAt = -1;
+        if (setRv != CKR_OK && count_label(session, "undo-renamed") != 0)
+            partial = 1;
+    }
+    CHECK_TRUE(setRv == CKR_OK, "template is set once memory is available");
+    CHECK_TRUE(!partial, "a failed template leaves the label unchanged");
+    if (rv == CKR_OK) {
+        CK_SESSION_INFO info;
+
+        rv = funcList->C_GetSessionInfo(session, &info);
+        CHECK_TRUE(rv == CKR_OK && info.state == CKS_RW_USER_FUNCTIONS,
+                   "failed allocations leave the login");
+    }
+    close_session(session);
+    rv = funcList->C_Finalize(NULL);
+    CHECK_RV(rv, "finalize", CKR_OK);
+}
+#endif
+
+static int change_empty_pin(CK_SLOT_ID slot)
+{
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    int code = 0;
+
+    if (lib_init() != CKR_OK)
+        return 20;
+    if (funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+            NULL, NULL, &session) != CKR_OK ||
+            funcList->C_SetPIN(session, (CK_UTF8CHAR_PTR)"", 0,
+            (CK_UTF8CHAR_PTR)reloadPin, (CK_ULONG)XSTRLEN(reloadPin)) !=
+            CKR_OK) {
+        code |= 1;
+    }
+    close_session(session);
+    if (funcList->C_Finalize(NULL) != CKR_OK)
+        code |= 2;
+    return code;
+}
+
+/* A token with an empty user PIN that another process gives a PIN does not
+ * get keys encrypted under the empty PIN's key. */
+static void test_reload_drops_empty_pin_key(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    unsigned char label[32];
+    pid_t pid = -1;
+    int go = -1;
+
+    printf("\n--- an empty user PIN set by another process ---\n");
+#ifdef TOKEN_STORE_FILE_TEST
+    clear_store_dir();
+#endif
+    rv = lib_init();
+    if (rv == CKR_OK)
+        rv = first_slot(&slot);
+    XMEMSET(label, ' ', sizeof(label));
+    XMEMCPY(label, tokenLabel, XSTRLEN(tokenLabel));
+    if (rv == CKR_OK) {
+        rv = funcList->C_InitToken(slot, (CK_UTF8CHAR_PTR)soPin,
+                                   (CK_ULONG)XSTRLEN(soPin), label);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(session, CKU_SO, (CK_UTF8CHAR_PTR)soPin,
+                               (CK_ULONG)XSTRLEN(soPin));
+    }
+    if (rv == CKR_OK)
+        rv = funcList->C_InitPIN(session, (CK_UTF8CHAR_PTR)"", 0);
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    if (EMPTY_PIN_REFUSED(rv)) {
+        printf("Skipping: empty PINs are not allowed\n");
+        return;
+    }
+    CHECK_RV(rv, "token with an empty user PIN", CKR_OK);
+    if (rv == CKR_OK) {
+        pid = fork_changer(change_empty_pin, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (pid > 0) {
+        CHECK_TRUE(run_changer(pid, go) == 0, "other process sets a PIN");
+    }
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "empty-pin-key", &obj);
+        CHECK_RV(rv, "key needs a login", CKR_USER_NOT_LOGGED_IN);
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+#ifndef WOLFPKCS11_NO_TIME
+/* Log in with a wrong PIN in a new session and close it. */
+static CK_RV wrong_login(CK_SLOT_ID slot)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+
+    rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                 NULL, NULL, &session);
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(session, CKU_USER,
+            (CK_UTF8CHAR_PTR)"wrong-user-pin-1234", 19);
+        rv = (rv == CKR_PIN_INCORRECT) ? CKR_OK : CKR_GENERAL_ERROR;
+    }
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    return rv;
+}
+
+/* Check whether the stored token reports failed user logins. */
+static int stored_user_fails(CK_SLOT_ID slot)
+{
+    CK_TOKEN_INFO info;
+    int fails = -1;
+
+    if (lib_init() == CKR_OK &&
+            funcList->C_GetTokenInfo(slot, &info) == CKR_OK) {
+        fails = (info.flags & CKF_USER_PIN_COUNT_LOW) != 0;
+    }
+    funcList->C_Finalize(NULL);
+    return fails;
+}
+
+/* C_Finalize stores failed logins into a token another process stored. */
+static void test_stale_finalize_keeps_failed_logins(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    pid_t pid = -1;
+    int go = -1;
+
+    printf("\n--- a stale C_Finalize stores failed logins ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        pid = fork_changer(change_add, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK) {
+        rv = wrong_login(slot);
+        CHECK_RV(rv, "login with a wrong PIN", CKR_OK);
+    }
+    if (pid > 0) {
+        CHECK_TRUE(run_changer(pid, go) == 0,
+                   "other process stores an object");
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Finalize(NULL);
+        CHECK_RV(rv, "finalize", CKR_OK);
+        CHECK_TRUE(stored_user_fails(slot) == 1, "failed login is stored");
+    }
+    else {
+        funcList->C_Finalize(NULL);
+    }
+}
+
+/* A successful login that reset the failed logins is not undone when the
+ * token is loaded again. */
+static void test_reload_keeps_login_reset(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    pid_t pid = -1;
+    int go = -1;
+
+    printf("\n--- loading the token again keeps a login's reset ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = wrong_login(slot);
+        CHECK_RV(rv, "login with a wrong PIN", CKR_OK);
+    }
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        pid = fork_changer(change_add_public, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK) {
+        rv = user_session(slot, &session);
+        CHECK_RV(rv, "login resets the failed logins", CKR_OK);
+    }
+    if (pid > 0) {
+        CHECK_TRUE(run_changer(pid, go) == 0,
+                   "other process stores an object");
+    }
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "reset-parent", &obj);
+        CHECK_RV(rv, "create after the other process stored", CKR_OK);
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        CHECK_TRUE(stored_user_fails(slot) == 0,
+                   "reset of the failed logins is stored");
+    }
+}
+#endif
+
+static void record_path(const char* kind, CK_SLOT_ID slot, int objId,
+                        char* path, size_t pathSz);
+
+/* Provision the token as token_setup does, without clearing the store. */
+static int change_setup(CK_SLOT_ID slot)
+{
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    unsigned char label[32];
+    int code = 0;
+
+    XMEMSET(label, ' ', sizeof(label));
+    XMEMCPY(label, tokenLabel, XSTRLEN(tokenLabel));
+    if (lib_init() != CKR_OK)
+        return 20;
+    if (funcList->C_InitToken(slot, (CK_UTF8CHAR_PTR)soPin,
+            (CK_ULONG)XSTRLEN(soPin), label) != CKR_OK ||
+            funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+            NULL, NULL, &session) != CKR_OK ||
+            funcList->C_Login(session, CKU_SO, (CK_UTF8CHAR_PTR)soPin,
+            (CK_ULONG)XSTRLEN(soPin)) != CKR_OK ||
+            funcList->C_InitPIN(session, (CK_UTF8CHAR_PTR)userPin,
+            (CK_ULONG)XSTRLEN(userPin)) != CKR_OK) {
+        code |= 1;
+    }
+    close_session(session);
+    if (funcList->C_Finalize(NULL) != CKR_OK)
+        code |= 2;
+    return code;
+}
+
+/* A process that started before another one set up the token checks the SO
+ * PIN of that token at C_InitToken. */
+static void test_init_token_after_other_setup(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    unsigned char label[32];
+    static const char wrongSoPin[] = "wrong-so-pin-1234";
+    pid_t pid = -1;
+    int go = -1;
+
+    printf("\n--- C_InitToken after another process set up the token ---\n");
+    clear_store_dir();
+    rv = lib_init();
+    if (rv == CKR_OK)
+        rv = first_slot(&slot);
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        pid = fork_changer(change_setup, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (pid > 0) {
+        CHECK_TRUE(run_changer(pid, go) == 0,
+                   "other process sets up the token");
+    }
+    XMEMSET(label, ' ', sizeof(label));
+    XMEMCPY(label, tokenLabel, XSTRLEN(tokenLabel));
+    if (rv == CKR_OK) {
+        rv = funcList->C_InitToken(slot, (CK_UTF8CHAR_PTR)wrongSoPin,
+                                   (CK_ULONG)XSTRLEN(wrongSoPin), label);
+        CHECK_RV(rv, "wrong SO PIN is refused", CKR_PIN_INCORRECT);
+        rv = funcList->C_InitToken(slot, (CK_UTF8CHAR_PTR)soPin,
+                                   (CK_ULONG)XSTRLEN(soPin), label);
+        CHECK_RV(rv, "SO PIN resets the token", CKR_OK);
+    }
+    funcList->C_Finalize(NULL);
+}
+
+static int change_uncopyable(CK_SLOT_ID slot)
+{
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_ULONG n = 0;
+    CK_ATTRIBUTE find = { CKA_LABEL, (CK_VOID_PTR)"copy-src", 8 };
+    CK_ATTRIBUTE noCopy = { CKA_COPYABLE, &ckFalse, sizeof(ckFalse) };
+    int code = 0;
+
+    if (lib_init() != CKR_OK || user_session(slot, &session) != CKR_OK)
+        return 20;
+    if (funcList->C_FindObjectsInit(session, &find, 1) != CKR_OK ||
+            funcList->C_FindObjects(session, &obj, 1, &n) != CKR_OK ||
+            funcList->C_FindObjectsFinal(session) != CKR_OK || n != 1 ||
+            funcList->C_SetAttributeValue(session, obj, &noCopy, 1) !=
+            CKR_OK) {
+        code |= 1;
+    }
+    close_session(session);
+    if (funcList->C_Finalize(NULL) != CKR_OK)
+        code |= 2;
+    return code;
+}
+
+/* C_CopyObject checks the source as another process stored it. */
+static void test_copy_sees_other_change(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE src = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE copy = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE label = { CKA_LABEL, (CK_VOID_PTR)"copy-dst", 8 };
+    pid_t pid = -1;
+    int go = -1;
+
+    printf("\n--- C_CopyObject after another process changed the source ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK)
+        rv = create_token_secret(session, "copy-src", &src);
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        pid = fork_changer(change_uncopyable, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (pid > 0) {
+        CHECK_TRUE(run_changer(pid, go) == 0,
+                   "other process makes the source not copyable");
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_CopyObject(session, src, &label, 1, &copy);
+        CHECK_RV(rv, "copy is refused", CKR_ACTION_PROHIBITED);
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+/* A reload that cannot read what another process stored leaves the token in
+ * memory as it was. */
+static void test_reload_failure_keeps_token(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    CK_SESSION_INFO info;
+    char path[512];
+    static const byte junk[2] = { 0xff, 0xff };
+    pid_t pid = -1;
+    int go = -1;
+
+    printf("\n--- a failed reload leaves the token as it was ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK)
+        rv = create_token_secret(session, "rf-first", &obj);
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        pid = fork_changer(change_add, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (pid > 0) {
+        CHECK_TRUE(run_changer(pid, go) == 0,
+                   "other process stores an object");
+    }
+    record_path("obj", slot, 1, path, sizeof(path));
+    if (rv == CKR_OK) {
+        CHECK_TRUE(write_store_file(path, junk, sizeof(junk)) == 0,
+                   "damage the stored object record");
+        CHECK_TRUE(create_token_secret(session, "rf-second", &obj) != CKR_OK,
+                   "create fails when the token cannot be read");
+        CHECK_TRUE(count_label(session, "rf-first") == 1,
+                   "loaded object is kept");
+        rv = funcList->C_GetSessionInfo(session, &info);
+        CHECK_TRUE(rv == CKR_OK && info.state == CKS_RW_USER_FUNCTIONS,
+                   "login is kept");
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+#ifndef WOLFPKCS11_NO_TIME
+static int change_wrong_login(CK_SLOT_ID slot)
+{
+    int code = 0;
+
+    if (lib_init() != CKR_OK)
+        return 20;
+    if (wrong_login(slot) != CKR_OK)
+        code |= 1;
+    if (funcList->C_Finalize(NULL) != CKR_OK)
+        code |= 2;
+    return code;
+}
+
+/* Failed logins of two processes that reach the limit together lock the
+ * PIN. */
+static void test_merged_failed_logins_lock(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    CK_TOKEN_INFO info;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    CK_ATTRIBUTE dataTmpl[] = {
+        { CKA_CLASS,   &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN,   &ckTrue,    sizeof(ckTrue)    },
+        { CKA_PRIVATE, &ckFalse,   sizeof(ckFalse)   },
+    };
+    pid_t pid = -1;
+    int go = -1;
+
+    printf("\n--- failed logins of two processes lock the PIN ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        pid = fork_changer(change_wrong_login, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK)
+        rv = wrong_login(slot);
+    if (rv == CKR_OK)
+        rv = wrong_login(slot);
+    CHECK_RV(rv, "two wrong logins", CKR_OK);
+    if (pid > 0) {
+        CHECK_TRUE(run_changer(pid, go) == 0,
+                   "other process stores a wrong login");
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, dataTmpl,
+            sizeof(dataTmpl) / sizeof(*dataTmpl), &obj);
+        CHECK_RV(rv, "store pass", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_GetTokenInfo(slot, &info);
+        CHECK_TRUE(rv == CKR_OK && (info.flags & CKF_USER_PIN_LOCKED),
+                   "PIN is locked");
+        rv = funcList->C_Login(session, CKU_USER, (CK_UTF8CHAR_PTR)userPin,
+                               (CK_ULONG)XSTRLEN(userPin));
+        CHECK_RV(rv, "correct PIN is refused while locked", CKR_PIN_LOCKED);
+    }
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
+#ifndef NO_HMAC
+/* Dropping the empty PIN's key ends the operations on keys decoded under it.
+ */
+static void test_dropped_key_ends_ops(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    CK_MECHANISM mech = { CKM_SHA256_HMAC, NULL, 0 };
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,    &secretClass,             sizeof(secretClass) },
+        { CKA_KEY_TYPE, &genericType,             sizeof(genericType) },
+        { CKA_VALUE,    reloadKey,                sizeof(reloadKey)   },
+        { CKA_TOKEN,    &ckTrue,                  sizeof(ckTrue)      },
+        { CKA_PRIVATE,  &ckFalse,                 sizeof(ckFalse)     },
+        { CKA_SIGN,     &ckTrue,                  sizeof(ckTrue)      },
+        { CKA_LABEL,    (CK_VOID_PTR)"drop-key",  8                   },
+    };
+    CK_ATTRIBUTE dataTmpl[] = {
+        { CKA_CLASS,   &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN,   &ckTrue,    sizeof(ckTrue)    },
+        { CKA_PRIVATE, &ckFalse,   sizeof(ckFalse)   },
+    };
+    static CK_BYTE msg[] = "message";
+    CK_BYTE sig[64];
+    CK_ULONG sigLen = sizeof(sig);
+    unsigned char label[32];
+    pid_t pid = -1;
+    int go = -1;
+
+    printf("\n--- dropping the empty PIN's key ends its operations ---\n");
+    clear_store_dir();
+    rv = lib_init();
+    if (rv == CKR_OK)
+        rv = first_slot(&slot);
+    XMEMSET(label, ' ', sizeof(label));
+    XMEMCPY(label, tokenLabel, XSTRLEN(tokenLabel));
+    if (rv == CKR_OK) {
+        rv = funcList->C_InitToken(slot, (CK_UTF8CHAR_PTR)soPin,
+                                   (CK_ULONG)XSTRLEN(soPin), label);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(session, CKU_SO, (CK_UTF8CHAR_PTR)soPin,
+                               (CK_ULONG)XSTRLEN(soPin));
+    }
+    if (rv == CKR_OK)
+        rv = funcList->C_InitPIN(session, (CK_UTF8CHAR_PTR)"", 0);
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    if (EMPTY_PIN_REFUSED(rv)) {
+        funcList->C_Finalize(NULL);
+        printf("Skipping: empty PINs are not allowed\n");
+        return;
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, keyTmpl,
+            sizeof(keyTmpl) / sizeof(*keyTmpl), &key);
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    CHECK_RV(rv, "token with an empty user PIN and a key", CKR_OK);
+    if (rv == CKR_OK) {
+        pid = fork_changer(change_empty_pin, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_SignInit(session, &mech, key);
+        CHECK_RV(rv, "sign with the empty PIN's key", CKR_OK);
+    }
+    if (pid > 0) {
+        CHECK_TRUE(run_changer(pid, go) == 0, "other process sets a PIN");
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, dataTmpl,
+            sizeof(dataTmpl) / sizeof(*dataTmpl), &obj);
+        CHECK_RV(rv, "load the token again", CKR_OK);
+        CHECK_TRUE(funcList->C_Sign(session, msg, sizeof(msg) - 1, sig,
+                   &sigLen) != CKR_OK, "operation is ended");
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
+static int change_reset(CK_SLOT_ID slot)
+{
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,   &dataClass,              sizeof(dataClass) },
+        { CKA_TOKEN,   &ckTrue,                 sizeof(ckTrue)    },
+        { CKA_PRIVATE, &ckFalse,                sizeof(ckFalse)   },
+        { CKA_LABEL,   (CK_VOID_PTR)"reset-new", 9                },
+    };
+    unsigned char label[32];
+    int code = 0;
+
+    XMEMSET(label, ' ', sizeof(label));
+    XMEMCPY(label, tokenLabel, XSTRLEN(tokenLabel));
+    if (lib_init() != CKR_OK)
+        return 20;
+    if (funcList->C_InitToken(slot, (CK_UTF8CHAR_PTR)soPin,
+            (CK_ULONG)XSTRLEN(soPin), label) != CKR_OK ||
+            funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+            NULL, NULL, &session) != CKR_OK ||
+            funcList->C_CreateObject(session, tmpl,
+            sizeof(tmpl) / sizeof(*tmpl), &obj) != CKR_OK) {
+        code |= 1;
+    }
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    if (funcList->C_Finalize(NULL) != CKR_OK)
+        code |= 2;
+    return code;
+}
+
+/* After another process reset the token, handles this process holds do not
+ * name the new token's objects. */
+static void test_handles_after_other_reset(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE old = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    CK_ATTRIBUTE dataTmpl[] = {
+        { CKA_CLASS,   &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN,   &ckTrue,    sizeof(ckTrue)    },
+        { CKA_PRIVATE, &ckFalse,   sizeof(ckFalse)   },
+    };
+    byte buf[32];
+    CK_ATTRIBUTE get = { CKA_LABEL, buf, sizeof(buf) };
+    pid_t pid = -1;
+    int go = -1;
+
+    printf("\n--- handles after another process reset the token ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, dataTmpl,
+            sizeof(dataTmpl) / sizeof(*dataTmpl), &old);
+        CHECK_RV(rv, "create a public object", CKR_OK);
+    }
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        pid = fork_changer(change_reset, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (pid > 0) {
+        CHECK_TRUE(run_changer(pid, go) == 0,
+                   "other process resets the token");
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, dataTmpl,
+            sizeof(dataTmpl) / sizeof(*dataTmpl), &obj);
+        CHECK_RV(rv, "load the token again", CKR_OK);
+        rv = funcList->C_GetAttributeValue(session, old, &get, 1);
+        CHECK_RV(rv, "old handle names no object",
+                 CKR_OBJECT_HANDLE_INVALID);
+        rv = CKR_OK;
+    }
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+
+/* Keys loaded again by a reload that ends the login decrypt with the new
+ * PIN, also after the library is initialized again. */
+static void test_reload_logout_keeps_keys(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,       &secretClass,            sizeof(secretClass) },
+        { CKA_KEY_TYPE,    &genericType,            sizeof(genericType) },
+        { CKA_VALUE,       reloadKey,               sizeof(reloadKey)   },
+        { CKA_TOKEN,       &ckTrue,                 sizeof(ckTrue)      },
+        { CKA_SENSITIVE,   &ckFalse,                sizeof(ckFalse)     },
+        { CKA_EXTRACTABLE, &ckTrue,                 sizeof(ckTrue)      },
+        { CKA_LABEL,       (CK_VOID_PTR)"keep-key", 8                   },
+    };
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    CK_ATTRIBUTE dataTmpl[] = {
+        { CKA_CLASS,   &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN,   &ckTrue,    sizeof(ckTrue)    },
+        { CKA_PRIVATE, &ckFalse,   sizeof(ckFalse)   },
+    };
+    int pass;
+    pid_t pid = -1;
+    int go = -1;
+
+    printf("\n--- keys survive a reload that ends the login ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, keyTmpl,
+            sizeof(keyTmpl) / sizeof(*keyTmpl), &key);
+        CHECK_RV(rv, "create a token key", CKR_OK);
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        pid = fork_changer(change_pin, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (pid > 0) {
+        CHECK_TRUE(run_changer(pid, go) == 0, "other process changes the PIN");
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, dataTmpl,
+            sizeof(dataTmpl) / sizeof(*dataTmpl), &obj);
+        CHECK_RV(rv, "reload ends the login", CKR_OK);
+    }
+    for (pass = 0; rv == CKR_OK && pass < 2; pass++) {
+        byte value[sizeof(reloadKey)];
+        CK_ATTRIBUTE get = { CKA_VALUE, value, sizeof(value) };
+
+        if (pass == 1) {
+            close_session(session);
+            session = CK_INVALID_HANDLE;
+            funcList->C_Finalize(NULL);
+            rv = lib_init();
+            if (rv == CKR_OK) {
+                rv = funcList->C_OpenSession(slot,
+                    CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL, NULL, &session);
+            }
+        }
+        if (rv == CKR_OK) {
+            rv = funcList->C_Login(session, CKU_USER,
+                (CK_UTF8CHAR_PTR)reloadPin, (CK_ULONG)XSTRLEN(reloadPin));
+            CHECK_RV(rv, "login with the new PIN", CKR_OK);
+        }
+        if (rv == CKR_OK) {
+            XMEMSET(value, 0, sizeof(value));
+            rv = funcList->C_GetAttributeValue(session, key, &get, 1);
+            CHECK_TRUE(rv == CKR_OK &&
+                       XMEMCMP(value, reloadKey, sizeof(reloadKey)) == 0,
+                       pass == 0 ? "key decrypts after the reload" :
+                       "key decrypts after initializing again");
+        }
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+#ifndef WOLFPKCS11_NO_TIME
+static int change_lock_user(CK_SLOT_ID slot)
+{
+    int code = 0;
+
+    if (lib_init() != CKR_OK)
+        return 20;
+    if (wrong_login(slot) != CKR_OK)
+        code |= 1;
+    if (funcList->C_Finalize(NULL) != CKR_OK)
+        code |= 2;
+    return code;
+}
+
+/* A lockout another process stored stays when this process had reset the
+ * failed logins by logging in. */
+static void test_merge_keeps_stored_lockout(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    CK_TOKEN_INFO info;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    CK_ATTRIBUTE dataTmpl[] = {
+        { CKA_CLASS,   &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN,   &ckTrue,    sizeof(ckTrue)    },
+        { CKA_PRIVATE, &ckFalse,   sizeof(ckFalse)   },
+    };
+    pid_t pid = -1;
+    int go = -1;
+
+    printf("\n--- a stored lockout survives a login's reset ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = wrong_login(slot);
+    if (rv == CKR_OK)
+        rv = wrong_login(slot);
+    CHECK_RV(rv, "two wrong logins", CKR_OK);
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        pid = fork_changer(change_lock_user, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK) {
+        rv = user_session(slot, &session);
+        CHECK_RV(rv, "login resets the failed logins", CKR_OK);
+    }
+    if (pid > 0) {
+        CHECK_TRUE(run_changer(pid, go) == 0,
+                   "other process locks the PIN");
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, dataTmpl,
+            sizeof(dataTmpl) / sizeof(*dataTmpl), &obj);
+        CHECK_RV(rv, "store pass", CKR_OK);
+        rv = funcList->C_GetTokenInfo(slot, &info);
+        CHECK_TRUE(rv == CKR_OK && (info.flags & CKF_USER_PIN_LOCKED),
+                   "PIN stays locked");
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+static word32 stored_be32(const byte* p)
+{
+    return ((word32)p[0] << 24) | ((word32)p[1] << 16) |
+           ((word32)p[2] << 8) | (word32)p[3];
+}
+
+/* Move the stored time of the last failed user login into the past. */
+static int expire_user_lockout(CK_SLOT_ID slot)
+{
+    static byte data[4096];
+    char path[512];
+    long len;
+    long off = 32;
+
+    snprintf(path, sizeof(path), "%s/wp11_token_%016lx", TEST_DIR,
+             (unsigned long)slot);
+    len = read_store_file(path, data, sizeof(data));
+    if (len <= 0 || len >= (long)sizeof(data))
+        return -1;
+    /* Label, SO PIN, seed, failed logins and times, then the user's. */
+    if (len < off + 4)
+        return -1;
+    off += 4 + (long)stored_be32(data + off) + 16 + 4 +
+           2 * (long)sizeof(time_t);
+    if (len < off + 4)
+        return -1;
+    off += 4 + (long)stored_be32(data + off) + 16 + 4;
+    if (len < off + (long)sizeof(time_t))
+        return -1;
+    XMEMSET(data + off, 0, sizeof(time_t));
+    return write_store_file(path, data, (size_t)len);
+}
+
+/* Failed logins of two processes after a lockout expired are both kept. */
+static void test_merge_after_lockout_expires(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    CK_TOKEN_INFO info;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    CK_ATTRIBUTE dataTmpl[] = {
+        { CKA_CLASS,   &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN,   &ckTrue,    sizeof(ckTrue)    },
+        { CKA_PRIVATE, &ckFalse,   sizeof(ckFalse)   },
+    };
+    pid_t pid = -1;
+    int go = -1;
+    int i;
+
+    printf("\n--- failed logins after an expired lockout are merged ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    for (i = 0; rv == CKR_OK && i < 3; i++)
+        rv = wrong_login(slot);
+    CHECK_RV(rv, "lock the user PIN", CKR_OK);
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        CHECK_TRUE(expire_user_lockout(slot) == 0, "lockout expires");
+        pid = fork_changer(change_wrong_login, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK)
+        rv = wrong_login(slot);
+    CHECK_RV(rv, "wrong login after the lockout", CKR_OK);
+    if (pid > 0) {
+        CHECK_TRUE(run_changer(pid, go) == 0,
+                   "other process stores a wrong login");
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, dataTmpl,
+            sizeof(dataTmpl) / sizeof(*dataTmpl), &obj);
+        CHECK_RV(rv, "store pass", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_GetTokenInfo(slot, &info);
+        CHECK_TRUE(rv == CKR_OK && (info.flags & CKF_USER_PIN_FINAL_TRY),
+                   "both failed logins are kept");
+    }
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+
+/* Load the token again through an SO login, which stores nothing. */
+static CK_RV so_login_refresh(CK_SLOT_ID slot)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+
+    rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                 NULL, NULL, &session);
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(session, CKU_SO, (CK_UTF8CHAR_PTR)soPin,
+                               (CK_ULONG)XSTRLEN(soPin));
+    }
+    close_session(session);
+    return rv;
+}
+
+/* Failed logins after an expired lockout are kept across two reloads. */
+static void test_merge_after_lockout_two_reloads(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    CK_TOKEN_INFO info;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    CK_ATTRIBUTE dataTmpl[] = {
+        { CKA_CLASS,   &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN,   &ckTrue,    sizeof(ckTrue)    },
+        { CKA_PRIVATE, &ckFalse,   sizeof(ckFalse)   },
+    };
+    pid_t addPid = -1;
+    pid_t failPid = -1;
+    int addGo = -1;
+    int failGo = -1;
+    int i;
+
+    printf("\n--- failed logins after an expired lockout, two reloads ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    for (i = 0; rv == CKR_OK && i < 3; i++)
+        rv = wrong_login(slot);
+    CHECK_RV(rv, "lock the user PIN", CKR_OK);
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        CHECK_TRUE(expire_user_lockout(slot) == 0, "lockout expires");
+        addPid = fork_changer(change_add_public, slot, &addGo);
+        failPid = fork_changer(change_wrong_login, slot, &failGo);
+        if (addPid < 0 || failPid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK)
+        rv = wrong_login(slot);
+    CHECK_RV(rv, "wrong login after the lockout", CKR_OK);
+    if (addPid > 0) {
+        CHECK_TRUE(run_changer(addPid, addGo) == 0,
+                   "other process stores an object");
+        addPid = -1;
+    }
+    if (rv == CKR_OK) {
+        rv = so_login_refresh(slot);
+        CHECK_RV(rv, "first reload", CKR_OK);
+    }
+    if (failPid > 0) {
+        CHECK_TRUE(run_changer(failPid, failGo) == 0,
+                   "other process stores a wrong login");
+        failPid = -1;
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, dataTmpl,
+            sizeof(dataTmpl) / sizeof(*dataTmpl), &obj);
+        CHECK_RV(rv, "second reload and store pass", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_GetTokenInfo(slot, &info);
+        CHECK_TRUE(rv == CKR_OK && (info.flags & CKF_USER_PIN_FINAL_TRY),
+                   "both failed logins are kept");
+    }
+    if (addPid > 0)
+        (void)run_changer(addPid, addGo);
+    if (failPid > 0)
+        (void)run_changer(failPid, failGo);
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
+/* A token with an empty user PIN loads again after a login and logout. */
+static void test_empty_pin_reload_after_logout(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+#ifndef NO_HMAC
+    CK_MECHANISM mech = { CKM_SHA256_HMAC, NULL, 0 };
+    static CK_BYTE msg[] = "message";
+    CK_BYTE sig[64];
+    CK_ULONG sigLen = sizeof(sig);
+#endif
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,    &secretClass,             sizeof(secretClass) },
+        { CKA_KEY_TYPE, &genericType,             sizeof(genericType) },
+        { CKA_VALUE,    reloadKey,                sizeof(reloadKey)   },
+        { CKA_TOKEN,    &ckTrue,                  sizeof(ckTrue)      },
+        { CKA_PRIVATE,  &ckFalse,                 sizeof(ckFalse)     },
+        { CKA_SIGN,     &ckTrue,                  sizeof(ckTrue)      },
+        { CKA_LABEL,    (CK_VOID_PTR)"empty-key", 9                   },
+    };
+    CK_ATTRIBUTE dataTmpl[] = {
+        { CKA_CLASS,   &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN,   &ckTrue,    sizeof(ckTrue)    },
+        { CKA_PRIVATE, &ckFalse,   sizeof(ckFalse)   },
+    };
+    unsigned char label[32];
+    pid_t pid = -1;
+    int go = -1;
+
+    printf("\n--- an empty PIN token loads again after a logout ---\n");
+    clear_store_dir();
+    rv = lib_init();
+    if (rv == CKR_OK)
+        rv = first_slot(&slot);
+    XMEMSET(label, ' ', sizeof(label));
+    XMEMCPY(label, tokenLabel, XSTRLEN(tokenLabel));
+    if (rv == CKR_OK) {
+        rv = funcList->C_InitToken(slot, (CK_UTF8CHAR_PTR)soPin,
+                                   (CK_ULONG)XSTRLEN(soPin), label);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(session, CKU_SO, (CK_UTF8CHAR_PTR)soPin,
+                               (CK_ULONG)XSTRLEN(soPin));
+    }
+    if (rv == CKR_OK)
+        rv = funcList->C_InitPIN(session, (CK_UTF8CHAR_PTR)"", 0);
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    if (EMPTY_PIN_REFUSED(rv)) {
+        funcList->C_Finalize(NULL);
+        printf("Skipping: empty PINs are not allowed\n");
+        return;
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, keyTmpl,
+            sizeof(keyTmpl) / sizeof(*keyTmpl), &key);
+    }
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    CHECK_RV(rv, "token with an empty user PIN and a key", CKR_OK);
+    if (rv == CKR_OK) {
+        pid = fork_changer(change_add_public, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(session, CKU_USER, (CK_UTF8CHAR_PTR)"", 0);
+        CHECK_RV(rv, "login with the empty PIN", CKR_OK);
+        rv = funcList->C_Logout(session);
+    }
+    if (pid > 0) {
+        CHECK_TRUE(run_changer(pid, go) == 0,
+                   "other process stores an object");
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, dataTmpl,
+            sizeof(dataTmpl) / sizeof(*dataTmpl), &obj);
+        CHECK_RV(rv, "create after the reload", CKR_OK);
+    #ifndef NO_HMAC
+        rv = funcList->C_SignInit(session, &mech, key);
+        if (rv == CKR_OK)
+            rv = funcList->C_Sign(session, msg, sizeof(msg) - 1, sig, &sigLen);
+        CHECK_RV(rv, "key loaded again is usable", CKR_OK);
+    #endif
+        rv = funcList->C_Login(session, CKU_USER, (CK_UTF8CHAR_PTR)"", 0);
+        CHECK_RV(rv, "login after the reload", CKR_OK);
+    }
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+
+#ifndef NO_HMAC
+/* A reload that ends an SO login leaves the keys of an empty PIN token
+ * usable. */
+static void test_empty_pin_reload_ends_so_login(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    CK_MECHANISM mech = { CKM_SHA256_HMAC, NULL, 0 };
+    static CK_BYTE msg[] = "message";
+    CK_BYTE sig[64];
+    CK_ULONG sigLen = sizeof(sig);
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,    &secretClass,             sizeof(secretClass) },
+        { CKA_KEY_TYPE, &genericType,             sizeof(genericType) },
+        { CKA_VALUE,    reloadKey,                sizeof(reloadKey)   },
+        { CKA_TOKEN,    &ckTrue,                  sizeof(ckTrue)      },
+        { CKA_PRIVATE,  &ckFalse,                 sizeof(ckFalse)     },
+        { CKA_SIGN,     &ckTrue,                  sizeof(ckTrue)      },
+        { CKA_LABEL,    (CK_VOID_PTR)"empty-key", 9                   },
+    };
+    CK_ATTRIBUTE dataTmpl[] = {
+        { CKA_CLASS,   &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN,   &ckTrue,    sizeof(ckTrue)    },
+        { CKA_PRIVATE, &ckFalse,   sizeof(ckFalse)   },
+    };
+    unsigned char label[32];
+    pid_t pid = -1;
+    int go = -1;
+
+    printf("\n--- an empty PIN token after a reload ends the SO login ---\n");
+    clear_store_dir();
+    rv = lib_init();
+    if (rv == CKR_OK)
+        rv = first_slot(&slot);
+    XMEMSET(label, ' ', sizeof(label));
+    XMEMCPY(label, tokenLabel, XSTRLEN(tokenLabel));
+    if (rv == CKR_OK) {
+        rv = funcList->C_InitToken(slot, (CK_UTF8CHAR_PTR)soPin,
+                                   (CK_ULONG)XSTRLEN(soPin), label);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(session, CKU_SO, (CK_UTF8CHAR_PTR)soPin,
+                               (CK_ULONG)XSTRLEN(soPin));
+    }
+    if (rv == CKR_OK)
+        rv = funcList->C_InitPIN(session, (CK_UTF8CHAR_PTR)"", 0);
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    if (EMPTY_PIN_REFUSED(rv)) {
+        funcList->C_Finalize(NULL);
+        printf("Skipping: empty PINs are not allowed\n");
+        return;
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, keyTmpl,
+            sizeof(keyTmpl) / sizeof(*keyTmpl), &key);
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    CHECK_RV(rv, "token with an empty user PIN and a key", CKR_OK);
+    if (rv == CKR_OK) {
+        pid = fork_changer(change_so_pin, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(session, CKU_SO, (CK_UTF8CHAR_PTR)soPin,
+                               (CK_ULONG)XSTRLEN(soPin));
+        CHECK_RV(rv, "SO login", CKR_OK);
+    }
+    if (pid > 0) {
+        CHECK_TRUE(run_changer(pid, go) == 0,
+                   "other process changes the SO PIN");
+    }
+    if (rv == CKR_OK) {
+        (void)funcList->C_CreateObject(session, dataTmpl,
+            sizeof(dataTmpl) / sizeof(*dataTmpl), &obj);
+        rv = funcList->C_SignInit(session, &mech, key);
+        if (rv == CKR_OK)
+            rv = funcList->C_Sign(session, msg, sizeof(msg) - 1, sig, &sigLen);
+        CHECK_RV(rv, "key loaded again is usable", CKR_OK);
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
+#ifndef NO_HMAC
+/* An SO logout leaves an operation running on a copy a reload replaced, as
+ * it leaves those on the current objects. */
+static void test_so_logout_keeps_replaced_op(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_SESSION_HANDLE other = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    CK_MECHANISM mech = { CKM_SHA256_HMAC, NULL, 0 };
+    static CK_BYTE msg[] = "message";
+    CK_BYTE sig[64];
+    CK_ULONG sigLen = sizeof(sig);
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &genericType, sizeof(genericType) },
+        { CKA_VALUE,    reloadKey,    sizeof(reloadKey)   },
+        { CKA_TOKEN,    &ckTrue,      sizeof(ckTrue)      },
+        { CKA_PRIVATE,  &ckFalse,     sizeof(ckFalse)     },
+        { CKA_SIGN,     &ckTrue,      sizeof(ckTrue)      },
+    };
+    pid_t pid = -1;
+    int go = -1;
+
+    printf("\n--- an SO logout after a reload keeps a running sign ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        pid = fork_changer(change_add, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &other);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(session, CKU_SO, (CK_UTF8CHAR_PTR)soPin,
+                               (CK_ULONG)XSTRLEN(soPin));
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, keyTmpl,
+            sizeof(keyTmpl) / sizeof(*keyTmpl), &key);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_SignInit(session, &mech, key);
+        if (rv == CKR_OK)
+            rv = funcList->C_SignUpdate(session, msg, sizeof(msg) - 1);
+        CHECK_RV(rv, "sign started", CKR_OK);
+    }
+    if (pid > 0) {
+        CHECK_TRUE(run_changer(pid, go) == 0, "other process stores");
+    }
+    if (rv == CKR_OK) {
+        rv = create_token_secret(other, "so-reload", &obj);
+        CHECK_RV(rv, "token loaded again", CKR_OK);
+    }
+    if (rv == CKR_OK)
+        rv = funcList->C_Logout(other);
+    if (rv == CKR_OK) {
+        rv = funcList->C_SignFinal(session, sig, &sigLen);
+        CHECK_RV(rv, "sign finishes after the SO logout", CKR_OK);
+    }
+    close_session(other);
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
+#ifndef WOLFPKCS11_NSS
+/* Dropping the empty PIN's key retires private session objects. */
+static void test_dropped_key_retires_session_objects(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    static byte value[4] = { 9, 8, 7, 6 };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_CLASS,   &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN,   &ckFalse,   sizeof(ckFalse)   },
+        { CKA_PRIVATE, &ckTrue,    sizeof(ckTrue)    },
+        { CKA_VALUE,   value,      sizeof(value)     },
+    };
+    CK_ATTRIBUTE dataTmpl[] = {
+        { CKA_CLASS,   &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN,   &ckTrue,    sizeof(ckTrue)    },
+        { CKA_PRIVATE, &ckFalse,   sizeof(ckFalse)   },
+    };
+    byte buf[4];
+    CK_ATTRIBUTE get = { CKA_VALUE, buf, sizeof(buf) };
+    unsigned char label[32];
+    pid_t pid = -1;
+    int go = -1;
+
+    printf("\n--- dropping the empty PIN's key retires session objects ---\n");
+    clear_store_dir();
+    rv = lib_init();
+    if (rv == CKR_OK)
+        rv = first_slot(&slot);
+    XMEMSET(label, ' ', sizeof(label));
+    XMEMCPY(label, tokenLabel, XSTRLEN(tokenLabel));
+    if (rv == CKR_OK) {
+        rv = funcList->C_InitToken(slot, (CK_UTF8CHAR_PTR)soPin,
+                                   (CK_ULONG)XSTRLEN(soPin), label);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(session, CKU_SO, (CK_UTF8CHAR_PTR)soPin,
+                               (CK_ULONG)XSTRLEN(soPin));
+    }
+    if (rv == CKR_OK)
+        rv = funcList->C_InitPIN(session, (CK_UTF8CHAR_PTR)"", 0);
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    if (EMPTY_PIN_REFUSED(rv)) {
+        printf("Skipping: empty PINs are not allowed\n");
+        return;
+    }
+    CHECK_RV(rv, "token with an empty user PIN", CKR_OK);
+    if (rv == CKR_OK) {
+        pid = fork_changer(change_empty_pin, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, privTmpl,
+            sizeof(privTmpl) / sizeof(*privTmpl), &priv);
+        CHECK_RV(rv, "private session object without a login", CKR_OK);
+    }
+    if (pid > 0) {
+        CHECK_TRUE(run_changer(pid, go) == 0, "other process sets a PIN");
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, dataTmpl,
+            sizeof(dataTmpl) / sizeof(*dataTmpl), &obj);
+        CHECK_RV(rv, "load the token again", CKR_OK);
+        rv = funcList->C_Login(session, CKU_USER, (CK_UTF8CHAR_PTR)reloadPin,
+                               (CK_ULONG)XSTRLEN(reloadPin));
+        CHECK_RV(rv, "login with the new PIN", CKR_OK);
+        rv = funcList->C_GetAttributeValue(session, priv, &get, 1);
+        CHECK_RV(rv, "private session object is retired",
+                 CKR_OBJECT_HANDLE_INVALID);
+        rv = CKR_OK;
+    }
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
+/* A create whose store pass failed leaves nothing to store, so the process
+ * can load the token again after another process stored. */
+static void test_failed_create_not_pending(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    int blocked = 0;
+    pid_t pid = -1;
+    int go = -1;
+
+    if (geteuid() == 0) {
+        printf("\nSkipping failed create test when run as root\n");
+        return;
+    }
+    printf("\n--- a failed create leaves nothing to store ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        pid = fork_changer(change_add, slot, &go);
+        if (pid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK && block_store_dir()) {
+        blocked = 1;
+        CHECK_TRUE(create_token_secret(session, "failed-create", &obj) !=
+                   CKR_OK, "create fails while the store is blocked");
+        (void)chmod(TEST_DIR, 0700);
+    }
+    if (pid > 0) {
+        CHECK_TRUE(run_changer(pid, go) == 0,
+                   "other process stores an object");
+    }
+    if (rv == CKR_OK && blocked) {
+        rv = create_token_secret(session, "after-failed", &obj);
+        CHECK_RV(rv, "token can still be changed", CKR_OK);
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+#ifdef DEBUG_WOLFPKCS11
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern void WP11_Session_SetAddObjectHook(void (*hook)(void));
+#ifdef __cplusplus
+}
+#endif
+
+static pid_t racePid = -1;
+static int raceGo = -1;
+static int raceResult = -1;
+
+/* Let the other process store between the check and the store pass. */
+static void race_add_hook(void)
+{
+    if (racePid > 0) {
+        raceResult = run_changer(racePid, raceGo);
+        racePid = -1;
+    }
+}
+
+/* A store pass refused because another process stored first loads the token
+ * again and adds the object to the current token. */
+static void test_refused_add_retries(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+
+    printf("\n--- a refused create loads the token again ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        racePid = fork_changer(change_add, slot, &raceGo);
+        if (racePid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        WP11_Session_SetAddObjectHook(race_add_hook);
+        rv = create_token_secret(session, "race-parent", &obj);
+        WP11_Session_SetAddObjectHook(NULL);
+        CHECK_RV(rv, "create while another process stores", CKR_OK);
+        CHECK_TRUE(raceResult == 0, "other process stored first");
+    }
+    if (racePid > 0)
+        (void)run_changer(racePid, raceGo);
+    racePid = -1;
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK)
+        rv = reload(slot, &session);
+    CHECK_RV(rv, "reload", CKR_OK);
+    if (rv == CKR_OK) {
+        CHECK_TRUE(count_label(session, "reload-child") == 1,
+                   "other process's object is stored");
+        CHECK_TRUE(count_label(session, "race-parent") == 1,
+                   "this process's object is stored");
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern void WP11_Object_SetFindHook(void (*hook)(void));
+#ifdef __cplusplus
+}
+#endif
+
+static CK_SLOT_ID raceSlot = 0;
+static CK_SESSION_HANDLE raceSession = CK_INVALID_HANDLE;
+
+/* Let the other process store after the object was looked up. */
+static void race_find_hook(void)
+{
+    race_add_hook();
+}
+
+/* Let the other process store after the lookup, then load the token again in
+ * this process through another session. */
+static void race_find_reload_hook(void)
+{
+    CK_OBJECT_HANDLE obj;
+
+    if (racePid > 0) {
+        race_add_hook();
+        (void)create_token_secret(raceSession, "race-reload", &obj);
+    }
+}
+
+/* A change to an object that a reload replaced after the lookup is made to
+ * the object loaded since. */
+static void test_set_attr_after_reload(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE rename = { CKA_LABEL, (CK_VOID_PTR)"race-renamed", 12 };
+
+    printf("\n--- an attribute change after a reload of the token ---\n");
+    rv = token_setup(&raceSlot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(raceSlot, &session);
+    if (rv == CKR_OK)
+        rv = create_token_secret(session, "race-first", &obj);
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        racePid = fork_changer(change_add, raceSlot, &raceGo);
+        if (racePid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK)
+        rv = user_session(raceSlot, &session);
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(raceSlot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &raceSession);
+    }
+    if (rv == CKR_OK) {
+        WP11_Object_SetFindHook(race_find_reload_hook);
+        rv = funcList->C_SetAttributeValue(session, obj, &rename, 1);
+        WP11_Object_SetFindHook(NULL);
+        CHECK_RV(rv, "rename while the token is loaded again", CKR_OK);
+        CHECK_TRUE(raceResult == 0, "other process stored first");
+    }
+    if (racePid > 0)
+        (void)run_changer(racePid, raceGo);
+    racePid = -1;
+    close_session(raceSession);
+    raceSession = CK_INVALID_HANDLE;
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK)
+        rv = reload(raceSlot, &session);
+    CHECK_RV(rv, "reload", CKR_OK);
+    if (rv == CKR_OK) {
+        CHECK_TRUE(count_label(session, "race-renamed") == 1,
+                   "rename is stored");
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+/* A destroy whose store pass is refused because another process stored first
+ * loads the token again and destroys the object then. */
+static void test_refused_destroy_retries(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+
+    printf("\n--- a refused destroy loads the token again ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK)
+        rv = create_token_secret(session, "race-doomed", &obj);
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        racePid = fork_changer(change_add, slot, &raceGo);
+        if (racePid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        WP11_Object_SetFindHook(race_find_hook);
+        rv = funcList->C_DestroyObject(session, obj);
+        WP11_Object_SetFindHook(NULL);
+        CHECK_RV(rv, "destroy while another process stores", CKR_OK);
+        CHECK_TRUE(raceResult == 0, "other process stored first");
+    }
+    if (racePid > 0)
+        (void)run_changer(racePid, raceGo);
+    racePid = -1;
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK)
+        rv = reload(slot, &session);
+    CHECK_RV(rv, "reload", CKR_OK);
+    if (rv == CKR_OK) {
+        CHECK_TRUE(count_label(session, "race-doomed") == 0,
+                   "object is destroyed");
+        CHECK_TRUE(count_label(session, "reload-child") == 1,
+                   "other process's object is stored");
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+static pid_t racePid2 = -1;
+static int raceGo2 = -1;
+static int raceFinds = 0;
+static int raceSecondReload = 1;
+
+/* After each lookup another process stores and this one loads the token
+ * again, except after the second when raceSecondReload is 0. */
+static void race_find_twice_hook(void)
+{
+    CK_OBJECT_HANDLE obj;
+    int n = ++raceFinds;
+
+    if (n == 1 && racePid > 0) {
+        race_add_hook();
+        (void)create_token_secret(raceSession, "race-reload-1", &obj);
+    }
+    else if (n == 2 && racePid2 > 0) {
+        (void)run_changer(racePid2, raceGo2);
+        racePid2 = -1;
+        if (raceSecondReload)
+            (void)create_token_secret(raceSession, "race-reload-2", &obj);
+    }
+}
+
+static int change_add_second(CK_SLOT_ID slot)
+{
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    int code = 0;
+
+    if (lib_init() != CKR_OK || user_session(slot, &session) != CKR_OK)
+        return 20;
+    if (create_token_secret(session, "reload-child-2", &obj) != CKR_OK)
+        code |= 1;
+    close_session(session);
+    if (funcList->C_Finalize(NULL) != CKR_OK)
+        code |= 2;
+    return code;
+}
+
+/* An attribute change refused twice, by reloads or by another process's
+ * stores, reports a failure a retry can get past and is not kept. */
+static void test_set_attr_after_two_reloads(int secondReload)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE rename = { CKA_LABEL, (CK_VOID_PTR)"race-twice", 10 };
+
+    printf("\n--- an attribute change after two %s of the token ---\n",
+           secondReload ? "reloads" : "changes");
+    rv = token_setup(&raceSlot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(raceSlot, &session);
+    if (rv == CKR_OK)
+        rv = create_token_secret(session, "race-first", &obj);
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        racePid = fork_changer(change_add, raceSlot, &raceGo);
+        racePid2 = fork_changer(change_add_second, raceSlot, &raceGo2);
+        if (racePid < 0 || racePid2 < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK)
+        rv = user_session(raceSlot, &session);
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(raceSlot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &raceSession);
+    }
+    if (rv == CKR_OK) {
+        raceFinds = 0;
+        raceSecondReload = secondReload;
+        WP11_Object_SetFindHook(race_find_twice_hook);
+        rv = funcList->C_SetAttributeValue(session, obj, &rename, 1);
+        WP11_Object_SetFindHook(NULL);
+        CHECK_RV(rv, "rename reports a retryable failure",
+                 CKR_FUNCTION_FAILED);
+        CHECK_TRUE(count_label(session, "race-twice") == 0,
+                   "failed rename is not kept");
+        rv = funcList->C_SetAttributeValue(session, obj, &rename, 1);
+        CHECK_RV(rv, "retry succeeds", CKR_OK);
+    }
+    if (racePid > 0)
+        (void)run_changer(racePid, raceGo);
+    if (racePid2 > 0)
+        (void)run_changer(racePid2, raceGo2);
+    racePid = -1;
+    racePid2 = -1;
+    close_session(raceSession);
+    raceSession = CK_INVALID_HANDLE;
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+#ifndef NO_HMAC
+/* An operation init on a key that a reload replaced after the lookup still
+ * starts. */
+static void test_op_init_after_reload(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_SHA256_HMAC, NULL, 0 };
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,    &secretClass,             sizeof(secretClass) },
+        { CKA_KEY_TYPE, &genericType,             sizeof(genericType) },
+        { CKA_VALUE,    reloadKey,                sizeof(reloadKey)   },
+        { CKA_TOKEN,    &ckTrue,                  sizeof(ckTrue)      },
+        { CKA_SIGN,     &ckTrue,                  sizeof(ckTrue)      },
+        { CKA_LABEL,    (CK_VOID_PTR)"init-key",  8                   },
+    };
+    static CK_BYTE msg[] = "message";
+    CK_BYTE sig[64];
+    CK_ULONG sigLen = sizeof(sig);
+
+    printf("\n--- an operation init after a reload of the token ---\n");
+    rv = token_setup(&raceSlot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(raceSlot, &session);
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, keyTmpl,
+            sizeof(keyTmpl) / sizeof(*keyTmpl), &key);
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        racePid = fork_changer(change_add, raceSlot, &raceGo);
+        if (racePid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK)
+        rv = user_session(raceSlot, &session);
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(raceSlot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &raceSession);
+    }
+    if (rv == CKR_OK) {
+        WP11_Object_SetFindHook(race_find_reload_hook);
+        rv = funcList->C_SignInit(session, &mech, key);
+        WP11_Object_SetFindHook(NULL);
+        CHECK_RV(rv, "sign init while the token is loaded again", CKR_OK);
+        CHECK_TRUE(raceResult == 0, "other process stored first");
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Sign(session, msg, sizeof(msg) - 1, sig, &sigLen);
+        CHECK_RV(rv, "sign", CKR_OK);
+    }
+    if (racePid > 0)
+        (void)run_changer(racePid, raceGo);
+    racePid = -1;
+    close_session(raceSession);
+    raceSession = CK_INVALID_HANDLE;
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+static CK_OBJECT_HANDLE raceKey = CK_INVALID_HANDLE;
+
+/* Destroy the object this process looks up. */
+static int change_destroy(CK_SLOT_ID slot)
+{
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    int code = 0;
+
+    if (lib_init() != CKR_OK || user_session(slot, &session) != CKR_OK)
+        return 20;
+    if (funcList->C_DestroyObject(session, raceKey) != CKR_OK)
+        code |= 1;
+    close_session(session);
+    if (funcList->C_Finalize(NULL) != CKR_OK)
+        code |= 2;
+    return code;
+}
+
+/* Load the token again after the lookup and then log out. */
+static void race_find_reload_logout_hook(void)
+{
+    if (racePid > 0) {
+        race_find_reload_hook();
+        (void)funcList->C_Logout(raceSession);
+    }
+}
+
+/* An operation does not start with a key that is gone by the time it is
+ * set: destroyed by another process, or ended by a logout after a reload. */
+static void test_op_init_on_ended_key(int destroy)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_SHA256_HMAC, NULL, 0 };
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,    &secretClass,             sizeof(secretClass) },
+        { CKA_KEY_TYPE, &genericType,             sizeof(genericType) },
+        { CKA_VALUE,    reloadKey,                sizeof(reloadKey)   },
+        { CKA_TOKEN,    &ckTrue,                  sizeof(ckTrue)      },
+        { CKA_SIGN,     &ckTrue,                  sizeof(ckTrue)      },
+        { CKA_LABEL,    (CK_VOID_PTR)"ended-key", 9                   },
+    };
+
+    printf("\n--- an operation init on a key %s after the lookup ---\n",
+           destroy ? "destroyed elsewhere" : "ended by a logout");
+    rv = token_setup(&raceSlot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(raceSlot, &session);
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, keyTmpl,
+            sizeof(keyTmpl) / sizeof(*keyTmpl), &raceKey);
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        racePid = fork_changer(destroy ? change_destroy : change_add,
+                               raceSlot, &raceGo);
+        if (racePid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK)
+        rv = user_session(raceSlot, &session);
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(raceSlot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &raceSession);
+    }
+    if (rv == CKR_OK) {
+        WP11_Object_SetFindHook(destroy ? race_find_reload_hook :
+                                race_find_reload_logout_hook);
+        rv = funcList->C_SignInit(session, &mech, raceKey);
+        WP11_Object_SetFindHook(NULL);
+        CHECK_TRUE(raceResult == 0, "other process stored first");
+        CHECK_TRUE(rv != CKR_OK, "sign init is refused");
+    }
+    if (racePid > 0)
+        (void)run_changer(racePid, raceGo);
+    racePid = -1;
+    close_session(raceSession);
+    raceSession = CK_INVALID_HANDLE;
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+
+/* Log out after the object was looked up. */
+static void race_find_logout_hook(void)
+{
+    (void)funcList->C_Logout(raceSession);
+}
+
+/* A copy of a private object is not added once a logout came after the
+ * source was looked up. */
+static void test_copy_private_after_logout(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE copy = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS dataClass = CKO_DATA;
+    static CK_BYTE value[] = { 0x01, 0x02, 0x03 };
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,   &dataClass, sizeof(dataClass) },
+        { CKA_TOKEN,   &ckTrue,    sizeof(ckTrue)    },
+        { CKA_PRIVATE, &ckTrue,    sizeof(ckTrue)    },
+        { CKA_VALUE,   value,      sizeof(value)     },
+    };
+    CK_ATTRIBUTE copyTmpl[] = {
+        { CKA_LABEL, (CK_VOID_PTR)"private-copy", 12 },
+    };
+
+    printf("\n--- a private copy when a logout comes after the lookup ---\n");
+    rv = token_setup(&raceSlot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(raceSlot, &session);
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(raceSlot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &raceSession);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, tmpl,
+            sizeof(tmpl) / sizeof(*tmpl), &obj);
+    }
+    if (rv == CKR_OK) {
+        WP11_Object_SetFindHook(race_find_logout_hook);
+        rv = funcList->C_CopyObject(session, obj, copyTmpl,
+            sizeof(copyTmpl) / sizeof(*copyTmpl), &copy);
+        WP11_Object_SetFindHook(NULL);
+        CHECK_TRUE(rv != CKR_OK, "copy is not added");
+    }
+    close_session(raceSession);
+    raceSession = CK_INVALID_HANDLE;
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern void WP11_Slot_SetPinCheckHook(void (*hook)(void));
+#ifdef __cplusplus
+}
+#endif
+
+/* Let the other process change the SO PIN while this one checks it. */
+static void race_pin_hook(void)
+{
+    race_add_hook();
+}
+
+/* C_InitToken does not reset a token whose SO PIN another process changed
+ * while this one checked the old one. */
+static void test_init_token_race(void)
+{
+    CK_RV rv;
+    unsigned char label[32];
+
+    printf("\n--- C_InitToken while another process changes the SO PIN ---\n");
+    rv = token_setup(&raceSlot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        racePid = fork_changer(change_so_pin, raceSlot, &raceGo);
+        if (racePid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    XMEMSET(label, ' ', sizeof(label));
+    XMEMCPY(label, tokenLabel, XSTRLEN(tokenLabel));
+    if (rv == CKR_OK) {
+        WP11_Slot_SetPinCheckHook(race_pin_hook);
+        rv = funcList->C_InitToken(raceSlot, (CK_UTF8CHAR_PTR)soPin,
+                                   (CK_ULONG)XSTRLEN(soPin), label);
+        WP11_Slot_SetPinCheckHook(NULL);
+        CHECK_TRUE(rv != CKR_OK, "reset with the old SO PIN fails");
+        CHECK_TRUE(raceResult == 0, "other process changed the SO PIN");
+        rv = funcList->C_InitToken(raceSlot, (CK_UTF8CHAR_PTR)reloadSoPin,
+                                   (CK_ULONG)XSTRLEN(reloadSoPin), label);
+        CHECK_RV(rv, "reset with the new SO PIN", CKR_OK);
+    }
+    if (racePid > 0)
+        (void)run_changer(racePid, raceGo);
+    racePid = -1;
+    funcList->C_Finalize(NULL);
+}
+
+/* Make the store directory, then let the other process set up the token. */
+static void race_setup_hook(void)
+{
+    (void)mkdir(TEST_DIR, 0700);
+    race_add_hook();
+}
+
+/* C_InitToken of a token loaded before its store directory existed does not
+ * overwrite the token another process set up during the reset. */
+static void test_init_token_new_store_race(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    unsigned char label[32];
+
+    printf("\n--- C_InitToken while another process sets up a new store ---\n");
+    clear_store_dir();
+    (void)rmdir(TEST_DIR);
+    rv = lib_init();
+    if (rv == CKR_OK)
+        rv = first_slot(&raceSlot);
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        racePid = fork_changer(change_setup, raceSlot, &raceGo);
+        if (racePid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    XMEMSET(label, ' ', sizeof(label));
+    XMEMCPY(label, tokenLabel, XSTRLEN(tokenLabel));
+    if (rv == CKR_OK) {
+        raceResult = -1;
+        WP11_Slot_SetPinCheckHook(race_setup_hook);
+        rv = funcList->C_InitToken(raceSlot, (CK_UTF8CHAR_PTR)reloadSoPin,
+                                   (CK_ULONG)XSTRLEN(reloadSoPin), label);
+        WP11_Slot_SetPinCheckHook(NULL);
+        CHECK_TRUE(rv != CKR_OK, "reset over the other token fails");
+        CHECK_TRUE(raceResult == 0, "other process sets up the token");
+        rv = funcList->C_InitToken(raceSlot, (CK_UTF8CHAR_PTR)reloadSoPin,
+                                   (CK_ULONG)XSTRLEN(reloadSoPin), label);
+        CHECK_RV(rv, "its SO PIN is checked", CKR_PIN_INCORRECT);
+        rv = user_session(raceSlot, &session);
+        CHECK_RV(rv, "its user PIN is kept", CKR_OK);
+    }
+    if (racePid > 0)
+        (void)run_changer(racePid, raceGo);
+    racePid = -1;
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+/* Let the other process store while the SO PIN is checked, then load the
+ * token again in this process. */
+static void race_pin_reload_hook(void)
+{
+    CK_OBJECT_HANDLE obj;
+
+    if (racePid > 0) {
+        race_add_hook();
+        (void)create_token_secret(raceSession, "race-pin-reload", &obj);
+    }
+}
+
+/* C_SetPIN changes the SO PIN when a reload during the old PIN check did not
+ * change it. */
+static void test_so_set_pin_survives_reload(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+
+    printf("\n--- SO C_SetPIN while the token is loaded again ---\n");
+    rv = token_setup(&raceSlot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        racePid = fork_changer(change_add, raceSlot, &raceGo);
+        if (racePid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(raceSlot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(raceSlot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &raceSession);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(session, CKU_SO, (CK_UTF8CHAR_PTR)soPin,
+                               (CK_ULONG)XSTRLEN(soPin));
+    }
+    if (rv == CKR_OK) {
+        WP11_Slot_SetPinCheckHook(race_pin_reload_hook);
+        rv = funcList->C_SetPIN(session, (CK_UTF8CHAR_PTR)soPin,
+                                (CK_ULONG)XSTRLEN(soPin),
+                                (CK_UTF8CHAR_PTR)reloadSoPin,
+                                (CK_ULONG)XSTRLEN(reloadSoPin));
+        WP11_Slot_SetPinCheckHook(NULL);
+        CHECK_TRUE(raceResult == 0, "other process stored an object");
+        CHECK_RV(rv, "SO PIN is changed", CKR_OK);
+    }
+    if (racePid > 0)
+        (void)run_changer(racePid, raceGo);
+    racePid = -1;
+    close_session(raceSession);
+    raceSession = CK_INVALID_HANDLE;
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+/* Log the SO out while this process adds an object. */
+static void race_add_logout_hook(void)
+{
+    if (raceSession != CK_INVALID_HANDLE) {
+        (void)funcList->C_Logout(raceSession);
+        raceSession = CK_INVALID_HANDLE;
+    }
+}
+
+/* An SO logout during an add does not refuse a public token key. */
+static void test_add_survives_so_logout(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_SESSION_HANDLE other = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+
+    printf("\n--- an add while the SO logs out ---\n");
+    rv = token_setup(&raceSlot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(raceSlot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(raceSlot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &other);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_Login(session, CKU_SO, (CK_UTF8CHAR_PTR)soPin,
+                               (CK_ULONG)XSTRLEN(soPin));
+    }
+    if (rv == CKR_OK) {
+        raceSession = other;
+        WP11_Session_SetAddObjectHook(race_add_logout_hook);
+        rv = create_token_secret(session, "so-logout-add", &obj);
+        WP11_Session_SetAddObjectHook(NULL);
+        raceSession = CK_INVALID_HANDLE;
+        CHECK_RV(rv, "key is added", CKR_OK);
+    }
+    close_session(other);
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+
+#ifdef HAVE_ECC
+static int raceAdds = 0;
+
+/* Let the other process change the PIN before the second key is added. */
+static void race_second_add_hook(void)
+{
+    if (++raceAdds == 2)
+        race_add_hook();
+}
+
+/* A key pair whose private key cannot be added after a reload leaves no
+ * public key on the token. */
+static void test_keypair_cleanup_after_reload(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_EC_KEY_PAIR_GEN, NULL, 0 };
+    static CK_BYTE p256[] = {
+        0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07
+    };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_EC_PARAMS, p256,                  sizeof(p256)   },
+        { CKA_TOKEN,     &ckTrue,               sizeof(ckTrue) },
+        { CKA_PRIVATE,   &ckTrue,               sizeof(ckTrue) },
+        { CKA_VERIFY,    &ckTrue,               sizeof(ckTrue) },
+        { CKA_LABEL,     (CK_VOID_PTR)"kp-pub", 6              },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_TOKEN,     &ckTrue,                sizeof(ckTrue) },
+        { CKA_SIGN,      &ckTrue,                sizeof(ckTrue) },
+        { CKA_LABEL,     (CK_VOID_PTR)"kp-priv", 7              },
+    };
+
+    printf("\n--- a key pair that fails after a reload leaves nothing ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        racePid = fork_changer(change_pin, slot, &raceGo);
+        if (racePid < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        raceAdds = 0;
+        WP11_Session_SetAddObjectHook(race_second_add_hook);
+        rv = funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+            sizeof(pubTmpl) / sizeof(*pubTmpl), privTmpl,
+            sizeof(privTmpl) / sizeof(*privTmpl), &pub, &priv);
+        WP11_Session_SetAddObjectHook(NULL);
+        CHECK_TRUE(rv != CKR_OK, "key pair fails after the PIN changed");
+        CHECK_TRUE(raceResult == 0, "other process changed the PIN");
+        rv = funcList->C_Login(session, CKU_USER, (CK_UTF8CHAR_PTR)reloadPin,
+                               (CK_ULONG)XSTRLEN(reloadPin));
+        CHECK_RV(rv, "login with the new PIN", CKR_OK);
+        CHECK_TRUE(count_label(session, "kp-pub") == 0,
+                   "private public key is removed");
+        rv = CKR_OK;
+    }
+    if (racePid > 0)
+        (void)run_changer(racePid, raceGo);
+    racePid = -1;
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
+#endif
 
 /* A stale process whose change is still waiting to be stored reports the
  * loss at C_Finalize. */
@@ -1757,6 +4971,29 @@ static void test_stale_finalize_reports_pending(void)
             status = -1;
         CHECK_TRUE(status == 0, "other process stores an object");
     }
+    /* The pending change keeps the token from being loaded again. */
+    if (rv == CKR_OK && blocked) {
+        CK_TOKEN_INFO info;
+
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+        if (rv == CKR_OK) {
+            rv = funcList->C_Login(session, CKU_USER, (CK_UTF8CHAR_PTR)userPin,
+                                   (CK_ULONG)XSTRLEN(userPin));
+            CHECK_RV(rv, "login uses the token as loaded", CKR_OK);
+            rv = create_token_secret(session, "pending-second", &obj);
+            CHECK_RV(rv, "create while a change is pending",
+                     CKR_TOKEN_WRITE_PROTECTED);
+            rv = funcList->C_GetTokenInfo(slot, &info);
+            CHECK_TRUE(rv == CKR_OK && (info.flags & CKF_WRITE_PROTECTED),
+                       "token reports write protection");
+            rv = CKR_OK;
+        }
+        if (session != CK_INVALID_HANDLE)
+            funcList->C_CloseSession(session);
+        session = CK_INVALID_HANDLE;
+    }
     if (rv == CKR_OK && blocked) {
         rv = funcList->C_Finalize(NULL);
         CHECK_RV(rv, "stale finalize with a pending change",
@@ -1770,7 +5007,7 @@ static void test_stale_finalize_reports_pending(void)
 
 #ifdef TEST_ALLOC_FAILURE
 /* A C_SetAttributeValue that fails after changing an attribute leaves other
- * processes out of date, so they cannot write the old attribute back. */
+ * processes out of date, so they do not write the old attribute back. */
 static void test_partial_set_attr_advances(void)
 {
     CK_RV rv;
@@ -1808,16 +5045,23 @@ static void test_partial_set_attr_advances(void)
     if (rv == CKR_OK)
         pid = fork();
     if (pid == 0) {
+        CK_ULONG n = 0;
+        CK_ATTRIBUTE find = { CKA_LABEL, (CK_VOID_PTR)"partial-first", 13 };
+        CK_ATTRIBUTE childId = { CKA_ID, (CK_VOID_PTR)"child", 5 };
         int code = 0;
 
         close_fd(&toChild[1]);
         close_fd(&fromChild[0]);
         if (lib_init() != CKR_OK || user_session(slot, &session) != CKR_OK ||
+                funcList->C_FindObjectsInit(session, &find, 1) != CKR_OK ||
+                funcList->C_FindObjects(session, &obj, 1, &n) != CKR_OK ||
+                funcList->C_FindObjectsFinal(session) != CKR_OK || n != 1 ||
                 write(fromChild[1], &c, 1) != 1 ||
                 read(toChild[0], &c, 1) != 1) {
             _exit(10);
         }
-        if (create_token_secret(session, "partial-child", &obj) == CKR_OK)
+        /* Rewrites the object's record with the label this process holds. */
+        if (funcList->C_SetAttributeValue(session, obj, &childId, 1) != CKR_OK)
             code = 1;
         close_session(session);
         funcList->C_Finalize(NULL);
@@ -1870,14 +5114,14 @@ static void test_partial_set_attr_advances(void)
         close_fd(&toChild[1]);
         if (waitpid(pid, &status, 0) < 0 || !WIFEXITED(status))
             status = -1;
-        CHECK_TRUE(status == 0, "other process can no longer store");
+        CHECK_TRUE(status == 0, "other process changes the object");
     }
     if (rv == CKR_OK)
         rv = reload(slot, &session);
     CHECK_RV(rv, "reload", CKR_OK);
     if (rv == CKR_OK) {
         CHECK_TRUE(count_label(session, "partial-renamed") == 1,
-                   "changed label is stored");
+                   "changed label is kept");
     }
     close_session(session);
     funcList->C_Finalize(NULL);
@@ -1992,7 +5236,7 @@ static void test_clean_finalize_keeps_others_current(void)
 
 #if defined(TOKEN_STORE_FILE_TEST) && !defined(WOLFPKCS11_NO_TIME)
 /* A C_Finalize that stores a changed failed login count leaves other
- * processes out of date, so they cannot write the old count back. */
+ * processes out of date, so they do not write the old count back. */
 static void test_failed_login_finalize_advances(void)
 {
     CK_RV rv;
@@ -2024,7 +5268,7 @@ static void test_failed_login_finalize_advances(void)
                 read(toChild[0], &c, 1) != 1) {
             _exit(10);
         }
-        if (create_token_secret(session, "login-child", &obj) == CKR_OK)
+        if (create_token_secret(session, "login-child", &obj) != CKR_OK)
             code |= 1;
         close_session(session);
         funcList->C_Finalize(NULL);
@@ -2062,8 +5306,21 @@ static void test_failed_login_finalize_advances(void)
         close_fd(&toChild[1]);
         if (waitpid(pid, &status, 0) < 0 || !WIFEXITED(status))
             status = -1;
-        CHECK_TRUE(status == 0, "other process can no longer store");
+        CHECK_TRUE(status == 0, "other process stores an object");
     }
+    if (rv == CKR_OK)
+        rv = lib_init();
+    if (rv == CKR_OK) {
+        CK_TOKEN_INFO info;
+
+        rv = funcList->C_GetTokenInfo(slot, &info);
+        CHECK_RV(rv, "token info", CKR_OK);
+        if (rv == CKR_OK) {
+            CHECK_TRUE((info.flags & CKF_USER_PIN_COUNT_LOW) != 0,
+                       "failed login count is kept");
+        }
+    }
+    funcList->C_Finalize(NULL);
     close_fd(&toChild[1]);
     close_fd(&fromChild[0]);
 }
@@ -2076,6 +5333,55 @@ static void record_path(const char* kind, CK_SLOT_ID slot, int objId,
 {
     snprintf(path, pathSz, "%s/wp11_%s_%016lx_%016lx", TEST_DIR, kind,
              (unsigned long)slot, (unsigned long)objId);
+}
+
+/* A destroy whose store pass fails leaves its records to the next pass
+ * that commits. */
+static void test_failed_destroy_pass_purges(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE first = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    CK_OBJECT_HANDLE last = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE rename = { CKA_LABEL, (CK_VOID_PTR)"purge-renamed", 13 };
+    char objPath[512];
+    char keyPath[512];
+    int blocked = 0;
+
+    if (geteuid() == 0) {
+        printf("\nSkipping failed destroy pass test when run as root\n");
+        return;
+    }
+    printf("\n--- a failed destroy pass leaves its records to a purge ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK)
+        rv = create_token_secret(session, "purge-first", &first);
+    if (rv == CKR_OK)
+        rv = create_token_secret(session, "purge-second", &obj);
+    if (rv == CKR_OK)
+        rv = create_token_secret(session, "purge-last", &last);
+    CHECK_RV(rv, "three token objects", CKR_OK);
+    if (rv == CKR_OK && block_store_dir()) {
+        blocked = 1;
+        (void)funcList->C_DestroyObject(session, last);
+        (void)chmod(TEST_DIR, 0700);
+    }
+    if (blocked) {
+        rv = funcList->C_SetAttributeValue(session, first, &rename, 1);
+        CHECK_RV(rv, "next change commits", CKR_OK);
+        record_path("obj", slot, 2, objPath, sizeof(objPath));
+        record_path("symmkey", slot, 2, keyPath, sizeof(keyPath));
+        CHECK_TRUE(count_label(session, "purge-last") != 0 ||
+                   (access(objPath, F_OK) != 0 && access(keyPath, F_OK) != 0),
+                   "destroyed object's records are removed");
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
 }
 
 /* A record kind this build does not write. */
@@ -2220,9 +5526,79 @@ static int run_tests(void)
     test_init_token_removes_orphan_records();
     test_init_token_reports_failed_removal();
     test_destroy_reports_unstore_failure();
+    test_failed_destroy_pass_purges();
     test_destroy_unstored_object();
     test_load_record_without_trailing_fields();
-    test_stale_process_does_not_store();
+    test_stale_process_reloads();
+    test_stale_login_sees_new_pin();
+    test_reload_keeps_login();
+    test_reload_ends_login_on_pin_change();
+    test_init_pin_after_so_pin_change();
+    test_init_token_after_other_setup();
+    test_failed_create_not_pending();
+    test_handles_after_other_reset();
+    test_reload_logout_keeps_keys();
+    test_empty_pin_reload_after_logout();
+#ifndef NO_HMAC
+    test_empty_pin_reload_ends_so_login();
+    test_so_logout_keeps_replaced_op();
+#endif
+#ifndef WOLFPKCS11_NSS
+    test_dropped_key_retires_session_objects();
+#endif
+    test_copy_sees_other_change();
+    test_reload_failure_keeps_token();
+    test_failed_pin_change_reloads(0);
+    test_failed_pin_change_reloads(1);
+    test_unchecked_store_refuses_login();
+#ifndef NO_HMAC
+    test_dropped_key_ends_ops();
+#endif
+    test_init_token_sees_new_so_pin();
+    test_set_pin_after_so_pin_change();
+#ifdef HAVE_ECC
+    test_op_ends_on_destroyed_key(0);
+    test_op_ends_on_destroyed_key(1);
+#endif
+#if !defined(NO_AES) && defined(HAVE_AES_CBC)
+    test_derive_after_other_store();
+#endif
+#ifdef TEST_ALLOC_FAILURE
+    test_partial_set_attr_undone();
+#endif
+    test_reload_drops_empty_pin_key();
+    test_reload_to_empty_pin_keeps_key();
+#ifdef WOLFPKCS11_NSS
+    test_nss_init_pin_without_store_dir();
+#endif
+#ifndef WOLFPKCS11_NO_TIME
+    test_stale_finalize_keeps_failed_logins();
+    test_reload_keeps_login_reset();
+    test_merged_failed_logins_lock();
+    test_merge_keeps_stored_lockout();
+    test_merge_after_lockout_expires();
+    test_merge_after_lockout_two_reloads();
+#endif
+#ifdef DEBUG_WOLFPKCS11
+    test_refused_add_retries();
+    test_set_attr_after_reload();
+    test_refused_destroy_retries();
+    test_set_attr_after_two_reloads(1);
+    test_set_attr_after_two_reloads(0);
+#ifndef NO_HMAC
+    test_op_init_after_reload();
+    test_op_init_on_ended_key(1);
+    test_op_init_on_ended_key(0);
+#endif
+    test_copy_private_after_logout();
+    test_init_token_race();
+    test_init_token_new_store_race();
+    test_so_set_pin_survives_reload();
+    test_add_survives_so_logout();
+#ifdef HAVE_ECC
+    test_keypair_cleanup_after_reload();
+#endif
+#endif
     test_clean_finalize_keeps_others_current();
 #ifndef WOLFPKCS11_NO_TIME
     test_failed_login_finalize_advances();

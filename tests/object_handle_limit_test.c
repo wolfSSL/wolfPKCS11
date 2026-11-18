@@ -292,6 +292,45 @@ static void reload_test(CK_OBJECT_HANDLE tokFirst, CK_OBJECT_HANDLE tokLast)
 }
 #endif
 
+/* A reset of a token that used every id does not issue them again. */
+static void reset_test(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session = 0;
+    CK_OBJECT_HANDLE obj;
+    unsigned char label[32];
+
+    XMEMSET(label, ' ', sizeof(label));
+    XMEMCPY(label, tokenLabel, XSTRLEN(tokenLabel));
+    rv = token_setup();
+    CHECK_RV(rv, "token setup before reset", CKR_OK);
+    if (rv == CKR_OK &&
+            WP11_Test_SetNextObjId(slot, 1, (int)OBJ_ID_MAX + 1) != 0) {
+        rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_InitToken(slot, (CK_UTF8CHAR_PTR)soPin,
+                                   (CK_ULONG)XSTRLEN(soPin), label);
+        CHECK_RV(rv, "reset token with every id used", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        rv = create_data(session, CK_TRUE, "token-after-reset", &obj);
+        CHECK_RV(rv, "token object after reset fails", CKR_DEVICE_MEMORY);
+    }
+    if (session != 0)
+        funcList->C_CloseSession(session);
+    /* Store a usable counter so a run that shares its storage starts clean. */
+    if (WP11_Test_SetNextObjId(slot, 1, 1) == 0) {
+        (void)funcList->C_InitToken(slot, (CK_UTF8CHAR_PTR)soPin,
+                                    (CK_ULONG)XSTRLEN(soPin), label);
+    }
+    funcList->C_Finalize(NULL);
+}
+
 static void run_test(void)
 {
     CK_RV rv;
@@ -395,6 +434,7 @@ static void run_test(void)
 #else
     (void)tokLast;
 #endif
+    reset_test();
     pkcs11_unload();
 }
 
