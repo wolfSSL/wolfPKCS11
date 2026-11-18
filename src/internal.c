@@ -1638,6 +1638,11 @@ static void wp11_Slot_EndReplacedHandle(WP11_Slot* slot,
 #define WP11_BATCH_APPLY       1
 #define WP11_BATCH_CHECK       2
 
+/* Lock file flag set while the purge of a token reset is not finished. */
+#define WP11_BATCH_PURGE       0x01
+/* Lock file flag set once a purge failed: only store passes retry it. */
+#define WP11_BATCH_PURGE_FAILED 0x02
+
 typedef struct WP11_StoreBatch {
     WP11_Slot* slot;
     XFILE intent;
@@ -1651,6 +1656,7 @@ typedef struct WP11_StoreBatch {
     int active;
     int failed;
     word64 gen;
+    byte genFlags;
     WP11_Token* genToken;
     size_t dirLen;
     char dir[WP11_STORE_MAX_PATH];
@@ -1938,16 +1944,17 @@ static int wolfPKCS11_StoreBatchRecover(void)
 }
 
 /**
- * Read the count of committed store passes, kept in the lock file.
- * Caller holds the lock file.
+ * Read the count of committed store passes and the flags kept after it in
+ * the lock file. Caller holds the lock file.
  *
- * @param [out]  gen  Count of passes, 0 when none was written.
+ * @param [out]  gen    Count of passes, 0 when none was written.
+ * @param [out]  flags  WP11_BATCH_PURGE when set. May be NULL.
  * @return  0 on success.
  * @return  READ_ONLY_E when the lock file cannot be read.
  */
-static int wolfPKCS11_StoreBatchGen(word64* gen)
+static int wolfPKCS11_StoreBatchGen(word64* gen, byte* flags)
 {
-    byte buf[8];
+    byte buf[9];
     int i;
 #if defined(_WIN32) || defined(_MSC_VER)
     OVERLAPPED ov;
@@ -1965,34 +1972,38 @@ static int wolfPKCS11_StoreBatchGen(word64* gen)
         return READ_ONLY_E;
 #endif
     *gen = 0;
-    if ((size_t)got == sizeof(buf)) {
-        for (i = 0; i < (int)sizeof(buf); i++)
+    if ((size_t)got >= sizeof(word64)) {
+        for (i = 0; i < (int)sizeof(word64); i++)
             *gen = (*gen << 8) | buf[i];
     }
+    if (flags != NULL)
+        *flags = ((size_t)got == sizeof(buf)) ? buf[sizeof(word64)] : 0;
     return 0;
 }
 
 /**
- * Write the count of committed store passes durably to the lock file.
- * Caller holds the lock file.
+ * Write the count of committed store passes and the flags durably to the
+ * lock file. Caller holds the lock file.
  *
- * @param [in]  gen  Count of passes.
+ * @param [in]  gen    Count of passes.
+ * @param [in]  flags  WP11_BATCH_* flags.
  * @return  0 on success.
  * @return  READ_ONLY_E when the lock file cannot be written.
  */
-static int wolfPKCS11_StoreBatchSetGen(word64 gen)
+static int wolfPKCS11_StoreBatchSetGen(word64 gen, byte flags)
 {
-    byte buf[8];
+    byte buf[9];
     int i;
 #if defined(_WIN32) || defined(_MSC_VER)
     OVERLAPPED ov;
     DWORD put = 0;
 #endif
 
-    for (i = (int)sizeof(buf) - 1; i >= 0; i--) {
+    for (i = (int)sizeof(word64) - 1; i >= 0; i--) {
         buf[i] = (byte)gen;
         gen >>= 8;
     }
+    buf[sizeof(word64)] = flags;
 #if defined(_WIN32) || defined(_MSC_VER)
     XMEMSET(&ov, 0, sizeof(ov));
     if (!WriteFile(storeBatch.lockFile, buf, sizeof(buf), &put, &ov) ||
@@ -2093,21 +2104,55 @@ static void wolfPKCS11_StoreBatchRelease(WP11_Slot* held)
 /**
  * Read the count of committed store passes while the lock file is held.
  *
- * @param [in]   held  Slot returned by wolfPKCS11_StoreBatchCheck.
- * @param [out]  gen   Count of passes.
+ * @param [in]   held   Slot returned by wolfPKCS11_StoreBatchCheck.
+ * @param [out]  gen    Count of passes.
+ * @param [out]  flags  WP11_BATCH_* flags. May be NULL.
  * @return  0 on success.
  * @return  READ_ONLY_E when the lock file is not held or cannot be read.
  */
-static int wolfPKCS11_StoreBatchHeldGen(WP11_Slot* held, word64* gen)
+static int wolfPKCS11_StoreBatchHeldGen(WP11_Slot* held, word64* gen,
+    byte* flags)
 {
     /* No pass has committed to a store that does not exist yet. */
     if (held != NULL && storeBatch.absent) {
         *gen = 0;
+        if (flags != NULL)
+            *flags = 0;
         return 0;
     }
     if (held == NULL || !storeBatch.locked)
         return READ_ONLY_E;
-    return wolfPKCS11_StoreBatchGen(gen);
+    return wolfPKCS11_StoreBatchGen(gen, flags);
+}
+
+/**
+ * Record the outcome of a purge in the lock file: clear the pending purge
+ * once the removals are durable, or note that it failed. Caller holds the
+ * lock file.
+ *
+ * @param [in]  removed  1 when every record was removed, 0 otherwise.
+ * @return  0 on success.
+ * @return  READ_ONLY_E when the lock file cannot be read or written.
+ * @return  Other value when the store directory cannot be synced.
+ */
+static int wolfPKCS11_StoreBatchPurgeDone(int removed)
+{
+    int ret = 0;
+    word64 gen = 0;
+    byte flags = 0;
+
+    if (removed)
+        ret = wolfPKCS11_StoreSyncDir(storeBatch.dir);
+    if (ret == 0)
+        ret = wolfPKCS11_StoreBatchGen(&gen, &flags);
+    if (ret == 0 && removed && (flags & WP11_BATCH_PURGE)) {
+        ret = wolfPKCS11_StoreBatchSetGen(gen,
+            flags & ~(WP11_BATCH_PURGE | WP11_BATCH_PURGE_FAILED));
+    }
+    else if (ret == 0 && !removed && !(flags & WP11_BATCH_PURGE_FAILED)) {
+        ret = wolfPKCS11_StoreBatchSetGen(gen, flags | WP11_BATCH_PURGE_FAILED);
+    }
+    return ret;
 }
 
 /**
@@ -2162,7 +2207,7 @@ static int wolfPKCS11_StoreBatchBegin(int tokenId)
     if (ret == 0)
         ret = wolfPKCS11_StoreBatchRecover();
     if (ret == 0)
-        ret = wolfPKCS11_StoreBatchGen(&storeBatch.gen);
+        ret = wolfPKCS11_StoreBatchGen(&storeBatch.gen, &storeBatch.genFlags);
     storeBatch.genToken = NULL;
     if (ret == 0) {
     #if defined(_WIN32) || defined(_MSC_VER)
@@ -2261,6 +2306,7 @@ static int wolfPKCS11_StoreBatchEnd(int commit, WP11_Slot** held)
     int ret = 0;
     int hold = 0;
     int bumped = 0;
+    byte flags;
     WP11_Slot* slot;
 
     if (held != NULL)
@@ -2284,7 +2330,13 @@ static int wolfPKCS11_StoreBatchEnd(int commit, WP11_Slot** held)
         /* Written before the marker so a committed pass is always counted. */
         if (ret == 0 && commit && storeBatch.genToken != NULL) {
             bumped = 1;
-            ret = wolfPKCS11_StoreBatchSetGen(storeBatch.gen + 1);
+            flags = storeBatch.genFlags;
+            /* A new reset's purge has not been tried yet. */
+            if (storeBatch.genToken->storeReset)
+                flags &= ~WP11_BATCH_PURGE_FAILED;
+            if (storeBatch.genToken->storePurge)
+                flags |= WP11_BATCH_PURGE;
+            ret = wolfPKCS11_StoreBatchSetGen(storeBatch.gen + 1, flags);
         }
         if (ret == 0 && commit) {
             ret = wolfPKCS11_StoreRename(storeBatch.intentName,
@@ -2301,14 +2353,17 @@ static int wolfPKCS11_StoreBatchEnd(int commit, WP11_Slot** held)
                 storeBatch.genToken->storeGen = storeBatch.gen + 1;
                 storeBatch.genToken->storeGenKnown = 1;
                 storeBatch.genToken->storeGenAdopt = 0;
+                storeBatch.genToken->storeReset = 0;
             }
         }
         else {
             (void)wolfPKCS11_StoreBatchApply(storeBatch.intentName,
                 WP11_BATCH_DISCARD);
             (void)remove(storeBatch.intentName);
-            if (bumped && wolfPKCS11_StoreBatchSetGen(storeBatch.gen) != 0)
+            if (bumped && wolfPKCS11_StoreBatchSetGen(storeBatch.gen,
+                    storeBatch.genFlags) != 0) {
                 storeBatch.genToken->storeGen = storeBatch.gen + 1;
+            }
         }
         storeBatch.genToken = NULL;
         hold = (held != NULL && ret == 0 && commit);
@@ -8330,6 +8385,10 @@ static int wp11_Token_EmptyPin(WP11_Slot* slot, WP11_Token* token,
     return wp11_Token_HasEmptyPin(slot, token);
 }
 
+#ifdef WP11_STORE_BATCH
+static int wp11_Token_Purge(WP11_Token* token, int tokenId);
+#endif
+
 /**
  * Load a token from storage. Runs without the slot lock from library
  * initialization, under it from a token reset, and under the slot and token
@@ -8356,6 +8415,7 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token,
     word32 len;
 #ifdef WP11_STORE_BATCH
     WP11_Slot* batchHeld = NULL;
+    byte batchFlags = 0;
 #endif
 
     ret = 0;
@@ -8363,7 +8423,7 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token,
     /* Finish or drop an interrupted pass, then keep passes out until read. */
     ret = wolfPKCS11_StoreBatchCheck(tokenId, &batchHeld);
     if (ret == 0 && wolfPKCS11_StoreBatchHeldGen(batchHeld,
-            &token->storeGen) == 0) {
+            &token->storeGen, &batchFlags) == 0) {
         token->storeGenKnown = 1;
     }
 #endif
@@ -8518,6 +8578,13 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token,
         ret = 0;
     }
 #ifdef WP11_STORE_BATCH
+    /* Finish the purge of a reset whose process stopped before trying it. */
+    if (ret == 0 && (batchFlags & WP11_BATCH_PURGE) &&
+            !(batchFlags & WP11_BATCH_PURGE_FAILED) &&
+            token->state == WP11_TOKEN_STATE_INITIALIZED) {
+        (void)wolfPKCS11_StoreBatchPurgeDone(
+            wp11_Token_Purge(token, tokenId) == 0);
+    }
     wolfPKCS11_StoreBatchRelease(batchHeld);
 #endif
 
@@ -8969,6 +9036,7 @@ static int wp11_Token_StoreSome(WP11_Token* token, int tokenId, int what,
 {
     int ret;
     int stale = 0;
+    int purged;
 #ifdef WP11_STORE_BATCH
     int endRet;
     WP11_Slot* held = NULL;
@@ -8991,6 +9059,9 @@ static int wp11_Token_StoreSome(WP11_Token* token, int tokenId, int what,
         else if (!token->storeKeepGen) {
             storeBatch.genToken = token;
         }
+        /* A purge another process left pending is finished by this pass. */
+        if (!stale && (storeBatch.genFlags & WP11_BATCH_PURGE))
+            token->storePurge = 1;
     }
     if (ret == 0 || stale) {
         if (ret == 0)
@@ -9012,8 +9083,14 @@ static int wp11_Token_StoreSome(WP11_Token* token, int tokenId, int what,
             token->storePurge = 1;
         token->storeUnstorePending = 0;
     }
-    if (ret == 0 && token->storePurge && wp11_Token_Purge(token, tokenId) == 0)
-        token->storePurge = 0;
+    if (ret == 0 && token->storePurge) {
+        purged = (wp11_Token_Purge(token, tokenId) == 0);
+        token->storePurge = !purged;
+    #ifdef WP11_STORE_BATCH
+        if (held != NULL && wolfPKCS11_StoreBatchPurgeDone(purged) != 0)
+            token->storePurge = 1;
+    #endif
+    }
 #ifdef WP11_STORE_BATCH
     wolfPKCS11_StoreBatchRelease(held);
 #endif
@@ -9904,6 +9981,7 @@ int WP11_Slot_TokenReset(WP11_Slot* slot, char* pin, int pinLen, char* label,
     token->storeGen = storeGen;
     token->storeGenKnown = storeGenKnown;
     token->storeGenAdopt = !storeGenKnown;
+    token->storeReset = 1;
 #endif
     /* C_InitToken is the canonical provisioning step. Mark the token as
      * initialized here rather than in wp11_Token_Init so a fresh slot stays
@@ -13969,7 +14047,7 @@ static int wp11_Slot_TokenStale(WP11_Slot* slot)
 
     if (!token->storeStale && !token->storeGenAdopt) {
         ret = wolfPKCS11_StoreBatchCheck((int)slot->id, &held);
-        if (ret == 0 && wolfPKCS11_StoreBatchHeldGen(held, &gen) != 0) {
+        if (ret == 0 && wolfPKCS11_StoreBatchHeldGen(held, &gen, NULL) != 0) {
             if (held != NULL && token->storeGenKnown)
                 ret = READ_ONLY_E;
         }
@@ -14267,6 +14345,7 @@ static int wp11_Slot_Reload(WP11_Slot* slot, int force)
         token->storeStale = 0;
         token->storePurge = 0;
         token->storeGenAdopt = 0;
+        token->storeReset = 0;
         if (logout) {
             /* Unless decoded under an empty PIN, the objects just loaded hold
              * only their stored ciphertext. */

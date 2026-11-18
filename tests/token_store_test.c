@@ -5495,6 +5495,139 @@ static void test_init_token_reports_failed_removal(void)
     (void)rmdir(path);
     funcList->C_Finalize(NULL);
 }
+
+/* Set or clear the failed purge flag in the token's batch lock file. */
+static int set_purge_failed(CK_SLOT_ID slot, int failed)
+{
+    char path[512];
+    FILE* f;
+    byte buf[9];
+    int ret = -1;
+
+    snprintf(path, sizeof(path), "%s/wp11_txn_%016lx_lock", TEST_DIR,
+             (unsigned long)slot);
+    f = fopen(path, "r+b");
+    if (f == NULL)
+        return -1;
+    if (fread(buf, 1, sizeof(buf), f) == sizeof(buf)) {
+        buf[8] = failed ? (byte)(buf[8] | 0x02) : (byte)(buf[8] & ~0x02);
+        if (fseek(f, 0, SEEK_SET) == 0 &&
+                fwrite(buf, 1, sizeof(buf), f) == sizeof(buf)) {
+            ret = 0;
+        }
+    }
+    fclose(f);
+    return ret;
+}
+
+/* A purge that C_InitToken could not finish is retried by store passes, not
+ * by every load; one that never ran, as when its process stopped, is
+ * finished by the next process that loads the token, and only once. */
+static void test_init_token_purge_survives_exit(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    unsigned char label[32];
+    char path[512];
+    char inner[600];
+    char later[512];
+    static const byte junk[4] = { 1, 2, 3, 4 };
+    struct stat st;
+
+    printf("\n--- a later process finishes a pending purge ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    record_path("symmkey", slot, 3, path, sizeof(path));
+    record_path("symmkey", slot, 4, later, sizeof(later));
+    snprintf(inner, sizeof(inner), "%s/x", path);
+    if (rv == CKR_OK) {
+        CHECK_TRUE(mkdir(path, 0700) == 0 &&
+                   write_store_file(inner, junk, sizeof(junk)) == 0,
+                   "make an unremovable key record");
+        XMEMSET(label, ' ', sizeof(label));
+        XMEMCPY(label, tokenLabel, XSTRLEN(tokenLabel));
+        rv = funcList->C_InitToken(slot, (CK_UTF8CHAR_PTR)soPin,
+                                   (CK_ULONG)XSTRLEN(soPin), label);
+        CHECK_RV(rv, "C_InitToken", CKR_FUNCTION_FAILED);
+        rv = (rv == CKR_FUNCTION_FAILED) ? CKR_OK : CKR_GENERAL_ERROR;
+    }
+    funcList->C_Finalize(NULL);
+    /* Leave an ordinary record that only the pending purge removes. */
+    (void)remove(inner);
+    (void)rmdir(path);
+    if (rv == CKR_OK) {
+        CHECK_TRUE(write_store_file(path, junk, sizeof(junk)) == 0,
+                   "leave an old key record");
+        rv = lib_init();
+        CHECK_RV(rv, "initialize in a later process", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        CHECK_TRUE(stat(path, &st) == 0, "loading does not retry it");
+        rv = funcList->C_OpenSession(slot,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &session);
+    }
+    if (rv == CKR_OK) {
+        CK_OBJECT_CLASS dataClass = CKO_DATA;
+        CK_ATTRIBUTE tmpl[] = {
+            { CKA_CLASS,   &dataClass, sizeof(dataClass) },
+            { CKA_TOKEN,   &ckTrue,    sizeof(ckTrue)    },
+            { CKA_PRIVATE, &ckFalse,   sizeof(ckFalse)   },
+        };
+
+        rv = funcList->C_CreateObject(session, tmpl,
+            sizeof(tmpl) / sizeof(*tmpl), &obj);
+        CHECK_RV(rv, "a store pass", CKR_OK);
+        CHECK_TRUE(stat(path, &st) != 0, "the store pass removes it");
+    }
+    if (session != CK_INVALID_HANDLE)
+        funcList->C_CloseSession(session);
+    funcList->C_Finalize(NULL);
+
+    /* A purge that never ran is finished at load. */
+    if (rv == CKR_OK) {
+        XMEMSET(label, ' ', sizeof(label));
+        XMEMCPY(label, tokenLabel, XSTRLEN(tokenLabel));
+        rv = lib_init();
+    }
+    if (rv == CKR_OK) {
+        CHECK_TRUE(mkdir(path, 0700) == 0 &&
+                   write_store_file(inner, junk, sizeof(junk)) == 0,
+                   "make the key record unremovable again");
+        rv = funcList->C_InitToken(slot, (CK_UTF8CHAR_PTR)soPin,
+                                   (CK_ULONG)XSTRLEN(soPin), label);
+        CHECK_RV(rv, "C_InitToken", CKR_FUNCTION_FAILED);
+        rv = (rv == CKR_FUNCTION_FAILED) ? CKR_OK : CKR_GENERAL_ERROR;
+    }
+    funcList->C_Finalize(NULL);
+    (void)remove(inner);
+    (void)rmdir(path);
+    if (rv == CKR_OK) {
+        CHECK_TRUE(write_store_file(path, junk, sizeof(junk)) == 0 &&
+                   set_purge_failed(slot, 0) == 0,
+                   "leave a purge that never ran");
+        rv = lib_init();
+        CHECK_RV(rv, "initialize in a later process", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        CHECK_TRUE(stat(path, &st) != 0, "the later process removes it");
+    }
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        CHECK_TRUE(write_store_file(later, junk, sizeof(junk)) == 0,
+                   "leave a record after the purge");
+        rv = lib_init();
+        CHECK_RV(rv, "initialize again", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        CHECK_TRUE(stat(later, &st) == 0, "the finished purge does not rerun");
+    }
+    funcList->C_Finalize(NULL);
+    (void)remove(path);
+    (void)remove(later);
+}
 #endif
 
 static int run_tests(void)
@@ -5525,6 +5658,7 @@ static int run_tests(void)
     test_init_token_removes_changed_type();
     test_init_token_removes_orphan_records();
     test_init_token_reports_failed_removal();
+    test_init_token_purge_survives_exit();
     test_destroy_reports_unstore_failure();
     test_failed_destroy_pass_purges();
     test_destroy_unstored_object();
