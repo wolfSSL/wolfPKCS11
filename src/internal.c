@@ -18386,7 +18386,17 @@ static int wp11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
             }
             break;
         case CKA_WOLFSSL_DEVID:
-            object->devId = (int)(*(CK_ULONG*)data);
+        #ifdef WOLFPKCS11_STATEFUL_SIG_PRIVATE
+            /* A device key signs on the device its record names. */
+            if (wp11_Stateful_OnDevice(object) &&
+                    (int)(*(CK_ULONG*)data) != object->devId) {
+                ret = NOT_AVAILABLE_E;
+            }
+            else
+        #endif
+            {
+                object->devId = (int)(*(CK_ULONG*)data);
+            }
             break;
 #ifdef WOLFPKCS11_LMS
         case CKA_HSS_LEVELS:

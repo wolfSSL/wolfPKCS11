@@ -68,9 +68,10 @@ static void wp11_Stateful_WriteU64(byte* p, word64 v)
 #define WP11_STATEFUL_POLICY_MAX      64U
 
 #define WP11_STATEFUL_KIND_SEALED     0U
+#define WP11_STATEFUL_KIND_DEVICE     1U
 
-/* Record: [u32 len][shell][u32 kind], then [u32 len][policy][u64 count][salt]
- * [u32 len][ct], sealed up to the salt. */
+/* Record: [u32 len][shell][u32 kind][u32 len][policy][u64 count][salt]
+ * [u32 len][ct], sealed up to the salt. A device kind seals [u32 devId][id]. */
 typedef struct WP11_StatefulRec {
     const byte* rec;
     const byte* shell;
@@ -128,8 +129,10 @@ static int wp11_Stateful_Parse(const byte* rec, word32 len,
     r->kind = wp11_HbsReadU32(rec + idx);
     idx += 4;
 
-    if (r->kind != WP11_STATEFUL_KIND_SEALED || len - idx < 4)
+    if ((r->kind != WP11_STATEFUL_KIND_SEALED &&
+            r->kind != WP11_STATEFUL_KIND_DEVICE) || len - idx < 4) {
         return BAD_FUNC_ARG;
+    }
     n = wp11_HbsReadU32(rec + idx);
     idx += 4;
     if (n > WP11_STATEFUL_POLICY_MAX ||
@@ -240,9 +243,9 @@ WP11_API int WP11_Test_StatefulRecordKey(const byte* tokenKey,
 
 /* Build a record holding priv sealed under key with a fresh salt. */
 static int wp11_Stateful_Seal(WP11_Object* o, const byte* shell,
-    word32 shellLen, const byte* policy, word32 policyLen, word64 count,
-    const byte* priv, word32 privLen, const byte* key, byte** out,
-    word32* outLen)
+    word32 shellLen, word32 kind, const byte* policy, word32 policyLen,
+    word64 count, const byte* priv, word32 privLen, const byte* key,
+    byte** out, word32* outLen)
 {
     int ret;
     byte* rec;
@@ -268,7 +271,7 @@ static int wp11_Stateful_Seal(WP11_Object* o, const byte* shell,
     wp11_Stateful_WriteU32(rec, shellLen);
     XMEMCPY(rec + 4, shell, shellLen);
     idx = 4 + shellLen;
-    wp11_Stateful_WriteU32(rec + idx, WP11_STATEFUL_KIND_SEALED);
+    wp11_Stateful_WriteU32(rec + idx, kind);
     wp11_Stateful_WriteU32(rec + idx + 4, policyLen);
     idx += 8;
     if (policyLen > 0)
@@ -286,7 +289,7 @@ static int wp11_Stateful_Seal(WP11_Object* o, const byte* shell,
     if (ret == 0) {
         ret = wp11_EncryptData(rec + aadLen + WP11_STATEFUL_SALT_LEN + 4,
             priv, (int)privLen, recKey, (int)sizeof(recKey), nonce,
-            (int)sizeof(nonce), rec, aadLen, o->devId);
+            (int)sizeof(nonce), rec, aadLen, o->slot->devId);
     }
     wc_ForceZero(recKey, sizeof(recKey));
     if (ret != 0) {
@@ -314,7 +317,7 @@ static int wp11_Stateful_Unseal(WP11_Object* o, const WP11_StatefulRec* r,
     if (ret == 0) {
         ret = wp11_DecryptData(priv, r->ct,
             (int)(r->ctLen - AES_BLOCK_SIZE), recKey, (int)sizeof(recKey),
-            nonce, (int)sizeof(nonce), r->rec, r->aadLen, o->devId);
+            nonce, (int)sizeof(nonce), r->rec, r->aadLen, o->slot->devId);
     }
     wc_ForceZero(recKey, sizeof(recKey));
     return ret;
@@ -331,8 +334,6 @@ static int wp11_Stateful_ReSeal(WP11_Object* o, const byte* rec, word32 len,
     word32 privLen = 0;
 
     ret = wp11_Stateful_Parse(rec, len, &r);
-    if (ret == 0 && r.kind != WP11_STATEFUL_KIND_SEALED)
-        ret = BAD_FUNC_ARG;
     if (ret == 0) {
         privLen = r.ctLen - AES_BLOCK_SIZE;
         priv = (byte*)XMALLOC(privLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -346,8 +347,8 @@ static int wp11_Stateful_ReSeal(WP11_Object* o, const byte* rec, word32 len,
             policy = r.policy;
             policyLen = r.policyLen;
         }
-        ret = wp11_Stateful_Seal(o, r.shell, r.shellLen, policy, policyLen,
-            r.count, priv, privLen, newKey, out, outLen);
+        ret = wp11_Stateful_Seal(o, r.shell, r.shellLen, r.kind, policy,
+            policyLen, r.count, priv, privLen, newKey, out, outLen);
     }
     if (priv != NULL) {
         wc_ForceZero(priv, privLen);
@@ -413,6 +414,56 @@ static int wp11_Stateful_StoreType(WP11_Object* o)
     (void)o;
     return WOLFPKCS11_STORE_HSSKEY_PRIV;
 }
+#ifdef WOLFPKCS11_HSS_DEVICE
+/* Check that the record at objId is still o's, under the same policy. */
+static int wp11_Stateful_Owns(WP11_Object* o, int storeType, int objId)
+{
+    int ret;
+    byte* stored = NULL;
+    int storedLen = 0;
+    WP11_StatefulRec mem;
+    WP11_StatefulRec disk;
+    byte* ref = NULL;
+    word32 refLen = 0;
+    LmsKey* key = o->data.lmsKey;
+
+    ret = wp11_Stateful_ReadStored(storeType, (int)o->slot->id, objId,
+        &stored, &storedLen);
+    if (ret == 0)
+        ret = wp11_Stateful_Parse(o->keyData, (word32)o->keyDataLen, &mem);
+    if (ret == 0)
+        ret = wp11_Stateful_Parse(stored, (word32)storedLen, &disk);
+    if (ret == 0 && (!wp11_Stateful_SameKey(&mem, &disk) ||
+            disk.policyLen != mem.policyLen ||
+            XMEMCMP(disk.policy, mem.policy, mem.policyLen) != 0)) {
+        ret = BAD_STATE_E;
+    }
+    /* A record that changed must still unseal to this device key. */
+    if (ret == 0 && (storedLen != o->keyDataLen ||
+            XMEMCMP(stored, o->keyData, (size_t)storedLen) != 0)) {
+        refLen = disk.ctLen - AES_BLOCK_SIZE;
+        if (refLen != 4 + (word32)key->idLen)
+            ret = BAD_STATE_E;
+        if (ret == 0) {
+            ref = (byte*)XMALLOC(refLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            if (ref == NULL)
+                ret = MEMORY_E;
+        }
+        if (ret == 0)
+            ret = wp11_Stateful_Unseal(o, &disk, o->slot->token.key, ref);
+        if (ret == 0 && (wp11_HbsReadU32(ref) != (word32)o->devId ||
+                XMEMCMP(ref + 4, key->id, (size_t)key->idLen) != 0)) {
+            ret = BAD_STATE_E;
+        }
+        if (ref != NULL) {
+            wc_ForceZero(ref, refLen);
+            XFREE(ref, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        }
+    }
+    XFREE(stored, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    return ret;
+}
+#endif
 
 /* Bring o up to the record at objId, or reload it with force, refusing a state
  * behind memory or of another key. Caller holds the state lock. */
@@ -610,6 +661,22 @@ void wp11_Stateful_StoreDone(WP11_Token* token, int committed)
     }
 }
 
+int wp11_Stateful_OnDevice(WP11_Object* object)
+{
+    int ret = 0;
+
+#ifdef WOLFPKCS11_HSS_DEVICE
+    if (wp11_Stateful_IsKey(object)) {
+        WP11_Lock_LockRO(&object->slot->storeLock);
+        ret = (object->statefulState & WP11_STATEFUL_DEVICE) != 0;
+        WP11_Lock_UnlockRO(&object->slot->storeLock);
+    }
+#else
+    (void)object;
+#endif
+    return ret;
+}
+
 int wp11_Stateful_IsKey(WP11_Object* object)
 {
     if (object->objClass != CKO_PRIVATE_KEY)
@@ -642,7 +709,7 @@ int wp11_Stateful_ReKey(WP11_Object* object, const byte* oldKey,
     if (ret != 0)
         return wp11_Stateful_Damaged(ret) ? 0 : ret;
     if (wp11_Stateful_Parse(object->keyData, (word32)object->keyDataLen,
-            &r) != 0 || r.kind != WP11_STATEFUL_KIND_SEALED) {
+            &r) != 0) {
         return 0;
     }
     /* The record keeps its own policy digest, so a changed one stays refused,
@@ -700,7 +767,7 @@ static int wp11_Stateful_SaveState(WP11_Object* o, const byte* priv,
 
     ret = wp11_Stateful_Parse(o->keyData, (word32)o->keyDataLen, &r);
     if (ret == 0) {
-        ret = wp11_Stateful_Seal(o, r.shell, r.shellLen, r.policy,
+        ret = wp11_Stateful_Seal(o, r.shell, r.shellLen, r.kind, r.policy,
             r.policyLen, o->statefulSigCount, priv, privSz,
             o->slot->token.key, &rec, &recLen);
     }
@@ -737,10 +804,12 @@ static int wp11_Stateful_Encode(WP11_Object* object,
         if (ret == 0)
             ret = wp11_Stateful_Policy(object, policy);
         if (ret == 0) {
-            ret = wp11_Stateful_Seal(object, shell, shellLen, policy,
-                sizeof(policy), object->statefulSigCount, object->statefulBuf,
-                object->statefulBufLen, object->slot->token.key, &rec,
-                &recLen);
+            ret = wp11_Stateful_Seal(object, shell, shellLen,
+                (object->statefulState & WP11_STATEFUL_DEVICE) ?
+                    WP11_STATEFUL_KIND_DEVICE : WP11_STATEFUL_KIND_SEALED,
+                policy, sizeof(policy), object->statefulSigCount,
+                object->statefulBuf, object->statefulBufLen,
+                object->slot->token.key, &rec, &recLen);
         }
         if (ret == 0) {
             wc_ForceZero(object->statefulBuf, object->statefulBufLen);
@@ -931,7 +1000,11 @@ static int wp11_Stateful_Sign(const WP11_StatefulOps* ops, unsigned char* data,
     }
     if (ret == 0 && (priv->statefulState & WP11_STATEFUL_EXHAUSTED))
         ret = KEY_EXHAUSTED_E;
-    if (ret == 0) {
+    else if (ret == 0 && (priv->statefulState & WP11_STATEFUL_DEVICE) &&
+            (priv->statefulState & WP11_STATEFUL_VALID) == 0) {
+        ret = NOT_AVAILABLE_E;
+    }
+    if (ret == 0 && (priv->statefulState & WP11_STATEFUL_DEVICE) == 0) {
         /* A key disabled by a failure reloads: a released signature's state
          * is always stored. */
         ret = wp11_Stateful_Refresh(priv, wp11_Stateful_StoreType(priv),
@@ -948,10 +1021,18 @@ static int wp11_Stateful_Sign(const WP11_StatefulOps* ops, unsigned char* data,
             ret = NOT_AVAILABLE_E;
     }
     /* A state write that cannot be committed would still use up a leaf. */
-    if (ret == 0) {
+    if (ret == 0 && (priv->statefulState & WP11_STATEFUL_DEVICE) == 0) {
         ret = wp11_storage_check_durable(wp11_Stateful_StoreType(priv),
             (CK_ULONG)priv->slot->id, (CK_ULONG)objId);
     }
+#ifdef WOLFPKCS11_HSS_DEVICE
+    /* Another process may have destroyed or moved the key. */
+    if (ret == 0 && (priv->statefulState & WP11_STATEFUL_DEVICE)) {
+        ret = wp11_Stateful_Owns(priv, wp11_Stateful_StoreType(priv), objId);
+        if (ret != 0 && ret != MEMORY_E && ret != READ_ONLY_E)
+            ret = NOT_AVAILABLE_E;
+    }
+#endif
     if (ret == 0) {
         prevCount = priv->statefulSigCount;
         priv->statefulSigCount = prevCount + 1;
@@ -959,20 +1040,37 @@ static int wp11_Stateful_Sign(const WP11_StatefulOps* ops, unsigned char* data,
         outLen = *sigLen;
         ret = ops->sign(priv, sig, &outLen, data, dataLen);
         priv->statefulStoreId = 0;
+        /* A device can report more than the buffer holds. */
+        if (ret == 0 && outLen > *sigLen)
+            ret = WC_HW_E;
         if (ret == 0) {
             *sigLen = outLen;
-            if (ops->total(priv, &total) == 0 && total != 0 &&
+            if ((priv->statefulState & WP11_STATEFUL_DEVICE) == 0 &&
+                    ops->total(priv, &total) == 0 && total != 0 &&
                     priv->statefulSigCount >= total) {
                 priv->statefulState |= WP11_STATEFUL_EXHAUSTED;
             }
         }
         else {
-            if (ret == KEY_EXHAUSTED_E)
+            if (ret == KEY_EXHAUSTED_E) {
                 priv->statefulState |= WP11_STATEFUL_EXHAUSTED;
-            else if (!wp11_Stateful_SignArgError(ret) || ops->broken(priv))
+            }
+        #ifdef WOLFPKCS11_HSS_DEVICE
+            else if (priv->statefulState & WP11_STATEFUL_DEVICE) {
+                /* A declined sign fails on the missing callbacks, or with
+                 * NO_VALID_DEVID under WOLF_CRYPTO_CB_ONLY_LMS. */
+                if (!(wp11_Stateful_SignArgError(ret) ||
+                        ret == NO_VALID_DEVID) || ops->broken(priv)) {
+                    priv->statefulState &= (byte)~WP11_STATEFUL_VALID;
+                }
+                ret = NOT_AVAILABLE_E;
+            }
+        #endif
+            else if (!wp11_Stateful_SignArgError(ret) || ops->broken(priv)) {
                 priv->statefulState &= (byte)~WP11_STATEFUL_VALID;
-            if (outLen > 0)
-                XMEMSET(sig, 0, outLen);
+            }
+            /* A failing device may have raised outLen past the buffer. */
+            XMEMSET(sig, 0, *sigLen);
             priv->statefulSigCount = prevCount;
         }
     }
@@ -991,8 +1089,10 @@ static int wp11_Stateful_SigsLeft(const WP11_StatefulOps* ops,
     *remaining = 0;
     if (key->statefulState & WP11_STATEFUL_EXHAUSTED)
         return 0;
-    if ((key->statefulState & WP11_STATEFUL_VALID) == 0)
+    if ((key->statefulState & WP11_STATEFUL_VALID) == 0 ||
+            (key->statefulState & WP11_STATEFUL_DEVICE) != 0) {
         return NOT_AVAILABLE_E;
+    }
     if (ops->total(key, &total) != 0)
         return BAD_FUNC_ARG;
     used = key->statefulSigCount;
@@ -1235,6 +1335,9 @@ static int wp11_Hss_LoadState(WP11_Object* o, const byte* rec, word32 len,
         ret = wp11_HssParseShellHeader(r.shell, r.shellLen, &levels, &height,
             &winternitz, &pub, &pubLen);
     }
+    /* A sign holds the token lock RO, too little to set o->devId. */
+    if (ret == 0 && reload && r.kind == WP11_STATEFUL_KIND_DEVICE)
+        ret = NOT_AVAILABLE_E;
     if (ret == 0 && rec != o->keyData) {
         copy = (byte*)XMALLOC(len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         if (copy == NULL)
@@ -1260,54 +1363,70 @@ static int wp11_Hss_LoadState(WP11_Object* o, const byte* rec, word32 len,
     else
         o->encoded = 0;
     o->statefulState = 0;
-    if (r.kind != WP11_STATEFUL_KIND_SEALED) {
-        ret = NOT_COMPILED_IN;
+    /* Software only: some wolfSSL versions skip the read callback in
+     * wc_LmsKey_Reload for a key with a device id. */
+    ret = wc_LmsKey_Init(key, NULL, INVALID_DEVID);
+    if (ret == 0)
+        ret = wc_LmsKey_SetParameters(key, levels, height, winternitz);
+    if (ret == 0)
+        ret = wp11_Stateful_Policy(o, policy);
+    if (ret == 0) {
+        if (r.policyLen != sizeof(policy) ||
+                XMEMCMP(r.policy, policy, sizeof(policy)) != 0) {
+            ret = AES_GCM_AUTH_E;
+        }
     }
-    else {
-        /* Software only: with a device id wc_LmsKey_Reload skips the read
-         * callback and leaves the key without its private state. */
-        ret = wc_LmsKey_Init(key, NULL, INVALID_DEVID);
+    if (ret == 0) {
+        privLen = r.ctLen - AES_BLOCK_SIZE;
+        priv = (byte*)XMALLOC(privLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (priv == NULL)
+            ret = MEMORY_E;
+    }
+    if (ret == 0)
+        ret = wp11_Stateful_Unseal(o, &r, o->slot->token.key, priv);
+#ifdef WOLFPKCS11_HSS_DEVICE
+    if (ret == 0 && r.kind == WP11_STATEFUL_KIND_DEVICE) {
+        o->statefulState |= WP11_STATEFUL_DEVICE;
+        if (privLen <= 4 || privLen - 4 > LMS_MAX_ID_LEN)
+            ret = BAD_FUNC_ARG;
+        if (ret == 0) {
+            wc_LmsKey_Free(key);
+            o->devId = (int)wp11_HbsReadU32(priv);
+            ret = wc_LmsKey_InitId(key, priv + 4, (int)(privLen - 4), NULL,
+                o->devId);
+        }
         if (ret == 0)
             ret = wc_LmsKey_SetParameters(key, levels, height, winternitz);
         if (ret == 0)
-            ret = wp11_Stateful_Policy(o, policy);
-        if (ret == 0) {
-            if (r.policyLen != sizeof(policy) ||
-                    XMEMCMP(r.policy, policy, sizeof(policy)) != 0) {
-                ret = AES_GCM_AUTH_E;
-            }
+            ret = wc_LmsKey_Reload(key);
+    }
+    else
+#endif
+    if (ret == 0 && r.kind != WP11_STATEFUL_KIND_SEALED) {
+        ret = NOT_COMPILED_IN;
+    }
+    else if (ret == 0) {
+        o->statefulSigCount = r.count;
+        total = wp11_Hss_Total(levels, height);
+        if (total != 0 && r.count >= total) {
+            o->statefulState |= WP11_STATEFUL_EXHAUSTED;
         }
-        if (ret == 0) {
-            privLen = r.ctLen - AES_BLOCK_SIZE;
-            priv = (byte*)XMALLOC(privLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-            if (priv == NULL)
-                ret = MEMORY_E;
+        else if (!reload) {
+            /* Rebuilding the trees waits for the first signature. */
+            o->statefulState |= WP11_STATEFUL_RELOAD;
         }
-        if (ret == 0)
-            ret = wp11_Stateful_Unseal(o, &r, o->slot->token.key, priv);
-        if (ret == 0) {
-            o->statefulSigCount = r.count;
-            total = wp11_Hss_Total(levels, height);
-            if (total != 0 && r.count >= total) {
-                o->statefulState |= WP11_STATEFUL_EXHAUSTED;
-            }
-            else if (!reload) {
-                /* Rebuilding the trees waits for the first signature. */
-                o->statefulState |= WP11_STATEFUL_RELOAD;
-            }
-            else {
-                ret = wc_LmsKey_SetWriteCb(key, wp11_Hss_WriteState_Cb);
-                if (ret == 0)
-                    ret = wc_LmsKey_SetReadCb(key, wp11_Hss_ReadState_Cb);
-                if (ret == 0)
-                    ret = wc_LmsKey_SetContext(key, o);
-                if (ret == 0) {
-                    o->statefulBuf = priv;
-                    o->statefulBufLen = privLen;
-                    ret = wc_LmsKey_Reload(key);
-                    o->statefulBuf = NULL;
-                    o->statefulBufLen = 0;
-                }
+        else {
+            ret = wc_LmsKey_SetWriteCb(key, wp11_Hss_WriteState_Cb);
+            if (ret == 0)
+                ret = wc_LmsKey_SetReadCb(key, wp11_Hss_ReadState_Cb);
+            if (ret == 0)
+                ret = wc_LmsKey_SetContext(key, o);
+            if (ret == 0) {
+                o->statefulBuf = priv;
+                o->statefulBufLen = privLen;
+                ret = wc_LmsKey_Reload(key);
+                o->statefulBuf = NULL;
+                o->statefulBufLen = 0;
             }
         }
     }
@@ -1687,18 +1806,64 @@ int WP11_Hss_Verify(unsigned char* sig, word32 sigLen, unsigned char* data,
 }
 
 #ifdef WOLFPKCS11_LMS_PRIVATE
-/* Generate an HSS key pair. Adding the private key to the token stores its
- * first state. */
-int WP11_Hss_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
-                             CK_ULONG levels, CK_LMS_TYPE lmsType,
-                             CK_LMOTS_TYPE lmotsType, WP11_Slot* slot)
+/* Make the key in software, or on priv's device when id is not NULL. */
+static int wp11_Hss_MakeKey(WP11_Object* priv, const byte* id, int idLen,
+    int levels, int height, int winternitz, WP11_Slot* slot)
 {
     int ret;
-    int nLevels, height, winternitz;
     WC_RNG rng;
+    LmsKey* key = priv->data.lmsKey;
+
+#ifdef WOLFPKCS11_HSS_DEVICE
+    if (id != NULL)
+        ret = wc_LmsKey_InitId(key, id, idLen, NULL, priv->devId);
+    else
+#endif
+    {
+        /* Software only, as in wp11_Hss_LoadState. */
+        ret = wc_LmsKey_Init(key, NULL, INVALID_DEVID);
+    }
+    (void)id;
+    (void)idLen;
+    if (ret == 0)
+        ret = wc_LmsKey_SetParameters(key, levels, height, winternitz);
+    /* Without state callbacks, a fallback to software in keygen or in a
+     * declined sign fails before it builds a tree or signs. */
+    if (ret == 0 && id == NULL)
+        ret = wc_LmsKey_SetWriteCb(key, wp11_Hss_WriteState_Cb);
+    if (ret == 0 && id == NULL)
+        ret = wc_LmsKey_SetReadCb(key, wp11_Hss_ReadState_Cb);
+    if (ret == 0 && id == NULL)
+        ret = wc_LmsKey_SetContext(key, priv);
+    if (ret == 0)
+        ret = wp11_Slot_NewRng(slot, &rng);
+    if (ret == 0) {
+        ret = wc_LmsKey_MakeKey(key, &rng);
+        wc_FreeRng(&rng);
+    #ifdef WOLFPKCS11_HSS_DEVICE
+        /* The parameters are set, so any error but memory is the device's. */
+        if (id != NULL && ret != 0 && ret != MEMORY_E)
+            ret = WC_HW_E;
+    #endif
+    }
+    return ret;
+}
+
+/* Generate an HSS key pair. Adding the private key to the token stores its
+ * first state, or the device key id when a device holds the state. */
+int WP11_Hss_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
+                             CK_ULONG levels, CK_LMS_TYPE lmsType,
+                             CK_LMOTS_TYPE lmotsType, int useDevice,
+                             WP11_Slot* slot)
+{
+    int ret = 0;
+    int nLevels, height, winternitz;
     byte pubBuf[HSS_MAX_PUBLIC_KEY_LEN];
     word32 pubLen = sizeof(pubBuf);
     LmsKey* key;
+#ifdef WOLFPKCS11_HSS_DEVICE
+    byte id[4 + WP11_HSS_DEVICE_ID_LEN];
+#endif
 
     if (pub == NULL || priv == NULL || slot == NULL ||
             pub->data.lmsKey == NULL || priv->data.lmsKey == NULL) {
@@ -1715,25 +1880,57 @@ int WP11_Hss_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
     nLevels = (int)levels;
     priv->statefulSigCount = 0;
     priv->statefulStoreId = 0;
-
-    /* Software only, as in wp11_Hss_LoadState. */
-    ret = wc_LmsKey_Init(key, NULL, INVALID_DEVID);
-    if (ret == 0)
-        ret = wc_LmsKey_SetParameters(key, nLevels, height, winternitz);
-    if (ret == 0)
-        ret = wc_LmsKey_SetWriteCb(key, wp11_Hss_WriteState_Cb);
-    if (ret == 0)
-        ret = wc_LmsKey_SetReadCb(key, wp11_Hss_ReadState_Cb);
-    if (ret == 0)
-        ret = wc_LmsKey_SetContext(key, priv);
-    if (ret == 0)
-        ret = wp11_Slot_NewRng(slot, &rng);
-    if (ret == 0) {
-        ret = wc_LmsKey_MakeKey(key, &rng);
-        wc_FreeRng(&rng);
+    /* CKA_WOLFSSL_DEVID of INVALID_DEVID asks for a software key. */
+    if (useDevice && priv->devId == INVALID_DEVID) {
+        useDevice = 0;
+        priv->devId = slot->devId;
     }
-    if (ret == 0 && priv->statefulBuf == NULL)
-        ret = BAD_STATE_E;
+
+#ifdef WOLFPKCS11_HSS_DEVICE
+    if (useDevice) {
+        wp11_Stateful_WriteU32(id, (word32)priv->devId);
+        ret = WP11_Slot_GenerateRandom(slot, id + 4, WP11_HSS_DEVICE_ID_LEN);
+        if (ret == 0) {
+            ret = wp11_Hss_MakeKey(priv, id + 4, WP11_HSS_DEVICE_ID_LEN,
+                nLevels, height, winternitz, slot);
+        }
+        else {
+            /* The error path below frees the key. */
+            (void)wc_LmsKey_Init(key, NULL, INVALID_DEVID);
+        }
+    }
+#else
+    if (useDevice) {
+        /* The error path below frees the key. */
+        (void)wc_LmsKey_Init(key, NULL, INVALID_DEVID);
+        ret = WC_HW_E;
+    }
+#endif
+    if (ret == 0 && !useDevice) {
+        ret = wp11_Hss_MakeKey(priv, NULL, 0, nLevels, height, winternitz,
+            slot);
+    }
+    /* A device that made the key never hands the state to the callback. */
+    if (ret == 0 && priv->statefulBuf == NULL) {
+    #ifdef WOLFPKCS11_HSS_DEVICE
+        if (useDevice) {
+            priv->statefulBuf = (byte*)XMALLOC(sizeof(id), NULL,
+                DYNAMIC_TYPE_TMP_BUFFER);
+            if (priv->statefulBuf == NULL) {
+                ret = MEMORY_E;
+            }
+            else {
+                XMEMCPY(priv->statefulBuf, id, sizeof(id));
+                priv->statefulBufLen = sizeof(id);
+                priv->statefulState |= WP11_STATEFUL_DEVICE;
+            }
+        }
+        else
+    #endif
+        {
+            ret = BAD_STATE_E;
+        }
+    }
 
     if (ret == 0)
         ret = wc_LmsKey_ExportPubRaw(key, pubBuf, &pubLen);
@@ -1765,6 +1962,9 @@ int WP11_Hss_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
     }
 
     wc_ForceZero(pubBuf, sizeof(pubBuf));
+#ifdef WOLFPKCS11_HSS_DEVICE
+    wc_ForceZero(id, sizeof(id));
+#endif
     return ret;
 }
 
@@ -2193,6 +2393,8 @@ static int wp11_Xmss_LoadState(WP11_Object* o, const byte* rec, word32 len,
     XmssKey* key = o->data.xmssKey;
 
     ret = wp11_Stateful_Parse(rec, len, &r);
+    if (ret == 0 && r.kind != WP11_STATEFUL_KIND_SEALED)
+        ret = BAD_FUNC_ARG;
     if (ret == 0)
         ret = wp11_XmssParseShell(r.shell, r.shellLen, &pub);
     if (ret == 0 && rec != o->keyData) {

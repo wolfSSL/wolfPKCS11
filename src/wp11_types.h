@@ -344,7 +344,7 @@ struct WP11_Object {
                                         * with the key unchanged              */
 #ifdef WOLFPKCS11_STATEFUL_SIG_PRIVATE
     word64 statefulSigCount;           /* Signatures made, as stored          */
-    byte* statefulBuf;                 /* State not yet stored                */
+    byte* statefulBuf;                 /* State or device id not yet stored   */
     word32 statefulBufLen;             /* Length of statefulBuf               */
     int statefulStoreId;               /* Store id + 1 for the next state     */
     int statefulHomeId;                /* Store id + 1 of the last record     */
