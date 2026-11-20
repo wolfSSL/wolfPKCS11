@@ -19,6 +19,17 @@ on:
           required: false
           type: string
           default: ''
+        wolfssl_ref:
+          required: false
+          type: string
+          default: ''
+        wolfssl_base_config:
+          required: false
+          type: string
+          default: >-
+            --enable-cryptocb --enable-aescfb --enable-rsapss --enable-keygen
+            --enable-pwdbased --enable-scrypt --enable-md5 --enable-mldsa
+            --enable-lms=verify-only --enable-xmss=verify-only
 
 jobs:
   build:
@@ -36,6 +47,7 @@ jobs:
     - uses: actions/checkout@v4
       with:
         repository: wolfssl/wolfssl
+        ref: ${{ inputs.wolfssl_ref }}
         path: wolfssl
     - name: wolfssl autogen
       working-directory: ./wolfssl
@@ -43,8 +55,7 @@ jobs:
     - name: wolfssl configure
       working-directory: ./wolfssl
       run: |
-        ./configure --enable-cryptocb --enable-aescfb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt --enable-md5 \
-            --enable-mldsa --enable-lms=verify-only --enable-xmss=verify-only ${{inputs.wolfssl_config}} \
+        ./configure ${{inputs.wolfssl_base_config}} ${{inputs.wolfssl_config}} \
             C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT -DHAVE_AES_ECB -DHAVE_AES_KEYWRAP ${{inputs.wolfssl_cflags}}"
     - name: wolfssl make
       working-directory: ./wolfssl

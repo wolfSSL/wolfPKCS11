@@ -18900,10 +18900,23 @@ int WP11_GenerateRandomKey(WP11_Object* secret, WP11_Slot* slot,
  *          0 on success
  */
 
+#if (!defined(HAVE_FIPS) || FIPS_VERSION_GE(7,0)) && \
+    !defined(HAVE_SELFTEST) && defined(LIBWOLFSSL_VERSION_HEX) && \
+    LIBWOLFSSL_VERSION_HEX >= 0x05007000
+    #define WP11_HAVE_HKDF_DEVID
+    #if LIBWOLFSSL_VERSION_HEX < 0x05008004
+        /* wc_HKDF_ex() arrived in 5.8.4; earlier releases have the parts */
+        #define WP11_HKDF_TWO_STEP
+    #endif
+#endif
+
 int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
                     unsigned char* key, word32* keyLen, WP11_Object* priv)
 {
     int ret = 0;
+#ifdef WP11_HKDF_TWO_STEP
+    byte prk[WC_MAX_DIGEST_SIZE];
+#endif
     byte* privData = NULL;
     word32 privLen = 0;
     byte* salt = NULL;
@@ -18984,6 +18997,37 @@ int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
         privData = priv->data.symmKey->data;
         privLen = priv->data.symmKey->len;
     }
+#ifdef WP11_HAVE_HKDF_DEVID
+    if (ret == 0 && params->bExtract && !params->bExpand) {
+        ret = wc_HKDF_Extract_ex(hashType, salt, (word32)saltLen,
+            privData, privLen, key, NULL, priv->devId);
+
+        if (!ret)
+            *keyLen = hashLen;
+    }
+    else if (ret == 0 && !params->bExtract && params->bExpand) {
+        ret = wc_HKDF_Expand_ex(hashType, privData, privLen,
+            params->pInfo, (word32)params->ulInfoLen,
+            key, *keyLen, NULL, priv->devId);
+    }
+    else if (ret == 0) {
+        /* Both */
+    #ifdef WP11_HKDF_TWO_STEP
+        ret = wc_HKDF_Extract_ex(hashType, salt, (word32)saltLen,
+            privData, privLen, prk, NULL, priv->devId);
+        if (ret == 0) {
+            ret = wc_HKDF_Expand_ex(hashType, prk, hashLen,
+                params->pInfo, (word32)params->ulInfoLen,
+                key, *keyLen, NULL, priv->devId);
+        }
+        wc_ForceZero(prk, sizeof(prk));
+    #else
+        ret = wc_HKDF_ex(hashType, privData, privLen, salt,
+            (word32)saltLen, params->pInfo, (word32)params->ulInfoLen,
+            key, *keyLen, NULL, priv->devId);
+    #endif
+    }
+#else
     if (ret == 0 && params->bExtract && !params->bExpand) {
         ret = wc_HKDF_Extract(hashType, salt, (word32)saltLen,
             privData, privLen, key);
@@ -19001,6 +19045,7 @@ int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
         ret = wc_HKDF(hashType, privData, privLen, salt, (word32)saltLen,
               params->pInfo, (word32)params->ulInfoLen, key, *keyLen);
     }
+#endif
     PRIVATE_KEY_LOCK();
     if (secondLock != NULL)
         WP11_Lock_UnlockRO(secondLock);
@@ -22167,10 +22212,11 @@ int WP11_Digest_Single(unsigned char* data, word32 dataLen,
 
 #ifndef NO_HMAC
 int WP11_PBKDF2(byte* output, const byte* passwd, int pLen,
-    const byte* salt, int sLen, int iterations, int kLen, int hashType)
+    const byte* salt, int sLen, int iterations, int kLen, int hashType,
+    WP11_Session* session)
 {
-    return wc_PBKDF2(output, passwd, pLen, salt, sLen, iterations, kLen,
-        hashType);
+    return wc_PBKDF2_ex(output, passwd, pLen, salt, sLen, iterations, kLen,
+        hashType, NULL, session->devId);
 }
 #endif
 

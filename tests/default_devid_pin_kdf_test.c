@@ -25,6 +25,7 @@
 #ifndef WOLFSSL_USER_SETTINGS
     #include <wolfssl/options.h>
 #endif
+#include <wolfssl/version.h>
 #include <wolfssl/wolfcrypt/cryptocb.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/wolfcrypt/misc.h>
@@ -50,6 +51,11 @@
     defined(WOLFPKCS11_PBKDF2)
 
 #define TEST_DEVID WOLFPKCS11_DEFAULT_DEVID
+#if defined(WOLFPKCS11_HKDF) && (!defined(HAVE_FIPS) || \
+    FIPS_VERSION_GE(7,0)) && !defined(HAVE_SELFTEST) && \
+    defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX >= 0x05007000
+    #define TEST_HKDF_DEVID
+#endif
 #define TEST_OBJ_DEVID (TEST_DEVID + 1)
 #define DEVID_TEST_DIR "./store/default_devid_pin_kdf_test"
 
@@ -192,7 +198,12 @@ static CK_RV exercise_device_cipher(CK_SLOT_ID slot)
 #ifdef WOLFSSL_HAVE_PRF
     CK_TLS_MAC_PARAMS tlsParams;
     CK_MECHANISM tlsMech = { CKM_TLS_MAC, &tlsParams, sizeof(tlsParams) };
-    CK_MECHANISM_TYPE prfs[] = { CKM_SHA256, CKM_TLS_PRF };
+    CK_MECHANISM_TYPE prfs[] = {
+        CKM_SHA256,
+#ifndef NO_MD5
+        CKM_TLS_PRF
+#endif
+    };
     size_t i;
     CK_OBJECT_HANDLE preMaster = CK_INVALID_HANDLE;
     CK_OBJECT_HANDLE master = CK_INVALID_HANDLE;
@@ -235,6 +246,42 @@ static CK_RV exercise_device_cipher(CK_SLOT_ID slot)
         { CKA_VALUE, keyValue, sizeof(keyValue) }
     };
 #endif
+#ifdef TEST_HKDF_DEVID
+    CK_HKDF_PARAMS hkdfParams;
+    CK_MECHANISM hkdfMech = { CKM_HKDF_DERIVE, &hkdfParams,
+        sizeof(hkdfParams) };
+    CK_OBJECT_HANDLE hkdfBase = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE hkdfOut = CK_INVALID_HANDLE;
+    CK_BYTE hkdfSalt[16] = { 0 };
+    CK_BYTE hkdfInfo[8] = { 0 };
+    CK_ULONG hkdfLen = 32;
+    int hkdfMode;
+    CK_ATTRIBUTE hkdfBaseAttrs[] = {
+        { CKA_CLASS, &keyClass, sizeof(keyClass) },
+        { CKA_KEY_TYPE, &hmacType, sizeof(hmacType) },
+        { CKA_DERIVE, &ckTrue, sizeof(ckTrue) },
+        { CKA_WOLFSSL_DEVID, &objDevId, sizeof(objDevId) },
+        { CKA_VALUE, hmacValue, sizeof(hmacValue) }
+    };
+    CK_ATTRIBUTE hkdfOutAttrs[] = {
+        { CKA_CLASS, &keyClass, sizeof(keyClass) },
+        { CKA_KEY_TYPE, &hmacType, sizeof(hmacType) },
+        { CKA_VALUE_LEN, &hkdfLen, sizeof(hkdfLen) }
+    };
+#endif
+    CK_BYTE pbkdfPassword[] = "wolfpkcs11-kdf";
+    CK_ULONG pbkdfPasswordLen = sizeof(pbkdfPassword) - 1U;
+    CK_BYTE pbkdfSalt[16] = { 0x01 };
+    CK_ULONG pbkdfKeyLen = 32;
+    CK_PKCS5_PBKD2_PARAMS pbkdfParams;
+    CK_MECHANISM pbkdfMech = { CKM_PKCS5_PBKD2, &pbkdfParams,
+        sizeof(pbkdfParams) };
+    CK_OBJECT_HANDLE pbkdfKey = CK_INVALID_HANDLE;
+    CK_ATTRIBUTE pbkdfAttrs[] = {
+        { CKA_CLASS, &keyClass, sizeof(keyClass) },
+        { CKA_KEY_TYPE, &hmacType, sizeof(hmacType) },
+        { CKA_VALUE_LEN, &pbkdfKeyLen, sizeof(pbkdfKeyLen) }
+    };
     CK_ATTRIBUTE attrs[] = {
         { CKA_CLASS, &keyClass, sizeof(keyClass) },
         { CKA_KEY_TYPE, &keyType, sizeof(keyType) },
@@ -377,6 +424,59 @@ static CK_RV exercise_device_cipher(CK_SLOT_ID slot)
     if (cmacKey != CK_INVALID_HANDLE)
         (void)funcList->C_DestroyObject(session, cmacKey);
 #endif
+#ifdef TEST_HKDF_DEVID
+    if (rv == CKR_OK) {
+        rv = funcList->C_CreateObject(session, hkdfBaseAttrs,
+            sizeof(hkdfBaseAttrs) / sizeof(hkdfBaseAttrs[0]), &hkdfBase);
+    }
+    /* Mode 0 is extract only, 1 is expand only and 2 is both */
+    for (hkdfMode = 0; rv == CKR_OK && hkdfMode < 3; hkdfMode++) {
+        XMEMSET(&hkdfParams, 0, sizeof(hkdfParams));
+        hkdfParams.bExtract = (hkdfMode != 1) ? CK_TRUE : CK_FALSE;
+        hkdfParams.bExpand = (hkdfMode != 0) ? CK_TRUE : CK_FALSE;
+        hkdfParams.prfHashMechanism = CKM_SHA256;
+        hkdfParams.ulSaltType = CKF_HKDF_SALT_DATA;
+        hkdfParams.pSalt = hkdfSalt;
+        hkdfParams.ulSaltLen = sizeof(hkdfSalt);
+        hkdfParams.pInfo = hkdfInfo;
+        hkdfParams.ulInfoLen = sizeof(hkdfInfo);
+        objectCalls = 0;
+        rv = funcList->C_DeriveKey(session, &hkdfMech, hkdfBase,
+            hkdfOutAttrs, sizeof(hkdfOutAttrs) / sizeof(hkdfOutAttrs[0]),
+            &hkdfOut);
+        if (rv == CKR_OK && objectCalls == 0) {
+            fprintf(stderr, "FAIL: HKDF mode %d did not reach object "
+                "device %d\n", hkdfMode, TEST_OBJ_DEVID);
+            rv = CKR_FUNCTION_FAILED;
+        }
+        if (hkdfOut != CK_INVALID_HANDLE) {
+            (void)funcList->C_DestroyObject(session, hkdfOut);
+            hkdfOut = CK_INVALID_HANDLE;
+        }
+    }
+    if (hkdfBase != CK_INVALID_HANDLE)
+        (void)funcList->C_DestroyObject(session, hkdfBase);
+#endif
+    if (rv == CKR_OK) {
+        XMEMSET(&pbkdfParams, 0, sizeof(pbkdfParams));
+        pbkdfParams.saltSource = CKZ_SALT_SPECIFIED;
+        pbkdfParams.pSaltSourceData = pbkdfSalt;
+        pbkdfParams.ulSaltSourceDataLen = sizeof(pbkdfSalt);
+        pbkdfParams.iterations = 2;
+        pbkdfParams.prf = CKP_PKCS5_PBKD2_HMAC_SHA256;
+        pbkdfParams.pPassword = pbkdfPassword;
+        pbkdfParams.ulPasswordLen = &pbkdfPasswordLen;
+        pinHashCalls = 0;
+        rv = funcList->C_GenerateKey(session, &pbkdfMech, pbkdfAttrs,
+            sizeof(pbkdfAttrs) / sizeof(pbkdfAttrs[0]), &pbkdfKey);
+    }
+    if (rv == CKR_OK && pinHashCalls == 0) {
+        fprintf(stderr, "FAIL: PBKDF2 key generation did not reach device "
+            "%d\n", TEST_DEVID);
+        rv = CKR_FUNCTION_FAILED;
+    }
+    if (pbkdfKey != CK_INVALID_HANDLE)
+        (void)funcList->C_DestroyObject(session, pbkdfKey);
 
     if (hmacKey != CK_INVALID_HANDLE)
         (void)funcList->C_DestroyObject(session, hmacKey);

@@ -120,6 +120,20 @@ jobs:
       check: >-
         make check &&
         WOLFPKCS11_DEFAULT_DEVID_REQUIRED=1 ./tests/default_devid_pin_kdf_test
+  default_devid_hkdf_two_step:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      wolfssl_ref: v5.8.2-stable
+      wolfssl_base_config: >-
+        --enable-cryptocb --enable-aescfb --enable-rsapss --enable-keygen
+        --enable-pwdbased --enable-scrypt --enable-md5
+      wolfssl_config: --enable-cmac
+      config: >-
+        --enable-pbkdf2 --enable-aescmac --with-pbkdf2-iterations=25
+        CFLAGS="-DWOLFPKCS11_NO_STORE -DWOLFPKCS11_DEFAULT_DEVID=7"
+      check: >-
+        make check &&
+        WOLFPKCS11_DEFAULT_DEVID_REQUIRED=1 ./tests/default_devid_pin_kdf_test
   default_devid_guards:
     uses: ./.github/workflows/build-workflow.yml
     with:

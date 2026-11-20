@@ -942,7 +942,8 @@ WP11_LOCAL int WP11_Aes_Cmac_Verify_Final(unsigned char* sig, word32 sigLen, int
 
 #ifndef NO_HMAC
 WP11_LOCAL int WP11_PBKDF2(byte* output, const byte* passwd, int pLen,
-    const byte* salt, int sLen, int iterations, int kLen, int hashType);
+    const byte* salt, int sLen, int iterations, int kLen, int hashType,
+    WP11_Session* session);
 #endif
 WP11_LOCAL int WP11_PKCS12_PBKDF(byte* output, const byte* passwd, int pLen,
     const byte* salt, int sLen, int iterations, int kLen, int hashType);
