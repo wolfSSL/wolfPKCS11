@@ -494,6 +494,7 @@ WP11_API void WP11_Object_SetFindHook(void (*hook)(void));
 WP11_API void WP11_Session_SetAddObjectHook(void (*hook)(void));
 WP11_API void WP11_Slot_SetPinCheckHook(void (*hook)(void));
 WP11_API void WP11_Test_FailTokenInit(int fail);
+WP11_API void WP11_Test_FailSeedRandom(int fail);
 #if !defined(WOLFPKCS11_NO_STORE) && !defined(WOLFPKCS11_CUSTOM_STORE) && \
     !defined(WOLFPKCS11_TPM_STORE) && !defined(_WIN32) && !defined(_MSC_VER)
 /* Exit status of a process ended by the store rename test hook. */
