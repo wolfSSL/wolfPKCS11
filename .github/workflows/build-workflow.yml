@@ -19,6 +19,11 @@ on:
           required: false
           type: string
           default: ''
+        wolfssl_lms:
+          # --enable-lms-private needs a sign-capable wolfSSL LMS build.
+          required: false
+          type: string
+          default: 'verify-only'
 
 jobs:
   build:
@@ -44,7 +49,7 @@ jobs:
       working-directory: ./wolfssl
       run: |
         ./configure --enable-cryptocb --enable-aescfb --enable-rsapss --enable-keygen --enable-pwdbased --enable-scrypt --enable-md5 \
-            --enable-mldsa --enable-lms=verify-only --enable-xmss=verify-only ${{inputs.wolfssl_config}} \
+            --enable-mldsa --enable-lms=${{inputs.wolfssl_lms}} --enable-xmss=verify-only ${{inputs.wolfssl_config}} \
             C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT -DHAVE_AES_ECB -DHAVE_AES_KEYWRAP ${{inputs.wolfssl_cflags}}"
     - name: wolfssl make
       working-directory: ./wolfssl

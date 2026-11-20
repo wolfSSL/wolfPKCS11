@@ -26,6 +26,29 @@
 
 #include "wp11_types.h"
 
+#ifdef WOLFPKCS11_STATEFUL_SIG_PRIVATE
+/* statefulState: the state is loaded and usable, is used up, or waits for
+ * its trees to be rebuilt. */
+#define WP11_STATEFUL_VALID           0x01
+#define WP11_STATEFUL_EXHAUSTED       0x02
+#define WP11_STATEFUL_RELOAD          0x08
+
+/* Kept apart from the policy AAD of other keys, so changes to that leave the
+ * records readable. */
+#ifdef WOLFPKCS11_TPM
+#define WP11_STATEFUL_POLICY_SKIP     (WP11_FLAG_TRUSTED | WP11_FLAG_TPM)
+#else
+#define WP11_STATEFUL_POLICY_SKIP     WP11_FLAG_TRUSTED
+#endif
+
+WP11_LOCAL int wp11_Stateful_IsKey(WP11_Object* object);
+WP11_LOCAL void wp11_Stateful_StoreDone(WP11_Token* token, int committed);
+/* Re-seal the stored state of a key under newKey; *keyData is NULL when the
+ * key has no sealed state. */
+WP11_LOCAL int wp11_Stateful_ReKey(WP11_Object* object, const byte* oldKey,
+                                   const byte* newKey, byte** keyData);
+#endif
+
 #ifdef WOLFPKCS11_LMS
 
 #ifndef WOLFPKCS11_NO_STORE
