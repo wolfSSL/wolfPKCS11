@@ -10132,6 +10132,53 @@ static void wp11_Token_LoginChanged(WP11_Token* token, int locked)
     (void)locked;
 #endif
 }
+
+/**
+ * Store the failed login counts so they outlive the process.
+ * Caller holds no slot or token lock.
+ *
+ * @param  slot    [in]  Slot object.
+ * @param  failed  [in]  1 when a PIN check failed, so a token another process
+ *                       stored is loaded again and the store retried.
+ */
+static void wp11_Slot_StoreLockout(WP11_Slot* slot, int failed)
+{
+#ifndef WOLFPKCS11_NO_STORE
+    WP11_Token* token = &slot->token;
+    int ret;
+    int stale;
+    int tries;
+    byte oldDirty;
+
+    for (tries = 0; tries < 2; tries++) {
+        ret = 0;
+        WP11_Lock_LockRW(&slot->lock);
+        WP11_Lock_LockRW(&token->lock);
+        if (token->storeLoginDirty &&
+                !(token->storeDirty && token->storeStale)) {
+            oldDirty = token->storeDirty;
+            ret = wp11_Slot_StoreSome(slot, (int)slot->id,
+                                      WP11_STORE_PASS_TOKEN, NULL);
+            /* A 0 return with the counts still pending means storage is
+             * paused. */
+        #ifdef WP11_STORE_BATCH
+            if (token->storeLoginDirty)
+        #else
+            if (ret == 0 && token->storeLoginDirty)
+        #endif
+                token->storeDirty = oldDirty;
+        }
+        stale = token->storeStale;
+        WP11_Lock_UnlockRW(&token->lock);
+        WP11_Lock_UnlockRW(&slot->lock);
+        if (ret == 0 || !failed || !stale || WP11_Slot_Refresh(slot) != 0)
+            break;
+    }
+#else
+    (void)slot;
+    (void)failed;
+#endif
+}
 #endif
 
 #ifdef DEBUG_WOLFPKCS11
@@ -10156,6 +10203,7 @@ WP11_API void WP11_Slot_SetPinCheckHook(void (*hook)(void))
  * @param  pinLen  [in]  Length of PIN.
  * @return  PIN_NOT_SET_E when the token is not initialized.
  *          PIN_INVALID_E when the PIN is not correct.
+ *          BAD_STATE_E when the SO PIN changed during the check.
  *          Other -ve value when hashing PIN fails.
  *          0 when PIN is correct.
  */
@@ -10258,8 +10306,10 @@ int WP11_Slot_CheckSOPinLockout(WP11_Slot* slot, char* pin, int pinLen)
                                token->soFailLoginTimeout,
                                WP11_MAX_LOGIN_FAILS_SO, now);
     WP11_Lock_UnlockRW(&slot->lock);
-    if (ret != 0)
+    if (ret != 0) {
+        wp11_Slot_StoreLockout(slot, 0);
         return ret;
+    }
 #endif
 
     ret = WP11_Slot_CheckSOPin(slot, pin, pinLen);
@@ -10275,6 +10325,7 @@ int WP11_Slot_CheckSOPinLockout(WP11_Slot* slot, char* pin, int pinLen)
     }
     WP11_Lock_UnlockRW(&token->lock);
     WP11_Lock_UnlockRW(&slot->lock);
+    wp11_Slot_StoreLockout(slot, ret == PIN_INVALID_E);
 #endif
 
     return ret;
@@ -10432,6 +10483,9 @@ int WP11_Slot_SOLogin(WP11_Slot* slot, char* pin, int pinLen)
             token->loginState = WP11_APP_STATE_RW_SO;
         WP11_Lock_UnlockRW(&slot->lock);
     }
+#ifndef WOLFPKCS11_NO_TIME
+    wp11_Slot_StoreLockout(slot, ret == PIN_INVALID_E);
+#endif
 
     return ret;
 }
@@ -10785,6 +10839,9 @@ int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen)
     WP11_Lock_UnlockRW(&slot->lock);
 
     if (ret != 0) {
+    #ifndef WOLFPKCS11_NO_TIME
+        wp11_Slot_StoreLockout(slot, 0);
+    #endif
     #ifdef WOLFSSL_SMALL_STACK
         XFREE(d, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     #endif
@@ -10867,6 +10924,9 @@ int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen)
     }
     WP11_Lock_UnlockRW(&token->lock);
     WP11_Lock_UnlockRW(&slot->lock);
+#ifndef WOLFPKCS11_NO_TIME
+    wp11_Slot_StoreLockout(slot, !pinChanged && ret == PIN_INVALID_E);
+#endif
 
     wc_ForceZero(d, sizeof(*d));
 #ifdef WOLFSSL_SMALL_STACK
@@ -11274,6 +11334,10 @@ static int wp11_Slot_SetUserPin(WP11_Slot* slot, const word32* since,
     }
     WP11_Lock_UnlockRW(&token->lock);
     WP11_Lock_UnlockRW(&slot->lock);
+    /* Stores the counts unless the PIN change above stored them. */
+#ifndef WOLFPKCS11_NO_TIME
+    wp11_Slot_StoreLockout(slot, oldPinRet == PIN_INVALID_E);
+#endif
 
 #ifndef WOLFPKCS11_NO_STORE
     wp11_Token_ReKeyFree(reKey, reKeyCnt);
@@ -23981,6 +24045,20 @@ int WP11_TLS_MAC_verify(byte* data, word32 dataLen, byte* sig, word32 sigLen,
 }
 #endif /* WOLFSSL_HAVE_PRF */
 
+#ifdef DEBUG_WOLFPKCS11
+static int wp11_seedRandomFail = 0;
+
+/**
+ * Test hook: make the next RNG instantiation in C_SeedRandom fail.
+ *
+ * @param  fail  [in]  Non-zero to fail the next instantiation.
+ */
+WP11_API void WP11_Test_FailSeedRandom(int fail)
+{
+    wp11_seedRandomFail = fail;
+}
+#endif
+
 /**
  * Seed the random number generator of the token in the slot.
  *
@@ -23994,11 +24072,25 @@ int WP11_TLS_MAC_verify(byte* data, word32 dataLen, byte* sig, word32 sigLen,
 int WP11_Slot_SeedRandom(WP11_Slot* slot, unsigned char* seed, int seedLen)
 {
     int ret;
+    int rngRet;
 
     WP11_Lock_LockRW(&slot->token.rngLock);
     wc_FreeRng(&slot->token.rng);
     ret = wc_InitRngNonce_ex(&slot->token.rng, seed, seedLen, NULL,
                                                                  INVALID_DEVID);
+#ifdef DEBUG_WOLFPKCS11
+    if (ret == 0 && wp11_seedRandomFail) {
+        wp11_seedRandomFail = 0;
+        wc_FreeRng(&slot->token.rng);
+        ret = RNG_FAILURE_E;
+    }
+#endif
+    if (ret != 0) {
+        /* Leave the slot with a working generator. */
+        rngRet = Rng_New(&globalRandom, &globalLock, &slot->token.rng);
+        if (rngRet != 0)
+            ret = rngRet;
+    }
     WP11_Lock_UnlockRW(&slot->token.rngLock);
 
     return ret;
