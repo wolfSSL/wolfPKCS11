@@ -317,6 +317,131 @@ static void test_listed_keygen_supported(CK_SLOT_ID slot,
     }
 }
 
+/* Every listed derive mechanism must be known to C_DeriveKey. */
+static void test_listed_derive_supported(CK_SLOT_ID slot,
+                                         CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_MECHANISM_TYPE mechs[256];
+    CK_ULONG count = sizeof(mechs) / sizeof(mechs[0]);
+    CK_ULONG i;
+    CK_MECHANISM_INFO info;
+    CK_MECHANISM mech;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE key;
+    CK_BYTE value[48];
+    char msg[96];
+    CK_ATTRIBUTE baseTmpl[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &genericType, sizeof(genericType) },
+        { CKA_PRIVATE,  &ckFalse,     sizeof(ckFalse)     },
+        { CKA_DERIVE,   &ckTrue,      sizeof(ckTrue)      },
+        { CKA_VALUE,    value,        sizeof(value)       },
+    };
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &genericType, sizeof(genericType) },
+        { CKA_PRIVATE,  &ckFalse,     sizeof(ckFalse)     },
+    };
+
+    XMEMSET(value, 0x5a, sizeof(value));
+    rv = funcList->C_CreateObject(session, baseTmpl,
+                                  sizeof(baseTmpl) / sizeof(*baseTmpl), &base);
+    CHECK_RV(rv, "create derive base key", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    rv = funcList->C_GetMechanismList(slot, mechs, &count);
+    CHECK_RV(rv, "C_GetMechanismList", CKR_OK);
+    for (i = 0; rv == CKR_OK && i < count; i++) {
+        snprintf(msg, sizeof(msg), "C_GetMechanismInfo(derive listed 0x%lx)",
+                 (unsigned long)mechs[i]);
+        if (funcList->C_GetMechanismInfo(slot, mechs[i], &info) != CKR_OK) {
+            CHECK_TRUE(0, msg);
+            continue;
+        }
+        if ((info.flags & CKF_DERIVE) == 0)
+            continue;
+
+        mech.mechanism = mechs[i];
+        mech.pParameter = NULL;
+        mech.ulParameterLen = 0;
+        key = CK_INVALID_HANDLE;
+        snprintf(msg, sizeof(msg), "C_DeriveKey accepts listed 0x%lx",
+                 (unsigned long)mechs[i]);
+        CHECK_TRUE(funcList->C_DeriveKey(session, &mech, base, tmpl,
+                       sizeof(tmpl) / sizeof(*tmpl), &key) !=
+                   CKR_MECHANISM_INVALID, msg);
+        if (key != CK_INVALID_HANDLE)
+            funcList->C_DestroyObject(session, key);
+    }
+
+    funcList->C_DestroyObject(session, base);
+}
+
+/* Every listed encrypt or sign mechanism must be known to its init call. */
+static void test_listed_ops_supported(CK_SLOT_ID slot)
+{
+    CK_RV rv;
+    CK_MECHANISM_TYPE mechs[256];
+    CK_ULONG count = sizeof(mechs) / sizeof(mechs[0]);
+    CK_ULONG i;
+    int op;
+    CK_MECHANISM_INFO info;
+    CK_MECHANISM mech;
+    CK_SESSION_HANDLE session;
+    CK_OBJECT_HANDLE key;
+    CK_BYTE value[32];
+    char msg[96];
+    CK_ATTRIBUTE keyTmpl[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &genericType, sizeof(genericType) },
+        { CKA_PRIVATE,  &ckFalse,     sizeof(ckFalse)     },
+        { CKA_ENCRYPT,  &ckTrue,      sizeof(ckTrue)      },
+        { CKA_SIGN,     &ckTrue,      sizeof(ckTrue)      },
+        { CKA_VALUE,    value,        sizeof(value)       },
+    };
+
+    XMEMSET(value, 0x5a, sizeof(value));
+    rv = funcList->C_GetMechanismList(slot, mechs, &count);
+    CHECK_RV(rv, "C_GetMechanismList", CKR_OK);
+    for (i = 0; rv == CKR_OK && i < count; i++) {
+        if (funcList->C_GetMechanismInfo(slot, mechs[i], &info) != CKR_OK)
+            continue;
+        for (op = 0; op < 2; op++) {
+            if ((info.flags & (op == 0 ? CKF_ENCRYPT : CKF_SIGN)) == 0)
+                continue;
+            if (funcList->C_OpenSession(slot, CKF_SERIAL_SESSION |
+                    CKF_RW_SESSION, NULL, NULL, &session) != CKR_OK) {
+                CHECK_TRUE(0, "C_OpenSession for init check");
+                return;
+            }
+            if (funcList->C_CreateObject(session, keyTmpl,
+                    sizeof(keyTmpl) / sizeof(*keyTmpl), &key) != CKR_OK) {
+                CHECK_TRUE(0, "create init check key");
+                funcList->C_CloseSession(session);
+                return;
+            }
+            mech.mechanism = mechs[i];
+            mech.pParameter = NULL;
+            mech.ulParameterLen = 0;
+            if (op == 0) {
+                snprintf(msg, sizeof(msg), "C_EncryptInit accepts listed 0x%lx",
+                         (unsigned long)mechs[i]);
+                rv = funcList->C_EncryptInit(session, &mech, key);
+            }
+            else {
+                snprintf(msg, sizeof(msg), "C_SignInit accepts listed 0x%lx",
+                         (unsigned long)mechs[i]);
+                rv = funcList->C_SignInit(session, &mech, key);
+            }
+            CHECK_TRUE(rv != CKR_MECHANISM_INVALID, msg);
+            rv = CKR_OK;
+            funcList->C_CloseSession(session);
+        }
+    }
+}
+
 #ifdef HAVE_ECC
 /* EC mechanisms report the prime field curves, named curve parameters and
  * uncompressed points that the token supports, and nothing else. */
@@ -998,6 +1123,8 @@ static int run_test(void)
     if (rv == CKR_OK) {
         test_generic_secret_size(slotList[0], session);
         test_listed_keygen_supported(slotList[0], session);
+        test_listed_derive_supported(slotList[0], session);
+        test_listed_ops_supported(slotList[0]);
 #ifdef HAVE_ECC
         test_ec_mech_flags(slotList[0]);
 #endif

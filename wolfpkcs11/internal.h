@@ -397,10 +397,8 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #define WP11_MAX_SYM_KEY_SZ            (4096/8)
 #elif defined(WOLFPKCS11_CONCATENATE)
 #define WP11_MAX_SYM_KEY_SZ            256
-#elif defined(HAVE_ECC)
-#define WP11_MAX_SYM_KEY_SZ            ((521+7)/8)
 #else
-#define WP11_MAX_SYM_KEY_SZ            64
+#define WP11_MAX_SYM_KEY_SZ            ((521+7)/8)
 #endif
 #endif
 #if !defined(NO_AES) && WP11_MAX_SYM_KEY_SZ < 32

@@ -1062,23 +1062,8 @@ static CK_RV BuildKeyTemplate(CK_SESSION_HANDLE hSession,
  * spec) pass this so the helper falls back to template inspection only. */
 #define WP11_NO_IMPLICIT_CLASS ((CK_OBJECT_CLASS)~(CK_OBJECT_CLASS)0)
 
-/* Per PKCS#11 v3.0 sec 5.1 Table 16: creating, generating, or unwrapping an
- * object whose effective CKA_PRIVATE is CK_TRUE on a session that is not
- * logged in as the user must return CKR_USER_NOT_LOGGED_IN. Empty-PIN tokens
- * treat public sessions as logged-in (matches the find-time filter in
- * WP11_Session_Find) so this gate must mirror that.
- *
- * `implicitClass` lets callers whose object class is implied by the API
- * itself (C_GenerateKey always creates a CKO_SECRET_KEY, C_GenerateKeyPair
- * produces CKO_PUBLIC_KEY/CKO_PRIVATE_KEY) supply that class even when the
- * template omits CKA_CLASS. Without this, the spec-default
- * CKA_PRIVATE=CK_TRUE would not be inferred for templates like
- * `{CKA_VALUE_LEN, CKA_KEY_TYPE}` and a public session could silently
- * generate a private key. An explicit CKA_PRIVATE attribute in the template
- * still wins over the class-derived default.
- *
- * Gated by WOLFPKCS11_LEGACY_PRIVATE_FALSE_DEFAULT so the class-based
- * inference matches the legacy default in SetAttributeDefaults. */
+/* CKA_PRIVATE, else the template class or implicitClass, decides privacy. A
+ * private object needs a user login (NSS: any) once a non-empty PIN is set. */
 static CK_RV CheckPrivateLogin(WP11_Session* session,
                                CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
                                CK_OBJECT_CLASS implicitClass)
@@ -1118,12 +1103,6 @@ static CK_RV CheckPrivateLogin(WP11_Session* session,
     slot = WP11_Session_GetSlot(session);
     if (slot == NULL)
         return CKR_OK;
-    /* Fresh / unprovisioned tokens (no user PIN initialized) have nothing to
-     * log in as, and the existing find-time private-object filter
-     * (src/internal.c) likewise bypasses on Has_Empty_Pin. Mirror both:
-     * an unset user PIN is treated as "no protection required" so callers
-     * that pre-date C_InitToken / C_InitPIN keep working. After the token
-     * is provisioned with a non-empty user PIN, the gate engages. */
     if (!WP11_Slot_IsTokenUserPinInitialized(slot))
         return CKR_OK;
     if (WP11_Slot_Has_Empty_Pin(slot))
@@ -3594,7 +3573,7 @@ CK_RV C_SetAttributeValue(CK_SESSION_HANDLE hSession,
  * @param  ulCount    [in]  Number of attribute triplets in template.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_ARGUMENTS_BAD when pTemplate is NULL.
+ *          CKR_ARGUMENTS_BAD when pTemplate is NULL and ulCount is not 0.
  *          CKR_OPERATION_ACTIVE when last find operation on session has not
  *          been finalized.
  *          CKR_ATTRIBUTE_VALUE_INVALID when attribute value is not valid for
@@ -9726,7 +9705,7 @@ CK_RV C_VerifyRecover(CK_SESSION_HANDLE hSession,
  * @param  hSession             [in]      Handle of session.
  * @param  pPart                [in]      Data to digest and encrypt.
  * @param  ulPartLen            [in]      Length of data in bytes.
- * @param  pEncryptedPart       [in]      Buffer to hold encrypted data.
+ * @param  pEncryptedPart       [out]     Buffer to hold encrypted data.
  *                                        NULL indicates length required.
  * @param  pulEncryptedPartLen  [in,out]  On in, length of buffer in bytes.
  *                                        On out, length of encrypted data in
@@ -9735,8 +9714,7 @@ CK_RV C_VerifyRecover(CK_SESSION_HANDLE hSession,
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pPart or pulEncryptedPartLen is NULL or
  *          ulPartLen is 0.
- *          CKR_OPERATION_NOT_INITIALIZED when C_EncryptInit and C_DigestInit
- *          have not been successfully called.
+ *          CKR_FUNCTION_NOT_SUPPORTED otherwise.
  */
 CK_RV C_DigestEncryptUpdate(CK_SESSION_HANDLE hSession,
                             CK_BYTE_PTR pPart, CK_ULONG ulPartLen,
@@ -9782,16 +9760,16 @@ CK_RV C_DigestEncryptUpdate(CK_SESSION_HANDLE hSession,
  * @param  hSession            [in]      Handle of session.
  * @param  pEncryptedPart      [in]      Data to decrypt and digest.
  * @param  ulEncryptedPartLen  [in]      Length of data in bytes.
- * @param  pPart               [in]      Buffer to hold decrypted data.
+ * @param  pPart               [out]     Buffer to hold decrypted data.
  *                                       NULL indicates length required.
  * @param  pulPartLen          [in,out]  On in, length of buffer in bytes.
  *                                       On out, length of decrypted data in
  *                                       bytes.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_ARGUMENTS_BAD when pEncryptedPart or pulDataLen is NULL.
- *          CKR_OPERATION_NOT_INITIALIZED when C_DecryptInit and C_DigestInit
- *          have not been successfully called.
+ *          CKR_ARGUMENTS_BAD when pEncryptedPart or pulPartLen is NULL or
+ *          ulEncryptedPartLen is 0.
+ *          CKR_FUNCTION_NOT_SUPPORTED otherwise.
  */
 CK_RV C_DecryptDigestUpdate(CK_SESSION_HANDLE hSession,
                             CK_BYTE_PTR pEncryptedPart,
@@ -9838,7 +9816,7 @@ CK_RV C_DecryptDigestUpdate(CK_SESSION_HANDLE hSession,
  * @param  hSession             [in]      Handle of session.
  * @param  pPart                [in]      Data to sign and encrypt.
  * @param  ulPartLen            [in]      Length of data in bytes.
- * @param  pEncryptedPart       [in]      Buffer to hold encrypted data.
+ * @param  pEncryptedPart       [out]     Buffer to hold encrypted data.
  *                                        NULL indicates length required.
  * @param  pulEncryptedPartLen  [in,out]  On in, length of buffer in bytes.
  *                                        On out, length of encrypted data in
@@ -9847,8 +9825,7 @@ CK_RV C_DecryptDigestUpdate(CK_SESSION_HANDLE hSession,
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_ARGUMENTS_BAD when pPart or pulEncryptedPartLen is NULL or
  *          ulPartLen is 0.
- *          CKR_OPERATION_NOT_INITIALIZED when C_EncryptInit and C_SignInit
- *          have not been successfully called.
+ *          CKR_FUNCTION_NOT_SUPPORTED otherwise.
  */
 CK_RV C_SignEncryptUpdate(CK_SESSION_HANDLE hSession,
                           CK_BYTE_PTR pPart, CK_ULONG ulPartLen,
@@ -9894,16 +9871,16 @@ CK_RV C_SignEncryptUpdate(CK_SESSION_HANDLE hSession,
  * @param  hSession            [in]      Handle of session.
  * @param  pEncryptedPart      [in]      Data to decrypt and verify.
  * @param  ulEncryptedPartLen  [in]      Length of data in bytes.
- * @param  pPart               [in]      Buffer to hold decrypted data.
+ * @param  pPart               [out]     Buffer to hold decrypted data.
  *                                       NULL indicates length required.
  * @param  pulPartLen          [in,out]  On in, length of buffer in bytes.
  *                                       On out, length of decrypted data in
  *                                       bytes.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
- *          CKR_ARGUMENTS_BAD when pEncryptedPart or pulDataLen is NULL.
- *          CKR_OPERATION_NOT_INITIALIZED when C_DecryptInit and C_VerifyInit
- *          have not been successfully called.
+ *          CKR_ARGUMENTS_BAD when pEncryptedPart or pulPartLen is NULL or
+ *          ulEncryptedPartLen is 0.
+ *          CKR_FUNCTION_NOT_SUPPORTED otherwise.
  */
 CK_RV C_DecryptVerifyUpdate(CK_SESSION_HANDLE hSession,
                             CK_BYTE_PTR pEncryptedPart,

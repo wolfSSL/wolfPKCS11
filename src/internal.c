@@ -3117,7 +3117,8 @@ static int wp11_storage_left(void* storage, long* left)
  * @param [in, out]  buffer  Buffer to hold data read.
  * @param [in]       len     Length of data required.
  * @return  0 on success.
- * @return  BUFFER_E to indicate failure.
+ * @return  BUFFER_E when fewer than len bytes are left.
+ * @return  Other -ve value when the store read fails.
  */
 static int wp11_storage_read(void* storage, unsigned char* buffer, int len)
 {
@@ -3433,10 +3434,10 @@ static int wp11_storage_read_time(void* storage, time_t* timeVal)
 }
 
 /**
- * Write an unsigned long value.
+ * Write a time_t value.
  *
- * @param [in]  store  Context for operation.
- * @param [in]  val    Unsigned long value to write.
+ * @param [in]  storage  Context for operation.
+ * @param [in]  timeVal  time_t value to write.
  * @return  0 on success.
  * @return  BUFFER_E to indicate failure.
  */
@@ -3539,9 +3540,9 @@ int wp11_storage_write_array(void* storage,
 /**
  * Read an array of bytes with variable length and allocate buffer to hold it.
  *
- * @param [in]       store   Context for operation.
- * @param [in, out]  buffer  Buffer to hold data read.
- * @param [in]       len     Length of data to read.
+ * @param [in]   storage  Context for operation.
+ * @param [out]  buffer   Allocated data, set on success when *len > 0.
+ * @param [out]  len      Length of data, read from storage.
  * @return  0 on success.
  * @return  BUFFER_E to indicate failure.
  * @return  ASN_PARSE_E when the stored length is negative.
@@ -3636,11 +3637,11 @@ static int wp11_storage_read_string(void* storage, char* str, int max)
 }
 
 /**
- * Write an array of bytes with variable length.
+ * Write a string as max bytes with no length prefix.
  *
  * @param [in]  store  Context for operation.
  * @param [in]  str    String to write.
- * @param [in]  max    Maximum length of string.
+ * @param [in]  max    Number of bytes to write.
  * @return  0 on success.
  * @return  BUFFER_E to indicate failure.
  */
@@ -8392,13 +8393,13 @@ static int wp11_Token_Purge(WP11_Token* token, int tokenId);
  * initialization, under it from a token reset, and under the slot and token
  * locks from a reload; neither its callees nor this function take them.
  *
- * @param [in, out]  object   Token object.
- * @param [in]       tokenId  Id of token this key belongs to.
+ * @param [in]       slot     Slot the token belongs to.
+ * @param [in]       tokenId  Id of token.
+ * @param [in, out]  token    Token to fill.
  * @param [in]       prev     Copy of the token loaded before. May be NULL.
- * @return  0 on success.
- * @return  MEMORY_E when dynamic memory allocation fails.
- * @return  BUFFER_E when loading fails.
- * @return  NOT_AVAILABLE_E when unable to locate data.
+ * @return  0 on success or when no token is stored.
+ * @return  CKR_DEVICE_ERROR when loading the token or its objects fails.
+ * @return  Other -ve value when preparing or opening the storage fails.
  */
 static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token,
                            const WP11_Token* prev)
@@ -8724,7 +8725,7 @@ static int wp11_Token_StorePass(WP11_Token* token, int tokenId, int what,
                                                              token->userPinLen);
         }
         if (ret == 0) {
-            /* Write User's PIN seed. (32) */
+            /* Write User's PIN seed. (16) */
             ret = wp11_storage_write_fixed_array(storage, token->userPinSeed,
                                                  sizeof(token->userPinSeed));
         }
@@ -9325,12 +9326,11 @@ static int wp11_Slot_Init(WP11_Slot* slot, int id)
 /**
  * Load tokens in slot from storage.
  *
- * @param [in, out]  object  Slot object.
- * @param [in]       slotId  Id of slot this key belongs to.
- * @return  0 on success.
- * @return  MEMORY_E when dynamic memory allocation fails.
- * @return  BUFFER_E when loading fails.
- * @return  NOT_AVAILABLE_E when unable to locate data.
+ * @param [in, out]  slot  Slot object.
+ * @param [in]       id    Id of the slot's token in storage.
+ * @return  0 on success or when no token is stored.
+ * @return  CKR_DEVICE_ERROR when loading the token or its objects fails.
+ * @return  Other -ve value when preparing or opening the storage fails.
  */
 static int wp11_Slot_Load(WP11_Slot* slot, int id)
 {
@@ -13798,7 +13798,7 @@ int WP11_Session_IsFindActive(WP11_Session* session)
 
 
 /**
- * Free the object and take it out of the linked list.
+ * Free the object and the data it owns. Does not remove it from any list.
  *
  * @param  object  [in]  Object object.
  */
