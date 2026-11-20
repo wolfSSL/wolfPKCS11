@@ -1966,6 +1966,52 @@ static void test_unchecked_store_refuses_login(void)
     funcList->C_Finalize(NULL);
 }
 
+/* A token record that exists but cannot be read stops the load instead of
+ * reporting an uninitialized token that could be initialized over it. */
+static void test_unreadable_token_record(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_TOKEN_INFO info;
+    char path[256];
+    FILE* f;
+
+    printf("\n--- an unreadable token record stops the load ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    funcList->C_Finalize(NULL);
+    snprintf(path, sizeof(path), "%s/wp11_token_%016lx", TEST_DIR,
+             (unsigned long)slot);
+    if (rv == CKR_OK && geteuid() != 0 && chmod(path, 0) == 0) {
+        f = fopen(path, "rb");
+        if (f != NULL) {
+            fclose(f);
+            printf("Skipping: token record cannot be made unreadable\n");
+        }
+        else {
+            XMEMSET(&info, 0, sizeof(info));
+            rv = lib_init();
+            if (rv == CKR_OK)
+                rv = funcList->C_GetTokenInfo(slot, &info);
+            CHECK_TRUE(rv != CKR_OK ||
+                       (info.flags & CKF_TOKEN_INITIALIZED) != 0,
+                       "unreadable token record is not reported uninitialized");
+            funcList->C_Finalize(NULL);
+        }
+        (void)chmod(path, 0600);
+        XMEMSET(&info, 0, sizeof(info));
+        rv = lib_init();
+        if (rv == CKR_OK)
+            rv = funcList->C_GetTokenInfo(slot, &info);
+        CHECK_RV(rv, "load once the record is readable", CKR_OK);
+        CHECK_TRUE((info.flags & CKF_TOKEN_INITIALIZED) != 0,
+                   "token initialized once readable");
+        CHECK_RV(login_user(slot), "login once the record is readable",
+                 CKR_OK);
+        funcList->C_Finalize(NULL);
+    }
+}
+
 static int change_user_pin_empty(CK_SLOT_ID slot)
 {
     CK_RV rv;
@@ -5743,6 +5789,7 @@ static int run_tests(void)
     test_failed_pin_change_reloads(0);
     test_failed_pin_change_reloads(1);
     test_unchecked_store_refuses_login();
+    test_unreadable_token_record();
 #ifndef NO_HMAC
     test_dropped_key_ends_ops();
 #endif
