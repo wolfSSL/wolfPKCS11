@@ -572,6 +572,7 @@ WP11_LOCAL int WP11_Session_SetPssParams(WP11_Session* session, CK_MECHANISM_TYP
 WP11_LOCAL int WP11_Session_GetPssHashLen(WP11_Session* session);
 WP11_LOCAL int WP11_Session_SetOaepParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
                                CK_MECHANISM_TYPE mgf, byte* label, int labelSz);
+WP11_LOCAL int WP11_Session_GetOaepHashLen(WP11_Session* session);
 WP11_LOCAL int WP11_Session_SetCbcParams(WP11_Session* session, unsigned char* iv, int enc,
                               WP11_Object* object);
 WP11_LOCAL int WP11_Session_SetCtrParams(WP11_Session* session, CK_ULONG ulCounterBits,

@@ -12471,6 +12471,17 @@ int WP11_Session_SetOaepParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
 
     return ret;
 }
+
+/**
+ * Return the length of the OAEP hash in bytes.
+ *
+ * @param  session  [in]  Session object.
+ * @return  Length of the hash in bytes, negative when the hash is unknown.
+ */
+int WP11_Session_GetOaepHashLen(WP11_Session* session)
+{
+    return wc_HashGetDigestSize(session->params.oaep.hashType);
+}
 #endif /* WC_NO_RSA_OAEP */
 
 #ifdef WC_RSA_PSS
@@ -12499,6 +12510,11 @@ int WP11_Session_SetPssParams(WP11_Session* session, CK_MECHANISM_TYPE hashAlg,
     /* Larger values would alias wolfCrypt's negative salt length markers. */
     if (ret == 0 && sLen > (CK_ULONG)(RSA_MAX_SIZE / 8))
         ret = BAD_FUNC_ARG;
+#if !defined(WOLFSSL_PSS_LONG_SALT) || FIPS_VERSION_GE(7,0)
+    /* wolfCrypt refuses these at sign and verify time. */
+    if (ret == 0 && sLen > (CK_ULONG)wc_HashGetDigestSize(hashType))
+        ret = BAD_FUNC_ARG;
+#endif
     if (ret == 0) {
         WP11_Session_AbortOp(session);
         XMEMSET(pss, 0, sizeof(*pss));
@@ -18339,7 +18355,6 @@ static int wp11_Rsa_SigInvalid(int ret)
            ret == RSA_OUT_OF_RANGE_E;
 }
 
-#ifdef WC_RSA_DIRECT
 /**
  * Check that a raw RSA input is below the modulus.
  *
@@ -18365,7 +18380,6 @@ static int wp11_Rsa_CheckRange(const unsigned char* in, word32 inLen,
     }
     return ret;
 }
-#endif /* WC_RSA_DIRECT */
 
 /**
  * Encrypt data with public key.
@@ -18379,6 +18393,7 @@ static int wp11_Rsa_CheckRange(const unsigned char* in, word32 inLen,
  * @param  pub     [in]      Public key object.
  * @param  slot    [in]      Slot operation is performed on.
  * @return  BUFFER_E when outLen is too small for decrypted data.
+ *          RSA_OUT_OF_RANGE_E when the input is not below the modulus.
  *          Other -ve when encryption fails.
  *          0 on success.
  */
@@ -18390,7 +18405,9 @@ int WP11_Rsa_PublicEncrypt(unsigned char* in, word32 inLen, unsigned char* out,
 
     if (pub->lock != NULL)
         WP11_Lock_LockRO(pub->lock);
-    ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
+    ret = wp11_Rsa_CheckRange(in, inLen, pub->data.rsaKey);
+    if (ret == 0)
+        ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
     if (ret == 0) {
         ret = wc_RsaFunction(in, inLen, out, outLen, RSA_PUBLIC_ENCRYPT,
                                                        pub->data.rsaKey, &rng);
@@ -18413,7 +18430,8 @@ int WP11_Rsa_PublicEncrypt(unsigned char* in, word32 inLen, unsigned char* out,
  *                           On out, length data in buffer.
  * @param  priv    [in]      Private key object.
  * @param  slot    [in]      Slot operation is performed on.
- * @return  -ve when decryption fails.
+ * @return  RSA_OUT_OF_RANGE_E when the input is not below the modulus.
+ *          Other -ve when decryption fails.
  *          0 on success.
  */
 int WP11_Rsa_PrivateDecrypt(unsigned char* in, word32 inLen, unsigned char* out,
@@ -18425,6 +18443,9 @@ int WP11_Rsa_PrivateDecrypt(unsigned char* in, word32 inLen, unsigned char* out,
     if (priv->lock != NULL)
         WP11_Lock_LockRO(priv->lock);
     ret = wp11_Object_KeyStateLocked(priv);
+    /* Older wolfCrypt skips this check on a raw private decrypt. */
+    if (ret == 0)
+        ret = wp11_Rsa_CheckRange(in, inLen, priv->data.rsaKey);
     if (ret == 0)
         ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
     if (ret == 0) {
@@ -18689,6 +18710,7 @@ int WP11_RsaOaep_PrivateDecrypt(unsigned char* in, word32 inLen,
  * @param  priv    [in]      Private key object.
  * @param  slot    [in]      Slot operation is performed on.
  * @return  RSA_BUFFER_E or BUFFER_E when sigLen is too small.
+ *          RSA_OUT_OF_RANGE_E when the input is not below the modulus.
  *          Other -ve when signing fails.
  *          0 on success.
  */
@@ -18721,7 +18743,9 @@ int WP11_Rsa_Sign(unsigned char* in, word32 inLen, unsigned char* sig,
         inLen = keyLen;
     }
 
-    ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
+    ret = wp11_Rsa_CheckRange(in, inLen, priv->data.rsaKey);
+    if (ret == 0)
+        ret = Rng_New(&slot->token.rng, &slot->token.rngLock, &rng);
     if (ret == 0) {
     #ifdef WOLFPKCS11_TPM
         ret = WP11_Object_LoadTpmKey(priv);
@@ -18867,8 +18891,11 @@ int WP11_Rsa_Verify(unsigned char* sig, word32 sigLen, unsigned char* in,
         return BUFFER_E;
     }
 
-    ret = wc_RsaDirect(sig, sigLen, decSig, &decSigLen, pub->data.rsaKey,
-                       RSA_PUBLIC_DECRYPT, NULL);
+    ret = wp11_Rsa_CheckRange(sig, sigLen, pub->data.rsaKey);
+    if (ret == 0) {
+        ret = wc_RsaDirect(sig, sigLen, decSig, &decSigLen, pub->data.rsaKey,
+                           RSA_PUBLIC_DECRYPT, NULL);
+    }
     if (pub->lock != NULL)
         WP11_Lock_UnlockRO(pub->lock);
 
