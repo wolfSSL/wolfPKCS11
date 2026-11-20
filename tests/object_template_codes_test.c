@@ -912,6 +912,284 @@ static void test_unwrap(CK_SESSION_HANDLE session)
 }
 #endif
 
+#ifndef NO_DH
+static void test_dh_required(CK_SESSION_HANDLE session)
+{
+    CK_KEY_TYPE dhType = CKK_DH;
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_CLASS,    &pubClass,      sizeof(pubClass)       },
+        { CKA_KEY_TYPE, &dhType,        sizeof(dhType)         },
+        { CKA_TOKEN,    &ckFalse,       sizeof(ckFalse)        },
+        { CKA_PRIME,    dh_ffdhe2048_p, sizeof(dh_ffdhe2048_p) },
+        { CKA_BASE,     dh_ffdhe2048_g, sizeof(dh_ffdhe2048_g) },
+        { CKA_VALUE,    dh_2048_pub,    sizeof(dh_2048_pub)    },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_CLASS,    &privClass,     sizeof(privClass)      },
+        { CKA_KEY_TYPE, &dhType,        sizeof(dhType)         },
+        { CKA_TOKEN,    &ckFalse,       sizeof(ckFalse)        },
+        { CKA_PRIVATE,  &ckFalse,       sizeof(ckFalse)        },
+        { CKA_PRIME,    dh_ffdhe2048_p, sizeof(dh_ffdhe2048_p) },
+        { CKA_BASE,     dh_ffdhe2048_g, sizeof(dh_ffdhe2048_g) },
+        { CKA_VALUE,    dh_2048_priv,   sizeof(dh_2048_priv)   },
+    };
+    CK_ATTRIBUTE emptyTmpl[] = {
+        { CKA_CLASS,    &pubClass,      sizeof(pubClass)       },
+        { CKA_KEY_TYPE, &dhType,        sizeof(dhType)         },
+        { CKA_TOKEN,    &ckFalse,       sizeof(ckFalse)        },
+    };
+    CK_ATTRIBUTE saved;
+
+    printf("\n--- DH key objects need prime, base and value ---\n");
+
+    create_expect(session, pubTmpl, TMPL_CNT(pubTmpl), CKR_OK,
+                  "DH public key (control)");
+    create_expect(session, privTmpl, TMPL_CNT(privTmpl), CKR_OK,
+                  "DH private key (control)");
+    create_expect(session, emptyTmpl, TMPL_CNT(emptyTmpl),
+                  CKR_TEMPLATE_INCOMPLETE, "DH public key with no material");
+    create_expect(session, pubTmpl, TMPL_CNT(pubTmpl) - 1,
+                  CKR_TEMPLATE_INCOMPLETE, "DH public key without value");
+    create_expect(session, privTmpl, TMPL_CNT(privTmpl) - 1,
+                  CKR_TEMPLATE_INCOMPLETE, "DH private key without value");
+    saved = pubTmpl[3];
+    pubTmpl[3] = pubTmpl[5];
+    create_expect(session, pubTmpl, TMPL_CNT(pubTmpl) - 1,
+                  CKR_TEMPLATE_INCOMPLETE, "DH public key without prime");
+    pubTmpl[3] = saved;
+    saved = privTmpl[5];
+    privTmpl[5] = privTmpl[6];
+    create_expect(session, privTmpl, TMPL_CNT(privTmpl) - 1,
+                  CKR_TEMPLATE_INCOMPLETE, "DH private key without base");
+    privTmpl[5] = saved;
+}
+#endif
+
+static void test_subject_class(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE data = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE copy = CK_INVALID_HANDLE;
+    CK_MECHANISM genMech = { CKM_GENERIC_SECRET_KEY_GEN, NULL, 0 };
+    CK_ULONG genLen = 32;
+    static CK_BYTE subject[] = { 0x30, 0x00 };
+    CK_ATTRIBUTE subjectAttr[] = {
+        { CKA_SUBJECT, subject, sizeof(subject) },
+    };
+    CK_ATTRIBUTE secretTmpl[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &genericType, sizeof(genericType) },
+        { CKA_TOKEN,    &ckFalse,     sizeof(ckFalse)     },
+        { CKA_PRIVATE,  &ckFalse,     sizeof(ckFalse)     },
+        { CKA_VALUE,    keyBytes,     sizeof(keyBytes)    },
+        { CKA_SUBJECT,  subject,      sizeof(subject)     },
+    };
+    CK_ATTRIBUTE dataTmpl[] = {
+        { CKA_CLASS,    &dataClass,   sizeof(dataClass)   },
+        { CKA_TOKEN,    &ckFalse,     sizeof(ckFalse)     },
+        { CKA_PRIVATE,  &ckFalse,     sizeof(ckFalse)     },
+        { CKA_VALUE,    keyBytes,     sizeof(keyBytes)    },
+        { CKA_SUBJECT,  subject,      sizeof(subject)     },
+    };
+    CK_ATTRIBUTE genTmpl[] = {
+        { CKA_CLASS,     &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE,  &genericType, sizeof(genericType) },
+        { CKA_TOKEN,     &ckFalse,     sizeof(ckFalse)     },
+        { CKA_PRIVATE,   &ckFalse,     sizeof(ckFalse)     },
+        { CKA_VALUE_LEN, &genLen,      sizeof(genLen)      },
+        { CKA_SUBJECT,   subject,      sizeof(subject)     },
+    };
+#ifndef NO_RSA
+    CK_KEY_TYPE rsaType = CKK_RSA;
+    CK_ATTRIBUTE rsaPubTmpl[] = {
+        { CKA_CLASS,           &pubClass,        sizeof(pubClass)         },
+        { CKA_KEY_TYPE,        &rsaType,         sizeof(rsaType)          },
+        { CKA_TOKEN,           &ckFalse,         sizeof(ckFalse)          },
+        { CKA_MODULUS,         rsa_2048_modulus, sizeof(rsa_2048_modulus) },
+        { CKA_PUBLIC_EXPONENT, rsa_2048_pub_exp, sizeof(rsa_2048_pub_exp) },
+        { CKA_SUBJECT,         subject,          sizeof(subject)          },
+    };
+#endif
+
+    printf("\n--- CKA_SUBJECT only on certificates and key pairs ---\n");
+
+    create_expect(session, secretTmpl, TMPL_CNT(secretTmpl),
+                  CKR_ATTRIBUTE_TYPE_INVALID, "secret key with CKA_SUBJECT");
+    create_expect(session, dataTmpl, TMPL_CNT(dataTmpl),
+                  CKR_ATTRIBUTE_TYPE_INVALID, "data object with CKA_SUBJECT");
+
+    rv = funcList->C_CreateObject(session, secretTmpl,
+                                  TMPL_CNT(secretTmpl) - 1, &key);
+    CHECK_RV(rv, "create secret key", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_SetAttributeValue(session, key, subjectAttr, 1);
+        CHECK_RV(rv, "set CKA_SUBJECT on secret key",
+                 CKR_ATTRIBUTE_TYPE_INVALID);
+        rv = funcList->C_CopyObject(session, key, subjectAttr, 1, &copy);
+        CHECK_RV(rv, "copy secret key with CKA_SUBJECT",
+                 CKR_ATTRIBUTE_TYPE_INVALID);
+        if (rv == CKR_OK)
+            funcList->C_DestroyObject(session, copy);
+        funcList->C_DestroyObject(session, key);
+    }
+    rv = funcList->C_GenerateKey(session, &genMech, genTmpl, TMPL_CNT(genTmpl),
+                                 &key);
+    CHECK_RV(rv, "generate secret key with CKA_SUBJECT",
+             CKR_ATTRIBUTE_TYPE_INVALID);
+    if (rv == CKR_OK)
+        funcList->C_DestroyObject(session, key);
+    rv = funcList->C_CreateObject(session, dataTmpl, TMPL_CNT(dataTmpl) - 1,
+                                  &data);
+    CHECK_RV(rv, "create data object", CKR_OK);
+    if (rv == CKR_OK) {
+        rv = funcList->C_SetAttributeValue(session, data, subjectAttr, 1);
+        CHECK_RV(rv, "set CKA_SUBJECT on data object",
+                 CKR_ATTRIBUTE_TYPE_INVALID);
+        funcList->C_DestroyObject(session, data);
+    }
+#ifndef NO_RSA
+    rv = funcList->C_CreateObject(session, rsaPubTmpl, TMPL_CNT(rsaPubTmpl),
+                                  &key);
+    CHECK_RV(rv, "RSA public key with CKA_SUBJECT (control)", CKR_OK);
+    if (rv == CKR_OK) {
+        check_get_attr(session, key, CKA_SUBJECT, CKR_OK,
+                       "RSA public key subject");
+        funcList->C_DestroyObject(session, key);
+    }
+#endif
+}
+
+static void test_wrap_with_trusted(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE copy = CK_INVALID_HANDLE;
+    CK_BBOOL value = CK_FALSE;
+    CK_ATTRIBUTE setFalse[] = {
+        { CKA_WRAP_WITH_TRUSTED, &ckFalse, sizeof(ckFalse) },
+    };
+    CK_ATTRIBUTE setTrue[] = {
+        { CKA_WRAP_WITH_TRUSTED, &ckTrue, sizeof(ckTrue) },
+    };
+    CK_ATTRIBUTE getTmpl[] = {
+        { CKA_WRAP_WITH_TRUSTED, &value, sizeof(value) },
+    };
+
+    printf("\n--- CKA_WRAP_WITH_TRUSTED is fixed once TRUE ---\n");
+
+    if (create_generic_key(session, &key) != CKR_OK)
+        return;
+
+    rv = funcList->C_SetAttributeValue(session, key, setTrue, 1);
+    CHECK_RV(rv, "set CKA_WRAP_WITH_TRUSTED TRUE", CKR_OK);
+    rv = funcList->C_SetAttributeValue(session, key, setTrue, 1);
+    CHECK_RV(rv, "set CKA_WRAP_WITH_TRUSTED TRUE again", CKR_OK);
+    rv = funcList->C_SetAttributeValue(session, key, setFalse, 1);
+    CHECK_RV(rv, "clear CKA_WRAP_WITH_TRUSTED", CKR_ATTRIBUTE_READ_ONLY);
+    rv = funcList->C_CopyObject(session, key, setFalse, 1, &copy);
+    CHECK_RV(rv, "copy clearing CKA_WRAP_WITH_TRUSTED",
+             CKR_ATTRIBUTE_READ_ONLY);
+    if (rv == CKR_OK)
+        funcList->C_DestroyObject(session, copy);
+
+    rv = funcList->C_GetAttributeValue(session, key, getTmpl, 1);
+    CHECK_RV(rv, "get CKA_WRAP_WITH_TRUSTED", CKR_OK);
+    if (rv == CKR_OK)
+        CHECK_TRUE(value == CK_TRUE, "CKA_WRAP_WITH_TRUSTED still TRUE");
+    funcList->C_DestroyObject(session, key);
+}
+
+#ifdef DEBUG_WOLFPKCS11
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern void WP11_Object_SetUpdateHook(void (*hook)(void));
+#ifdef __cplusplus
+}
+#endif
+
+static CK_SESSION_HANDLE raceSession = CK_INVALID_HANDLE;
+static CK_OBJECT_HANDLE raceKey = CK_INVALID_HANDLE;
+static CK_ATTRIBUTE raceAttr;
+static CK_RV raceRv = CKR_GENERAL_ERROR;
+
+/* Runs in the first session's update after its policy check passed. */
+static void hook_set_other_way(void)
+{
+    WP11_Object_SetUpdateHook(NULL);
+    raceRv = funcList->C_SetAttributeValue(raceSession, raceKey, &raceAttr, 1);
+}
+
+static void one_way_race(CK_SESSION_HANDLE session, CK_ATTRIBUTE_TYPE type,
+                         CK_BBOOL start, const char* what)
+{
+    CK_RV rv;
+    CK_BBOOL other = !start;
+    CK_BBOOL value = start;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,    &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE, &genericType, sizeof(genericType) },
+        { CKA_TOKEN,    &ckFalse,     sizeof(ckFalse)     },
+        { CKA_PRIVATE,  &ckFalse,     sizeof(ckFalse)     },
+        { CKA_VALUE,    keyBytes,     sizeof(keyBytes)    },
+        { type,         &start,       sizeof(start)       },
+    };
+    CK_ATTRIBUTE set = { type, &start, sizeof(start) };
+    CK_ATTRIBUTE get = { type, &value, sizeof(value) };
+
+    rv = funcList->C_CreateObject(raceSession, tmpl, TMPL_CNT(tmpl), &raceKey);
+    CHECK_RV(rv, "create key for the race", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+    raceAttr.type = type;
+    raceAttr.pValue = &other;
+    raceAttr.ulValueLen = sizeof(other);
+    raceRv = CKR_GENERAL_ERROR;
+    WP11_Object_SetUpdateHook(hook_set_other_way);
+    rv = funcList->C_SetAttributeValue(session, raceKey, &set, 1);
+    WP11_Object_SetUpdateHook(NULL);
+    CHECK_RV(raceRv, "other session changes the flag first", CKR_OK);
+    CHECK_RV(rv, what, CKR_ATTRIBUTE_READ_ONLY);
+    rv = funcList->C_GetAttributeValue(session, raceKey, &get, 1);
+    CHECK_TRUE(rv == CKR_OK && value == other, "flag keeps the newer value");
+    funcList->C_DestroyObject(raceSession, raceKey);
+}
+
+static void test_one_way_race(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+    CK_SESSION_INFO info;
+
+    printf("\n--- one-way flags changed by two sessions ---\n");
+
+    rv = funcList->C_GetSessionInfo(session, &info);
+    if (rv == CKR_OK) {
+        rv = funcList->C_OpenSession(info.slotID,
+                                     CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                     NULL, NULL, &raceSession);
+    }
+    CHECK_RV(rv, "open second session", CKR_OK);
+    if (rv != CKR_OK)
+        return;
+
+    one_way_race(session, CKA_WRAP_WITH_TRUSTED, CK_FALSE,
+                 "clear CKA_WRAP_WITH_TRUSTED set meanwhile");
+    one_way_race(session, CKA_SENSITIVE, CK_FALSE,
+                 "clear CKA_SENSITIVE set meanwhile");
+    one_way_race(session, CKA_EXTRACTABLE, CK_TRUE,
+                 "set CKA_EXTRACTABLE cleared meanwhile");
+    one_way_race(session, CKA_COPYABLE, CK_TRUE,
+                 "set CKA_COPYABLE cleared meanwhile");
+    one_way_race(session, CKA_DESTROYABLE, CK_TRUE,
+                 "set CKA_DESTROYABLE cleared meanwhile");
+
+    /* Closing the session frees the key that is no longer destroyable. */
+    funcList->C_CloseSession(raceSession);
+    raceSession = CK_INVALID_HANDLE;
+}
+#endif
+
 static int run_test(void)
 {
     CK_RV rv;
@@ -953,6 +1231,14 @@ static int run_test(void)
 #endif
 #ifndef NO_AES
     test_unwrap(session);
+#endif
+#ifndef NO_DH
+    test_dh_required(session);
+#endif
+    test_subject_class(session);
+    test_wrap_with_trusted(session);
+#ifdef DEBUG_WOLFPKCS11
+    test_one_way_race(session);
 #endif
     test_object_limit(session);
 

@@ -3462,7 +3462,7 @@ static CK_RV test_attribute_types(void* args)
         { CKA_CLASS,             &secretKeyClass,   sizeof(secretKeyClass)    },
         { CKA_KEY_TYPE,          &genericKeyType,   sizeof(genericKeyType)    },
         { CKA_VALUE,             keyData,           sizeof(keyData)           },
-        { CKA_SUBJECT,             NULL,                0                     },
+        { CKA_ID,                  NULL,                0                     },
     };
     CK_ULONG tmplCnt = sizeof(tmpl) / sizeof(*tmpl);
     CK_BBOOL privateBool, sensitive, extractable, modifiable, alwaysSensitive;

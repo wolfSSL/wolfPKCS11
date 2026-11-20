@@ -1020,6 +1020,117 @@ static CK_RV test_copy_object_mldsa_key(void* args)
 
     return ret;
 }
+
+static CK_RV mldsa_priv_value_read(CK_SESSION_HANDLE session,
+                                   CK_OBJECT_HANDLE priv, CK_RV expRv,
+                                   const char* msg)
+{
+    CK_RV ret;
+    static byte value[sizeof(mldsa_44_priv)];
+    CK_ATTRIBUTE getTmpl[] = {
+        { CKA_VALUE, value, sizeof(value) },
+    };
+
+    ret = funcList->C_GetAttributeValue(session, priv, getTmpl, 1);
+    if (expRv != CKR_OK) {
+        CHECK_CKR_FAIL(ret, expRv, msg);
+        if (ret == CKR_OK) {
+            CHECK_COND(getTmpl[0].ulValueLen == CK_UNAVAILABLE_INFORMATION,
+                       ret, msg);
+        }
+    }
+    else {
+        CHECK_CKR(ret, msg);
+        if (ret == CKR_OK) {
+            CHECK_COND(getTmpl[0].ulValueLen == sizeof(mldsa_44_priv) &&
+                       XMEMCMP(value, mldsa_44_priv,
+                               sizeof(mldsa_44_priv)) == 0, ret, msg);
+        }
+    }
+
+    return ret;
+}
+
+static CK_RV mldsa_priv_value_import(CK_SESSION_HANDLE session,
+                                     CK_BBOOL sensitive, CK_BBOOL extractable,
+                                     CK_RV expRv, const char* msg)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_ML_DSA_PARAMETER_SET_TYPE paramSet = CKP_ML_DSA_44;
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,         &privKeyClass,  sizeof(privKeyClass)  },
+        { CKA_KEY_TYPE,      &mldsaKeyType,  sizeof(mldsaKeyType)  },
+        { CKA_SIGN,          &ckTrue,        sizeof(ckTrue)        },
+        { CKA_PARAMETER_SET, &paramSet,      sizeof(paramSet)      },
+        { CKA_SENSITIVE,     &sensitive,     sizeof(sensitive)     },
+        { CKA_EXTRACTABLE,   &extractable,   sizeof(extractable)   },
+        { CKA_VALUE,         mldsa_44_priv,  sizeof(mldsa_44_priv) },
+    };
+
+    ret = funcList->C_CreateObject(session, tmpl, sizeof(tmpl)/sizeof(*tmpl),
+                                   &priv);
+    CHECK_CKR(ret, "ML-DSA private key import");
+    if (ret == CKR_OK)
+        ret = mldsa_priv_value_read(session, priv, expRv, msg);
+
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+
+    return ret;
+}
+
+static CK_RV test_mldsa_priv_value_sensitive(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_ML_DSA_PARAMETER_SET_TYPE paramSet = CKP_ML_DSA_44;
+    CK_BBOOL ckFalse = CK_FALSE;
+    CK_MECHANISM mech = { CKM_ML_DSA_KEY_PAIR_GEN, NULL, 0 };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_PARAMETER_SET, &paramSet, sizeof(paramSet) },
+        { CKA_VERIFY,        &ckTrue,   sizeof(ckTrue)   },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_SIGN,          &ckTrue,   sizeof(ckTrue)   },
+        { CKA_SENSITIVE,     &ckTrue,   sizeof(ckTrue)   },
+        { CKA_EXTRACTABLE,   &ckFalse,  sizeof(ckFalse)  },
+    };
+
+    ret = funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+                                      sizeof(pubTmpl) / sizeof(*pubTmpl),
+                                      privTmpl,
+                                      sizeof(privTmpl) / sizeof(*privTmpl),
+                                      &pub, &priv);
+    CHECK_CKR(ret, "ML-DSA sensitive key generation");
+    if (ret == CKR_OK) {
+        ret = mldsa_priv_value_read(session, priv, CKR_ATTRIBUTE_SENSITIVE,
+                                    "ML-DSA generated private value");
+    }
+    if (ret == CKR_OK) {
+        ret = mldsa_priv_value_import(session, CK_TRUE, CK_TRUE,
+                                      CKR_ATTRIBUTE_SENSITIVE,
+                                      "ML-DSA sensitive private value");
+    }
+    if (ret == CKR_OK) {
+        ret = mldsa_priv_value_import(session, CK_FALSE, CK_FALSE,
+                                      CKR_ATTRIBUTE_SENSITIVE,
+                                      "ML-DSA non-extractable private value");
+    }
+    if (ret == CKR_OK) {
+        ret = mldsa_priv_value_import(session, CK_FALSE, CK_TRUE, CKR_OK,
+                                      "ML-DSA exportable private value");
+    }
+
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+
+    return ret;
+}
 #endif /* WOLFPKCS11_MLDSA */
 
 #ifdef WOLFPKCS11_MLKEM
@@ -4404,6 +4515,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_fixed_keys_seed),
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_fixed_keys_both),
     PKCS11TEST_FUNC_SESS_DECL(test_copy_object_mldsa_key),
+    PKCS11TEST_FUNC_SESS_DECL(test_mldsa_priv_value_sensitive),
 #ifndef WOLFPKCS11_NO_STORE
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_attrs_logged_out),
 #endif

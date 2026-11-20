@@ -492,6 +492,107 @@ cleanup:
     return result;
 }
 
+#ifndef NO_AES
+static CK_RV read_key_value(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE obj,
+                            byte* value, CK_ULONG* len, CK_KEY_TYPE* type)
+{
+    CK_ATTRIBUTE get[] = {
+        { CKA_VALUE,    value, *len          },
+        { CKA_KEY_TYPE, type,  sizeof(*type) },
+    };
+    CK_RV ret;
+
+    ret = funcList->C_GetAttributeValue(session, obj, get, 2);
+    *len = get[0].ulValueLen;
+    return ret;
+}
+
+/* The MAC keys are generic secrets of the MAC size whatever key type and
+ * length the template gives the cipher keys. */
+static int test_tls_key_mat_cipher_template(CK_SESSION_HANDLE session)
+{
+    static const CK_ULONG macBits[] = { 160, 256 };
+    CK_RV ret;
+    CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
+    CK_TLS12_KEY_MAT_PARAMS params;
+    CK_SSL3_KEY_MAT_OUT out;
+    CK_SSL3_KEY_MAT_OUT ref;
+    CK_KEY_TYPE aesType = CKK_AES;
+    CK_KEY_TYPE type;
+    CK_ULONG keyLen = 16;
+    CK_ATTRIBUTE aesTmpl[] = {
+        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
+        { CKA_KEY_TYPE,    &aesType,        sizeof(aesType)        },
+        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
+        { CKA_SENSITIVE,   &ckFalse,        sizeof(ckFalse)        },
+        { CKA_EXTRACTABLE, &ckTrue,         sizeof(ckTrue)         },
+        { CKA_VALUE_LEN,   &keyLen,         sizeof(keyLen)         },
+    };
+    byte master[48];
+    byte refMac[32];
+    byte mac[32];
+    byte key[32];
+    CK_ULONG refLen;
+    CK_ULONG len;
+    size_t i;
+    int result = 0;
+
+    XMEMSET(&out, 0, sizeof(out));
+    XMEMSET(&ref, 0, sizeof(ref));
+    XMEMSET(master, 0x3c, sizeof(master));
+    ret = create_secret_base(session, CKK_GENERIC_SECRET, master,
+                             sizeof(master), &base);
+    CHECK_CKR(ret, "create TLS master secret");
+
+    for (i = 0; i < sizeof(macBits) / sizeof(*macBits); i++) {
+        tls_key_mat_init(&params, &ref, macBits[i], 128, 0);
+        ret = tls_key_mat_derive(session, base, &params, NULL, 0);
+        CHECK_CKR(ret, "TLS key and MAC derive with generic template");
+        refLen = sizeof(refMac);
+        ret = read_key_value(session, ref.hClientMacSecret, refMac, &refLen,
+                             &type);
+        CHECK_CKR(ret, "read reference MAC key");
+        destroy_key_mat(session, &ref);
+
+        tls_key_mat_init(&params, &out, macBits[i], 128, 0);
+        ret = tls_key_mat_derive(session, base, &params, aesTmpl,
+                                 sizeof(aesTmpl) / sizeof(*aesTmpl));
+        CHECK_CKR(ret, "TLS key and MAC derive with AES template");
+        len = sizeof(mac);
+        ret = read_key_value(session, out.hClientMacSecret, mac, &len, &type);
+        CHECK_CKR(ret, "read MAC key");
+        CHECK_RV(type, CKK_GENERIC_SECRET, "MAC key is a generic secret");
+        CHECK_RV(len, macBits[i] / 8, "MAC key has the MAC size");
+        CHECK_RV(XMEMCMP(mac, refMac, len), 0, "MAC key value unchanged");
+        len = sizeof(key);
+        ret = read_key_value(session, out.hClientKey, key, &len, &type);
+        CHECK_CKR(ret, "read cipher key");
+        CHECK_RV(type, CKK_AES, "cipher key takes the template key type");
+        CHECK_RV(len, keyLen, "cipher key takes the template length");
+
+        destroy_key_mat(session, &out);
+    }
+
+    tls_key_mat_init(&params, &out, 256, 256, 0);
+    ret = tls_key_mat_derive(session, base, &params, aesTmpl,
+                             sizeof(aesTmpl) / sizeof(*aesTmpl));
+    CHECK_RV(ret, CKR_TEMPLATE_INCONSISTENT,
+             "template length short of cipher keys");
+    keyLen = 32;
+    tls_key_mat_init(&params, &out, 256, 128, 0);
+    ret = tls_key_mat_derive(session, base, &params, aesTmpl,
+                             sizeof(aesTmpl) / sizeof(*aesTmpl));
+    CHECK_RV(ret, CKR_TEMPLATE_INCONSISTENT,
+             "template length longer than cipher keys");
+
+cleanup:
+    destroy_key_mat(session, &out);
+    destroy_key_mat(session, &ref);
+    destroy_obj(session, &base);
+    return result;
+}
+#endif
+
 /* Key material sizes are capped, and the IVs, returned in the clear, must not
  * read out the key block from its start (Fenrir 17781). */
 static int test_tls_key_mat_size_bounds(CK_SESSION_HANDLE session)
@@ -2345,6 +2446,10 @@ static int kdf_tls_derive_test(void)
         result = -1;
     if (test_tls_key_mat_size_bounds(session) != 0)
         result = -1;
+#ifndef NO_AES
+    if (test_tls_key_mat_cipher_template(session) != 0)
+        result = -1;
+#endif
 #endif
 
 #if !defined(NO_AES) && defined(HAVE_AES_CBC)
