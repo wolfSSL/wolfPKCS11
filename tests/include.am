@@ -16,6 +16,12 @@ noinst_PROGRAMS += tests/pkcs11str
 tests_pkcs11str_SOURCES = tests/pkcs11str.c
 tests_pkcs11str_LDADD =
 
+check_PROGRAMS += tests/default_devid_pin_kdf_test
+noinst_PROGRAMS += tests/default_devid_pin_kdf_test
+tests_default_devid_pin_kdf_test_SOURCES = \
+    tests/default_devid_pin_kdf_test.c
+tests_default_devid_pin_kdf_test_LDADD =
+
 check_PROGRAMS += tests/token_path_test
 noinst_PROGRAMS += tests/token_path_test
 tests_token_path_test_SOURCES = tests/token_path_test.c
@@ -499,6 +505,7 @@ if BUILD_STATIC
 tests_pkcs11test_LDADD += src/libwolfpkcs11.la
 tests_pkcs11mtt_LDADD  += src/libwolfpkcs11.la
 tests_pkcs11str_LDADD  += src/libwolfpkcs11.la
+tests_default_devid_pin_kdf_test_LDADD += src/libwolfpkcs11.la
 tests_token_path_test_LDADD += src/libwolfpkcs11.la
 tests_rsa_session_persistence_test_LDADD += src/libwolfpkcs11.la
 tests_debug_test_LDADD += src/libwolfpkcs11.la
@@ -683,4 +690,5 @@ EXTRA_DIST += tests/unit.h \
               tests/testdata.h \
               tests/pkcs11_test_util.h \
               tests/hbs_kat.h \
-              tests/README.md
+              tests/README.md \
+              tests/default_devid_guard_test.sh

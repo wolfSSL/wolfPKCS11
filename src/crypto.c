@@ -10232,7 +10232,7 @@ static CK_RV wp11_C_GenerateKey(CK_SESSION_HANDLE hSession,
                              (int)params->ulSaltSourceDataLen,
                              (int)params->iterations,
                              (int)derivedKeyLen,
-                             hashType);
+                             hashType, session);
 
             if (ret != 0) {
                 wc_ForceZero(derivedKey, derivedKeyLen);

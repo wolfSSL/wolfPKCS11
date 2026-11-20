@@ -22,6 +22,19 @@
 #include "wp11_types.h"
 #include "hbs.h"
 
+#if defined(WOLFPKCS11_PIN_KDF_SOFTWARE) && defined(WOLFPKCS11_PBKDF2)
+    #if defined(WOLF_CRYPTO_CB_FIND)
+        #error WOLFPKCS11_PIN_KDF_SOFTWARE conflicts with WOLF_CRYPTO_CB_FIND
+    #elif defined(WOLF_CRYPTO_CB) && LIBWOLFSSL_VERSION_HEX < 0x05007004
+        /* Older SHA-256 init replaces INVALID_DEVID with the default device */
+        #error WOLFPKCS11_PIN_KDF_SOFTWARE requires wolfSSL 5.7.4 or later
+    #endif
+#endif
+#if defined(WOLFPKCS11_DEFAULT_DEVID) && (defined(WOLFPKCS11_TPM) || \
+    defined(WOLFSSL_MAXQ10XX_CRYPTO) || defined(WOLFSSL_STM32U5_DHUK))
+    #error WOLFPKCS11_DEFAULT_DEVID conflicts with a TPM, MAXQ or STM32U5 slot
+#endif
+
 #ifdef WOLFPKCS11_TPM
     /* Hoisted: the store section's forward declaration is compiled out under
      * WOLFPKCS11_NO_STORE, but the wrap path below still calls it. */
@@ -9300,6 +9313,10 @@ static int wp11_Slot_Init(WP11_Slot* slot, int id)
     if (ret == 0) {
     #if defined(WOLFPKCS11_TPM)
         ret = wp11_TpmInit(slot);
+    #elif defined(WOLFPKCS11_DEFAULT_DEVID)
+        /* Let embedded integrations route slot crypto through a device
+         * registered with wolfCrypt without enabling a TPM-specific backend. */
+        slot->devId = WOLFPKCS11_DEFAULT_DEVID;
     #elif defined (WOLFSSL_MAXQ10XX_CRYPTO)
         slot->devId = MAXQ_DEVICE_ID;
     #elif defined (WOLFSSL_STM32U5_DHUK)
@@ -9867,6 +9884,18 @@ static int HashPIN(char* pin, int pinLen, byte* seed, int seedLen, byte* hash,
                    int hashLen, WP11_Slot* slot)
 {
 #ifdef WOLFPKCS11_PBKDF2
+    int devId;
+
+    /* A provider whose regular key operations use a crypto device may keep
+     * the high-iteration PIN KDF local. This avoids turning one token login
+     * into hundreds of thousands of device transactions while preserving
+     * the configured PBKDF2 work factor. */
+#ifdef WOLFPKCS11_PIN_KDF_SOFTWARE
+    (void)slot;
+    devId = INVALID_DEVID;
+#else
+    devId = slot->devId;
+#endif
 #if defined(HAVE_FIPS) && defined(WOLFPKCS11_NSS)
     if (pinLen == 0) {
         /* For FIPS, use empty pin of HMAC_FIPS_MIN_KEY bytes when pinLen is 0.
@@ -9877,11 +9906,11 @@ static int HashPIN(char* pin, int pinLen, byte* seed, int seedLen, byte* hash,
         byte emptyPin[HMAC_FIPS_MIN_KEY];
         XMEMSET(emptyPin, 0, sizeof(emptyPin));
         return wc_PBKDF2_ex(hash, emptyPin, sizeof(emptyPin), seed, seedLen,
-            PBKDF2_ITERATIONS, hashLen, WC_SHA256, NULL, slot->devId);
+            PBKDF2_ITERATIONS, hashLen, WC_SHA256, NULL, devId);
     }
 #endif
     return wc_PBKDF2_ex(hash, (byte*)pin, pinLen, seed, seedLen,
-        PBKDF2_ITERATIONS, hashLen, WC_SHA256, NULL, slot->devId);
+        PBKDF2_ITERATIONS, hashLen, WC_SHA256, NULL, devId);
 #elif defined(HAVE_SCRYPT)
     /* Convert PIN into secret using scrypt algorithm. */
     (void)slot;
@@ -20322,10 +20351,23 @@ int WP11_GenerateRandomKey(WP11_Object* secret, WP11_Slot* slot,
  *          0 on success
  */
 
+#if (!defined(HAVE_FIPS) || FIPS_VERSION_GE(7,0)) && \
+    !defined(HAVE_SELFTEST) && defined(LIBWOLFSSL_VERSION_HEX) && \
+    LIBWOLFSSL_VERSION_HEX >= 0x05007000
+    #define WP11_HAVE_HKDF_DEVID
+    #if LIBWOLFSSL_VERSION_HEX < 0x05008004
+        /* wc_HKDF_ex() arrived in 5.8.4; earlier releases have the parts */
+        #define WP11_HKDF_TWO_STEP
+    #endif
+#endif
+
 int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
                     unsigned char* key, word32* keyLen, WP11_Object* priv)
 {
     int ret = 0;
+#ifdef WP11_HKDF_TWO_STEP
+    byte prk[WC_MAX_DIGEST_SIZE];
+#endif
     byte* privData = NULL;
     word32 privLen = 0;
     byte* salt = NULL;
@@ -20406,6 +20448,37 @@ int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
         privData = priv->data.symmKey->data;
         privLen = priv->data.symmKey->len;
     }
+#ifdef WP11_HAVE_HKDF_DEVID
+    if (ret == 0 && params->bExtract && !params->bExpand) {
+        ret = wc_HKDF_Extract_ex(hashType, salt, (word32)saltLen,
+            privData, privLen, key, NULL, priv->devId);
+
+        if (!ret)
+            *keyLen = hashLen;
+    }
+    else if (ret == 0 && !params->bExtract && params->bExpand) {
+        ret = wc_HKDF_Expand_ex(hashType, privData, privLen,
+            params->pInfo, (word32)params->ulInfoLen,
+            key, *keyLen, NULL, priv->devId);
+    }
+    else if (ret == 0) {
+        /* Both */
+    #ifdef WP11_HKDF_TWO_STEP
+        ret = wc_HKDF_Extract_ex(hashType, salt, (word32)saltLen,
+            privData, privLen, prk, NULL, priv->devId);
+        if (ret == 0) {
+            ret = wc_HKDF_Expand_ex(hashType, prk, hashLen,
+                params->pInfo, (word32)params->ulInfoLen,
+                key, *keyLen, NULL, priv->devId);
+        }
+        wc_ForceZero(prk, sizeof(prk));
+    #else
+        ret = wc_HKDF_ex(hashType, privData, privLen, salt,
+            (word32)saltLen, params->pInfo, (word32)params->ulInfoLen,
+            key, *keyLen, NULL, priv->devId);
+    #endif
+    }
+#else
     if (ret == 0 && params->bExtract && !params->bExpand) {
         ret = wc_HKDF_Extract(hashType, salt, (word32)saltLen,
             privData, privLen, key);
@@ -20423,6 +20496,7 @@ int WP11_KDF_Derive(WP11_Session* session, CK_HKDF_PARAMS_PTR params,
         ret = wc_HKDF(hashType, privData, privLen, salt, (word32)saltLen,
               params->pInfo, (word32)params->ulInfoLen, key, *keyLen);
     }
+#endif
     PRIVATE_KEY_LOCK();
     if (secondLock != NULL)
         WP11_Lock_UnlockRO(secondLock);
@@ -20954,7 +21028,7 @@ int WP11_Tls12_Master_Key_Derive(CK_SSL3_RANDOM_DATA* random,
         ret = wc_PRF_TLS(enc, (word32)encLen, key->data.symmKey->data,
                          key->data.symmKey->len, (const byte*)label,
                          (word32)ulLabelLen, pSeed, (word32)ulSeedLen,
-                         1, macType, NULL, 0);
+                         1, macType, NULL, key->devId);
         PRIVATE_KEY_LOCK();
     }
     if (key->lock != NULL)
@@ -21154,7 +21228,8 @@ int WP11_Nss_Tls12_Master_Key_Derive(CK_BYTE_PTR pSessionHash,
         ret = wc_PRF_TLS(enc, (word32)encLen, key->data.symmKey->data,
                          key->data.symmKey->len, (const byte*)label,
                          (word32)ulLabelLen, pSessionHash,
-                         (word32)ulSessionHashLen, 1, macType, NULL, 0);
+                         (word32)ulSessionHashLen, 1, macType, NULL,
+                         key->devId);
         PRIVATE_KEY_LOCK();
     }
     if (key->lock != NULL)
@@ -23254,7 +23329,7 @@ int WP11_Aes_Cmac_Init(WP11_Object* secret, WP11_Session* session,
     ret = wp11_Object_KeyStateLocked(secret);
     if (ret == 0) {
         ret = wc_InitCmac_ex(&cmac->cmac, key->data, key->len, WC_CMAC_AES,
-                             NULL, NULL, secret->slot->devId);
+                             NULL, NULL, secret->devId);
     }
     if (secret->lock != NULL)
         WP11_Lock_UnlockRO(secret->lock);
@@ -23608,10 +23683,11 @@ int WP11_Digest_Single(unsigned char* data, word32 dataLen,
 
 #ifndef NO_HMAC
 int WP11_PBKDF2(byte* output, const byte* passwd, int pLen,
-    const byte* salt, int sLen, int iterations, int kLen, int hashType)
+    const byte* salt, int sLen, int iterations, int kLen, int hashType,
+    WP11_Session* session)
 {
-    return wc_PBKDF2(output, passwd, pLen, salt, sLen, iterations, kLen,
-        hashType);
+    return wc_PBKDF2_ex(output, passwd, pLen, salt, sLen, iterations, kLen,
+        hashType, NULL, session->devId);
 }
 #endif
 
@@ -23713,19 +23789,20 @@ int WP11_Hmac_Init(CK_MECHANISM_TYPE mechanism, WP11_Object* secret,
     if (ret == 0) {
         WP11_Session_AbortOp(session);
         hmac->hmacSz = wc_HmacSizeByType(hashType);
-        ret = wc_HmacInit(&hmac->hmac, NULL, secret->slot->devId);
-    }
-    if (ret == 0) {
         if (secret->lock != NULL)
             WP11_Lock_LockRO(secret->lock);
-        key = secret->data.symmKey;
-        ret = wp11_Object_KeyStateLocked(secret);
-        if (ret == 0)
-            ret = wc_HmacSetKey(&hmac->hmac, hashType, key->data, key->len);
+        ret = wc_HmacInit(&hmac->hmac, NULL, secret->devId);
+        if (ret == 0) {
+            key = secret->data.symmKey;
+            ret = wp11_Object_KeyStateLocked(secret);
+            if (ret == 0)
+                ret = wc_HmacSetKey(&hmac->hmac, hashType, key->data,
+                    key->len);
+            if (ret != 0)
+                wc_HmacFree(&hmac->hmac);
+        }
         if (secret->lock != NULL)
             WP11_Lock_UnlockRO(secret->lock);
-        if (ret != 0)
-            wc_HmacFree(&hmac->hmac);
     }
 
     return ret;
@@ -23929,7 +24006,7 @@ int WP11_TLS_MAC_sign(byte* data, word32 dataLen, byte* sig, word32* sigLen,
     if (ret == 0 && mac->isTlsPrf) {
         outLen = mac->macSz;
         ret = wc_PRF_TLSv1(sig, outLen, key->data, key->len, label, 15,
-                data, dataLen, NULL, secret->slot->devId);
+                data, dataLen, NULL, secret->devId);
     }
     else if (ret == 0) {
         /* Use maximum requested size if MAC size is unspecified */
@@ -23938,7 +24015,7 @@ int WP11_TLS_MAC_sign(byte* data, word32 dataLen, byte* sig, word32* sigLen,
         else
             outLen = mac->macSz;
         ret = wc_PRF_TLS(sig, outLen, key->data, key->len, label, 15,
-                data, dataLen, 1, mac->mac, NULL, secret->slot->devId);
+                data, dataLen, 1, mac->mac, NULL, secret->devId);
     }
     PRIVATE_KEY_LOCK();
 
