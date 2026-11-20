@@ -136,7 +136,7 @@ static void remove_record(const char* path)
 
 static void cleanup_test_files(void)
 {
-    static const char* txnKinds[] = { "lock", "intent", "commit" };
+    static const char* txnKinds[] = { "lock", "gen", "intent", "commit" };
     char path[256];
     size_t k;
     int i;

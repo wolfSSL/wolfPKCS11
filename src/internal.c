@@ -1308,13 +1308,26 @@ static int wolfPKCS11_StoreCommitTemp(WP11_FileStoreCtx* ctx)
     return ret;
 }
 
+/**
+ * Check that a store directory is a directory and not a link.
+ *
+ * @param [in]  dirPath  Store directory.
+ * @return  0 on success.
+ * @return  NOT_AVAILABLE_E when the directory does not exist.
+ * @return  READ_ONLY_E otherwise.
+ */
 static int wolfPKCS11_StoreValidateDir(const char* dirPath)
 {
 #if defined(_WIN32) || defined(_MSC_VER)
     DWORD attrs;
+    DWORD err;
 
     attrs = GetFileAttributesA(dirPath);
     if (attrs == INVALID_FILE_ATTRIBUTES) {
+        err = GetLastError();
+        if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND) {
+            return NOT_AVAILABLE_E;
+        }
         return READ_ONLY_E;
     }
     if ((attrs & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
@@ -1326,7 +1339,7 @@ static int wolfPKCS11_StoreValidateDir(const char* dirPath)
     struct stat st;
 
     if (lstat(dirPath, &st) != 0) {
-        return READ_ONLY_E;
+        return (errno == ENOENT) ? NOT_AVAILABLE_E : READ_ONLY_E;
     }
     if (!S_ISDIR(st.st_mode)) {
         return READ_ONLY_E;
@@ -1353,12 +1366,9 @@ static int wolfPKCS11_StoreEnsureDir(const char* dirPath)
         return 0;
     }
 
-    if (MKDIR(dirPath) == 0) {
-        return wolfPKCS11_StoreValidateDir(dirPath);
-    }
-
-    if (errno == EEXIST) {
-        return wolfPKCS11_StoreValidateDir(dirPath);
+    if (MKDIR(dirPath) == 0 || errno == EEXIST) {
+        ret = wolfPKCS11_StoreValidateDir(dirPath);
+        return (ret == NOT_AVAILABLE_E) ? READ_ONLY_E : ret;
     }
 
     return READ_ONLY_E;
@@ -1638,10 +1648,12 @@ static void wp11_Slot_EndReplacedHandle(WP11_Slot* slot,
 #define WP11_BATCH_APPLY       1
 #define WP11_BATCH_CHECK       2
 
-/* Lock file flag set while the purge of a token reset is not finished. */
+/* Count file flag set while the purge of a token reset is not finished. */
 #define WP11_BATCH_PURGE       0x01
-/* Lock file flag set once a purge failed: only store passes retry it. */
+/* Count file flag set once a purge failed: only store passes retry it. */
 #define WP11_BATCH_PURGE_FAILED 0x02
+/* Size of a count file record: the count of passes and the flags. */
+#define WP11_BATCH_GEN_SZ      (sizeof(word64) + 1)
 
 typedef struct WP11_StoreBatch {
     WP11_Slot* slot;
@@ -1663,6 +1675,7 @@ typedef struct WP11_StoreBatch {
     char intentName[WP11_STORE_STAGED_MAX];
     char commitName[WP11_STORE_STAGED_MAX];
     char lockName[WP11_STORE_STAGED_MAX];
+    char genName[WP11_STORE_STAGED_MAX];
 } WP11_StoreBatch;
 
 static WP11_StoreBatch storeBatch;
@@ -1712,6 +1725,13 @@ static int wolfPKCS11_StoreBatchNames(int tokenId)
             "%s/wp11_txn_%016lx_lock", storeBatch.dir,
             (unsigned long)tokenId);
         if (len <= 0 || len >= (int)sizeof(storeBatch.lockName))
+            ret = READ_ONLY_E;
+    }
+    if (ret == 0) {
+        len = XSNPRINTF(storeBatch.genName, sizeof(storeBatch.genName),
+            "%s/wp11_txn_%016lx_gen", storeBatch.dir,
+            (unsigned long)tokenId);
+        if (len <= 0 || len >= (int)sizeof(storeBatch.genName))
             ret = READ_ONLY_E;
     }
 
@@ -1944,101 +1964,77 @@ static int wolfPKCS11_StoreBatchRecover(void)
 }
 
 /**
- * Read the count of committed store passes and the flags kept after it in
- * the lock file. Caller holds the lock file.
+ * Read the count of committed store passes and the flags kept after it.
+ * Caller holds the lock file.
  *
  * @param [out]  gen    Count of passes, 0 when none was written.
  * @param [out]  flags  WP11_BATCH_PURGE when set. May be NULL.
  * @return  0 on success.
- * @return  READ_ONLY_E when the lock file cannot be read.
+ * @return  READ_ONLY_E when the count file cannot be read.
  */
 static int wolfPKCS11_StoreBatchGen(word64* gen, byte* flags)
 {
-    byte buf[9];
+    byte buf[WP11_BATCH_GEN_SZ + 1];
+    size_t got;
     int i;
-#if defined(_WIN32) || defined(_MSC_VER)
-    OVERLAPPED ov;
-    DWORD got = 0;
+    XFILE f;
 
-    XMEMSET(&ov, 0, sizeof(ov));
-    if (!ReadFile(storeBatch.lockFile, buf, sizeof(buf), &got, &ov) &&
-            GetLastError() != ERROR_HANDLE_EOF) {
-        return READ_ONLY_E;
-    }
-#else
-    ssize_t got = pread(storeBatch.lockFd, buf, sizeof(buf), 0);
-
-    if (got < 0)
-        return READ_ONLY_E;
-#endif
     *gen = 0;
-    if ((size_t)got >= sizeof(word64)) {
-        for (i = 0; i < (int)sizeof(word64); i++)
-            *gen = (*gen << 8) | buf[i];
-    }
     if (flags != NULL)
-        *flags = ((size_t)got == sizeof(buf)) ? buf[sizeof(word64)] : 0;
+        *flags = 0;
+    errno = 0;
+    f = XFOPEN(storeBatch.genName, "rb");
+    if (f == XBADFILE)
+        return (errno == ENOENT) ? 0 : READ_ONLY_E;
+    got = XFREAD(buf, 1, sizeof(buf), f);
+    XFCLOSE(f);
+    if (got != WP11_BATCH_GEN_SZ)
+        return READ_ONLY_E;
+    for (i = 0; i < (int)sizeof(word64); i++)
+        *gen = (*gen << 8) | buf[i];
+    if (flags != NULL)
+        *flags = buf[sizeof(word64)];
     return 0;
 }
 
 /**
- * Write the count of committed store passes and the flags durably to the
- * lock file. Caller holds the lock file.
+ * Write the count of committed store passes and the flags durably. Caller
+ * holds the lock file.
  *
  * @param [in]  gen    Count of passes.
  * @param [in]  flags  WP11_BATCH_* flags.
  * @return  0 on success.
- * @return  READ_ONLY_E when the lock file cannot be written.
+ * @return  READ_ONLY_E when the count file cannot be written.
  */
 static int wolfPKCS11_StoreBatchSetGen(word64 gen, byte flags)
 {
-    byte buf[9];
+    int ret;
+    byte buf[WP11_BATCH_GEN_SZ];
     int i;
-#if defined(_WIN32) || defined(_MSC_VER)
-    OVERLAPPED ov;
-    DWORD put = 0;
-#endif
+    WP11_FileStoreCtx ctx;
 
     for (i = (int)sizeof(word64) - 1; i >= 0; i--) {
         buf[i] = (byte)gen;
         gen >>= 8;
     }
     buf[sizeof(word64)] = flags;
-#if defined(_WIN32) || defined(_MSC_VER)
-    XMEMSET(&ov, 0, sizeof(ov));
-    if (!WriteFile(storeBatch.lockFile, buf, sizeof(buf), &put, &ov) ||
-            put != sizeof(buf) || !FlushFileBuffers(storeBatch.lockFile)) {
+    XMEMSET(&ctx, 0, sizeof(ctx));
+    ctx.file = XBADFILE;
+    if (XSTRLEN(storeBatch.genName) >= sizeof(ctx.final_name))
         return READ_ONLY_E;
-    }
-#else
-    if (pwrite(storeBatch.lockFd, buf, sizeof(buf), 0) !=
-            (ssize_t)sizeof(buf) || fsync(storeBatch.lockFd) != 0) {
-        return READ_ONLY_E;
-    }
-#endif
-    return 0;
-}
-
-/**
- * Check whether a store directory does not exist.
- *
- * @param [in]  dir  Store directory.
- * @return  1 when absent, 0 otherwise.
- */
-static int wolfPKCS11_StoreDirAbsent(const char* dir)
-{
-#if defined(_WIN32) || defined(_MSC_VER)
-    DWORD err;
-
-    if (GetFileAttributesA(dir) != INVALID_FILE_ATTRIBUTES)
-        return 0;
-    err = GetLastError();
-    return err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND;
-#else
-    struct stat st;
-
-    return lstat(dir, &st) != 0 && errno == ENOENT;
-#endif
+    XSTRNCPY(ctx.final_name, storeBatch.genName, sizeof(ctx.final_name));
+    ret = wolfPKCS11_StoreCreateTempFile(&ctx, storeBatch.dir);
+    if (ret == 0 && XFWRITE(buf, 1, sizeof(buf), ctx.file) != sizeof(buf))
+        ret = READ_ONLY_E;
+    if (ret == 0)
+        ret = wolfPKCS11_StoreSyncFile(ctx.file);
+    if (ctx.file != XBADFILE && XFCLOSE(ctx.file) != 0)
+        ret = READ_ONLY_E;
+    if (ret == 0)
+        ret = wolfPKCS11_StoreCommitTemp(&ctx);
+    if (ret != 0)
+        wolfPKCS11_StoreAbortTemp(&ctx);
+    return ret;
 }
 
 /**
@@ -2072,7 +2068,8 @@ static int wolfPKCS11_StoreBatchCheck(int tokenId, WP11_Slot** held)
         if (wolfPKCS11_StoreBatchLockFile(1) == 0) {
             ret = wolfPKCS11_StoreBatchRecover();
         }
-        else if (wolfPKCS11_StoreDirAbsent(storeBatch.dir)) {
+        else if (wolfPKCS11_StoreValidateDir(storeBatch.dir) ==
+                NOT_AVAILABLE_E) {
             storeBatch.absent = 1;
         }
         else {
@@ -2108,7 +2105,8 @@ static void wolfPKCS11_StoreBatchRelease(WP11_Slot* held)
  * @param [out]  gen    Count of passes.
  * @param [out]  flags  WP11_BATCH_* flags. May be NULL.
  * @return  0 on success.
- * @return  READ_ONLY_E when the lock file is not held or cannot be read.
+ * @return  READ_ONLY_E when the lock file is not held or the count cannot be
+ *          read.
  */
 static int wolfPKCS11_StoreBatchHeldGen(WP11_Slot* held, word64* gen,
     byte* flags)
@@ -2126,13 +2124,13 @@ static int wolfPKCS11_StoreBatchHeldGen(WP11_Slot* held, word64* gen,
 }
 
 /**
- * Record the outcome of a purge in the lock file: clear the pending purge
+ * Record the outcome of a purge in the count file: clear the pending purge
  * once the removals are durable, or note that it failed. Caller holds the
  * lock file.
  *
  * @param [in]  removed  1 when every record was removed, 0 otherwise.
  * @return  0 on success.
- * @return  READ_ONLY_E when the lock file cannot be read or written.
+ * @return  READ_ONLY_E when the count file cannot be read or written.
  * @return  Other value when the store directory cannot be synced.
  */
 static int wolfPKCS11_StoreBatchPurgeDone(int removed)

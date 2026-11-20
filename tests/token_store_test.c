@@ -1865,12 +1865,41 @@ static CK_RV login_user(CK_SLOT_ID slot)
     return rv;
 }
 
+#define GEN_FILE_SZ 9
+
+static int read_gen_file(const char* path, byte* gen)
+{
+    FILE* f;
+    size_t got = 0;
+
+    f = fopen(path, "rb");
+    if (f != NULL) {
+        got = fread(gen, 1, GEN_FILE_SZ, f);
+        fclose(f);
+    }
+    return (got == GEN_FILE_SZ) ? 0 : -1;
+}
+
+static int write_gen_file(const char* path, const byte* gen, size_t len)
+{
+    FILE* f;
+    size_t put = 0;
+
+    f = fopen(path, "wb");
+    if (f != NULL) {
+        put = fwrite(gen, 1, len, f);
+        fclose(f);
+    }
+    return (put == len) ? 0 : -1;
+}
+
 /* A store whose freshness cannot be checked refuses a login. */
 static void test_unchecked_store_refuses_login(void)
 {
     CK_RV rv;
     CK_SLOT_ID slot = 0;
     char path[256];
+    byte gen[GEN_FILE_SZ + 1] = { 0 };
     FILE* f;
     int fd;
 
@@ -1905,6 +1934,34 @@ static void test_unchecked_store_refuses_login(void)
         }
         (void)chmod(path, 0600);
         CHECK_RV(login_user(slot), "login once the lock is readable", CKR_OK);
+    }
+    (void)snprintf(path, sizeof(path), "%s/wp11_txn_%016lx_gen", TEST_DIR,
+                   (unsigned long)slot);
+    if (rv == CKR_OK) {
+        CHECK_TRUE(read_gen_file(path, gen) == 0, "pass count read");
+        CHECK_TRUE(write_gen_file(path, gen, 4) == 0, "pass count cut");
+        CHECK_TRUE(login_user(slot) != CKR_OK, "cut pass count refuses login");
+        CHECK_TRUE(write_gen_file(path, gen, sizeof(gen)) == 0,
+                   "pass count lengthened");
+        CHECK_TRUE(login_user(slot) != CKR_OK,
+                   "long pass count refuses login");
+        CHECK_TRUE(write_gen_file(path, gen, GEN_FILE_SZ) == 0,
+                   "pass count restored");
+        CHECK_RV(login_user(slot), "login once the count is whole", CKR_OK);
+    }
+    if (rv == CKR_OK && geteuid() != 0 && chmod(path, 0) == 0) {
+        f = fopen(path, "rb");
+        if (f != NULL) {
+            fclose(f);
+            printf("Skipping: pass count cannot be made unreadable\n");
+        }
+        else {
+            CHECK_TRUE(login_user(slot) != CKR_OK,
+                       "unreadable pass count refuses login");
+        }
+        (void)chmod(path, 0600);
+        CHECK_RV(login_user(slot), "login once the count is readable",
+                 CKR_OK);
     }
     funcList->C_Finalize(NULL);
 }
@@ -5496,21 +5553,22 @@ static void test_init_token_reports_failed_removal(void)
     funcList->C_Finalize(NULL);
 }
 
-/* Set or clear the failed purge flag in the token's batch lock file. */
+/* Set or clear the failed purge flag in the token's pass count file. */
 static int set_purge_failed(CK_SLOT_ID slot, int failed)
 {
     char path[512];
     FILE* f;
-    byte buf[9];
+    byte buf[GEN_FILE_SZ];
     int ret = -1;
 
-    snprintf(path, sizeof(path), "%s/wp11_txn_%016lx_lock", TEST_DIR,
+    snprintf(path, sizeof(path), "%s/wp11_txn_%016lx_gen", TEST_DIR,
              (unsigned long)slot);
     f = fopen(path, "r+b");
     if (f == NULL)
         return -1;
     if (fread(buf, 1, sizeof(buf), f) == sizeof(buf)) {
-        buf[8] = failed ? (byte)(buf[8] | 0x02) : (byte)(buf[8] & ~0x02);
+        buf[GEN_FILE_SZ - 1] = failed ? (byte)(buf[GEN_FILE_SZ - 1] | 0x02) :
+            (byte)(buf[GEN_FILE_SZ - 1] & ~0x02);
         if (fseek(f, 0, SEEK_SET) == 0 &&
                 fwrite(buf, 1, sizeof(buf), f) == sizeof(buf)) {
             ret = 0;

@@ -317,8 +317,8 @@ versions may need to update templates or error-handling:
   `CKR_TOKEN_WRITE_PROTECTED`, `C_GetTokenInfo` reports `CKF_WRITE_PROTECTED`
   and `C_Finalize` fails. Calls that only read the token use it as loaded.
   Older wolfPKCS11 versions do not take part in this, so processes sharing a
-  token directory should use the same version, and the lock file in that
-  directory must not be removed while they run.
+  token directory should use the same version, and the `wp11_txn_*` files in
+  that directory must not be removed while they run.
 - FIPS builds hash PINs with the PBKDF2 iteration count set by
   `--with-pbkdf2-iterations` or `PBKDF2_ITERATIONS`. Before, they ignored it
   and used 600000. A FIPS build that sets another count cannot log in to a
