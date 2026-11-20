@@ -442,6 +442,11 @@ noinst_PROGRAMS += tests/verify_return_codes_test
 tests_verify_return_codes_test_SOURCES = tests/verify_return_codes_test.c
 tests_verify_return_codes_test_LDADD =
 
+check_PROGRAMS += tests/rsa_aes_length_test
+noinst_PROGRAMS += tests/rsa_aes_length_test
+tests_rsa_aes_length_test_SOURCES = tests/rsa_aes_length_test.c
+tests_rsa_aes_length_test_LDADD =
+
 check_PROGRAMS += tests/multi_part_sign_test
 noinst_PROGRAMS += tests/multi_part_sign_test
 tests_multi_part_sign_test_SOURCES = tests/multi_part_sign_test.c
@@ -587,6 +592,7 @@ tests_unwrap_keygen_test_LDADD += src/libwolfpkcs11.la
 tests_object_template_codes_test_LDADD += src/libwolfpkcs11.la
 tests_token_partial_store_test_LDADD += src/libwolfpkcs11.la
 tests_verify_return_codes_test_LDADD += src/libwolfpkcs11.la
+tests_rsa_aes_length_test_LDADD += src/libwolfpkcs11.la
 tests_multi_part_sign_test_LDADD += src/libwolfpkcs11.la
 tests_session_object_visibility_test_LDADD += src/libwolfpkcs11.la
 tests_attribute_template_test_LDADD += src/libwolfpkcs11.la
@@ -674,6 +680,7 @@ tests_unwrap_keygen_test_LDADD += src/libwolfpkcs11.la
 tests_object_template_codes_test_LDADD += src/libwolfpkcs11.la
 tests_token_partial_store_test_LDADD += src/libwolfpkcs11.la
 tests_verify_return_codes_test_LDADD += src/libwolfpkcs11.la
+tests_rsa_aes_length_test_LDADD += src/libwolfpkcs11.la
 tests_multi_part_sign_test_LDADD += src/libwolfpkcs11.la
 tests_session_object_visibility_test_LDADD += src/libwolfpkcs11.la
 tests_attribute_template_test_LDADD += src/libwolfpkcs11.la
