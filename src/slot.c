@@ -23,6 +23,13 @@
     #include <wolfpkcs11/config.h>
 #endif
 
+#ifndef WOLFSSL_USER_SETTINGS
+#include <wolfssl/options.h>
+#else
+#include "user_settings.h"
+#endif
+#include <wolfssl/wolfcrypt/settings.h>
+
 #include <wolfpkcs11/pkcs11.h>
 #include <wolfpkcs11/internal.h>
 
@@ -476,7 +483,7 @@ static CK_MECHANISM_TYPE mechanismList[] = {
 #endif
 #endif
 #endif
-#ifndef NO_KDF
+#ifdef WOLFSSL_HAVE_PRF
     CKM_TLS12_KEY_AND_MAC_DERIVE,
     CKM_TLS12_MASTER_KEY_DERIVE,
     CKM_TLS12_MASTER_KEY_DERIVE_DH,
@@ -730,7 +737,7 @@ static CK_MECHANISM_INFO mlKemMechInfo = {
     800, 1568, CKF_ENCAPSULATE | CKF_DECAPSULATE
 };
 #endif
-#ifndef NO_KDF
+#ifdef WOLFSSL_HAVE_PRF
 static CK_MECHANISM_INFO tls12MasterKeyDeriveDhInfo = {
     8, 128, CKF_DERIVE
 };
@@ -747,6 +754,9 @@ static CK_MECHANISM_INFO nssTls12MasterKeyDeriveDhInfo = {
 static CK_MECHANISM_INFO nssTls12MasterKeyDeriveInfo = {
     48, 128, CKF_DERIVE
 };
+#endif
+#endif
+#ifdef WOLFPKCS11_NSS
 #ifndef NO_HMAC
 static CK_MECHANISM_INFO nssPkcs12PbeSha224HmacKeyGenMechInfo = {
     224, 224, CKF_GENERATE
@@ -767,7 +777,6 @@ static CK_MECHANISM_INFO nssPkcs12PbeSha512HmacKeyGenMechInfo = {
 static CK_MECHANISM_INFO ssl3MasterKeyTargetInfo = {
     48, 48, 0
 };
-#endif
 #endif
 #ifdef WOLFSSL_HAVE_PRF
 static CK_MECHANISM_INFO tlsMacMechInfo = {
@@ -1249,7 +1258,7 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
             break;
 #endif
 #endif
-#ifndef NO_KDF
+#ifdef WOLFSSL_HAVE_PRF
         case CKM_TLS12_KEY_AND_MAC_DERIVE:
             XMEMCPY(pInfo, &tls12KeyAndMacDeriveInfo,
                     sizeof(CK_MECHANISM_INFO));
@@ -1271,6 +1280,9 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
             XMEMCPY(pInfo, &nssTls12MasterKeyDeriveDhInfo,
                     sizeof(CK_MECHANISM_INFO));
             break;
+#endif
+#endif
+#ifdef WOLFPKCS11_NSS
 #ifndef NO_HMAC
         case CKM_NSS_PKCS12_PBE_SHA224_HMAC_KEY_GEN:
             XMEMCPY(pInfo, &nssPkcs12PbeSha224HmacKeyGenMechInfo,
@@ -1293,7 +1305,6 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
             XMEMCPY(pInfo, &ssl3MasterKeyTargetInfo,
                     sizeof(CK_MECHANISM_INFO));
             break;
-#endif
 #endif
 #ifdef WOLFSSL_HAVE_PRF
         case CKM_TLS_MAC:
@@ -2240,11 +2251,14 @@ CK_RV C_CancelFunction(CK_SESSION_HANDLE hSession)
 /**
  * Wait for an event on any slot.
  *
- * @param  flags      [in]  Indicate whether to block.
- * @param  pSlot      [in]  Handle of slot that event occurred on.
- * @param  pReserved  [in]  Reserved for future use.
+ * @param  flags      [in]   Indicate whether to block.
+ * @param  pSlot      [out]  Handle of slot that event occurred on.
+ * @param  pReserved  [in]   Reserved for future use.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
- *          CKR_FUNCTION_NOT_PARALLEL indicating function not supported.
+ *          CKR_ARGUMENTS_BAD when pSlot is NULL, pReserved is not NULL or
+ *          flags has bits other than CKF_DONT_BLOCK.
+ *          CKR_NO_EVENT when CKF_DONT_BLOCK is set.
+ *          CKR_FUNCTION_NOT_SUPPORTED when blocking is requested.
  */
 CK_RV C_WaitForSlotEvent(CK_FLAGS flags, CK_SLOT_ID_PTR pSlot,
                          CK_VOID_PTR pReserved)

@@ -147,6 +147,12 @@ jobs:
     uses: ./.github/workflows/build-workflow.yml
     with:
       config: --enable-nss
+  nss_no_kdf:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --enable-nss
+      wolfssl_config: --enable-cryptonly --disable-crypttests --disable-examples
+      wolfssl_cflags: -DNO_KDF
   pbkdf2:
     uses: ./.github/workflows/build-workflow.yml
     with:
