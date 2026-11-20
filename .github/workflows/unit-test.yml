@@ -101,24 +101,25 @@ jobs:
     uses: ./.github/workflows/build-workflow.yml
     with:
       wolfssl_config: --enable-cmac
-      wolfssl_cflags: -DWC_NO_DEFAULT_DEVID
       config: >-
         --enable-singlethreaded --enable-pbkdf2 --enable-aescmac
         --with-pbkdf2-iterations=25
         CFLAGS="-DWOLFPKCS11_NO_STORE -DWOLFPKCS11_DEFAULT_DEVID=7
-        -DWOLFPKCS11_PIN_KDF_SOFTWARE -DWC_NO_DEFAULT_DEVID"
-      check: WOLFPKCS11_DEFAULT_DEVID_REQUIRED=1 ./tests/default_devid_pin_kdf_test
+        -DWOLFPKCS11_PIN_KDF_SOFTWARE"
+      check: >-
+        make check &&
+        WOLFPKCS11_DEFAULT_DEVID_REQUIRED=1 ./tests/default_devid_pin_kdf_test
   default_devid_device_pin_kdf:
     uses: ./.github/workflows/build-workflow.yml
     with:
       wolfssl_config: --enable-cmac
-      wolfssl_cflags: -DWC_NO_DEFAULT_DEVID
       config: >-
         --enable-pbkdf2 --enable-aescmac
         --enable-nss --with-pbkdf2-iterations=25
-        CFLAGS="-DWOLFPKCS11_NO_STORE -DWOLFPKCS11_DEFAULT_DEVID=7
-        -DWC_NO_DEFAULT_DEVID"
-      check: WOLFPKCS11_DEFAULT_DEVID_REQUIRED=1 ./tests/default_devid_pin_kdf_test
+        CFLAGS="-DWOLFPKCS11_NO_STORE -DWOLFPKCS11_DEFAULT_DEVID=7"
+      check: >-
+        make check &&
+        WOLFPKCS11_DEFAULT_DEVID_REQUIRED=1 ./tests/default_devid_pin_kdf_test
   default_devid_guards:
     uses: ./.github/workflows/build-workflow.yml
     with:

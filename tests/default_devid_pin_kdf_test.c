@@ -77,7 +77,7 @@ static int test_crypto_cb(int devId, wc_CryptoInfo* info, void* ctx)
     if (info->algo_type == WC_ALGO_TYPE_CIPHER)
         cipherCalls++;
 
-    return WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE);
+    return CRYPTOCB_UNAVAILABLE;
 }
 
 static int test_object_cb(int devId, wc_CryptoInfo* info, void* ctx)
@@ -88,7 +88,7 @@ static int test_object_cb(int devId, wc_CryptoInfo* info, void* ctx)
         return BAD_FUNC_ARG;
 
     objectCalls++;
-    return WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE);
+    return CRYPTOCB_UNAVAILABLE;
 }
 
 static CK_RV get_function_list(void)
@@ -398,7 +398,7 @@ int main(void)
     int deviceRegistered = 0;
     int objectRegistered = 0;
 
-    /* Runs only from the dedicated CI jobs, which build every probed mechanism. */
+    /* Only the dedicated CI jobs run this, and they build every mechanism */
     if (getenv("WOLFPKCS11_DEFAULT_DEVID_REQUIRED") == NULL) {
         printf("SKIP: set WOLFPKCS11_DEFAULT_DEVID_REQUIRED=1 to run\n");
         return 0;

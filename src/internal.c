@@ -24,12 +24,15 @@
 
 #if defined(WOLFPKCS11_PIN_KDF_SOFTWARE) && defined(WOLFPKCS11_PBKDF2)
     #if defined(WOLF_CRYPTO_CB_FIND)
-        #error WOLFPKCS11_PIN_KDF_SOFTWARE is incompatible with WOLF_CRYPTO_CB_FIND
-    #elif defined(WOLF_CRYPTO_CB) && !defined(WC_NO_DEFAULT_DEVID)
-        #error WOLFPKCS11_PIN_KDF_SOFTWARE requires WC_NO_DEFAULT_DEVID
-    #elif defined(WOLF_CRYPTO_CB) && LIBWOLFSSL_VERSION_HEX < 0x05008000
-        #error WOLFPKCS11_PIN_KDF_SOFTWARE requires wolfSSL 5.8.0 or later
+        #error WOLFPKCS11_PIN_KDF_SOFTWARE conflicts with WOLF_CRYPTO_CB_FIND
+    #elif defined(WOLF_CRYPTO_CB) && LIBWOLFSSL_VERSION_HEX < 0x05007004
+        /* Older SHA-256 init replaces INVALID_DEVID with the default device */
+        #error WOLFPKCS11_PIN_KDF_SOFTWARE requires wolfSSL 5.7.4 or later
     #endif
+#endif
+#if defined(WOLFPKCS11_DEFAULT_DEVID) && (defined(WOLFPKCS11_TPM) || \
+    defined(WOLFSSL_MAXQ10XX_CRYPTO) || defined(WOLFSSL_STM32U5_DHUK))
+    #error WOLFPKCS11_DEFAULT_DEVID conflicts with a TPM, MAXQ or STM32U5 slot
 #endif
 
 #ifdef WOLFPKCS11_TPM
