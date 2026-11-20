@@ -681,10 +681,10 @@ static void test_tls12(CK_SESSION_HANDLE session)
                    "8 byte protected TLS keys");
     tls12_key_case(session, 64, 128, 0, GUARD_RV(CKR_MECHANISM_PARAM_INVALID),
                    "8 byte protected TLS MAC secrets");
-    tls12_key_case(session, 64, 128, 4, GUARD_RV(CKR_MECHANISM_PARAM_INVALID),
-                   "8 byte TLS MAC secrets truncated to 4 bytes");
-    tls12_key_case(session, 256, 128, 8, GUARD_RV(CKR_ATTRIBUTE_VALUE_INVALID),
-                   "TLS keys truncated to 8 bytes");
+    tls12_key_case(session, 64, 128, 16, GUARD_RV(CKR_MECHANISM_PARAM_INVALID),
+                   "8 byte TLS MAC secrets with a 16 byte template length");
+    tls12_key_case(session, 256, 128, 8, CKR_TEMPLATE_INCONSISTENT,
+                   "TLS keys with an 8 byte template length");
     tls12_key_case(session, 256, 128, 0, CKR_OK, "16 byte protected TLS keys");
     tls12_key_case(session, 128, 128, 0, CKR_OK,
                    "16 byte protected TLS MAC secrets");

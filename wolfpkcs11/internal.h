@@ -491,6 +491,7 @@ WP11_API int WP11_Slot_TokenKeyIsZero(CK_SLOT_ID slotId);
 WP11_API int WP11_Slot_TokenDecodedObjectCount(CK_SLOT_ID slotId);
 WP11_API void WP11_Session_SetFindHook(void (*hook)(void));
 WP11_API void WP11_Object_SetFindHook(void (*hook)(void));
+WP11_API void WP11_Object_SetUpdateHook(void (*hook)(void));
 WP11_API void WP11_Session_SetAddObjectHook(void (*hook)(void));
 WP11_API void WP11_Slot_SetPinCheckHook(void (*hook)(void));
 WP11_API void WP11_Test_FailTokenInit(int fail);
@@ -681,6 +682,8 @@ WP11_LOCAL int WP11_Object_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, 
                         CK_ULONG* len);
 WP11_LOCAL int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
                         CK_ULONG len);
+WP11_LOCAL int WP11_Object_UpdateAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
+                        byte* data, CK_ULONG len);
 WP11_LOCAL void WP11_Object_SetKeyGeneration(WP11_Object* object,
                         CK_MECHANISM_TYPE mechanism);
 WP11_LOCAL int WP11_Object_MatchAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
