@@ -787,6 +787,50 @@ static void test_finalize_reports_store_failure(void)
     funcList->C_Finalize(NULL);
 }
 
+/* A token record that exists but cannot be opened fails initialization. */
+static void test_init_fails_on_unopenable_token(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_TOKEN_INFO info;
+    char tokenPath[512];
+    int fd;
+
+    printf("\n--- library initialization fails on an unopenable token ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    funcList->C_Finalize(NULL);
+    if (rv == CKR_OK) {
+        snprintf(tokenPath, sizeof(tokenPath), "%s/wp11_token_%016lx",
+                 TEST_DIR, (unsigned long)slot);
+        CHECK_TRUE(chmod(tokenPath, 0) == 0, "remove read permission");
+        fd = open(tokenPath, O_RDONLY);
+        if (fd >= 0) {
+            close(fd);
+            (void)chmod(tokenPath, 0600);
+            printf("SKIP: this process opens a file without read permission\n");
+            return;
+        }
+        rv = lib_init();
+        CHECK_TRUE(rv != CKR_OK, "initialize fails on an unopenable record");
+        if (rv == CKR_OK)
+            funcList->C_Finalize(NULL);
+        (void)chmod(tokenPath, 0600);
+        rv = lib_init();
+        CHECK_RV(rv, "initialize succeeds once the record opens", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        rv = funcList->C_GetTokenInfo(slot, &info);
+        CHECK_RV(rv, "get token info", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        CHECK_TRUE((info.flags & CKF_TOKEN_INITIALIZED) != 0 &&
+                   XMEMCMP(info.label, tokenLabel, XSTRLEN(tokenLabel)) == 0,
+                   "stored token is loaded");
+    }
+    funcList->C_Finalize(NULL);
+}
+
 /* The library initializes once an unreadable token record is repaired. */
 static void test_init_retry_after_load_failure(void)
 {
@@ -1038,6 +1082,76 @@ static void test_load_record_without_trailing_fields(void)
             funcList->C_Finalize(NULL);
         }
     }
+}
+
+/* An object record cut inside its issuer fails to load. */
+static void test_record_cut_in_issuer(void)
+{
+    static const char label[] = "cut-issuer";
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    char path[512];
+    byte record[2048];
+    long recordLen = 0;
+    long pos = -1;
+    long i;
+    int objId;
+
+    printf("\n--- object record cut inside the issuer ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, label, &obj);
+        CHECK_RV(rv, "create token object", CKR_OK);
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+
+    /* The issuer length follows the label in the object record. */
+    for (objId = 0; rv == CKR_OK && pos < 0 && objId < 4; objId++) {
+        object_record_path(slot, objId, path, sizeof(path));
+        recordLen = read_store_file(path, record, sizeof(record));
+        for (i = 0; i + (long)sizeof(label) + 13 <= recordLen; i++) {
+            if (XMEMCMP(record + i, label, sizeof(label) - 1) == 0) {
+                pos = i + (long)sizeof(label) - 1;
+                break;
+            }
+        }
+    }
+    if (rv == CKR_OK) {
+        CHECK_TRUE(pos > 0, "label found in the object record");
+        if (pos < 0)
+            rv = CKR_GENERAL_ERROR;
+    }
+    if (rv == CKR_OK) {
+        record[pos] = 0;
+        record[pos + 1] = 0;
+        record[pos + 2] = 0;
+        record[pos + 3] = 100;
+        CHECK_TRUE(write_store_file(path, record, (size_t)pos + 4 + 10) == 0,
+                   "cut the record inside a 100 byte issuer");
+        rv = lib_init();
+        CHECK_TRUE(rv != CKR_OK, "initialize fails on the cut record");
+        if (rv == CKR_OK)
+            funcList->C_Finalize(NULL);
+        record[pos + 3] = 0;
+        rv = write_store_file(path, record, (size_t)recordLen) == 0 ?
+             CKR_OK : CKR_GENERAL_ERROR;
+        if (rv == CKR_OK)
+            rv = reload(slot, &session);
+        CHECK_RV(rv, "initialize once the record is whole", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        CHECK_TRUE(count_label(session, label) == 1,
+                   "stored object is loaded");
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
 }
 #endif /* TOKEN_STORE_FILE_TEST */
 
@@ -1388,6 +1502,73 @@ static void test_tpm_init_token_removes_records(void)
 }
 
 #endif /* TOKEN_STORE_TPM_TEST */
+
+#ifdef DEBUG_WOLFPKCS11
+/* Debug-only hook exported by libwolfpkcs11. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern int WP11_Test_StoreReadFailAfter(int reads);
+#ifdef __cplusplus
+}
+#endif
+
+/* A store read error fails the load instead of reading as an older format. */
+static void test_load_fails_on_read_error(void)
+{
+    CK_RV rv;
+    CK_SLOT_ID slot = 0;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE obj;
+    int reads;
+    int failed = 1;
+    int ignored = 0;
+
+    printf("\n--- a store read error fails the token load ---\n");
+    rv = token_setup(&slot);
+    CHECK_RV(rv, "token setup", CKR_OK);
+    if (rv == CKR_OK)
+        rv = user_session(slot, &session);
+    if (rv == CKR_OK) {
+        rv = create_token_secret(session, "read-error", &obj);
+        CHECK_RV(rv, "create token object", CKR_OK);
+    }
+    close_session(session);
+    session = CK_INVALID_HANDLE;
+    funcList->C_Finalize(NULL);
+
+    for (reads = 0; rv == CKR_OK && failed; reads++) {
+        (void)WP11_Test_StoreReadFailAfter(reads);
+        rv = lib_init();
+        failed = WP11_Test_StoreReadFailAfter(-1) == -1;
+        if (rv == CKR_OK) {
+            funcList->C_Finalize(NULL);
+            if (failed) {
+                printf("read error after %d reads ignored\n", reads);
+                ignored++;
+            }
+        }
+        else if (failed) {
+            rv = CKR_OK;
+        }
+    }
+    CHECK_RV(rv, "initialize fails only on the read error", CKR_OK);
+    if (rv == CKR_OK) {
+        CHECK_TRUE(reads > 1, "loading the token reads the store");
+        CHECK_TRUE(ignored == 0, "every read error fails initialization");
+        rv = lib_init();
+        if (rv == CKR_OK)
+            rv = user_session(slot, &session);
+        CHECK_RV(rv, "initialize without a read error", CKR_OK);
+    }
+    if (rv == CKR_OK) {
+        CHECK_TRUE(count_label(session, "read-error") == 1,
+                   "stored object is loaded");
+    }
+    close_session(session);
+    funcList->C_Finalize(NULL);
+}
+#endif
 
 #ifdef TOKEN_STORE_FILE_TEST
 /* Count the object and key records left in the store directory. */
@@ -1917,6 +2098,17 @@ static void test_unchecked_store_refuses_login(void)
         }
         CHECK_TRUE(login_user(slot) != CKR_OK,
                    "unfinished pass refuses login");
+        if (chmod(path, 0) == 0) {
+            fd = open(path, O_RDONLY);
+            if (fd >= 0) {
+                close(fd);
+                printf("Skipping: commit marker cannot be made unreadable\n");
+            }
+            else {
+                CHECK_TRUE(login_user(slot) != CKR_OK,
+                           "unreadable commit marker refuses login");
+            }
+        }
         (void)remove(path);
         CHECK_RV(login_user(slot), "login once the pass is gone", CKR_OK);
     }
@@ -5705,12 +5897,14 @@ static int run_tests(void)
 #endif
 #ifdef DEBUG_WOLFPKCS11
     test_create_reports_close_failure();
+    test_load_fails_on_read_error();
 #endif
     test_token_record_kept_on_failed_store();
     test_pin_change_store_failure();
     test_init_pin_store_failure();
     test_token_reset_store_failure();
     test_finalize_reports_store_failure();
+    test_init_fails_on_unopenable_token();
     test_init_retry_after_load_failure();
     test_init_token_removes_newer_records();
     test_init_token_removes_changed_type();
@@ -5721,6 +5915,7 @@ static int run_tests(void)
     test_failed_destroy_pass_purges();
     test_destroy_unstored_object();
     test_load_record_without_trailing_fields();
+    test_record_cut_in_issuer();
     test_stale_process_reloads();
     test_stale_login_sees_new_pin();
     test_reload_keeps_login();
@@ -5809,6 +6004,7 @@ static int run_tests(void)
     test_grown_record_reloads();
     test_record_overflow_reports_failure();
     test_tpm_init_token_removes_records();
+    test_load_fails_on_read_error();
 #endif
     pkcs11_unload();
     return 0;
