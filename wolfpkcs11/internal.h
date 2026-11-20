@@ -507,6 +507,7 @@ WP11_API int WP11_Test_StoreWriteFailOnce(int writes);
 #endif
 #if defined(WOLFPKCS11_TPM_STORE) && !defined(WOLFPKCS11_NO_STORE)
 WP11_API void WP11_Test_TpmStoreShortBy(int bytes);
+WP11_API void WP11_Test_TpmStoreOpenRc(int rc);
 #endif
 WP11_API void WP11_Test_SetEmptyPinCheckHook(void (*hook)(void));
 WP11_API void WP11_Test_SetKeyDecodedHook(void (*hook)(void));

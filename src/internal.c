@@ -976,6 +976,18 @@ WP11_API void WP11_Test_TpmStoreShortBy(int bytes)
 {
     tpmStoreShortBy = bytes;
 }
+
+static int tpmStoreOpenRc = 0;
+
+/**
+ * Test hook: fail every NV index open for reading with the given TPM code.
+ *
+ * @param  rc  [in]  TPM response code, or 0 to disable the hook.
+ */
+WP11_API void WP11_Test_TpmStoreOpenRc(int rc)
+{
+    tpmStoreOpenRc = rc;
+}
 #endif
 
 /**
@@ -2509,8 +2521,14 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
     if (ret == 0 && read) {
         /* Try and open handle */
         ret = wolfTPM2_NVOpen(tpmStore->dev, &tpmStore->nv, nvIndex, NULL, 0);
+    #ifdef DEBUG_WOLFPKCS11
+        if (tpmStoreOpenRc != 0)
+            ret = tpmStoreOpenRc;
+    #endif
         if (ret != 0) {
-            ret = NOT_AVAILABLE_E; /* read for handle that doesn't exist */
+            /* Only an NV index that does not exist is a missing record. */
+            ret = ((ret & RC_MAX_FMT1) == TPM_RC_HANDLE) ? NOT_AVAILABLE_E :
+                READ_ONLY_E;
         }
     }
     else if (ret == 0 && tpmNvIndexMax != 0 && (word32)maxSz > tpmNvIndexMax) {
@@ -2587,9 +2605,10 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
         }
 
         if (ret == 0 && read) {
+            errno = 0;
             ctx->file = XFOPEN(name, "rb");
             if (ctx->file == NULL) {
-                ret = NOT_AVAILABLE_E;
+                ret = (errno == ENOENT) ? NOT_AVAILABLE_E : READ_ONLY_E;
             }
         }
         else if (ret == 0) {
@@ -2883,16 +2902,22 @@ int wolfPKCS11_Store_Read(void* store, unsigned char* buffer, int len)
         if (ret == TPM_RC_NV_RANGE)
             ret = BUFFER_E;
         else {
-            /* log failure and make negative error code */
         #ifdef WOLFPKCS11_DEBUG_STORE
             printf("TPM NV Read Error 0x%x: %s\n", ret, wolfTPM2_GetRCString(ret));
         #endif
-            ret = -ret;
+            ret = READ_ONLY_E;
         }
     }
 #else
     if (ctx != NULL && ctx->file != XBADFILE && ctx->file != NULL) {
         ret = (int)XFREAD(buffer, 1, len, ctx->file);
+    #ifdef XFERROR
+        if (ret < len && XFERROR(ctx->file))
+            ret = READ_ONLY_E;
+    #else
+        if (ret < len && ferror(ctx->file))
+            ret = READ_ONLY_E;
+    #endif
     }
 #endif
     return ret;
