@@ -371,10 +371,8 @@ AC_ARG_WITH([pbkdf2-iterations],
     [ PBKDF2_ITERATIONS=$withval ],
     [ PBKDF2_ITERATIONS=600000 ]
     )
-if test "$ENABLED_PBKDF2" = "yes"
-then
-    AM_CFLAGS="$AM_CFLAGS -DPBKDF2_ITERATIONS=$PBKDF2_ITERATIONS"
-fi
+# FIPS builds hash PINs with PBKDF2 without --enable-pbkdf2.
+AM_CFLAGS="$AM_CFLAGS -DPBKDF2_ITERATIONS=$PBKDF2_ITERATIONS"
 
 AC_ARG_ENABLE([md5],
     [AS_HELP_STRING([--enable-md5],[Enable MD5 (default: enabled)])],

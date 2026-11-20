@@ -517,15 +517,26 @@ WP11_API int WP11_Test_DecodeTpmKey(CK_SLOT_ID slotId, unsigned char* keyData,
     int keyDataLen);
 #endif
 #endif
-WP11_LOCAL int WP11_Slot_SetSOPin(WP11_Slot* slot, char* pin, int pinLen);
-WP11_LOCAL int WP11_Slot_SetUserPin(WP11_Slot* slot, char* pin, int pinLen);
+WP11_LOCAL int WP11_Slot_SetSOPinSince(WP11_Slot* slot, char* pin, int pinLen,
+                                      word32 since);
+WP11_LOCAL int WP11_Slot_SetUserPinSince(WP11_Slot* slot, char* pin,
+                                        int pinLen, word32 since);
 WP11_LOCAL int WP11_Slot_ChangeUserPin(WP11_Slot* slot, char* oldPin,
                                        int oldPinLen, char* pin, int pinLen);
 WP11_LOCAL int WP11_Slot_TokenReset(WP11_Slot* slot, char* pin, int pinLen,
-                         char* label);
+                                    char* label, const word32* since);
 WP11_LOCAL void WP11_Slot_GetTokenLabel(WP11_Slot* slot, char* label);
 WP11_LOCAL void WP11_BlankPad(CK_UTF8CHAR* field, int len);
 WP11_LOCAL int WP11_Slot_IsTokenInitialized(WP11_Slot* slot);
+WP11_LOCAL int WP11_Slot_Refresh(WP11_Slot* slot);
+WP11_LOCAL int WP11_Slot_Revert(WP11_Slot* slot);
+WP11_LOCAL int WP11_Slot_IsWriteProtected(WP11_Slot* slot);
+WP11_LOCAL CK_RV WP11_Slot_StaleRv(WP11_Slot* slot, int ret);
+WP11_LOCAL int WP11_Slot_FindTokenObject(WP11_Slot* slot,
+                                         CK_OBJECT_HANDLE handle,
+                                         WP11_Object** object);
+WP11_LOCAL word32 WP11_Slot_SOPinCount(WP11_Slot* slot);
+WP11_LOCAL void WP11_Session_NoteLogin(WP11_Session* session);
 WP11_LOCAL int WP11_Slot_TokenFailedLogin(WP11_Slot* slot, int login);
 WP11_LOCAL time_t WP11_Slot_TokenFailedExpire(WP11_Slot* slot, int login);
 WP11_LOCAL int WP11_Slot_IsTokenUserPinInitialized(WP11_Slot* slot);
@@ -627,7 +638,8 @@ WP11_LOCAL int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest);
 
 WP11_LOCAL CK_OBJECT_HANDLE WP11_Object_GetHandle(WP11_Object* object);
 WP11_LOCAL int WP11_Object_OnToken(WP11_Object* object);
-WP11_LOCAL void WP11_Object_Persist(WP11_Object* object);
+WP11_LOCAL int WP11_Object_Persist(WP11_Object* object);
+WP11_LOCAL void WP11_Object_MarkDirty(WP11_Object* object);
 WP11_LOCAL int WP11_KeyType_IsSecret(CK_KEY_TYPE type);
 WP11_LOCAL CK_KEY_TYPE WP11_Object_GetType(WP11_Object* object);
 WP11_LOCAL WP11_Slot* WP11_Object_GetSlot(WP11_Object* object);

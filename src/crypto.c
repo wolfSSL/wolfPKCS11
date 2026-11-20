@@ -1760,6 +1760,9 @@ static CK_RV CheckAttributeUpdate(WP11_Session* session, WP11_Object* obj,
  * @param  obj        [in]  Object to set value against.
  * @param  pTemplate  [in]  Template of attributes set against object.
  * @param  ulCount    [in]  Number of attribute triplets in template.
+ * @param  newObject  [in]  Whether the object is being created.
+ * @param  applied    [out] Set to 1 once the object starts to change. May be
+ *                          NULL.
  * @return  CKR_ARGUMENTS_BAD when pTemplate is NULL or ulCount is too large.
  *          CKR_SESSION_READ_ONLY when the session cannot modify objects.
  *          CKR_ATTRIBUTE_TYPE_INVALID if the attribute type is not supported.
@@ -1773,7 +1776,7 @@ static CK_RV CheckAttributeUpdate(WP11_Session* session, WP11_Object* obj,
  */
 static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
                                CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
-                               CK_BBOOL newObject)
+                               CK_BBOOL newObject, int* applied)
 {
     int ret = 0;
     CK_RV rv;
@@ -1950,6 +1953,8 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
         }
     }
 
+    if (applied != NULL)
+        *applied = 1;
     if (newObject == CK_TRUE || attrsFound == 1) {
         if (objClass == CKO_CERTIFICATE) {
             ret = WP11_Object_SetCert(obj, data, len);
@@ -2130,7 +2135,7 @@ static CK_RV NewObject(WP11_Session* session, CK_KEY_TYPE keyType,
         return CKR_FUNCTION_FAILED;
     }
 
-    rv = SetAttributeValue(session, obj, pTemplate, ulCount, CK_TRUE);
+    rv = SetAttributeValue(session, obj, pTemplate, ulCount, CK_TRUE, NULL);
     if (rv != CKR_OK) {
         WP11_Object_Free(obj);
         return rv;
@@ -2158,6 +2163,26 @@ static CK_RV NewObject(WP11_Session* session, CK_KEY_TYPE keyType,
 }
 
 /**
+ * Load a token object's token again when another process has stored it since,
+ * so the call uses the current token.
+ *
+ * @param  session  [in]  Session object.
+ * @param  hObject  [in]  Handle of the object used.
+ * @return  CKR_TOKEN_WRITE_PROTECTED when the token is out of date and holds
+ *          changes that are not stored.
+ *          CKR_FUNCTION_FAILED when loading the token failed.
+ *          CKR_OK otherwise.
+ */
+static CK_RV RefreshForObject(WP11_Session* session, CK_OBJECT_HANDLE hObject)
+{
+    WP11_Slot* slot = WP11_Session_GetSlot(session);
+
+    if (!WP11_Object_HandleOnToken(hObject) || !WP11_Session_IsRW(session))
+        return CKR_OK;
+    return WP11_Slot_StaleRv(slot, WP11_Slot_Refresh(slot));
+}
+
+/**
  * Take back an object that a failing call added. Other sessions may already
  * use it, so it is discarded like a destroyed object.
  *
@@ -2168,9 +2193,25 @@ static CK_RV NewObject(WP11_Session* session, CK_KEY_TYPE keyType,
 static void RemoveAddedObject(WP11_Session* session, WP11_Object* obj,
                               CK_OBJECT_HANDLE* handle)
 {
-    if (WP11_Session_RemoveObjectByHandle(session, obj, *handle, 0) !=
-            WP11_OBJECT_ALREADY_REMOVED) {
-        WP11_Slot_DiscardObject(WP11_Session_GetSlot(session), obj);
+    int ret;
+    int attempt;
+    WP11_Slot* slot = WP11_Session_GetSlot(session);
+    int onToken = WP11_Object_HandleOnToken(*handle);
+
+    for (attempt = 0; attempt < 4; attempt++) {
+        ret = WP11_Session_RemoveObjectByHandle(session, obj, *handle, 0);
+        /* A reload of the token replaced the object under the same handle. */
+        if (ret == WP11_OBJECT_ALREADY_REMOVED) {
+            if (!onToken || WP11_Slot_FindTokenObject(slot, *handle, &obj) != 0)
+                break;
+            continue;
+        }
+        WP11_Slot_DiscardObject(slot, obj);
+        /* A refused pass removed it only in memory, so load and retry. */
+        if (ret != BAD_STATE_E || WP11_Slot_Refresh(slot) != 0 ||
+                WP11_Slot_FindTokenObject(slot, *handle, &obj) != 0) {
+            break;
+        }
     }
     *handle = CK_INVALID_HANDLE;
 }
@@ -2213,6 +2254,8 @@ static CK_RV AddObject(WP11_Session* session, WP11_Object* object,
         return CKR_USER_NOT_LOGGED_IN;
     if (ret == OBJ_COUNT_E || ret == MEMORY_E)
         return CKR_DEVICE_MEMORY;
+    if (ret == BAD_STATE_E)
+        return WP11_Slot_StaleRv(WP11_Session_GetSlot(session), BAD_STATE_E);
     if (ret != 0)
         return CKR_FUNCTION_FAILED;
 
@@ -2783,6 +2826,7 @@ static CK_RV wp11_C_CreateObject(CK_SESSION_HANDLE hSession,
         return rv;
     }
 
+    WP11_Session_NoteLogin(session);
     rv = CheckPrivateLogin(session, pTemplate, ulCount,
                            WP11_NO_IMPLICIT_CLASS);
     if (rv != CKR_OK) {
@@ -2887,6 +2931,9 @@ static CK_RV wp11_C_CopyObject(CK_SESSION_HANDLE hSession,
         WOLFPKCS11_LEAVE("C_CopyObject", rv);
         return rv;
     }
+    /* Read the source as stored; the add checks a token target again. */
+    (void)RefreshForObject(session, hObject);
+    WP11_Session_NoteLogin(session);
 
     /* Need key type and whether object is to be on the token to create a new
      * object. Get the object type from original object and where to store
@@ -2991,7 +3038,8 @@ static CK_RV wp11_C_CopyObject(CK_SESSION_HANDLE hSession,
     }
 
     if (pTemplate != NULL) {
-        rv = SetAttributeValue(session, newObj, pTemplate, ulCount, CK_FALSE);
+        rv = SetAttributeValue(session, newObj, pTemplate, ulCount, CK_FALSE,
+                               NULL);
         if (rv != CKR_OK) {
             WP11_Object_Free(newObj);
             return rv;
@@ -3005,6 +3053,9 @@ static CK_RV wp11_C_CopyObject(CK_SESSION_HANDLE hSession,
             return CKR_USER_NOT_LOGGED_IN;
         if (ret == OBJ_COUNT_E || ret == MEMORY_E)
             return CKR_DEVICE_MEMORY;
+        if (ret == BAD_STATE_E)
+            return WP11_Slot_StaleRv(WP11_Session_GetSlot(session),
+                                     BAD_STATE_E);
         return CKR_FUNCTION_FAILED;
     }
 
@@ -3026,11 +3077,15 @@ CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
     return rv;
 }
 
+/* Internal result asking C_DestroyObject to try once more. */
+#define DESTROY_RETRY  (CKR_VENDOR_DEFINED | 0x5752)
+
 /**
  * Destroy object in session or on token.
  *
  * @param  hSession  [in]  Handle of session.
  * @param  hObject   [in]  Handle of object.
+ * @param  attempt   [in]  0 on the first attempt, 1 on the retry.
  * @return  CKR_CRYPTOKI_NOT_INITIALIZED when library not initialized.
  *          CKR_SESSION_HANDLE_INVALID when session handle is not valid.
  *          CKR_SESSION_READ_ONLY when the session cannot create objects.
@@ -3038,7 +3093,7 @@ CK_RV C_CopyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
  *          CKR_OK on success.
  */
 static CK_RV wp11_C_DestroyObject(CK_SESSION_HANDLE hSession,
-                                  CK_OBJECT_HANDLE hObject)
+                                  CK_OBJECT_HANDLE hObject, int attempt)
 {
     int ret;
     int onToken;
@@ -3063,6 +3118,11 @@ static CK_RV wp11_C_DestroyObject(CK_SESSION_HANDLE hSession,
         WOLFPKCS11_LEAVE("C_DestroyObject", rv);
         return rv;
     }
+    rv = RefreshForObject(session, hObject);
+    if (rv != CKR_OK) {
+        WOLFPKCS11_LEAVE("C_DestroyObject", rv);
+        return rv;
+    }
 
     ret = WP11_Object_Find(session, hObject, &obj);
     if (ret != 0) {
@@ -3081,7 +3141,6 @@ static CK_RV wp11_C_DestroyObject(CK_SESSION_HANDLE hSession,
         WOLFPKCS11_LEAVE("C_DestroyObject", rv);
         return rv;
     }
-
     /* Remove and reject-if-not-destroyable in one locked step. The
      * CKA_DESTROYABLE check is performed inside WP11_Session_RemoveObjectByHandle,
      * once the object is confirmed still linked (and therefore alive), so it
@@ -3089,6 +3148,18 @@ static CK_RV wp11_C_DestroyObject(CK_SESSION_HANDLE hSession,
      * refuse a different object that reused obj's address after such a free. */
     ret = WP11_Session_RemoveObjectByHandle(session, obj, hObject,
                                             1 /* checkDestroyable */);
+    /* A reload by another thread replaced the object. */
+    if (ret == WP11_OBJECT_ALREADY_REMOVED && onToken && attempt == 0) {
+        rv = DESTROY_RETRY;
+        WOLFPKCS11_LEAVE("C_DestroyObject", rv);
+        return rv;
+    }
+    if (ret == WP11_OBJECT_ALREADY_REMOVED && onToken &&
+            WP11_Object_Find(session, hObject, &obj) == 0) {
+        rv = CKR_FUNCTION_FAILED;
+        WOLFPKCS11_LEAVE("C_DestroyObject", rv);
+        return rv;
+    }
     if (ret == WP11_OBJECT_ALREADY_REMOVED) {
         /* Another thread destroyed this object first (a concurrent
          * C_DestroyObject on the same shared token-object handle). That thread
@@ -3105,10 +3176,21 @@ static CK_RV wp11_C_DestroyObject(CK_SESSION_HANDLE hSession,
     }
     /* Freed once no call that looked the object up can still be using it. */
     WP11_Slot_DiscardObject(WP11_Session_GetSlot(session), obj);
+    /* Loading the token again puts back an object a refused pass removed. */
+    if (ret == BAD_STATE_E &&
+            WP11_Slot_Refresh(WP11_Session_GetSlot(session)) == 0 &&
+            attempt == 0) {
+        rv = DESTROY_RETRY;
+        WOLFPKCS11_LEAVE("C_DestroyObject", rv);
+        return rv;
+    }
 
     /* The object was unlinked; a negative status means persisting the token
      * afterwards failed. Surface it rather than reporting success. */
-    rv = (ret < 0) ? CKR_FUNCTION_FAILED : CKR_OK;
+    if (ret == BAD_STATE_E)
+        rv = WP11_Slot_StaleRv(WP11_Session_GetSlot(session), BAD_STATE_E);
+    else
+        rv = (ret < 0) ? CKR_FUNCTION_FAILED : CKR_OK;
     WOLFPKCS11_LEAVE("C_DestroyObject", rv);
     return rv;
 }
@@ -3120,7 +3202,9 @@ CK_RV C_DestroyObject(CK_SESSION_HANDLE hSession,
     CK_RV rv;
     WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
 
-    rv = wp11_C_DestroyObject(hSession, hObject);
+    rv = wp11_C_DestroyObject(hSession, hObject, 0);
+    if (rv == DESTROY_RETRY)
+        rv = wp11_C_DestroyObject(hSession, hObject, 1);
     WP11_Slot_ObjectCallLeave(calls);
     return rv;
 }
@@ -3396,7 +3480,10 @@ static CK_RV wp11_C_SetAttributeValue(CK_SESSION_HANDLE hSession,
     CK_RV rv;
     int ret;
     WP11_Session* session;
+    WP11_Slot* slot;
     WP11_Object* obj;
+    int applied = 0;
+    int attempt;
 
     WOLFPKCS11_ENTER("C_SetAttributeValue");
     #ifdef DEBUG_WOLFPKCS11
@@ -3422,37 +3509,65 @@ static CK_RV wp11_C_SetAttributeValue(CK_SESSION_HANDLE hSession,
         WOLFPKCS11_LEAVE("C_SetAttributeValue", rv);
         return rv;
     }
-
-    ret = WP11_Object_Find(session, hObject, &obj);
-    if (ret != 0) {
-        rv = CKR_OBJECT_HANDLE_INVALID;
+    slot = WP11_Session_GetSlot(session);
+    rv = RefreshForObject(session, hObject);
+    if (rv != CKR_OK) {
         WOLFPKCS11_LEAVE("C_SetAttributeValue", rv);
         return rv;
     }
 
-    /* Only require R/W session for token objects */
-    if (!WP11_Session_IsRW(session) && WP11_Object_OnToken(obj)) {
-        rv = CKR_SESSION_READ_ONLY;
-        WOLFPKCS11_LEAVE("C_SetAttributeValue", rv);
-        return rv;
-    }
+    for (attempt = 0; attempt < 2; attempt++) {
+        ret = WP11_Object_Find(session, hObject, &obj);
+        if (ret != 0) {
+            rv = CKR_OBJECT_HANDLE_INVALID;
+            break;
+        }
+        /* Only require R/W session for token objects */
+        if (!WP11_Session_IsRW(session) && WP11_Object_OnToken(obj)) {
+            rv = CKR_SESSION_READ_ONLY;
+            break;
+        }
+        /* PKCS#11 v2.40 4.4.1; C_CopyObject goes by CKA_COPYABLE instead. */
+        if (!WP11_Object_IsModifiable(obj)) {
+            rv = CKR_ACTION_PROHIBITED;
+            break;
+        }
 
-    /* PKCS#11 v2.40 sec 4.4.1: an object with CKA_MODIFIABLE=CK_FALSE must
-     * reject all attribute changes (Fenrir 1343). Gate only the public
-     * entry point - C_CopyObject also uses SetAttributeValue with
-     * newObject=FALSE but is governed by CKA_COPYABLE, not CKA_MODIFIABLE. */
-    if (!WP11_Object_IsModifiable(obj)) {
-        rv = CKR_ACTION_PROHIBITED;
-        WOLFPKCS11_LEAVE("C_SetAttributeValue", rv);
-        return rv;
+        applied = 0;
+        rv = CheckCopyOnlyAttributes(obj, pTemplate, ulCount);
+        if (rv == CKR_OK) {
+            rv = SetAttributeValue(session, obj, pTemplate, ulCount, CK_FALSE,
+                                   &applied);
+            /* Loading the token again undoes a template that failed part way,
+             * unless another thread stored it first; else a full pass does. */
+            if (rv != CKR_OK && applied && (!WP11_Object_OnToken(obj) ||
+                    WP11_Slot_Revert(slot) != 0)) {
+                WP11_Object_MarkDirty(obj);
+            }
+        }
+        if (rv != CKR_OK)
+            break;
+        /* Token objects are only rewritten when they change, so write it. */
+        ret = WP11_Object_Persist(obj);
+        /* Loading the token again drops a change a refused pass left; the
+         * first time the change is applied again. */
+        if (attempt == 0 && (ret == WP11_OBJECT_ALREADY_REMOVED ||
+                (ret == BAD_STATE_E && WP11_Slot_Refresh(slot) == 0))) {
+            continue;
+        }
+        if (ret == WP11_OBJECT_ALREADY_REMOVED &&
+                WP11_Object_Find(session, hObject, &obj) != 0) {
+            rv = CKR_OBJECT_HANDLE_INVALID;
+        }
+        else if (ret == BAD_STATE_E) {
+            if (attempt != 0)
+                (void)WP11_Slot_Refresh(slot);
+            rv = WP11_Slot_StaleRv(slot, BAD_STATE_E);
+        }
+        else if (ret != 0)
+            rv = CKR_FUNCTION_FAILED;
+        break;
     }
-
-    rv = CheckCopyOnlyAttributes(obj, pTemplate, ulCount);
-    if (rv == CKR_OK)
-        rv = SetAttributeValue(session, obj, pTemplate, ulCount, CK_FALSE);
-    /* Token objects are only rewritten when they change, so write it now. */
-    if (rv == CKR_OK)
-        WP11_Object_Persist(obj);
     WOLFPKCS11_LEAVE("C_SetAttributeValue", rv);
     return rv;
 }
@@ -9904,6 +10019,7 @@ static CK_RV wp11_C_GenerateKey(CK_SESSION_HANDLE hSession,
     /* C_GenerateKey always produces a secret key, even when the template
      * omits CKA_CLASS - pass the implied class so the spec-default
      * CKA_PRIVATE=CK_TRUE still gates login. */
+    WP11_Session_NoteLogin(session);
     rv = CheckPrivateLogin(session, pTemplate, ulCount, CKO_SECRET_KEY);
     if (rv != CKR_OK) {
         WOLFPKCS11_LEAVE("C_GenerateKey", rv);
@@ -10460,6 +10576,7 @@ static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
      * the template omits CKA_CLASS. An explicit CKA_PRIVATE=TRUE in the
      * public template is still flagged because the helper consults the
      * template attribute first. */
+    WP11_Session_NoteLogin(session);
     rv = CheckPrivateLogin(session, pPublicKeyTemplate,
                            ulPublicKeyAttributeCount, CKO_PUBLIC_KEY);
     if (rv == CKR_OK) {
@@ -11250,6 +11367,7 @@ static CK_RV wp11_C_UnwrapKey(CK_SESSION_HANDLE hSession,
         WOLFPKCS11_LEAVE("C_UnwrapKey", rv);
         return rv;
     }
+    WP11_Session_NoteLogin(session);
 
     /* Only require R/W session for token objects */
     if (!WP11_Session_IsRW(session)) {
@@ -11497,8 +11615,14 @@ CK_RV C_UnwrapKey(CK_SESSION_HANDLE hSession,
 {
     CK_RV rv;
     MergedTemplate m;
+    WP11_Session* session;
     WP11_ObjectCalls* calls = WP11_Slot_ObjectCallEnter(hSession);
 
+    /* Read the key as stored before its template is merged. */
+    if (WP11_Library_IsInitialized() &&
+            WP11_Session_Get(hSession, &session) == 0) {
+        (void)RefreshForObject(session, hUnwrappingKey);
+    }
     rv = BuildKeyTemplate(hSession, hUnwrappingKey, CK_INVALID_HANDLE,
                           CKA_UNWRAP_TEMPLATE, pTemplate, ulAttributeCount,
                           &m);
@@ -11941,6 +12065,7 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
         WOLFPKCS11_LEAVE("C_DeriveKey", rv);
         return rv;
     }
+    WP11_Session_NoteLogin(session);
     /* phKey can be NULL for CKM_TLS12_KEY_AND_MAC_DERIVE as it is ignored */
     if ((phKey == NULL) &&
         (pMechanism->mechanism != CKM_TLS12_KEY_AND_MAC_DERIVE)) {
@@ -12289,7 +12414,10 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
             if (baseSensitive == CK_TRUE || baseExtractable == CK_FALSE) {
                 ret = WP11_Object_StartTls12KeyMat(obj, prf, macBits, keyBits,
                                                    ivBits);
-                if (ret == BAD_STATE_E)
+                /* A reload replaced the base key since it was looked up. */
+                if (ret == WP11_OBJECT_ALREADY_REMOVED)
+                    ret = (int)CKR_FUNCTION_FAILED;
+                else if (ret == BAD_STATE_E)
                     ret = (int)CKR_KEY_FUNCTION_NOT_PERMITTED;
                 tied = (ret == 0);
             }
@@ -12700,6 +12828,7 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
     MergedTemplate m;
     CK_OBJECT_HANDLE hOther = CK_INVALID_HANDLE;
     CK_MECHANISM mech;
+    WP11_Session* session;
 #ifdef WOLFPKCS11_HKDF
     CK_HKDF_PARAMS hkdf;
 #endif
@@ -12728,6 +12857,12 @@ CK_RV C_DeriveKey(CK_SESSION_HANDLE hSession,
         }
 #endif
         pMechanism = &mech;
+    }
+    /* Read the keys as stored before their templates are merged. */
+    if (WP11_Library_IsInitialized() &&
+            WP11_Session_Get(hSession, &session) == 0) {
+        (void)RefreshForObject(session,
+            WP11_Object_HandleOnToken(hBaseKey) ? hBaseKey : hOther);
     }
     rv = BuildKeyTemplate(hSession, hBaseKey, hOther, CKA_DERIVE_TEMPLATE,
                           pTemplate, ulAttributeCount, &m);
@@ -13300,6 +13435,7 @@ static CK_RV wp11_C_EncapsulateKey(CK_SESSION_HANDLE hSession,
     }
 
     /* Refuse before the size query or any ciphertext is written. */
+    WP11_Session_NoteLogin(session);
     rv = CheckPrivateLogin(session, pTemplate, ulAttributeCount,
                            CKO_SECRET_KEY);
     if (rv == CKR_OK)
@@ -13446,6 +13582,7 @@ static CK_RV wp11_C_DecapsulateKey(CK_SESSION_HANDLE hSession,
     }
 
     /* Refuse before the private key is used. */
+    WP11_Session_NoteLogin(session);
     rv = CheckPrivateLogin(session, pTemplate, ulAttributeCount,
                            CKO_SECRET_KEY);
     if (rv == CKR_OK)

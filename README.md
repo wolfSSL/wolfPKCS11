@@ -308,6 +308,22 @@ versions may need to update templates or error-handling:
   templates, and after it has written to the token no version can use that
   key. An older wolfPKCS11 drops the `CKA_WRAP_TEMPLATE` of a public key when
   it rewrites the object.
+- With the file store, a process that loaded the token before another process
+  stored a change loads the token again before it changes the token or logs
+  in. Before, the two processes overwrote each other's changes. Object handles
+  stay valid, and a login ends when the other process changed its PIN. A
+  process that still holds a change it could not store cannot load the token
+  again: until it initializes the library again, changing the token returns
+  `CKR_TOKEN_WRITE_PROTECTED`, `C_GetTokenInfo` reports `CKF_WRITE_PROTECTED`
+  and `C_Finalize` fails. Calls that only read the token use it as loaded.
+  Older wolfPKCS11 versions do not take part in this, so processes sharing a
+  token directory should use the same version, and the `wp11_txn_*` files in
+  that directory must not be removed while they run.
+- FIPS builds hash PINs with the PBKDF2 iteration count set by
+  `--with-pbkdf2-iterations` or `PBKDF2_ITERATIONS`. Before, they ignored it
+  and used 600000. A FIPS build that sets another count cannot log in to a
+  token an older build stored, so keep 600000 until the token is initialized
+  again.
 
 One known gap remains: `CKM_RSA_PKCS_OAEP` does not support an empty message,
 although PKCS#11 and RFC 8017 allow one. wolfCrypt rejects it on both sides, so
@@ -424,7 +440,7 @@ cmake -DCMAKE_PREFIX_PATH=/path/to/wolfssl/install ..
 | `WOLFPKCS11_CONCATENATE` | `yes` | `CKM_CONCATENATE_*` key derivation |
 | `WOLFPKCS11_DERIVE_LENGTH_GUARD` | `yes` | Refuse protected derived keys shorter than 16 bytes |
 | `WOLFPKCS11_PBKDF2` | `no` | PBKDF2 for PIN hashing |
-| `PBKDF2_ITERATIONS` | `600000` | PBKDF2 iteration count (used when `WOLFPKCS11_PBKDF2=yes`) |
+| `PBKDF2_ITERATIONS` | `600000` | PBKDF2 iteration count (used when `WOLFPKCS11_PBKDF2=yes` and in FIPS builds) |
 | `WOLFPKCS11_MD5` | `yes` | MD5 support |
 | `WOLFPKCS11_SHA1` | `yes` | SHA-1 support |
 | `WOLFPKCS11_SHA224` | `yes` | SHA-224 support |

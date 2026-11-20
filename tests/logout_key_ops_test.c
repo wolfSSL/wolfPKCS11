@@ -369,8 +369,8 @@ static void logout_during_init(CK_SLOT_ID slot, CK_BBOOL onToken,
 }
 
 /* A logout between the unlink and the discard of a destroyed key ends its
- * operations. */
-static void logout_during_destroy(CK_SLOT_ID slot, CK_BBOOL priv,
+ * operations, an SO logout included. */
+static void logout_during_destroy(CK_SLOT_ID slot, CK_BBOOL priv, int so,
                                   const char* what)
 {
     CK_RV rv;
@@ -385,7 +385,12 @@ static void logout_during_destroy(CK_SLOT_ID slot, CK_BBOOL priv,
     if (rv == CKR_OK)
         rv = open_session(slot, &opSession);
     for (i = 0; rv == CKR_OK && i < KEY_OP_CNT; i++) {
-        rv = login(session);
+        if (so) {
+            rv = funcList->C_Login(session, CKU_SO, (CK_UTF8CHAR_PTR)soPin,
+                                   (CK_ULONG)XSTRLEN(soPin));
+        }
+        else
+            rv = login(session);
         if (rv == CKR_OK)
             rv = create_key(session, keyOps[i].keyType, CK_TRUE, priv, &key);
         if (rv == CKR_OK)
@@ -583,8 +588,9 @@ int main(int argc, char* argv[])
         logout_during_init(slot, CK_FALSE, "private session keys");
 #endif
         destroy_during_init(slot);
-        logout_during_destroy(slot, CK_TRUE, "private token keys");
-        logout_during_destroy(slot, CK_FALSE, "public token keys");
+        logout_during_destroy(slot, CK_TRUE, 0, "private token keys");
+        logout_during_destroy(slot, CK_FALSE, 0, "public token keys");
+        logout_during_destroy(slot, CK_FALSE, 1, "SO token keys");
 #endif
     }
 #if defined(DEBUG_WOLFPKCS11) && defined(HAVE_AES_KEYWRAP)

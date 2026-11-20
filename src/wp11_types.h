@@ -338,7 +338,10 @@ struct WP11_Object {
     word32 opFlag;                     /* Flags of operations allowed         */
     word32 freeEpoch;                  /* Call epoch the object was unlinked */
     word32 logoutCnt;                  /* Slot logouts when it was removed    */
+    word32 addLogoutCnt;               /* User logouts when it was created    */
     byte unlinked;                     /* Destroyed or retired by logout      */
+    byte replaced;                     /* Unlinked by a reload of the token,
+                                        * with the key unchanged              */
 
     char startDate[8];                 /* Start date of usage                 */
     char endDate[8];                   /* End data of usage                   */
@@ -522,6 +525,8 @@ typedef struct WP11_TlsMacParams {
 struct WP11_Session {
     unsigned char inUse;               /* Indicates session has been opened   */
     CK_SESSION_HANDLE handle;          /* CryptoKi API session handle value   */
+    word32 createLogoutCnt;            /* User logouts when a create call
+                                        * checked the login                   */
     CK_MECHANISM_TYPE mechanism;       /* Op that is being performed          */
     CK_SLOT_ID slotId;                 /* Id of slot that session is on       */
     WP11_Slot* slot;                   /* Slot that session is on             */
@@ -626,6 +631,23 @@ typedef struct WP11_Token {
                                         * so the next one writes everything.
                                         * Not a bit-field: guarded by the
                                         * token lock, unlike userPinEmpty.   */
+    byte storePurge;                   /* Records the token does not use are
+                                        * still to be removed                 */
+    byte storeLoginDirty;              /* Failed login counts changed since
+                                        * the token record was stored         */
+    int storeSoFailBase;               /* SO failed logins last stored        */
+    int storeUserFailBase;             /* User failed logins last stored      */
+    WP11_Object* storeUnstoreObj;      /* Object a destroy removes            */
+    WP11_Object* storeUnstoreMoved;    /* Object moved into the freed id      */
+    int storeUnstoreId;                /* Store id of the destroyed object    */
+    int storeUnstoreRet;               /* Result of removing its records      */
+    byte storeUnstorePending;          /* Records to remove after the pass    */
+    word64 storeGen;                   /* Committed store passes when loaded  */
+    byte storeGenKnown;                /* storeGen was read from storage      */
+    byte storeGenAdopt;                /* Next pass takes the stored count    */
+    byte storeReset;                   /* Next pass stores a token reset      */
+    byte storeStale;                   /* Another process changed the store   */
+    byte storeKeepGen;                 /* Pass rewrites what is stored        */
 #endif
 } WP11_Token;
 
@@ -653,6 +675,10 @@ struct WP11_Slot {
     word32 epoch;                      /* Current object call epoch           */
     WP11_Object* discarded;            /* Destroyed objects awaiting free     */
     word32 logoutCnt;                  /* Logouts, guarded by the token lock  */
+    word32 userLogoutCnt;              /* User logouts and dropped keys,
+                                        * guarded by the token lock           */
+    word32 soPinCnt;                   /* SO PIN changes, guarded by the slot
+                                        * lock                                */
     WP11_Lock callLock;                /* Lock for object call epochs         */
     byte reclaim:1;                    /* Unlinked objects await free         */
 #ifndef WOLFPKCS11_NO_STORE

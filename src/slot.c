@@ -305,6 +305,8 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
         pInfo->flags |= CKF_TOKEN_INITIALIZED;
     if (WP11_Slot_IsTokenUserPinInitialized(slot))
         pInfo->flags |= CKF_USER_PIN_INITIALIZED;
+    if (WP11_Slot_IsWriteProtected(slot))
+        pInfo->flags |= CKF_WRITE_PROTECTED;
 
     return CKR_OK;
 }
@@ -1347,6 +1349,7 @@ CK_RV C_InitToken(CK_SLOT_ID slotID, CK_UTF8CHAR_PTR pPin,
     CK_RV rv;
     int ret;
     WP11_Slot* slot;
+    word32 soPinCnt;
 
     WOLFPKCS11_ENTER("C_InitToken");
     #ifdef DEBUG_WOLFPKCS11
@@ -1385,6 +1388,13 @@ CK_RV C_InitToken(CK_SLOT_ID slotID, CK_UTF8CHAR_PTR pPin,
         WOLFPKCS11_LEAVE("C_InitToken", rv);
         return rv;
     }
+    /* Check the SO PIN against the PIN data another process stored. */
+    rv = WP11_Slot_StaleRv(slot, WP11_Slot_Refresh(slot));
+    if (rv != CKR_OK) {
+        WOLFPKCS11_LEAVE("C_InitToken", rv);
+        return rv;
+    }
+    soPinCnt = WP11_Slot_SOPinCount(slot);
 
     if (WP11_Slot_IsTokenInitialized(slot)) {
         if (WP11_Slot_SOPin_IsSet(slot)) {
@@ -1397,7 +1407,7 @@ CK_RV C_InitToken(CK_SLOT_ID slotID, CK_UTF8CHAR_PTR pPin,
             if (ret != 0) {
                 if (ret == PIN_LOCKED_E)
                     rv = CKR_PIN_LOCKED;
-                else if (ret == PIN_BUSY_E)
+                else if (ret == PIN_BUSY_E || ret == BAD_STATE_E)
                     rv = CKR_FUNCTION_FAILED;
                 else
                     rv = CKR_PIN_INCORRECT;
@@ -1407,7 +1417,8 @@ CK_RV C_InitToken(CK_SLOT_ID slotID, CK_UTF8CHAR_PTR pPin,
         }
     }
 
-    ret = WP11_Slot_TokenReset(slot, (char*)pPin, (int)ulPinLen, (char*)pLabel);
+    ret = WP11_Slot_TokenReset(slot, (char*)pPin, (int)ulPinLen, (char*)pLabel,
+                               &soPinCnt);
     if (ret != 0) {
         rv = CKR_FUNCTION_FAILED;
         WOLFPKCS11_LEAVE("C_InitToken", rv);
@@ -1439,6 +1450,7 @@ CK_RV C_InitPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pPin,
     CK_RV rv;
     int ret;
     WP11_Slot* slot;
+    word32 soPinCnt;
     WP11_Session* session;
 
     WOLFPKCS11_ENTER("C_InitPIN");
@@ -1476,9 +1488,22 @@ CK_RV C_InitPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pPin,
     }
 
     slot = WP11_Session_GetSlot(session);
-    ret = WP11_Slot_SetUserPin(slot, (char*)pPin, (int)ulPinLen);
+    rv = WP11_Slot_StaleRv(slot, WP11_Slot_Refresh(slot));
+    if (rv != CKR_OK) {
+        WOLFPKCS11_LEAVE("C_InitPIN", rv);
+        return rv;
+    }
+    /* Loading the token again ends the SO login when the SO PIN changed. */
+    soPinCnt = WP11_Slot_SOPinCount(slot);
+    if (WP11_Session_GetState(session) != WP11_APP_STATE_RW_SO) {
+        rv = CKR_USER_NOT_LOGGED_IN;
+        WOLFPKCS11_LEAVE("C_InitPIN", rv);
+        return rv;
+    }
+    ret = WP11_Slot_SetUserPinSince(slot, (char*)pPin, (int)ulPinLen,
+                                    soPinCnt);
     if (ret != 0) {
-        rv = CKR_FUNCTION_FAILED;
+        rv = WP11_Slot_StaleRv(slot, ret);
         WOLFPKCS11_LEAVE("C_InitPIN", rv);
         return rv;
     }
@@ -1515,6 +1540,7 @@ CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
     int ret;
     int state;
     WP11_Slot* slot;
+    word32 soPinCnt;
     WP11_Session* session;
     CK_RV rv;
 
@@ -1552,6 +1578,7 @@ CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
         return rv;
     }
 
+    slot = WP11_Session_GetSlot(session);
     state = WP11_Session_GetState(session);
     if (state != WP11_APP_STATE_RW_SO && state != WP11_APP_STATE_RW_USER &&
                                             state != WP11_APP_STATE_RW_PUBLIC) {
@@ -1560,7 +1587,22 @@ CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
         return rv;
     }
 
-    slot = WP11_Session_GetSlot(session);
+    /* Check the old PIN against the PIN data another process stored. */
+    rv = WP11_Slot_StaleRv(slot, WP11_Slot_Refresh(slot));
+    if (rv != CKR_OK) {
+        WOLFPKCS11_LEAVE("C_SetPIN", rv);
+        return rv;
+    }
+    soPinCnt = WP11_Slot_SOPinCount(slot);
+    /* Loading the token again ends the SO login when the SO PIN changed. */
+    if (state == WP11_APP_STATE_RW_SO &&
+            WP11_Session_GetState(session) != WP11_APP_STATE_RW_SO) {
+        rv = CKR_USER_NOT_LOGGED_IN;
+        WOLFPKCS11_LEAVE("C_SetPIN", rv);
+        return rv;
+    }
+    state = WP11_Session_GetState(session);
+
     if (state == WP11_APP_STATE_RW_SO) {
         ret = WP11_Slot_CheckSOPinLockout(slot, (char*)pOldPin, (int)ulOldLen);
         if (ret == PIN_LOCKED_E) {
@@ -1568,7 +1610,7 @@ CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
             WOLFPKCS11_LEAVE("C_SetPIN", rv);
             return rv;
         }
-        if (ret == PIN_BUSY_E) {
+        if (ret == PIN_BUSY_E || ret == BAD_STATE_E) {
             rv = CKR_FUNCTION_FAILED;
             WOLFPKCS11_LEAVE("C_SetPIN", rv);
             return rv;
@@ -1579,9 +1621,11 @@ CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
             return rv;
         }
 
-        ret = WP11_Slot_SetSOPin(slot, (char*)pNewPin, (int)ulNewLen);
+        /* Not when the SO PIN changed since the old PIN check. */
+        ret = WP11_Slot_SetSOPinSince(slot, (char*)pNewPin, (int)ulNewLen,
+                                      soPinCnt);
         if (ret != 0) {
-            rv = CKR_FUNCTION_FAILED;
+            rv = WP11_Slot_StaleRv(slot, ret);
             WOLFPKCS11_LEAVE("C_SetPIN", rv);
             return rv;
         }
@@ -1599,13 +1643,8 @@ CK_RV C_SetPIN(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin,
             WOLFPKCS11_LEAVE("C_SetPIN", rv);
             return rv;
         }
-        if (ret == MEMORY_E) {
-            rv = CKR_HOST_MEMORY;
-            WOLFPKCS11_LEAVE("C_SetPIN", rv);
-            return rv;
-        }
         if (ret != 0) {
-            rv = CKR_FUNCTION_FAILED;
+            rv = WP11_Slot_StaleRv(slot, ret);
             WOLFPKCS11_LEAVE("C_SetPIN", rv);
             return rv;
         }
@@ -2007,22 +2046,27 @@ CK_RV C_Login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
         return rv;
     }
 
+    if (userType != CKU_SO && userType != CKU_USER) {
+        rv = (userType == CKU_CONTEXT_SPECIFIC) ?
+            CKR_OPERATION_NOT_INITIALIZED : CKR_USER_TYPE_INVALID;
+        WOLFPKCS11_LEAVE("C_Login", rv);
+        return rv;
+    }
+
     slot = WP11_Session_GetSlot(session);
+    /* Check the PIN against the PIN data another process stored. A token
+     * that holds unstored changes cannot be loaded again and is used as is. */
+    ret = WP11_Slot_Refresh(slot);
+    if (ret != 0 && !(ret == BAD_STATE_E && WP11_Slot_IsWriteProtected(slot))) {
+        rv = WP11_Slot_StaleRv(slot, ret);
+        WOLFPKCS11_LEAVE("C_Login", rv);
+        return rv;
+    }
     if (userType == CKU_SO) {
         ret = WP11_Slot_SOLogin(slot, (char*)pPin, (int)ulPinLen);
     }
-    else if (userType == CKU_USER) {
-        ret = WP11_Slot_UserLogin(slot, (char*)pPin, (int)ulPinLen);
-    }
-    else if (userType == CKU_CONTEXT_SPECIFIC) {
-        rv = CKR_OPERATION_NOT_INITIALIZED;
-        WOLFPKCS11_LEAVE("C_Login", rv);
-        return rv;
-    }
     else {
-        rv = CKR_USER_TYPE_INVALID;
-        WOLFPKCS11_LEAVE("C_Login", rv);
-        return rv;
+        ret = WP11_Slot_UserLogin(slot, (char*)pPin, (int)ulPinLen);
     }
 
     switch (ret) {
@@ -2045,6 +2089,7 @@ CK_RV C_Login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
             rv = CKR_PIN_LOCKED;
             break;
         case PIN_BUSY_E:
+        case BAD_STATE_E:
             rv = CKR_FUNCTION_FAILED;
             break;
         case READ_ONLY_E:
