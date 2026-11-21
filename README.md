@@ -463,6 +463,28 @@ cmake -DCMAKE_PREFIX_PATH=/path/to/wolfssl/install ..
 | `BUILD_SHARED_LIBS` | `ON` | Build shared (`ON`) or static (`OFF`) library |
 | `WOLFPKCS11_STATIC_WOLFSSL` | `no` | Link a static wolfSSL into the shared library and hide its symbols |
 
+Two related preprocessor settings are available when wolfCrypt callbacks are
+used. `WOLFPKCS11_DEFAULT_DEVID` sets the device ID assigned to a slot before
+an object-specific device ID is selected; it cannot be combined with the TPM,
+MAXQ10XX or STM32U5 DHUK backends, which set the slot's device ID themselves.
+Key operations use the object's device ID, which is the slot's unless the
+object sets `CKA_WOLFSSL_DEVID`. HKDF uses the base key's device ID on
+wolfSSL 5.7.0 or later, except FIPS builds before v7 and self-test builds.
+Those builds pass no device ID, which selects software unless a
+`WOLF_CRYPTO_CB_FIND` finder remaps it. PBKDF2 key generation has no base key,
+so it uses the slot's device ID. Device callbacks must complete synchronously;
+an operation whose callback returns `WC_PENDING_E` fails.
+`WOLFPKCS11_PIN_KDF_SOFTWARE` keeps PBKDF2 PIN hashing in software while key
+operations continue to use the device. This is useful when a device callback
+is intended for key operations but is too expensive for each PBKDF2
+iteration. With crypto callbacks enabled it needs wolfSSL 5.7.4 or later,
+because older SHA-256 init replaced an invalid device ID with the default
+registered device. It cannot be combined with `WOLF_CRYPTO_CB_FIND`, because
+a finder can remap an invalid device ID back to a registered callback. The
+device must be registered with
+the same wolfSSL instance that wolfPKCS11 uses, so an application cannot
+register it for the self-contained library with a private static wolfSSL.
+
 Note: wolfSSL must be built with the corresponding features enabled for the
 options above to work (e.g. enabling `WOLFPKCS11_AESCCM` requires wolfSSL built
 with `-DWOLFSSL_AESCCM=yes`).
