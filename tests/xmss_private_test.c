@@ -434,6 +434,13 @@ static CK_RV test_keygen_sign_verify(const XmssScheme* s)
     CK_ULONG v = 0;
     CK_BYTE value[16];
     CK_ATTRIBUTE a = { CKA_VALUE, value, sizeof(value) };
+    CK_BBOOL flags[4] = { CK_FALSE, CK_TRUE, CK_FALSE, CK_FALSE };
+    CK_ATTRIBUTE prot[] = {
+        { CKA_SENSITIVE,         &flags[0], sizeof(CK_BBOOL) },
+        { CKA_EXTRACTABLE,       &flags[1], sizeof(CK_BBOOL) },
+        { CKA_ALWAYS_SENSITIVE,  &flags[2], sizeof(CK_BBOOL) },
+        { CKA_NEVER_EXTRACTABLE, &flags[3], sizeof(CK_BBOOL) },
+    };
 
     printf("  %s keygen -> sign -> verify, attributes...\n", s->name);
     ret = fresh_token(&session);
@@ -476,11 +483,23 @@ static CK_RV test_keygen_sign_verify(const XmssScheme* s)
         ret = CKR_GENERAL_ERROR;
     }
     if (ret == CKR_OK) {
-        (void)funcList->C_GetAttributeValue(session, priv, &a, 1);
-        if (a.ulValueLen != CK_UNAVAILABLE_INFORMATION) {
-            fprintf(stderr, "\nprivate CKA_VALUE returned - FAIL\n");
+        v = funcList->C_GetAttributeValue(session, priv, &a, 1);
+        if (v != CKR_ATTRIBUTE_SENSITIVE ||
+                a.ulValueLen != CK_UNAVAILABLE_INFORMATION) {
+            fprintf(stderr, "\nprivate CKA_VALUE read: %lx - FAIL\n", v);
             ret = CKR_GENERAL_ERROR;
         }
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, priv, prot,
+            sizeof(prot) / sizeof(*prot));
+        CHECK_CKR(ret, "read protection attributes");
+    }
+    if (ret == CKR_OK && (flags[0] != CK_TRUE || flags[1] != CK_FALSE ||
+            flags[2] != CK_TRUE || flags[3] != CK_TRUE)) {
+        fprintf(stderr, "\nprivate key protection %d%d%d%d - FAIL\n",
+            flags[0], flags[1], flags[2], flags[3]);
+        ret = CKR_GENERAL_ERROR;
     }
     close_session(session);
     pkcs11_final();
@@ -605,6 +624,18 @@ static CK_RV test_keygen_negative(void)
         { CKA_TOKEN,    &ckTrue, sizeof(ckTrue) },
         { CKA_COPYABLE, &ckTrue, sizeof(ckTrue) },
     };
+    CK_ATTRIBUTE privNotSensitive[] = {
+        { CKA_TOKEN,     &ckTrue,  sizeof(ckTrue)  },
+        { CKA_SENSITIVE, &ckFalse, sizeof(ckFalse) },
+    };
+    CK_ATTRIBUTE privExtractable[] = {
+        { CKA_TOKEN,       &ckTrue, sizeof(ckTrue) },
+        { CKA_EXTRACTABLE, &ckTrue, sizeof(ckTrue) },
+    };
+    CK_ATTRIBUTE privValue[] = {
+        { CKA_TOKEN, &ckTrue, sizeof(ckTrue) },
+        { CKA_VALUE, value,   sizeof(value)  },
+    };
     CK_ATTRIBUTE privOther[] = {
         { CKA_TOKEN,         &ckTrue, sizeof(ckTrue) },
         { CKA_PARAMETER_SET, &other,  sizeof(other)  },
@@ -638,8 +669,22 @@ static CK_RV test_keygen_negative(void)
             "copyable private key");
     }
     if (ret == CKR_OK) {
+        ret = gen_expect(session, CKM_XMSS_KEY_PAIR_GEN, pubGood, 1,
+            privNotSensitive, 2, CKR_TEMPLATE_INCONSISTENT,
+            "private key not sensitive");
+    }
+    if (ret == CKR_OK) {
+        ret = gen_expect(session, CKM_XMSS_KEY_PAIR_GEN, pubGood, 1,
+            privExtractable, 2, CKR_TEMPLATE_INCONSISTENT,
+            "extractable private key");
+    }
+    if (ret == CKR_OK) {
         ret = gen_expect(session, CKM_XMSS_KEY_PAIR_GEN, pubValue, 2,
             privToken, 1, CKR_TEMPLATE_INCONSISTENT, "public key value");
+    }
+    if (ret == CKR_OK) {
+        ret = gen_expect(session, CKM_XMSS_KEY_PAIR_GEN, pubGood, 1,
+            privValue, 2, CKR_TEMPLATE_INCONSISTENT, "private key value");
     }
     if (ret == CKR_OK) {
         ret = gen_expect(session, CKM_XMSS_KEY_PAIR_GEN, pubGood, 1,

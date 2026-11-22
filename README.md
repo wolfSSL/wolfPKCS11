@@ -136,7 +136,9 @@ security. wolfPKCS11 therefore:
 * Requires the user to be logged in for `C_GenerateKeyPair`, or a token with
   an empty user PIN, because the state is encrypted with the user's token key.
   Private keys cannot be imported with `C_CreateObject`, and cannot be copied
-  (`CKA_COPYABLE` is `CK_FALSE`).
+  (`CKA_COPYABLE` is `CK_FALSE`). As PKCS#11 requires, they are always
+  sensitive and never extractable; a template that asks for
+  `CKA_SENSITIVE=CK_FALSE` or `CKA_EXTRACTABLE=CK_TRUE` is refused.
 
 Because the signature state is durable and per-key, do not clone, snapshot, or
 restore the token storage directory of a machine that signs with LMS/HSS keys -

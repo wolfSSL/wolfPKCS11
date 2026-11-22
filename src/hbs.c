@@ -1941,7 +1941,7 @@ int wp11_HssObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
             }
             else {
                 *len = CK_UNAVAILABLE_INFORMATION;
-                ret = NOT_AVAILABLE_E;
+                ret = CKR_ATTRIBUTE_SENSITIVE;
             }
             break;
         default:
@@ -2691,9 +2691,11 @@ int wp11_XmssObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
                 *len = sizeof(v);
             }
         }
+        else if (type == CKA_VALUE) {
+            *len = CK_UNAVAILABLE_INFORMATION;
+            ret = CKR_ATTRIBUTE_SENSITIVE;
+        }
         else {
-            if (type == CKA_VALUE)
-                *len = CK_UNAVAILABLE_INFORMATION;
             ret = NOT_AVAILABLE_E;
         }
         WP11_Lock_UnlockRO(&object->slot->storeLock);

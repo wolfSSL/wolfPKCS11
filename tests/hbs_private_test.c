@@ -592,6 +592,7 @@ static CK_RV test_keygen_negative_templates(void)
     CK_ULONG lmots2[2];
     CK_KEY_TYPE rsaType = CKK_RSA;
     CK_BYTE id[] = "hss-neg";
+    CK_BYTE privValue[16] = { 0 };
     CK_ATTRIBUTE pubOk[] = {
         { CKA_TOKEN, &ckTrue, sizeof(ckTrue) },
     };
@@ -663,6 +664,30 @@ static CK_RV test_keygen_negative_templates(void)
         priv[5].ulValueLen = sizeof(ckTrue);
         ret = gen_expect(session, pubOk, 1, priv, 6, NULL, 0,
             CKR_TEMPLATE_INCONSISTENT, "CKA_COPYABLE=TRUE on private key");
+    }
+    if (ret == CKR_OK) {
+        XMEMCPY(priv, privOk, sizeof(privOk));
+        priv[5].type = CKA_SENSITIVE;
+        priv[5].pValue = &ckFalse;
+        priv[5].ulValueLen = sizeof(ckFalse);
+        ret = gen_expect(session, pubOk, 1, priv, 6, NULL, 0,
+            CKR_TEMPLATE_INCONSISTENT, "CKA_SENSITIVE=FALSE on private key");
+    }
+    if (ret == CKR_OK) {
+        XMEMCPY(priv, privOk, sizeof(privOk));
+        priv[5].type = CKA_EXTRACTABLE;
+        priv[5].pValue = &ckTrue;
+        priv[5].ulValueLen = sizeof(ckTrue);
+        ret = gen_expect(session, pubOk, 1, priv, 6, NULL, 0,
+            CKR_TEMPLATE_INCONSISTENT, "CKA_EXTRACTABLE=TRUE on private key");
+    }
+    if (ret == CKR_OK) {
+        XMEMCPY(priv, privOk, sizeof(privOk));
+        priv[5].type = CKA_VALUE;
+        priv[5].pValue = privValue;
+        priv[5].ulValueLen = sizeof(privValue);
+        ret = gen_expect(session, pubOk, 1, priv, 6, NULL, 0,
+            CKR_TEMPLATE_INCONSISTENT, "CKA_VALUE on private key");
     }
     /* The lists need one entry per level. */
     if (ret == CKR_OK) {
@@ -4400,13 +4425,21 @@ static CK_RV test_keygen_defaults(void)
         { CKA_HSS_LMS_TYPES,   &hssLmsType, sizeof(hssLmsType) },
         { CKA_HSS_LMOTS_TYPES, &hssLmotsType, sizeof(hssLmotsType) },
     };
-    CK_BBOOL flags[4] = { CK_FALSE, CK_TRUE, CK_TRUE, CK_TRUE };
+    CK_BBOOL flags[8] = { CK_FALSE, CK_TRUE, CK_TRUE, CK_TRUE,
+                          CK_FALSE, CK_TRUE, CK_FALSE, CK_TRUE };
     CK_ATTRIBUTE get[] = {
-        { CKA_SIGN,         &flags[0], sizeof(CK_BBOOL) },
-        { CKA_DECRYPT,      &flags[1], sizeof(CK_BBOOL) },
-        { CKA_SIGN_RECOVER, &flags[2], sizeof(CK_BBOOL) },
-        { CKA_DERIVE,       &flags[3], sizeof(CK_BBOOL) },
+        { CKA_SIGN,              &flags[0], sizeof(CK_BBOOL) },
+        { CKA_DECRYPT,           &flags[1], sizeof(CK_BBOOL) },
+        { CKA_SIGN_RECOVER,      &flags[2], sizeof(CK_BBOOL) },
+        { CKA_DERIVE,            &flags[3], sizeof(CK_BBOOL) },
+        { CKA_SENSITIVE,         &flags[4], sizeof(CK_BBOOL) },
+        { CKA_EXTRACTABLE,       &flags[5], sizeof(CK_BBOOL) },
+        { CKA_ALWAYS_SENSITIVE,  &flags[6], sizeof(CK_BBOOL) },
+        { CKA_NEVER_EXTRACTABLE, &flags[7], sizeof(CK_BBOOL) },
     };
+    CK_ATTRIBUTE unprotect = { CKA_SENSITIVE, &ckFalse, sizeof(ckFalse) };
+    CK_ATTRIBUTE secret = { CKA_VALUE, value, sizeof(value) };
+    CK_RV srv;
     CK_ULONG pubCount = sizeof(pubTmpl) / sizeof(*pubTmpl);
     CK_ULONG privCount = sizeof(privTmpl) / sizeof(*privTmpl);
 
@@ -4432,6 +4465,26 @@ static CK_RV test_keygen_defaults(void)
         fprintf(stderr, "\nprivate key usage defaults %d%d%d%d - FAIL\n",
             flags[0], flags[1], flags[2], flags[3]);
         ret = CKR_GENERAL_ERROR;
+    }
+    if (ret == CKR_OK && (flags[4] != CK_TRUE || flags[5] != CK_FALSE ||
+            flags[6] != CK_TRUE || flags[7] != CK_TRUE)) {
+        fprintf(stderr, "\nprivate key protection %d%d%d%d - FAIL\n",
+            flags[4], flags[5], flags[6], flags[7]);
+        ret = CKR_GENERAL_ERROR;
+    }
+    if (ret == CKR_OK) {
+        srv = funcList->C_SetAttributeValue(session, priv, &unprotect, 1);
+        CHECK_CKR_FAIL(srv, CKR_ATTRIBUTE_READ_ONLY,
+            "C_SetAttributeValue(CKA_SENSITIVE=FALSE)");
+        if (srv != CKR_ATTRIBUTE_READ_ONLY)
+            ret = CKR_GENERAL_ERROR;
+    }
+    if (ret == CKR_OK) {
+        srv = funcList->C_GetAttributeValue(session, priv, &secret, 1);
+        CHECK_CKR_FAIL(srv, CKR_ATTRIBUTE_SENSITIVE, "read private CKA_VALUE");
+        if (srv != CKR_ATTRIBUTE_SENSITIVE ||
+                secret.ulValueLen != CK_UNAVAILABLE_INFORMATION)
+            ret = CKR_GENERAL_ERROR;
     }
     if (ret == CKR_OK) {
         ret = sign_verify_by_id(session, id, sizeof(id) - 1);

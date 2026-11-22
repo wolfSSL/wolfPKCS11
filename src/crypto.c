@@ -10745,34 +10745,53 @@ static CK_RV CheckGenPairAttrs(CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
 }
 
 #ifdef WOLFPKCS11_STATEFUL_SIG_PRIVATE
-/* True when the template holds CKA_TOKEN with the value CK_TRUE. */
-static int StatefulTemplateIsToken(CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount)
+/* True when the template holds the boolean attribute with the given value. */
+static int StatefulTemplateHasBool(CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
+                                   CK_ATTRIBUTE_TYPE type, CK_BBOOL value)
 {
     CK_ATTRIBUTE_PTR attr = NULL;
 
-    FindAttributeType(pTemplate, ulCount, CKA_TOKEN, &attr);
+    FindAttributeType(pTemplate, ulCount, type, &attr);
     return attr != NULL && attr->pValue != NULL &&
            attr->ulValueLen == sizeof(CK_BBOOL) &&
-           *(CK_BBOOL*)attr->pValue == CK_TRUE;
+           *(CK_BBOOL*)attr->pValue == value;
 }
 
-/* The private key must be a token object, so its state is stored, and is
- * never copyable. */
+/* The private key must be a token object, so its state is stored, and
+ * PKCS#11 makes it sensitive, not extractable and not copyable. */
 static CK_RV StatefulKeyPairGenCheckPriv(CK_ATTRIBUTE_PTR pPrivateKeyTemplate,
                                     CK_ULONG ulPrivateKeyAttributeCount)
 {
-    CK_ATTRIBUTE_PTR attr = NULL;
+    CK_ATTRIBUTE* valueAttr = NULL;
 
-    if (!StatefulTemplateIsToken(pPrivateKeyTemplate,
-            ulPrivateKeyAttributeCount)) {
+    FindAttributeType(pPrivateKeyTemplate, ulPrivateKeyAttributeCount,
+        CKA_VALUE, &valueAttr);
+    if (valueAttr != NULL ||
+            !StatefulTemplateHasBool(pPrivateKeyTemplate,
+                ulPrivateKeyAttributeCount, CKA_TOKEN, CK_TRUE) ||
+            StatefulTemplateHasBool(pPrivateKeyTemplate,
+                ulPrivateKeyAttributeCount, CKA_COPYABLE, CK_TRUE) ||
+            StatefulTemplateHasBool(pPrivateKeyTemplate,
+                ulPrivateKeyAttributeCount, CKA_SENSITIVE, CK_FALSE) ||
+            StatefulTemplateHasBool(pPrivateKeyTemplate,
+                ulPrivateKeyAttributeCount, CKA_EXTRACTABLE, CK_TRUE)) {
         return CKR_TEMPLATE_INCONSISTENT;
     }
-    FindAttributeType(pPrivateKeyTemplate, ulPrivateKeyAttributeCount,
-                      CKA_COPYABLE, &attr);
-    if (attr != NULL && attr->pValue != NULL &&
-            attr->ulValueLen == sizeof(CK_BBOOL) &&
-            *(CK_BBOOL*)attr->pValue == CK_TRUE) {
-        return CKR_TEMPLATE_INCONSISTENT;
+    return CKR_OK;
+}
+
+/* Builds whose private keys default to not sensitive or extractable still
+ * get a protected stateful key. */
+static CK_RV StatefulProtectPriv(WP11_Object* priv)
+{
+    CK_BBOOL trueVal = CK_TRUE;
+    CK_BBOOL falseVal = CK_FALSE;
+
+    if (WP11_Object_SetAttr(priv, CKA_SENSITIVE, &trueVal,
+            sizeof(trueVal)) != 0 ||
+            WP11_Object_SetAttr(priv, CKA_EXTRACTABLE, &falseVal,
+            sizeof(falseVal)) != 0) {
+        return CKR_FUNCTION_FAILED;
     }
     return CKR_OK;
 }
@@ -11181,6 +11200,8 @@ static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
                 rv = NewObject(session, CKK_HSS, CKO_PRIVATE_KEY, privTmpl,
                     privTmplCnt, &priv);
             }
+            if (rv == CKR_OK)
+                rv = StatefulProtectPriv(priv);
             if (privTmpl != NULL)
                 XFREE(privTmpl, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             if (rv == CKR_OK) {
@@ -11235,6 +11256,8 @@ static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
                 rv = NewObject(session, xmssType, CKO_PRIVATE_KEY,
                     pPrivateKeyTemplate, ulPrivateKeyAttributeCount, &priv);
             }
+            if (rv == CKR_OK)
+                rv = StatefulProtectPriv(priv);
             if (rv == CKR_OK) {
                 ret = WP11_Xmss_GenerateKeyPair(pub, priv, xmssParamSet,
                     WP11_Session_GetSlot(session));
