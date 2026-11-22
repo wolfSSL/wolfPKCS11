@@ -1454,13 +1454,9 @@ static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
             sign = CK_TRUE;
             break;
         case CKK_ML_DSA:
-#ifdef WOLFPKCS11_LMS_PRIVATE
         case CKK_HSS:
-#endif
-#ifdef WOLFPKCS11_XMSS_PRIVATE
         case CKK_XMSS:
         case CKK_XMSSMT:
-#endif
             derive = CK_FALSE;
             verify = CK_TRUE;
             encrypt = CK_FALSE;

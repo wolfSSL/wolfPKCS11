@@ -3627,6 +3627,45 @@ static CK_RV hbs_keygen_rejected(CK_SESSION_HANDLE session,
     return ret;
 }
 
+/* An imported public key gets the same usage defaults in every build. */
+static CK_RV hbs_pub_defaults(CK_SESSION_HANDLE session, CK_KEY_TYPE keyType,
+    const CK_BYTE* pub, CK_ULONG pubLen)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_BBOOL flags[5] = { CK_TRUE, CK_FALSE, CK_TRUE, CK_TRUE, CK_TRUE };
+    CK_ATTRIBUTE get[] = {
+        { CKA_ENCRYPT,        &flags[0], sizeof(CK_BBOOL) },
+        { CKA_VERIFY,         &flags[1], sizeof(CK_BBOOL) },
+        { CKA_VERIFY_RECOVER, &flags[2], sizeof(CK_BBOOL) },
+        { CKA_WRAP,           &flags[3], sizeof(CK_BBOOL) },
+        { CKA_DERIVE,         &flags[4], sizeof(CK_BBOOL) },
+    };
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,    &pubKeyClass,  sizeof(pubKeyClass) },
+        { CKA_KEY_TYPE, &keyType,      sizeof(keyType)     },
+        { CKA_VALUE,    (CK_BYTE*)pub, pubLen              },
+    };
+
+    ret = funcList->C_CreateObject(session, tmpl,
+        sizeof(tmpl) / sizeof(*tmpl), &obj);
+    CHECK_CKR(ret, "HBS public key import without usage attributes");
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, obj, get,
+            sizeof(get) / sizeof(*get));
+        CHECK_CKR(ret, "HBS public key usage attributes");
+    }
+    if (ret == CKR_OK && (flags[0] != CK_FALSE || flags[1] != CK_TRUE ||
+            flags[2] != CK_FALSE || flags[3] != CK_FALSE ||
+            flags[4] != CK_FALSE)) {
+        ret = CKR_GENERAL_ERROR;
+        CHECK_CKR(ret, "HBS public key usage defaults");
+    }
+    if (obj != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, obj);
+    return ret;
+}
+
 /* Import a raw public key and read CKA_VALUE back; it must round-trip byte
  * for byte (verify-only export path). */
 static CK_RV hbs_getattr_value(CK_SESSION_HANDLE session, CK_KEY_TYPE keyType,
@@ -3788,6 +3827,12 @@ static CK_RV test_hss_verify_only_no_keygen(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     return hbs_keygen_rejected(session, CKM_HSS_KEY_PAIR_GEN);
+}
+
+static CK_RV test_hss_pub_defaults(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    return hbs_pub_defaults(session, CKK_HSS, hss_kat_pub, sizeof(hss_kat_pub));
 }
 
 static CK_RV test_hss_getattr_value(void* args)
@@ -4249,6 +4294,13 @@ static CK_RV test_xmss_verify_only_no_keygen(void* args)
     return hbs_keygen_rejected(session, CKM_XMSS_KEY_PAIR_GEN);
 }
 
+static CK_RV test_xmss_pub_defaults(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    return hbs_pub_defaults(session, CKK_XMSS, xmss_kat_pub,
+        sizeof(xmss_kat_pub));
+}
+
 static CK_RV test_xmss_getattr_value(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -4673,6 +4725,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_hss_priv_import_rejected),
     PKCS11TEST_FUNC_SESS_DECL(test_hss_verify_only_no_keygen),
     PKCS11TEST_FUNC_SESS_DECL(test_hss_getattr_value),
+    PKCS11TEST_FUNC_SESS_DECL(test_hss_pub_defaults),
     PKCS11TEST_FUNC_SESS_DECL(test_hss_getattr_params),
     PKCS11TEST_FUNC_SESS_DECL(test_hss_getattr_array_params),
     PKCS11TEST_FUNC_SESS_DECL(test_hss_setattr_rejected),
@@ -4690,6 +4743,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_xmss_priv_import_rejected),
     PKCS11TEST_FUNC_SESS_DECL(test_xmss_verify_only_no_keygen),
     PKCS11TEST_FUNC_SESS_DECL(test_xmss_getattr_value),
+    PKCS11TEST_FUNC_SESS_DECL(test_xmss_pub_defaults),
     PKCS11TEST_FUNC_SESS_DECL(test_xmssmt_getattr_value),
     PKCS11TEST_FUNC_SESS_DECL(test_xmss_mech_info),
     PKCS11TEST_FUNC_SESS_DECL(test_xmssmt_mech_info),
