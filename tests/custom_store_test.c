@@ -1088,6 +1088,106 @@ static int hss_failed_move_keygen_test(void)
 }
 #endif
 
+#if defined(WOLFPKCS11_XMSS_PRIVATE) && \
+    defined(WOLFPKCS11_CUSTOM_STORE_CLOSE_COMMIT)
+static CK_RV xmss_sign(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE priv)
+{
+    CK_RV rv;
+    CK_MECHANISM mech = { CKM_XMSS, NULL, 0 };
+    static CK_BYTE msg[] = "custom store";
+    static CK_BYTE sig[8192];
+    CK_ULONG sigLen = sizeof(sig);
+
+    rv = funcList->C_SignInit(session, &mech, priv);
+    if (rv == CKR_OK) {
+        rv = funcList->C_Sign(session, msg, sizeof(msg) - 1, sig, &sigLen);
+    }
+    return rv;
+}
+
+static CK_RV xmss_find(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE* priv)
+{
+    CK_RV rv;
+    CK_OBJECT_CLASS privClass = CKO_PRIVATE_KEY;
+    CK_ATTRIBUTE tmpl = { CKA_CLASS, &privClass, sizeof(privClass) };
+    CK_ULONG cnt = 0;
+
+    rv = funcList->C_FindObjectsInit(session, &tmpl, 1);
+    if (rv == CKR_OK)
+        rv = funcList->C_FindObjects(session, priv, 1, &cnt);
+    (void)funcList->C_FindObjectsFinal(session);
+    if (rv == CKR_OK && cnt != 1)
+        rv = CKR_GENERAL_ERROR;
+    return rv;
+}
+
+/* An XMSS key record is written, moved by a destroy whose token record fails
+ * to commit, and still signs, also after a reload. */
+static int xmss_store_test(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session;
+    CK_OBJECT_HANDLE pub, priv;
+    CK_ULONG paramSet = 0x00000001UL; /* XMSS-SHA2_10_256 */
+    CK_MECHANISM mech = { CKM_XMSS_KEY_PAIR_GEN, NULL, 0 };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_TOKEN,         &ckTrue,   sizeof(ckTrue)   },
+        { CKA_PARAMETER_SET, &paramSet, sizeof(paramSet) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_TOKEN, &ckTrue, sizeof(ckTrue) },
+    };
+    int injected;
+
+    store_free();
+    rv = pkcs11_init();
+    CHECK_RV(rv, "Initialize");
+    rv = provision();
+    CHECK_RV(rv, "Provision token");
+    rv = open_user_session(&session);
+    CHECK_RV(rv, "Open user session");
+    rv = create_obj(session, "xmssOld");
+    CHECK_RV(rv, "Create the object at id 0");
+    rv = funcList->C_GenerateKeyPair(session, &mech, pubTmpl,
+        sizeof(pubTmpl) / sizeof(pubTmpl[0]), privTmpl,
+        sizeof(privTmpl) / sizeof(privTmpl[0]), &pub, &priv);
+    CHECK_RV(rv, "XMSS keygen");
+    CHECK(store_find(WOLFPKCS11_STORE_XMSSKEY_PRIV, slot, 2) != NULL,
+          "Key record stored");
+    rv = xmss_sign(session, priv);
+    CHECK_RV(rv, "XMSS sign");
+
+    injected = injectCnt;
+    failCommitAt = commitCnt + 3;
+    rv = destroy_obj(session, "xmssOld");
+    failCommitAt = -1;
+    CHECK(rv == CKR_FUNCTION_FAILED, "Failed commit fails the destroy");
+    CHECK(injectCnt == injected + 1, "Token record commit failed");
+    CHECK(store_find(WOLFPKCS11_STORE_XMSSKEY_PRIV, slot, 0) != NULL,
+          "Key record stored at the new id");
+    CHECK(store_find(WOLFPKCS11_STORE_HSSKEY_PRIV, slot, 0) == NULL,
+          "No HSS record at the new id");
+    rv = xmss_sign(session, priv);
+    CHECK_RV(rv, "XMSS sign after the failed pass");
+
+    (void)funcList->C_Logout(session);
+    (void)funcList->C_CloseSession(session);
+    (void)funcList->C_Finalize(NULL);
+    rv = pkcs11_init();
+    CHECK_RV(rv, "Initialize again");
+    rv = open_user_session(&session);
+    CHECK_RV(rv, "Open user session");
+    rv = xmss_find(session, &priv);
+    CHECK_RV(rv, "Find the XMSS key");
+    rv = xmss_sign(session, priv);
+    CHECK_RV(rv, "XMSS sign after a reload");
+    (void)funcList->C_Logout(session);
+    (void)funcList->C_CloseSession(session);
+    (void)funcList->C_Finalize(NULL);
+    return 0;
+}
+#endif
+
 int main(int argc, char* argv[])
 {
 #ifdef RUN_TEST
@@ -1114,6 +1214,11 @@ int main(int argc, char* argv[])
         ret = hss_failed_move_keygen_test();
     if (ret == 0)
         ret = hss_read_open_fail_test();
+#endif
+#if defined(WOLFPKCS11_XMSS_PRIVATE) && \
+    defined(WOLFPKCS11_CUSTOM_STORE_CLOSE_COMMIT)
+    if (ret == 0)
+        ret = xmss_store_test();
 #endif
     store_free();
     if (ret == 0)
