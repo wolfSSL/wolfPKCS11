@@ -812,8 +812,7 @@ WP11_LOCAL int WP11_Hss_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
 WP11_LOCAL int WP11_Hss_Sign(unsigned char* data, word32 dataLen,
                              unsigned char* sig, word32* sigLen,
                              WP11_Object* priv);
-WP11_LOCAL int WP11_Hss_SigsLeft(WP11_Object* key, word64* remaining);
-WP11_LOCAL int WP11_Hss_IsStored(WP11_Object* key);
+WP11_LOCAL int WP11_Stateful_IsStored(WP11_Object* key);
 #endif
 #endif
 
