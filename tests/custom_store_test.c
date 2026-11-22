@@ -230,8 +230,10 @@ int wolfPKCS11_Store_Remove(int type, CK_ULONG id1, CK_ULONG id2)
     if (rejectReserved && type == WOLFPKCS11_STORE_HSSKEY_PRIV)
         return STORE_FAIL_E;
 #endif
+#ifndef WOLFPKCS11_XMSS_PRIVATE
     if (rejectReserved && type == WOLFPKCS11_STORE_XMSSKEY_PRIV)
         return STORE_FAIL_E;
+#endif
     if (rec == NULL)
         return NOT_AVAILABLE_E;
     free(rec->data);

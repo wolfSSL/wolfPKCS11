@@ -406,6 +406,10 @@ static int wp11_Stateful_Damaged(int ret)
 
 static int wp11_Stateful_StoreType(WP11_Object* o)
 {
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+    if (o->type == CKK_XMSS || o->type == CKK_XMSSMT)
+        return WOLFPKCS11_STORE_XMSSKEY_PRIV;
+#endif
     (void)o;
     return WOLFPKCS11_STORE_HSSKEY_PRIV;
 }
@@ -473,7 +477,8 @@ static int wp11_Stateful_Adopt(WP11_Object* o, int storeType, int tokenId,
     /* Without a batch another key may already have written over the record. */
     owner = wp11_Token_ObjectAt(&o->slot->token, o->statefulHomeId - 1);
     if (!wp11_storage_atomic() && owner != NULL && owner != o &&
-            wp11_Stateful_IsKey(owner)) {
+            wp11_Stateful_IsKey(owner) &&
+            wp11_Stateful_StoreType(owner) == storeType) {
         return 0;
     }
     /* The record must be there: without it a newer state may be missed. */
@@ -571,8 +576,9 @@ static int wp11_Stateful_Retire(WP11_Object* o, int storeType, int tokenId,
     WP11_Object* owner;
 
     owner = wp11_Token_ObjectAt(&o->slot->token, oldId);
-    /* A key now at oldId writes or removes the record there itself. */
-    if ((owner != NULL && wp11_Stateful_IsKey(owner)) ||
+    /* A key now at oldId writes or removes its own type of record there. */
+    if ((owner != NULL && wp11_Stateful_IsKey(owner) &&
+            wp11_Stateful_StoreType(owner) == storeType) ||
             wp11_Stateful_Parse(o->keyData, (word32)o->keyDataLen, &mem) != 0) {
         return 0;
     }
@@ -610,6 +616,10 @@ int wp11_Stateful_IsKey(WP11_Object* object)
         return 0;
 #ifdef WOLFPKCS11_LMS_PRIVATE
     if (object->type == CKK_HSS)
+        return 1;
+#endif
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+    if (object->type == CKK_XMSS || object->type == CKK_XMSSMT)
         return 1;
 #endif
     return 0;
@@ -1653,9 +1663,6 @@ int WP11_Hss_Verify(unsigned char* sig, word32 sigLen, unsigned char* data,
         ret = 0;
     }
     else {
-        /* Unlike XMSS, whose wolfSSL verify rejects a zero-length message with
-         * BAD_FUNC_ARG, wc_LmsKey_Verify accepts an empty message, so HSS needs
-         * no dataLen == 0 special-case here (see WP11_Xmss_Verify). */
         ret = wc_LmsKey_Verify(pub->data.lmsKey, sig, sigLen, data,
             (int)dataLen);
         /* Only a genuine verification mismatch (SIG_VERIFY_E) maps to stat=0.
@@ -1987,16 +1994,7 @@ int wp11_HssCheckTypesAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
 #endif /* WOLFPKCS11_LMS */
 
 #ifdef WOLFPKCS11_XMSS
-/* ===========================================================================
- * XMSS/XMSS^MT (RFC 8391): verification and public-key import.
- *
- * Verify-only. One wolfSSL XmssKey type serves both XMSS and XMSS^MT; the
- * PKCS#11 key type (CKK_XMSS vs CKK_XMSSMT) selects which via the is_xmssmt
- * flag. The raw public key carries the parameter-set OID in its leading
- * bytes, so wc_XmssKey_ImportPubRaw_ex derives the parameter set on import.
- * A CKA_PARAMETER_SET attribute is optional and, when supplied, is validated
- * against the OID in the key.
- * ========================================================================= */
+/* XMSS/XMSS^MT (RFC 8391). Keygen and signing need WOLFPKCS11_XMSS_PRIVATE. */
 
 /* Length of the parameter-set OID prefix in a raw RFC 8391 public key. wolfSSL
  * only exposes XMSS_OID_LEN when built with WOLFSSL_HAVE_XMSS and it is absent
@@ -2032,6 +2030,375 @@ static int wp11_XmssImportPub(XmssKey* key, int is_xmssmt, int devId,
     return ret;
 }
 
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+/* XMSS private-key shell: magic, version and the public-key length as
+ * big-endian u32s, then the public key, which starts with the OID. */
+#define WP11_XMSS_SHELL_MAGIC     0x584D5350UL  /* "XMSP" */
+#define WP11_XMSS_SHELL_VERSION   1U
+#define WP11_XMSS_SHELL_HDR_LEN   (3 * 4)
+#define WP11_XMSS_PUB_MAX_LEN     (WP11_XMSS_OID_LEN + 2 * WC_XMSS_MAX_N)
+
+static int wp11_XmssIsMt(WP11_Object* o)
+{
+    return o->type == CKK_XMSSMT;
+}
+
+/* wolfSSL sets XMSS parameters by name only, so find the name through the
+ * import of a public key that carries the OID. */
+static int wp11_XmssSetParamOid(XmssKey* key, int isMt, word32 oid)
+{
+    static const word32 hashLens[] = { 32, 64, 24 };
+    int ret;
+    XmssKey tmp;
+    byte pub[WP11_XMSS_PUB_MAX_LEN];
+    word32 pubLen;
+    const char* name = NULL;
+    word32 i;
+
+    XMEMSET(pub, 0, sizeof(pub));
+    wp11_Stateful_WriteU32(pub, oid);
+    for (i = 0; i < sizeof(hashLens) / sizeof(hashLens[0]) && name == NULL;
+            i++) {
+        pubLen = WP11_XMSS_OID_LEN + 2 * hashLens[i];
+        if (pubLen > sizeof(pub))
+            continue;
+        ret = wc_XmssKey_Init(&tmp, NULL, INVALID_DEVID);
+        if (ret == 0) {
+            if (wc_XmssKey_ImportPubRaw_ex(&tmp, pub, pubLen, isMt) != 0 ||
+                    wc_XmssKey_GetParamStr(&tmp, &name) != 0) {
+                name = NULL;
+            }
+            wc_XmssKey_Free(&tmp);
+        }
+    }
+    if (name == NULL)
+        return BAD_FUNC_ARG;
+    return wc_XmssKey_SetParamStr(key, name);
+}
+
+static int wp11_Xmss_Shell(WP11_Object* o, byte* shell, word32* shellLen)
+{
+    int ret;
+    word32 pubLen = 0;
+
+    ret = wc_XmssKey_GetPubLen(o->data.xmssKey, &pubLen);
+    if (ret == 0 && (pubLen > WP11_XMSS_PUB_MAX_LEN ||
+            *shellLen < WP11_XMSS_SHELL_HDR_LEN + pubLen)) {
+        ret = BUFFER_E;
+    }
+    if (ret == 0) {
+        wp11_Stateful_WriteU32(shell, (word32)WP11_XMSS_SHELL_MAGIC);
+        wp11_Stateful_WriteU32(shell + 4, (word32)WP11_XMSS_SHELL_VERSION);
+        wp11_Stateful_WriteU32(shell + 8, pubLen);
+        ret = wc_XmssKey_ExportPubRaw(o->data.xmssKey,
+            shell + WP11_XMSS_SHELL_HDR_LEN, &pubLen);
+    }
+    if (ret == 0)
+        *shellLen = WP11_XMSS_SHELL_HDR_LEN + pubLen;
+    return ret;
+}
+
+/* On success *pub points into in. */
+static int wp11_XmssParseShell(const byte* in, word32 inLen, const byte** pub)
+{
+    word32 pubLen;
+
+    if (in == NULL || inLen < WP11_XMSS_SHELL_HDR_LEN ||
+            wp11_HbsReadU32(in) != (word32)WP11_XMSS_SHELL_MAGIC ||
+            wp11_HbsReadU32(in + 4) != (word32)WP11_XMSS_SHELL_VERSION) {
+        return BAD_FUNC_ARG;
+    }
+    pubLen = wp11_HbsReadU32(in + 8);
+    if (pubLen < WP11_XMSS_OID_LEN || pubLen > WP11_XMSS_PUB_MAX_LEN ||
+            WP11_XMSS_SHELL_HDR_LEN + pubLen != inLen) {
+        return BAD_FUNC_ARG;
+    }
+    *pub = in + WP11_XMSS_SHELL_HDR_LEN;
+    return 0;
+}
+
+/* wolfPKCS11 keeps the state, so the key does not use a device. */
+static int wp11_Xmss_InitParams(WP11_Object* o, const byte* pub)
+{
+    int ret;
+
+    ret = wc_XmssKey_Init(o->data.xmssKey, NULL, INVALID_DEVID);
+    if (ret == 0 && pub != NULL) {
+        ret = wp11_XmssSetParamOid(o->data.xmssKey, wp11_XmssIsMt(o),
+            wp11_HbsReadU32(pub));
+    }
+    return ret;
+}
+
+static enum wc_XmssRc wp11_Xmss_ReadState_Cb(byte* priv, word32 privSz,
+    void* ctx)
+{
+    WP11_Object* o = (WP11_Object*)ctx;
+    WP11_StatefulRec r;
+
+    if (o == NULL || priv == NULL)
+        return WC_XMSS_RC_BAD_ARG;
+    if (o->statefulBuf != NULL) {
+        if (o->statefulBufLen != privSz)
+            return WC_XMSS_RC_READ_FAIL;
+        XMEMCPY(priv, o->statefulBuf, privSz);
+        return WC_XMSS_RC_READ_TO_MEMORY;
+    }
+    /* wolfSSL reads the state before each signature, from the last record. */
+    if (wp11_Stateful_Parse(o->keyData, (word32)o->keyDataLen, &r) != 0 ||
+            r.ctLen - AES_BLOCK_SIZE != privSz ||
+            wp11_Stateful_Unseal(o, &r, o->slot->token.key, priv) != 0) {
+        return WC_XMSS_RC_READ_FAIL;
+    }
+    return WC_XMSS_RC_READ_TO_MEMORY;
+}
+
+/* wolfSSL releases a signature only when this returns
+ * WC_XMSS_RC_SAVED_TO_NV_MEMORY. */
+static enum wc_XmssRc wp11_Xmss_WriteState_Cb(const byte* priv,
+    word32 privSz, void* ctx)
+{
+    int ret = wp11_Stateful_SaveState((WP11_Object*)ctx, priv, privSz);
+
+    if (ret == BAD_FUNC_ARG)
+        return WC_XMSS_RC_BAD_ARG;
+    return (ret == 0) ? WC_XMSS_RC_SAVED_TO_NV_MEMORY : WC_XMSS_RC_WRITE_FAIL;
+}
+
+static int wp11_Xmss_TotalOf(WP11_Object* o, word64* total)
+{
+    const XmssParams* params = o->data.xmssKey->params;
+
+    if (params == NULL)
+        return BAD_STATE_E;
+    /* wolfSSL keeps the last index to mark a used-up key. */
+    *total = (params->h < 64) ? ((word64)1 << params->h) - 1 : 0;
+    return 0;
+}
+
+/* Load the key and its state from a record, adopting the record as the key
+ * data. A key whose state does not load stays usable for attributes only. */
+static int wp11_Xmss_LoadState(WP11_Object* o, const byte* rec, word32 len,
+    int reload)
+{
+    int ret;
+    WP11_StatefulRec r;
+    const byte* pub = NULL;
+    byte policy[WC_SHA256_DIGEST_SIZE];
+    byte* priv = NULL;
+    word32 privLen = 0;
+    byte* copy = NULL;
+    word64 total = 0;
+    word32 expLen = 0;
+    XmssKey* key = o->data.xmssKey;
+
+    ret = wp11_Stateful_Parse(rec, len, &r);
+    if (ret == 0)
+        ret = wp11_XmssParseShell(r.shell, r.shellLen, &pub);
+    if (ret == 0 && rec != o->keyData) {
+        copy = (byte*)XMALLOC(len, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (copy == NULL)
+            ret = MEMORY_E;
+        else
+            XMEMCPY(copy, rec, len);
+    }
+    /* encoded is read without storeLock, so it is only written to change. */
+    if (!o->encoded)
+        wc_XmssKey_Free(key);
+    else
+        o->encoded = 0;
+    o->statefulState = 0;
+    if (ret != 0) {
+        /* Decoded but unable to sign, as for a record that does not load. */
+        (void)wp11_Xmss_InitParams(o, pub);
+        return ret;
+    }
+
+    ret = wp11_Xmss_InitParams(o, pub);
+    if (ret == 0)
+        ret = wp11_Stateful_Policy(o, policy);
+    if (ret == 0 && (r.policyLen != sizeof(policy) ||
+            XMEMCMP(r.policy, policy, sizeof(policy)) != 0)) {
+        ret = AES_GCM_AUTH_E;
+    }
+    if (ret == 0) {
+        privLen = r.ctLen - AES_BLOCK_SIZE;
+        if (wc_XmssKey_GetPrivLen(key, &expLen) == 0 && expLen != privLen) {
+            WOLFPKCS11_MSG("XMSS state size differs from this wolfSSL build");
+            ret = BAD_STATE_E;
+        }
+    }
+    if (ret == 0) {
+        priv = (byte*)XMALLOC(privLen, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        if (priv == NULL)
+            ret = MEMORY_E;
+    }
+    if (ret == 0)
+        ret = wp11_Stateful_Unseal(o, &r, o->slot->token.key, priv);
+    if (ret == 0)
+        ret = wp11_Xmss_TotalOf(o, &total);
+    if (ret == 0) {
+        o->statefulSigCount = r.count;
+        if (total != 0 && r.count >= total) {
+            o->statefulState |= WP11_STATEFUL_EXHAUSTED;
+        }
+        else if (!reload) {
+            o->statefulState |= WP11_STATEFUL_RELOAD;
+        }
+        else {
+            ret = wc_XmssKey_SetWriteCb(key, wp11_Xmss_WriteState_Cb);
+            if (ret == 0)
+                ret = wc_XmssKey_SetReadCb(key, wp11_Xmss_ReadState_Cb);
+            if (ret == 0)
+                ret = wc_XmssKey_SetContext(key, o);
+            if (ret == 0) {
+                o->statefulBuf = priv;
+                o->statefulBufLen = privLen;
+                ret = wc_XmssKey_Reload(key);
+                o->statefulBuf = NULL;
+                o->statefulBufLen = 0;
+            }
+        }
+    }
+    if (ret == 0 && (o->statefulState & WP11_STATEFUL_EXHAUSTED) == 0)
+        o->statefulState |= WP11_STATEFUL_VALID;
+    if (ret != 0) {
+        /* Keep the parameters so the key still reports its attributes. */
+        wc_XmssKey_Free(key);
+        (void)wp11_Xmss_InitParams(o, pub);
+    }
+    if (priv != NULL) {
+        wc_ForceZero(priv, privLen);
+        XFREE(priv, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    }
+    if (copy != NULL) {
+        if (ret == 0) {
+            XFREE(o->keyData, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            o->keyData = copy;
+            o->keyDataLen = (int)len;
+        }
+        else {
+            XFREE(copy, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+        }
+    }
+    return ret;
+}
+
+static int wp11_Xmss_SignKey(WP11_Object* o, byte* sig, word32* sigLen,
+    const byte* msg, word32 msgLen)
+{
+    return wc_XmssKey_Sign(o->data.xmssKey, sig, sigLen, msg, (int)msgLen);
+}
+
+static int wp11_Xmss_Broken(WP11_Object* o)
+{
+    return o->data.xmssKey->state == WC_XMSS_STATE_BAD;
+}
+
+static const WP11_StatefulOps wp11_XmssOps = {
+    wp11_Xmss_Shell, wp11_Xmss_LoadState, wp11_Xmss_SignKey,
+    wp11_Xmss_TotalOf, wp11_Xmss_Broken
+};
+
+/* Generate an XMSS or XMSS^MT key pair. Adding the private key to the token
+ * stores its first state. */
+int WP11_Xmss_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
+                              CK_ULONG paramSet, WP11_Slot* slot)
+{
+    int ret;
+    int isMt;
+    WC_RNG rng;
+    byte pubBuf[WP11_XMSS_PUB_MAX_LEN];
+    word32 pubLen = sizeof(pubBuf);
+    XmssKey* key;
+
+    if (pub == NULL || priv == NULL || slot == NULL ||
+            pub->data.xmssKey == NULL || priv->data.xmssKey == NULL ||
+            pub->type != priv->type) {
+        return BAD_FUNC_ARG;
+    }
+    if ((CK_ULONG)(word32)paramSet != paramSet)
+        return BAD_FUNC_ARG;
+    key = priv->data.xmssKey;
+    isMt = wp11_XmssIsMt(priv);
+    priv->statefulSigCount = 0;
+    priv->statefulStoreId = 0;
+
+    ret = wp11_Xmss_InitParams(priv, NULL);
+    if (ret == 0)
+        ret = wp11_XmssSetParamOid(key, isMt, (word32)paramSet);
+    if (ret == 0)
+        ret = wc_XmssKey_SetWriteCb(key, wp11_Xmss_WriteState_Cb);
+    if (ret == 0)
+        ret = wc_XmssKey_SetReadCb(key, wp11_Xmss_ReadState_Cb);
+    if (ret == 0)
+        ret = wc_XmssKey_SetContext(key, priv);
+    if (ret == 0)
+        ret = wp11_Slot_NewRng(slot, &rng);
+    if (ret == 0) {
+        ret = wc_XmssKey_MakeKey(key, &rng);
+        wc_FreeRng(&rng);
+    }
+    if (ret == 0 && priv->statefulBuf == NULL)
+        ret = BAD_STATE_E;
+
+    if (ret == 0)
+        ret = wc_XmssKey_ExportPubRaw(key, pubBuf, &pubLen);
+    if (ret == 0) {
+        ret = wp11_XmssImportPub(pub->data.xmssKey, isMt, pub->devId, pubBuf,
+            pubLen, NULL, 0);
+    }
+
+    if (ret == 0) {
+        priv->local = pub->local = 1;
+        priv->keyGenMech = pub->keyGenMech =
+            isMt ? CKM_XMSSMT_KEY_PAIR_GEN : CKM_XMSS_KEY_PAIR_GEN;
+        priv->statefulState |= WP11_STATEFUL_VALID;
+        priv->opFlag |= WP11_FLAG_NOT_COPYABLE;
+    }
+    else {
+        wc_XmssKey_Free(key);
+        /* encoded stops WP11_Object_Free from freeing the key again. */
+        priv->encoded = 1;
+        priv->statefulState = 0;
+        if (priv->statefulBuf != NULL) {
+            wc_ForceZero(priv->statefulBuf, priv->statefulBufLen);
+            XFREE(priv->statefulBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            priv->statefulBuf = NULL;
+            priv->statefulBufLen = 0;
+        }
+    }
+    return ret;
+}
+
+int WP11_Xmss_Sign(unsigned char* data, word32 dataLen, unsigned char* sig,
+                   word32* sigLen, WP11_Object* priv)
+{
+    if (priv == NULL || priv->data.xmssKey == NULL)
+        return BAD_FUNC_ARG;
+    return wp11_Stateful_Sign(&wp11_XmssOps, data, dataLen, sig, sigLen,
+        priv);
+}
+
+/* OID of a private key, from its record while the key is not loaded. */
+static int wp11_Xmss_PrivOid(WP11_Object* object, word32* oid)
+{
+    WP11_StatefulRec r;
+    const byte* pub = NULL;
+
+    if (object->data.xmssKey->params != NULL) {
+        *oid = object->data.xmssKey->oid;
+        return 0;
+    }
+    if (wp11_Stateful_Parse(object->keyData, (word32)object->keyDataLen,
+            &r) != 0 || wp11_XmssParseShell(r.shell, r.shellLen, &pub) != 0) {
+        return NOT_AVAILABLE_E;
+    }
+    *oid = wp11_HbsReadU32(pub);
+    return 0;
+}
+#endif /* WOLFPKCS11_XMSS_PRIVATE */
+
 #ifndef WOLFPKCS11_NO_STORE
 /* Serialize the public key: keyData holds the raw RFC 8391 public key. */
 int wp11_Object_Encode_XmssKey(WP11_Object* object)
@@ -2041,6 +2408,10 @@ int wp11_Object_Encode_XmssKey(WP11_Object* object)
     unsigned char* oldData = object->keyData;
     int oldLen = object->keyDataLen;
 
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+    if (object->objClass == CKO_PRIVATE_KEY)
+        return wp11_Stateful_Encode(object, &wp11_XmssOps);
+#endif
     if (object->objClass != CKO_PUBLIC_KEY)
         return NOT_AVAILABLE_E;
 
@@ -2065,6 +2436,15 @@ int wp11_Object_Decode_XmssKey(WP11_Object* object)
 {
     int ret;
 
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+    if (object->objClass == CKO_PRIVATE_KEY) {
+        /* A key whose record or state does not load stays visible, so it can
+         * be destroyed, but does not sign. */
+        (void)wp11_Xmss_LoadState(object, object->keyData,
+            (word32)object->keyDataLen, 0);
+        return 0;
+    }
+#endif
     if (object->objClass != CKO_PUBLIC_KEY)
         return NOT_AVAILABLE_E;
 
@@ -2084,6 +2464,10 @@ int wp11_Object_Load_XmssKey(WP11_Object* object, int tokenId, int objId)
     int ret;
     void* storage = NULL;
 
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+    if (object->objClass == CKO_PRIVATE_KEY)
+        return wp11_Stateful_Load(object, tokenId, objId);
+#endif
     ret = wp11_storage_open_readonly(WOLFPKCS11_STORE_XMSSKEY_PUB, tokenId,
         objId, &storage);
     if (ret == 0) {
@@ -2100,6 +2484,10 @@ int wp11_Object_Store_XmssKey(WP11_Object* object, int tokenId,
     int ret = 0;
     void* storage = NULL;
 
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+    if (object->objClass == CKO_PRIVATE_KEY)
+        return wp11_Stateful_Store(object, tokenId, objId, &wp11_XmssOps);
+#endif
     if (object->keyData == NULL)
         ret = wp11_Object_Encode_XmssKey(object);
     if (ret == 0)
@@ -2127,12 +2515,22 @@ int WP11_Object_SetXmssKey(WP11_Object* object, unsigned char** data,
 
     if (object == NULL || data == NULL || len == NULL)
         return BAD_FUNC_ARG;
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+    /* Keygen fills in a private key created without a value. */
+    if (object->objClass == CKO_PRIVATE_KEY)
+        return (data[1] != NULL) ? BAD_FUNC_ARG : 0;
+    if (object->objClass != CKO_PUBLIC_KEY)
+        return BAD_FUNC_ARG;
+    if (data[1] == NULL)
+        return 0;
+#else
     if (object->objClass != CKO_PUBLIC_KEY)
         return BAD_FUNC_ARG;
     /* A public key must carry its value; an absent CKA_VALUE is an
      * incomplete template (no keygen path fills it later). Reject it. */
     if (data[1] == NULL)
         return BAD_FUNC_ARG;
+#endif
 
     if (object->lock != NULL)
         WP11_Lock_LockRW(object->lock);
@@ -2180,7 +2578,7 @@ int WP11_Object_SetXmssKey(WP11_Object* object, unsigned char** data,
 /**
  * Return the length of an XMSS/XMSS^MT signature in bytes.
  *
- * @param  pub  [in]  XMSS public key object.
+ * @param  pub  [in]  XMSS public or private key object.
  * @return  Length of XMSS signature in bytes, 0 when it cannot be determined.
  */
 word32 WP11_Xmss_SigLen(WP11_Object* pub)
@@ -2189,10 +2587,24 @@ word32 WP11_Xmss_SigLen(WP11_Object* pub)
 
     if (pub->lock != NULL)
         WP11_Lock_LockRO(pub->lock);
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+    if (pub->objClass == CKO_PRIVATE_KEY)
+        WP11_Lock_LockRO(&pub->slot->storeLock);
+#endif
     if (pub->data.xmssKey == NULL ||
             wc_XmssKey_GetSigLen(pub->data.xmssKey, &len) != 0) {
         len = 0;
     }
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+    /* A failed signature leaves the key in a state wolfSSL gives no length
+     * for; the next signature reloads it. */
+    if (pub->objClass == CKO_PRIVATE_KEY && len == 0 &&
+            pub->data.xmssKey != NULL && pub->data.xmssKey->params != NULL) {
+        len = pub->data.xmssKey->params->sig_len;
+    }
+    if (pub->objClass == CKO_PRIVATE_KEY)
+        WP11_Lock_UnlockRO(&pub->slot->storeLock);
+#endif
     if (pub->lock != NULL)
         WP11_Lock_UnlockRO(pub->lock);
 
@@ -2219,11 +2631,6 @@ int WP11_Xmss_Verify(unsigned char* sig, word32 sigLen, unsigned char* data,
         *stat = 0;
         ret = 0;
     }
-    /* wolfSSL's XMSS verify rejects an empty message with BAD_FUNC_ARG. */
-    else if (dataLen == 0) {
-        *stat = 0;
-        ret = 0;
-    }
     else {
         ret = wc_XmssKey_Verify(pub->data.xmssKey, sig, sigLen, data,
             (int)dataLen);
@@ -2233,7 +2640,9 @@ int WP11_Xmss_Verify(unsigned char* sig, word32 sigLen, unsigned char* data,
         if (ret == 0) {
             *stat = 1;
         }
-        else if (ret == SIG_VERIFY_E) {
+        /* wolfSSL before 5.9.4 refuses to verify an empty message. */
+        else if (ret == SIG_VERIFY_E ||
+                (ret == BAD_FUNC_ARG && dataLen == 0)) {
             *stat = 0;
             ret = 0;
         }
@@ -2248,7 +2657,7 @@ int WP11_Xmss_Verify(unsigned char* sig, word32 sigLen, unsigned char* data,
     return ret;
 }
 
-/* Serve XMSS-specific attributes from a public-key object. */
+/* Serve XMSS-specific attributes from a public or private key object. */
 int wp11_XmssObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
                             byte* data, CK_ULONG* len)
 {
@@ -2257,6 +2666,40 @@ int wp11_XmssObject_GetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
     if (object == NULL || object->data.xmssKey == NULL || len == NULL)
         return BAD_FUNC_ARG;
 
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+    if (object->objClass == CKO_PRIVATE_KEY) {
+        word32 oid = 0;
+        CK_ULONG v;
+
+        /* A sign reloading the key holds the store lock. */
+        WP11_Lock_LockRO(&object->slot->storeLock);
+        if (type == CKA_KEYS_REMAINING) {
+            ret = wp11_Stateful_GetKeysRemaining(&wp11_XmssOps, object, data,
+                len);
+        }
+        else if (type == CKA_PARAMETER_SET) {
+            ret = wp11_Xmss_PrivOid(object, &oid);
+            v = (CK_ULONG)oid;
+            if (ret == 0 && data == NULL)
+                *len = sizeof(v);
+            else if (ret == 0 && *len < sizeof(v)) {
+                *len = sizeof(v);
+                ret = BUFFER_E;
+            }
+            else if (ret == 0) {
+                XMEMCPY(data, &v, sizeof(v));
+                *len = sizeof(v);
+            }
+        }
+        else {
+            if (type == CKA_VALUE)
+                *len = CK_UNAVAILABLE_INFORMATION;
+            ret = NOT_AVAILABLE_E;
+        }
+        WP11_Lock_UnlockRO(&object->slot->storeLock);
+        return ret;
+    }
+#endif
     switch (type) {
         case CKA_VALUE:
             if (object->objClass == CKO_PUBLIC_KEY) {

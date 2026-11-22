@@ -1457,6 +1457,10 @@ static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
 #ifdef WOLFPKCS11_LMS_PRIVATE
         case CKK_HSS:
 #endif
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+        case CKK_XMSS:
+        case CKK_XMSSMT:
+#endif
             derive = CK_FALSE;
             verify = CK_TRUE;
             encrypt = CK_FALSE;
@@ -2580,13 +2584,13 @@ static CK_RV CreateObject(WP11_Session* session, CK_ATTRIBUTE_PTR pTemplate,
         return CKR_ATTRIBUTE_VALUE_INVALID;
     }
 
-#ifdef WOLFPKCS11_LMS_PRIVATE
-    /* Only C_GenerateKeyPair fills in an HSS key object created empty. */
-    if (objType == CKK_HSS && objectClass == CKO_PRIVATE_KEY)
-        return CKR_ATTRIBUTE_VALUE_INVALID;
-    if (objType == CKK_HSS && objectClass == CKO_PUBLIC_KEY) {
+#ifdef WOLFPKCS11_STATEFUL_SIG_PRIVATE
+    /* Only C_GenerateKeyPair fills in a stateful key object created empty. */
+    if (objType == CKK_HSS || objType == CKK_XMSS || objType == CKK_XMSSMT) {
         CK_ATTRIBUTE_PTR value = NULL;
 
+        if (objectClass == CKO_PRIVATE_KEY)
+            return CKR_ATTRIBUTE_VALUE_INVALID;
         FindAttributeType(pTemplate, ulCount, CKA_VALUE, &value);
         if (value == NULL || value->pValue == NULL || value->ulValueLen == 0)
             return CKR_ATTRIBUTE_VALUE_INVALID;
@@ -7408,6 +7412,20 @@ static CK_RV wp11_C_SignInit(CK_SESSION_HANDLE hSession,
             init |= WP11_INIT_HSS_SIGN;
             break;
 #endif
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+        case CKM_XMSS:
+        case CKM_XMSSMT:
+            if (type != ((pMechanism->mechanism == CKM_XMSS) ? CKK_XMSS :
+                    CKK_XMSSMT) ||
+                    WP11_Object_GetClass(obj) != CKO_PRIVATE_KEY) {
+                return CKR_KEY_TYPE_INCONSISTENT;
+            }
+            if (pMechanism->pParameter != NULL ||
+                    pMechanism->ulParameterLen != 0)
+                return CKR_MECHANISM_PARAM_INVALID;
+            init |= WP11_INIT_XMSS_SIGN;
+            break;
+#endif
 #ifndef NO_HMAC
     #ifndef NO_MD5
         case CKM_MD5_HMAC:
@@ -7558,6 +7576,10 @@ static word32 StatefulSigLen(CK_MECHANISM_TYPE mechanism, WP11_Object* obj)
     if (mechanism == CKM_HSS)
         return WP11_Hss_SigLen(obj);
 #endif
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+    if (mechanism == CKM_XMSS || mechanism == CKM_XMSSMT)
+        return WP11_Xmss_SigLen(obj);
+#endif
     (void)mechanism;
     (void)obj;
     return 0;
@@ -7570,6 +7592,10 @@ static int StatefulSign(CK_MECHANISM_TYPE mechanism, unsigned char* data,
 #ifdef WOLFPKCS11_LMS_PRIVATE
     if (mechanism == CKM_HSS)
         return WP11_Hss_Sign(data, dataLen, sig, sigLen, obj);
+#endif
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+    if (mechanism == CKM_XMSS || mechanism == CKM_XMSSMT)
+        return WP11_Xmss_Sign(data, dataLen, sig, sigLen, obj);
 #endif
     (void)mechanism;
     (void)data;
@@ -7898,8 +7924,15 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
     #ifdef WOLFPKCS11_LMS_PRIVATE
         case CKM_HSS:
     #endif
-            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_HSS_SIGN))
+    #ifdef WOLFPKCS11_XMSS_PRIVATE
+        case CKM_XMSS:
+        case CKM_XMSSMT:
+    #endif
+            if (!WP11_Session_IsOpInitialized(session,
+                    (mechanism == CKM_HSS) ? WP11_INIT_HSS_SIGN :
+                    WP11_INIT_XMSS_SIGN)) {
                 return CKR_OPERATION_NOT_INITIALIZED;
+            }
 
             sigLen = StatefulSigLen(mechanism, obj);
             /* A key whose record or state did not load has no length. */
@@ -8767,6 +8800,10 @@ static CK_RV wp11_C_VerifyInit(CK_SESSION_HANDLE hSession,
         case CKM_XMSS:
             if (type != CKK_XMSS)
                 return CKR_KEY_TYPE_INCONSISTENT;
+        #ifdef WOLFPKCS11_XMSS_PRIVATE
+            if (WP11_Object_GetClass(obj) != CKO_PUBLIC_KEY)
+                return CKR_KEY_TYPE_INCONSISTENT;
+        #endif
             if (pMechanism->pParameter != NULL ||
                     pMechanism->ulParameterLen != 0)
                 return CKR_MECHANISM_PARAM_INVALID;
@@ -8775,6 +8812,10 @@ static CK_RV wp11_C_VerifyInit(CK_SESSION_HANDLE hSession,
         case CKM_XMSSMT:
             if (type != CKK_XMSSMT)
                 return CKR_KEY_TYPE_INCONSISTENT;
+        #ifdef WOLFPKCS11_XMSS_PRIVATE
+            if (WP11_Object_GetClass(obj) != CKO_PUBLIC_KEY)
+                return CKR_KEY_TYPE_INCONSISTENT;
+        #endif
             if (pMechanism->pParameter != NULL ||
                     pMechanism->ulParameterLen != 0)
                 return CKR_MECHANISM_PARAM_INVALID;
@@ -10850,6 +10891,39 @@ static CK_RV HssStripGenParams(CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
 }
 #endif /* WOLFPKCS11_LMS_PRIVATE */
 
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+/* CKA_PARAMETER_SET may be on either keygen template, but must agree when on
+ * both. */
+static CK_RV XmssFindGenAttr(CK_ATTRIBUTE_PTR pPublicKeyTemplate,
+                             CK_ULONG ulPublicKeyAttributeCount,
+                             CK_ATTRIBUTE_PTR pPrivateKeyTemplate,
+                             CK_ULONG ulPrivateKeyAttributeCount,
+                             CK_ATTRIBUTE_TYPE type, CK_ULONG* value)
+{
+    CK_ATTRIBUTE_PTR pubAttr = NULL;
+    CK_ATTRIBUTE_PTR privAttr = NULL;
+
+    FindAttributeType(pPublicKeyTemplate, ulPublicKeyAttributeCount, type,
+                      &pubAttr);
+    FindAttributeType(pPrivateKeyTemplate, ulPrivateKeyAttributeCount, type,
+                      &privAttr);
+    if (pubAttr == NULL && privAttr == NULL)
+        return CKR_TEMPLATE_INCOMPLETE;
+    if ((pubAttr != NULL && (pubAttr->pValue == NULL ||
+            pubAttr->ulValueLen != sizeof(CK_ULONG))) ||
+        (privAttr != NULL && (privAttr->pValue == NULL ||
+            privAttr->ulValueLen != sizeof(CK_ULONG)))) {
+        return CKR_ATTRIBUTE_VALUE_INVALID;
+    }
+    if (pubAttr != NULL && privAttr != NULL &&
+            *(CK_ULONG*)pubAttr->pValue != *(CK_ULONG*)privAttr->pValue) {
+        return CKR_TEMPLATE_INCONSISTENT;
+    }
+    *value = *(CK_ULONG*)(pubAttr != NULL ? pubAttr : privAttr)->pValue;
+    return CKR_OK;
+}
+#endif /* WOLFPKCS11_XMSS_PRIVATE */
+
 static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
                                     CK_MECHANISM_PTR pMechanism,
                                     CK_ATTRIBUTE_PTR pPublicKeyTemplate,
@@ -10967,6 +11041,14 @@ static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
 #ifdef WOLFPKCS11_LMS_PRIVATE
         case CKM_HSS_KEY_PAIR_GEN:
             pairType = CKK_HSS;
+            break;
+#endif
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+        case CKM_XMSS_KEY_PAIR_GEN:
+            pairType = CKK_XMSS;
+            break;
+        case CKM_XMSSMT_KEY_PAIR_GEN:
+            pairType = CKK_XMSSMT;
             break;
 #endif
         default:
@@ -11104,6 +11186,58 @@ static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
             if (rv == CKR_OK) {
                 ret = WP11_Hss_GenerateKeyPair(pub, priv, hssLevels, hssLms,
                     hssLmots, WP11_Session_GetSlot(session));
+                if (ret == BAD_FUNC_ARG)
+                    rv = CKR_ATTRIBUTE_VALUE_INVALID;
+                else if (ret == MEMORY_E)
+                    rv = CKR_DEVICE_MEMORY;
+                else if (ret != 0)
+                    rv = CKR_FUNCTION_FAILED;
+            }
+            break;
+        }
+#endif
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+        case CKM_XMSS_KEY_PAIR_GEN:
+        case CKM_XMSSMT_KEY_PAIR_GEN: {
+            CK_ULONG xmssParamSet;
+            CK_KEY_TYPE xmssType = (pMechanism->mechanism ==
+                CKM_XMSS_KEY_PAIR_GEN) ? CKK_XMSS : CKK_XMSSMT;
+            CK_ATTRIBUTE* valueAttr = NULL;
+
+            if (pMechanism->pParameter != NULL ||
+                    pMechanism->ulParameterLen != 0) {
+                return CKR_MECHANISM_PARAM_INVALID;
+            }
+            rv = StatefulKeyPairGenCheckPriv(pPrivateKeyTemplate,
+                ulPrivateKeyAttributeCount);
+            if (rv != CKR_OK)
+                return rv;
+            /* Keygen makes the public key, so a template value is refused. */
+            FindAttributeType(pPublicKeyTemplate, ulPublicKeyAttributeCount,
+                CKA_VALUE, &valueAttr);
+            if (valueAttr != NULL)
+                return CKR_TEMPLATE_INCONSISTENT;
+            /* The state is sealed with the user's token key. */
+            if (!WP11_Slot_IsUserLoggedIn(WP11_Session_GetSlot(session)) &&
+                    !WP11_Slot_Has_Empty_Pin(WP11_Session_GetSlot(session))) {
+                return CKR_USER_NOT_LOGGED_IN;
+            }
+            rv = XmssFindGenAttr(pPublicKeyTemplate,
+                ulPublicKeyAttributeCount, pPrivateKeyTemplate,
+                ulPrivateKeyAttributeCount, CKA_PARAMETER_SET, &xmssParamSet);
+            if (rv != CKR_OK)
+                return rv;
+
+            *phPublicKey = *phPrivateKey = CK_INVALID_HANDLE;
+            rv = NewObject(session, xmssType, CKO_PUBLIC_KEY,
+                pPublicKeyTemplate, ulPublicKeyAttributeCount, &pub);
+            if (rv == CKR_OK) {
+                rv = NewObject(session, xmssType, CKO_PRIVATE_KEY,
+                    pPrivateKeyTemplate, ulPrivateKeyAttributeCount, &priv);
+            }
+            if (rv == CKR_OK) {
+                ret = WP11_Xmss_GenerateKeyPair(pub, priv, xmssParamSet,
+                    WP11_Session_GetSlot(session));
                 if (ret == BAD_FUNC_ARG)
                     rv = CKR_ATTRIBUTE_VALUE_INVALID;
                 else if (ret == MEMORY_E)
@@ -11306,7 +11440,9 @@ static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
                                       ulPrivateKeyAttributeCount, phPrivateKey);
     }
 #ifdef WOLFPKCS11_STATEFUL_SIG_PRIVATE
-    if (rv == CKR_OK && pMechanism->mechanism == CKM_HSS_KEY_PAIR_GEN &&
+    if (rv == CKR_OK && (pMechanism->mechanism == CKM_HSS_KEY_PAIR_GEN ||
+            pMechanism->mechanism == CKM_XMSS_KEY_PAIR_GEN ||
+            pMechanism->mechanism == CKM_XMSSMT_KEY_PAIR_GEN) &&
             !WP11_Stateful_IsStored(priv)) {
         rv = CKR_DEVICE_ERROR;
     }

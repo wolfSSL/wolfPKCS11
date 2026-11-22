@@ -3555,6 +3555,14 @@ static CK_RV hbs_keygen_rejected(CK_SESSION_HANDLE session,
     }
     else
 #endif
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+    if (kgMech == CKM_XMSS_KEY_PAIR_GEN) {
+        /* The template has no CKA_TOKEN, which XMSS keygen requires. */
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+            "XMSS keygen with incomplete template rejected");
+    }
+    else
+#endif
     {
         CHECK_CKR_FAIL(ret, CKR_MECHANISM_INVALID,
             "HBS keygen rejected (no sign support for this scheme)");
@@ -3640,6 +3648,15 @@ static CK_RV hbs_mech_info(CK_MECHANISM_TYPE mechType)
         if (ret == CKR_OK && (info.flags & CKF_SIGN) == 0) {
             ret = CKR_GENERAL_ERROR;
             CHECK_CKR(ret, "HSS mech info missing CKF_SIGN (sign build)");
+        }
+    }
+    else
+#endif
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+    if (mechType == CKM_XMSS || mechType == CKM_XMSSMT) {
+        if (ret == CKR_OK && (info.flags & CKF_SIGN) == 0) {
+            ret = CKR_GENERAL_ERROR;
+            CHECK_CKR(ret, "XMSS mech info missing CKF_SIGN (sign build)");
         }
     }
     else
@@ -4200,6 +4217,35 @@ static CK_RV test_xmss_mech_info(void* args)
     return hbs_mech_info(CKM_XMSS);
 }
 
+/* The keygen mechanisms exist only in a sign-capable build. */
+static CK_RV test_xmss_kg_mech_info(void* args)
+{
+    CK_RV ret = CKR_OK;
+    CK_RV rv;
+    CK_MECHANISM_INFO info;
+    CK_MECHANISM_TYPE mechs[] = { CKM_XMSS_KEY_PAIR_GEN,
+                                  CKM_XMSSMT_KEY_PAIR_GEN };
+    int i;
+
+    (void)args;
+    for (i = 0; ret == CKR_OK && i < 2; i++) {
+        XMEMSET(&info, 0, sizeof(info));
+        rv = funcList->C_GetMechanismInfo(slot, mechs[i], &info);
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+        CHECK_CKR(rv, "XMSS keygen mechanism info");
+        if (rv == CKR_OK && info.flags != CKF_GENERATE_KEY_PAIR) {
+            rv = CKR_GENERAL_ERROR;
+            CHECK_CKR(rv, "XMSS keygen mechanism flags");
+        }
+#else
+        CHECK_CKR_FAIL(rv, CKR_MECHANISM_INVALID,
+            "XMSS keygen mechanism in a verify-only build");
+#endif
+        ret = rv;
+    }
+    return ret;
+}
+
 static CK_RV test_xmssmt_mech_info(void* args)
 {
     (void)args;
@@ -4597,6 +4643,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_xmssmt_getattr_value),
     PKCS11TEST_FUNC_SESS_DECL(test_xmss_mech_info),
     PKCS11TEST_FUNC_SESS_DECL(test_xmssmt_mech_info),
+    PKCS11TEST_FUNC_SESS_DECL(test_xmss_kg_mech_info),
     PKCS11TEST_FUNC_SESS_DECL(test_xmss_empty_template_rejected),
     PKCS11TEST_FUNC_SESS_DECL(test_xmss_bad_pubkey_len),
     PKCS11TEST_FUNC_SESS_DECL(test_xmss_bad_pubkey_value),

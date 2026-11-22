@@ -173,20 +173,32 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #if defined(WOLFPKCS11_LMS_PRIVATE) && !defined(WOLFPKCS11_LMS)
 #error WOLFPKCS11_LMS_PRIVATE requires WOLFPKCS11_LMS.
 #endif
-#if defined(WOLFPKCS11_LMS_PRIVATE) && defined(NO_HMAC)
-#error WOLFPKCS11_LMS_PRIVATE requires HMAC to seal the signature state (not --disable-hmac).
+#if defined(WOLFPKCS11_XMSS_PRIVATE) && defined(WOLFSSL_XMSS_VERIFY_ONLY)
+#error XMSS keygen+sign (--enable-xmss-private) needs a sign-capable wolfSSL XMSS build, not verify-only.
 #endif
-#if defined(WOLFPKCS11_LMS_PRIVATE) && defined(WOLFPKCS11_NO_STORE)
-#error WOLFPKCS11_LMS_PRIVATE requires object storage for durable signature state (not WOLFPKCS11_NO_STORE).
+#if defined(WOLFPKCS11_XMSS_PRIVATE) && !defined(WOLFPKCS11_XMSS)
+#error WOLFPKCS11_XMSS_PRIVATE requires WOLFPKCS11_XMSS.
 #endif
-#if defined(WOLFPKCS11_LMS_PRIVATE) && defined(WOLFPKCS11_CUSTOM_STORE) && \
-    !defined(WOLFPKCS11_CUSTOM_STORE_CLOSE_COMMIT)
-#error WOLFPKCS11_LMS_PRIVATE with WOLFPKCS11_CUSTOM_STORE needs WOLFPKCS11_CUSTOM_STORE_CLOSE_COMMIT, so a signature is only released once its state is stored.
+#if defined(WOLFPKCS11_XMSS_PRIVATE) && \
+    (!defined(LIBWOLFSSL_VERSION_HEX) || LIBWOLFSSL_VERSION_HEX < 0x05009004)
+#error XMSS keygen+sign (--enable-xmss-private) needs wolfSSL 5.9.4 or later.
 #endif
 
 /* Durable signature state for stateful hash-based private keys. */
-#if defined(WOLFPKCS11_LMS_PRIVATE)
+#if defined(WOLFPKCS11_LMS_PRIVATE) || defined(WOLFPKCS11_XMSS_PRIVATE)
 #define WOLFPKCS11_STATEFUL_SIG_PRIVATE
+#endif
+
+#if defined(WOLFPKCS11_STATEFUL_SIG_PRIVATE) && defined(NO_HMAC)
+#error LMS/HSS and XMSS private keys require HMAC to seal the signature state (not --disable-hmac).
+#endif
+#if defined(WOLFPKCS11_STATEFUL_SIG_PRIVATE) && defined(WOLFPKCS11_NO_STORE)
+#error LMS/HSS and XMSS private keys require object storage for durable signature state (not WOLFPKCS11_NO_STORE).
+#endif
+#if defined(WOLFPKCS11_STATEFUL_SIG_PRIVATE) && \
+    defined(WOLFPKCS11_CUSTOM_STORE) && \
+    !defined(WOLFPKCS11_CUSTOM_STORE_CLOSE_COMMIT)
+#error LMS/HSS and XMSS private keys with WOLFPKCS11_CUSTOM_STORE need WOLFPKCS11_CUSTOM_STORE_CLOSE_COMMIT, so a signature is only released once its state is stored.
 #endif
 
 /* We need the next two for NSS, just for storage, even if we have no algos */
@@ -358,7 +370,7 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #define WP11_INIT_MLDSA_VERIFY         0x0081
 #define WP11_INIT_HSS_SIGN             0x0090
 #define WP11_INIT_HSS_VERIFY           0x0091
-#define WP11_INIT_XMSS_SIGN            0x00A0 /* Reserved for future use */
+#define WP11_INIT_XMSS_SIGN            0x00A0
 #define WP11_INIT_XMSS_VERIFY          0x00A1
 
 /* Operation categories for CKR_OPERATION_ACTIVE checks */
@@ -812,7 +824,6 @@ WP11_LOCAL int WP11_Hss_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
 WP11_LOCAL int WP11_Hss_Sign(unsigned char* data, word32 dataLen,
                              unsigned char* sig, word32* sigLen,
                              WP11_Object* priv);
-WP11_LOCAL int WP11_Stateful_IsStored(WP11_Object* key);
 #endif
 #endif
 
@@ -823,6 +834,17 @@ WP11_LOCAL word32 WP11_Xmss_SigLen(WP11_Object* pub);
 WP11_LOCAL int WP11_Xmss_Verify(unsigned char* sig, word32 sigLen,
                                 unsigned char* data, word32 dataLen, int* stat,
                                 WP11_Object* pub);
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+WP11_LOCAL int WP11_Xmss_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
+                                         CK_ULONG paramSet, WP11_Slot* slot);
+WP11_LOCAL int WP11_Xmss_Sign(unsigned char* data, word32 dataLen,
+                              unsigned char* sig, word32* sigLen,
+                              WP11_Object* priv);
+#endif
+#endif
+
+#ifdef WOLFPKCS11_STATEFUL_SIG_PRIVATE
+WP11_LOCAL int WP11_Stateful_IsStored(WP11_Object* key);
 #endif
 
 WP11_LOCAL int WP11_Dh_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
