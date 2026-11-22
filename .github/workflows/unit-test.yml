@@ -259,6 +259,22 @@ jobs:
     with:
       config: --enable-lms-private
       wolfssl_config: --enable-lms=small --disable-crypttests
+  # XMSS/XMSS^MT keygen and signing, against a sign-capable wolfSSL XMSS build.
+  xmss_private:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --enable-xmss-private
+      wolfssl_config: --enable-xmss
+  xmss_private_static:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --enable-xmss-private --disable-shared
+      wolfssl_config: --enable-xmss
+  hbs_private_debug:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --enable-lms-private --enable-xmss-private --enable-debug
+      wolfssl_config: --enable-lms --enable-xmss
   debug:
     uses: ./.github/workflows/build-workflow.yml
     with:

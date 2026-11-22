@@ -231,6 +231,46 @@ once the store reports the state committed. With `WOLFPKCS11_TPM_STORE`, each
 signature rewrites the key's NV index; consider the NV write endurance of the
 TPM.
 
+### Optional: XMSS/XMSS^MT Hash-Based Signatures (RFC 8391)
+
+Verification and public-key import for XMSS and XMSS^MT are enabled with
+`--enable-xmss` (or `WOLFPKCS11_XMSS=yes` in CMake) and require a wolfSSL build
+with XMSS support (`--enable-xmss`, `WOLFSSL_HAVE_XMSS`).
+
+Key generation and signing are **EXPERIMENTAL** and off by default. Enable them
+with `--enable-xmss-private` (or `WOLFPKCS11_XMSS_PRIVATE=yes` in CMake), which
+implies `--enable-xmss` and requires wolfSSL 5.9.4 or later with a
+*sign-capable* XMSS build (full `--enable-xmss`, not
+`--enable-xmss=verify-only`). A token that holds an XMSS private key loads only
+in builds with `--enable-xmss-private`.
+
+XMSS private keys are stateful in the same way as LMS/HSS keys, and everything
+in the LMS/HSS section above applies to them: token-resident keys only, the
+state stored durably before each signature, the same encrypted key record and
+the same limits, offline rollback included.
+
+With `WOLFPKCS11_TPM_STORE`, an XMSS key record must fit in one NV index
+(`TPM_PT_NV_INDEX_MAX`, often 2048 bytes). The record holds wolfSSL's XMSS
+secret key, which is about 1.3 KB for XMSS-SHA2_10_256 but larger for taller
+trees and 64-byte hashes, and 5.8 KB or more for XMSS^MT. Keygen fails for a
+key that does not fit, so those sets need the file store or a custom store.
+
+`CKM_XMSS_KEY_PAIR_GEN` and `CKM_XMSSMT_KEY_PAIR_GEN` take the parameter set as
+`CKA_PARAMETER_SET`, the numeric identifier from RFC 8391 and NIST SP 800-208,
+and accept every set the wolfSSL build supports. The private key reports
+`CKA_PARAMETER_SET` and `CKA_KEYS_REMAINING`, the PKCS#11 3.3 name for
+`CKA_HSS_KEYS_REMAINING`. wolfSSL keeps the last index of a key to mark it used
+up, so a key of total height h makes 2^h - 1 signatures.
+
+The stored state is wolfSSL's own XMSS secret key, whose size depends on the
+wolfSSL build options `WOLFSSL_WC_XMSS_SMALL` and
+`WOLFSSL_XMSS_LARGE_SECRET_KEY`. Keep them unchanged for the life of a token:
+with other options its XMSS keys no longer sign.
+
+As with LMS/HSS, generating a single tree of height 20 takes minutes. XMSS^MT
+with more layers gives as many signatures far faster, for example
+XMSSMT-SHA2_20/4_256 instead of XMSS-SHA2_20_256.
+
 ### Build options and defines
 
 #### Define WOLFPKCS11_TPM_STORE
@@ -578,6 +618,8 @@ cmake -DCMAKE_PREFIX_PATH=/path/to/wolfssl/install ..
 | `WOLFPKCS11_MLKEM` | `no` | ML-KEM support |
 | `WOLFPKCS11_LMS` | `no` | LMS/HSS verification and public-key import |
 | `WOLFPKCS11_LMS_PRIVATE` | `no` | LMS/HSS keygen + signing (EXPERIMENTAL, stateful private keys) |
+| `WOLFPKCS11_XMSS` | `no` | XMSS/XMSS^MT verification and public-key import |
+| `WOLFPKCS11_XMSS_PRIVATE` | `no` | XMSS/XMSS^MT keygen + signing (EXPERIMENTAL, stateful private keys) |
 | `WOLFPKCS11_EXAMPLES` | `yes` | Build examples |
 | `WOLFPKCS11_TESTS` | `yes` | Build and register tests |
 | `WOLFPKCS11_COVERAGE` | `no` | Code coverage support |

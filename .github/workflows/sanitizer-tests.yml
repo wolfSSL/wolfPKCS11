@@ -28,8 +28,9 @@ jobs:
           - name: "PKCS#11 V3.2 PQC Build"
             configure_flags: "--enable-pkcs11v32 --enable-mldsa --enable-mlkem"
           # An empty user PIN makes the token load decode keys before C_Login.
-          - name: "LMS HSS private, empty PIN allowed"
-            configure_flags: "--enable-lms-private C_EXTRA_FLAGS=-DWP11_MIN_PIN_LEN=0"
+          - name: "LMS HSS and XMSS private, empty PIN allowed"
+            configure_flags: "--enable-lms-private --enable-xmss-private C_EXTRA_FLAGS=-DWP11_MIN_PIN_LEN=0"
+            wolfssl_flags: "--enable-xmss"
         include:
           # With HAVE_WOLF_BIGINT (--enable-pkcs11) and ML-DSA/ML-KEM dynamic
           # key buffers, decoded wolfCrypt keys own heap memory, so a key that
