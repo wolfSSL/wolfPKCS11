@@ -520,7 +520,7 @@ static CK_RV test_reload_no_reuse(const XmssScheme* s)
     ret = fresh_token(&session);
     if (ret == CKR_OK) {
         ret = gen_key(session, s, id, sizeof(id) - 1, &pub, &priv);
-        if (ret == CKR_ATTRIBUTE_VALUE_INVALID && s->optional) {
+        if (ret == CKR_PARAMETER_SET_NOT_SUPPORTED && s->optional) {
             printf("    not in this wolfSSL build, skipped\n");
             skip = 1;
             ret = CKR_OK;
@@ -650,12 +650,12 @@ static CK_RV test_keygen_negative(void)
     }
     if (ret == CKR_OK) {
         ret = gen_expect(session, CKM_XMSS_KEY_PAIR_GEN, pubBad, 1,
-            privToken, 1, CKR_ATTRIBUTE_VALUE_INVALID,
+            privToken, 1, CKR_PARAMETER_SET_NOT_SUPPORTED,
             "unknown parameter set");
     }
     if (ret == CKR_OK) {
         ret = gen_expect(session, CKM_XMSSMT_KEY_PAIR_GEN, pubBad, 1,
-            privToken, 1, CKR_ATTRIBUTE_VALUE_INVALID,
+            privToken, 1, CKR_PARAMETER_SET_NOT_SUPPORTED,
             "unknown XMSS^MT parameter set");
     }
     if (ret == CKR_OK) {

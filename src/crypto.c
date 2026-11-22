@@ -2000,6 +2000,8 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
         #ifdef WOLFPKCS11_MLDSA
                 case CKK_ML_DSA:
                     ret = WP11_Object_SetMldsaKey(obj, data, len);
+                    if (ret == NOT_COMPILED_IN)
+                        return CKR_PARAMETER_SET_NOT_SUPPORTED;
                     break;
         #endif
         #ifndef NO_DH
@@ -2013,6 +2015,8 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
         #ifdef WOLFPKCS11_MLKEM
                 case CKK_ML_KEM:
                     ret = WP11_Object_SetMlKemKey(obj, data, len);
+                    if (ret == NOT_COMPILED_IN)
+                        return CKR_PARAMETER_SET_NOT_SUPPORTED;
                     break;
         #endif
         #ifdef WOLFPKCS11_LMS
@@ -2032,9 +2036,10 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
                 case CKK_XMSS:
                 case CKK_XMSSMT:
                     ret = WP11_Object_SetXmssKey(obj, data, len);
-                    /* As for HSS: any non-memory import failure is a bad
-                     * attribute value (truncated key, unknown/invalid OID,
-                     * unparsable header), not an internal fault. */
+                    /* wolfSSL does not know the OID in the key. */
+                    if (ret == NOT_COMPILED_IN)
+                        return CKR_PARAMETER_SET_NOT_SUPPORTED;
+                    /* Any other failure but memory is a bad key value. */
                     if (ret != 0 && ret != MEMORY_E) {
                         return CKR_ATTRIBUTE_VALUE_INVALID;
                     }
@@ -11261,7 +11266,9 @@ static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
             if (rv == CKR_OK) {
                 ret = WP11_Xmss_GenerateKeyPair(pub, priv, xmssParamSet,
                     WP11_Session_GetSlot(session));
-                if (ret == BAD_FUNC_ARG)
+                if (ret == NOT_COMPILED_IN)
+                    rv = CKR_PARAMETER_SET_NOT_SUPPORTED;
+                else if (ret == BAD_FUNC_ARG)
                     rv = CKR_ATTRIBUTE_VALUE_INVALID;
                 else if (ret == MEMORY_E)
                     rv = CKR_DEVICE_MEMORY;

@@ -259,7 +259,8 @@ key that does not fit, so those sets need the file store or a custom store.
 
 `CKM_XMSS_KEY_PAIR_GEN` and `CKM_XMSSMT_KEY_PAIR_GEN` take the parameter set as
 `CKA_PARAMETER_SET`, the numeric identifier from RFC 8391 and NIST SP 800-208,
-and accept every set the wolfSSL build supports. The private key reports
+and accept every set the wolfSSL build supports; others return
+`CKR_PARAMETER_SET_NOT_SUPPORTED`. The private key reports
 `CKA_PARAMETER_SET` and `CKA_KEYS_REMAINING`, the PKCS#11 3.3 name for
 `CKA_HSS_KEYS_REMAINING`. wolfSSL keeps the last index of a key to mark it used
 up, so a key of total height h makes 2^h - 1 signatures.

@@ -2072,7 +2072,7 @@ static int wp11_XmssSetParamOid(XmssKey* key, int isMt, word32 oid)
         }
     }
     if (name == NULL)
-        return BAD_FUNC_ARG;
+        return NOT_COMPILED_IN;
     return wc_XmssKey_SetParamStr(key, name);
 }
 
@@ -2318,7 +2318,7 @@ int WP11_Xmss_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
         return BAD_FUNC_ARG;
     }
     if ((CK_ULONG)(word32)paramSet != paramSet)
-        return BAD_FUNC_ARG;
+        return NOT_COMPILED_IN;
     key = priv->data.xmssKey;
     isMt = wp11_XmssIsMt(priv);
     priv->statefulSigCount = 0;

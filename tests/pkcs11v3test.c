@@ -771,6 +771,32 @@ static CK_RV test_mldsa_gen_keys(void* args)
     return ret;
 }
 
+static CK_RV test_mldsa_unsupported_param_set(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_ML_DSA_PARAMETER_SET_TYPE paramSet = 0x99;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_ML_DSA_KEY_PAIR_GEN, NULL, 0 };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_PARAMETER_SET, &paramSet, sizeof(paramSet) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_SIGN, &ckTrue, sizeof(ckTrue) },
+    };
+
+    ret = funcList->C_GenerateKeyPair(session, &mech, pubTmpl, 1, privTmpl, 1,
+                                      &pub, &priv);
+    CHECK_CKR_FAIL(ret, CKR_PARAMETER_SET_NOT_SUPPORTED,
+                   "ML-DSA keygen with an unknown parameter set");
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+    return ret;
+}
+
 static CK_RV test_mldsa_gen_keys_id(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -1525,6 +1551,32 @@ static CK_RV test_mlkem_gen_keys(void* args)
     if (pub != CK_INVALID_HANDLE)
         funcList->C_DestroyObject(session, pub);
 
+    return ret;
+}
+
+static CK_RV test_mlkem_unsupported_param_set(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_ML_KEM_PARAMETER_SET_TYPE paramSet = 0x99;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_ML_KEM_KEY_PAIR_GEN, NULL, 0 };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_PARAMETER_SET, &paramSet, sizeof(paramSet) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_DECAPSULATE, &ckTrue, sizeof(ckTrue) },
+    };
+
+    ret = funcList->C_GenerateKeyPair(session, &mech, pubTmpl, 1, privTmpl, 1,
+                                      &pub, &priv);
+    CHECK_CKR_FAIL(ret, CKR_PARAMETER_SET_NOT_SUPPORTED,
+                   "ML-KEM keygen with an unknown parameter set");
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
     return ret;
 }
 
@@ -4265,9 +4317,7 @@ static CK_RV test_xmss_bad_pubkey_len(void* args)
         xmss_kat_pub, sizeof(xmss_kat_pub));
 }
 
-/* A structurally invalid XMSS public key of the correct length (here an unknown
- * parameter-set OID in the leading bytes) must be rejected as a bad attribute
- * value, not a function failure. Complements test_xmss_bad_pubkey_len. */
+/* A public key of the right length with an unknown parameter-set OID. */
 static CK_RV test_xmss_bad_pubkey_value(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -4282,8 +4332,6 @@ static CK_RV test_xmss_bad_pubkey_value(void* args)
         { CKA_VALUE,    badPub,       sizeof(badPub)      },
     };
 
-    /* Corrupt the leading parameter-set OID to an unknown value; length stays
-     * correct so this exercises the structural-rejection path. */
     XMEMCPY(badPub, xmss_kat_pub, sizeof(badPub));
     badPub[0] = 0xFF;
     badPub[1] = 0xFF;
@@ -4292,8 +4340,8 @@ static CK_RV test_xmss_bad_pubkey_value(void* args)
 
     ret = funcList->C_CreateObject(session, tmpl,
         sizeof(tmpl) / sizeof(*tmpl), &obj);
-    CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
-        "XMSS structurally invalid public key rejected");
+    CHECK_CKR_FAIL(ret, CKR_PARAMETER_SET_NOT_SUPPORTED,
+        "XMSS public key with an unknown OID rejected");
     if (obj != CK_INVALID_HANDLE)
         funcList->C_DestroyObject(session, obj);
     return ret;
@@ -4579,6 +4627,7 @@ static TEST_FUNC testFunc[] = {
 #ifdef WOLFPKCS11_PKCS11_V3_2
 #ifdef WOLFPKCS11_MLDSA
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_gen_keys),
+    PKCS11TEST_FUNC_SESS_DECL(test_mldsa_unsupported_param_set),
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_gen_keys_id),
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_gen_keys_token),
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_token_keys),
@@ -4594,6 +4643,7 @@ static TEST_FUNC testFunc[] = {
 #endif
 #ifdef WOLFPKCS11_MLKEM
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_gen_keys),
+    PKCS11TEST_FUNC_SESS_DECL(test_mlkem_unsupported_param_set),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_gen_keys_768),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_gen_keys_1024),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_gen_keys_id),

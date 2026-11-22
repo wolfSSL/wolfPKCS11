@@ -15640,7 +15640,7 @@ int WP11_Object_SetEcKey(WP11_Object* object, unsigned char** data,
  * @param  params [in]  Pointer to parameters structure.
  * @param  len    [in]  Length of parameters.
  * @return  BUFFER_E when len is too short.
- *          ASN_PARSE_E when parameter is bad.
+ *          NOT_COMPILED_IN when the parameter set is not supported.
  *          Other -ve on failure.
  *          0 on success.
  */
@@ -15668,7 +15668,7 @@ static int mldsaSetParameters(wc_MlDsaKey* key,
             ret = wc_MlDsaKey_SetParams(key, WC_ML_DSA_87);
             break;
         default:
-            ret = ASN_PARSE_E;
+            ret = NOT_COMPILED_IN;
             break;
     }
 
@@ -15882,7 +15882,7 @@ int WP11_Object_SetMlKemKey(WP11_Object* object, unsigned char** data,
         default:
             if (object->lock != NULL)
                 WP11_Lock_UnlockRW(object->lock);
-            return ASN_PARSE_E;
+            return NOT_COMPILED_IN;
     }
 
     /* Set seed (only for private keys). */
