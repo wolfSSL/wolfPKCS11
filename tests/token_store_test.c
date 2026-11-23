@@ -2791,20 +2791,20 @@ static int stored_user_fails(CK_SLOT_ID slot)
     return fails;
 }
 
-/* C_Finalize stores failed logins into a token another process stored. */
-static void test_stale_finalize_keeps_failed_logins(void)
+/* A failed login stays stored when another process stores the token later. */
+static void test_failed_login_survives_later_store(void)
 {
     CK_RV rv;
     CK_SLOT_ID slot = 0;
     pid_t pid = -1;
     int go = -1;
 
-    printf("\n--- a stale C_Finalize stores failed logins ---\n");
+    printf("\n--- a failed login survives a later store ---\n");
     rv = token_setup(&slot);
     CHECK_RV(rv, "token setup", CKR_OK);
     funcList->C_Finalize(NULL);
     if (rv == CKR_OK) {
-        pid = fork_changer(change_add, slot, &go);
+        pid = fork_changer(change_add_public, slot, &go);
         if (pid < 0)
             rv = CKR_GENERAL_ERROR;
     }
@@ -3438,6 +3438,7 @@ static void test_reload_logout_keeps_keys(void)
 }
 
 #ifndef WOLFPKCS11_NO_TIME
+#ifdef DEBUG_WOLFPKCS11
 static int change_lock_user(CK_SLOT_ID slot)
 {
     int code = 0;
@@ -3451,8 +3452,29 @@ static int change_lock_user(CK_SLOT_ID slot)
     return code;
 }
 
-/* A lockout another process stored stays when this process had reset the
- * failed logins by logging in. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern void WP11_Slot_SetPinCheckHook(void (*hook)(void));
+#ifdef __cplusplus
+}
+#endif
+
+static pid_t lockPid = -1;
+static int lockGo = -1;
+static int lockResult = -1;
+
+/* Let the other process lock the PIN while this one checks it. */
+static void lock_during_login_hook(void)
+{
+    if (lockPid > 0) {
+        lockResult = run_changer(lockPid, lockGo);
+        lockPid = -1;
+    }
+}
+
+/* A lockout another process stored while this process's login was checked
+ * stays, though the login reset the failed logins. */
 static void test_merge_keeps_stored_lockout(void)
 {
     CK_RV rv;
@@ -3486,13 +3508,17 @@ static void test_merge_keeps_stored_lockout(void)
     if (rv == CKR_OK)
         rv = lib_init();
     if (rv == CKR_OK) {
+        lockPid = pid;
+        lockGo = go;
+        WP11_Slot_SetPinCheckHook(lock_during_login_hook);
         rv = user_session(slot, &session);
+        WP11_Slot_SetPinCheckHook(NULL);
         CHECK_RV(rv, "login resets the failed logins", CKR_OK);
+        CHECK_TRUE(lockResult == 0, "other process locks the PIN");
+        pid = lockPid;
     }
-    if (pid > 0) {
-        CHECK_TRUE(run_changer(pid, go) == 0,
-                   "other process locks the PIN");
-    }
+    if (pid > 0)
+        (void)run_changer(pid, go);
     if (rv == CKR_OK) {
         rv = funcList->C_CreateObject(session, dataTmpl,
             sizeof(dataTmpl) / sizeof(*dataTmpl), &obj);
@@ -3504,6 +3530,7 @@ static void test_merge_keeps_stored_lockout(void)
     close_session(session);
     funcList->C_Finalize(NULL);
 }
+#endif
 
 static word32 stored_be32(const byte* p)
 {
@@ -5764,10 +5791,12 @@ static int run_tests(void)
     test_nss_init_pin_without_store_dir();
 #endif
 #ifndef WOLFPKCS11_NO_TIME
-    test_stale_finalize_keeps_failed_logins();
+    test_failed_login_survives_later_store();
     test_reload_keeps_login_reset();
     test_merged_failed_logins_lock();
+#ifdef DEBUG_WOLFPKCS11
     test_merge_keeps_stored_lockout();
+#endif
     test_merge_after_lockout_expires();
     test_merge_after_lockout_two_reloads();
 #endif
