@@ -833,8 +833,9 @@ static void test_derive_login_race(CK_SESSION_HANDLE session)
 #endif
 
 #ifdef WOLFSSL_HAVE_PRF
-static CK_RV tls_derive(CK_SESSION_HANDLE session, CK_ATTRIBUTE* inner,
-                        CK_ULONG innerSz)
+static CK_RV tls_derive_sizes(CK_SESSION_HANDLE session, CK_ATTRIBUTE* inner,
+                              CK_ULONG innerSz, CK_ULONG macBits,
+                              CK_ULONG keyBits)
 {
     CK_RV rv;
     CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
@@ -859,8 +860,8 @@ static CK_RV tls_derive(CK_SESSION_HANDLE session, CK_ATTRIBUTE* inner,
     XMEMSET(serverRandom, 0x33, sizeof(serverRandom));
     XMEMSET(&keyMat, 0, sizeof(keyMat));
     XMEMSET(&params, 0, sizeof(params));
-    params.ulMacSizeInBits = 256;
-    params.ulKeySizeInBits = 128;
+    params.ulMacSizeInBits = macBits;
+    params.ulKeySizeInBits = keyBits;
     params.RandomInfo.pClientRandom = clientRandom;
     params.RandomInfo.ulClientRandomLen = sizeof(clientRandom);
     params.RandomInfo.pServerRandom = serverRandom;
@@ -885,6 +886,12 @@ static CK_RV tls_derive(CK_SESSION_HANDLE session, CK_ATTRIBUTE* inner,
     funcList->C_DestroyObject(session, keyMat.hServerKey);
     funcList->C_DestroyObject(session, base);
     return rv;
+}
+
+static CK_RV tls_derive(CK_SESSION_HANDLE session, CK_ATTRIBUTE* inner,
+                        CK_ULONG innerSz)
+{
+    return tls_derive_sizes(session, inner, innerSz, 256, 128);
 }
 
 static void test_tls_derive(CK_SESSION_HANDLE session)
@@ -927,6 +934,12 @@ static void test_tls_derive(CK_SESSION_HANDLE session)
              CKR_TEMPLATE_INCONSISTENT);
     keyLen = 16;
     rv = tls_derive(session, valueLen, sizeof(valueLen));
+    CHECK_RV(rv, "TLS derive template length short of MAC keys",
+             CKR_TEMPLATE_INCONSISTENT);
+    rv = tls_derive_sizes(session, valueLen, sizeof(valueLen), 128, 256);
+    CHECK_RV(rv, "TLS derive template length short of cipher keys",
+             CKR_TEMPLATE_INCONSISTENT);
+    rv = tls_derive_sizes(session, valueLen, sizeof(valueLen), 128, 128);
     CHECK_RV(rv, "TLS derive template length fits all keys", CKR_OK);
     rv = tls_derive(session, agrees, sizeof(agrees));
     CHECK_RV(rv, "TLS derive template agrees with MAC keys", CKR_OK);

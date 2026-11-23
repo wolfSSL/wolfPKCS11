@@ -1665,6 +1665,17 @@ static CK_RV CheckAttributeUpdate(WP11_Session* session, WP11_Object* obj,
         if ((getVar == CK_FALSE) && (*(CK_BBOOL*)attr->pValue == CK_TRUE))
             return CKR_ATTRIBUTE_READ_ONLY;
     }
+    /* Cannot change wrap with trusted from true to false */
+    if (!newObject && attr->type == CKA_WRAP_WITH_TRUSTED) {
+        getVarLen = sizeof(getVar);
+        rv = WP11_Object_GetAttr(obj, CKA_WRAP_WITH_TRUSTED, &getVar,
+                                 &getVarLen);
+        if (rv != CKR_OK)
+            return rv;
+
+        if ((getVar == CK_TRUE) && (*(CK_BBOOL*)attr->pValue == CK_FALSE))
+            return CKR_ATTRIBUTE_READ_ONLY;
+    }
     /* PKCS#11 v2.40 sec 4.4.1: once CKA_COPYABLE/CKA_DESTROYABLE has been
      * set to CK_FALSE it cannot be set back to CK_TRUE. Read the stored
      * flag bit directly so the check is independent of the GetAttr view
@@ -1705,6 +1716,14 @@ static CK_RV CheckAttributeUpdate(WP11_Session* session, WP11_Object* obj,
     /* Certificate attributes; NSS trust objects carry them too. */
     if ((attr->type == CKA_ISSUER || attr->type == CKA_SERIAL_NUMBER) &&
             objClass != CKO_CERTIFICATE
+#ifdef WOLFPKCS11_NSS
+            && objClass != CKO_NSS_TRUST
+#endif
+            ) {
+        return CKR_ATTRIBUTE_TYPE_INVALID;
+    }
+    if (attr->type == CKA_SUBJECT && objClass != CKO_CERTIFICATE &&
+            objClass != CKO_PUBLIC_KEY && objClass != CKO_PRIVATE_KEY
 #ifdef WOLFPKCS11_NSS
             && objClass != CKO_NSS_TRUST
 #endif
@@ -2067,10 +2086,18 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
             haveTmpl = 1;
             continue;
         }
-        ret = WP11_Object_SetAttr(obj, attr->type, (byte*)attr->pValue,
-                                                              attr->ulValueLen);
+        if (newObject) {
+            ret = WP11_Object_SetAttr(obj, attr->type, (byte*)attr->pValue,
+                                      attr->ulValueLen);
+        }
+        else {
+            ret = WP11_Object_UpdateAttr(obj, attr->type, (byte*)attr->pValue,
+                                         attr->ulValueLen);
+        }
         if (ret == MEMORY_E)
             return CKR_DEVICE_MEMORY;
+        else if (ret == NOT_AVAILABLE_E)
+            return CKR_ATTRIBUTE_READ_ONLY;
         else if (ret == BAD_FUNC_ARG || ret == BUFFER_E)
             return CKR_ATTRIBUTE_VALUE_INVALID;
         else if (ret == BAD_STATE_E)
@@ -2737,6 +2764,15 @@ static CK_RV CheckCreateRequiredAttributes(CK_ATTRIBUTE_PTR pTemplate,
                         (objectClass == CKO_PUBLIC_KEY) ?
                         CKA_EC_POINT : CKA_VALUE);
                 }
+                break;
+        #endif
+        #ifndef NO_DH
+            case CKK_DH:
+                rv = RequireAttribute(pTemplate, ulCount, CKA_PRIME);
+                if (rv == CKR_OK)
+                    rv = RequireAttribute(pTemplate, ulCount, CKA_BASE);
+                if (rv == CKR_OK)
+                    rv = RequireAttribute(pTemplate, ulCount, CKA_VALUE);
                 break;
         #endif
             default:
@@ -11768,7 +11804,6 @@ static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
     WP11_Object* secret = NULL;
     int ret;
     CK_ULONG symmKeyLen;
-    CK_KEY_TYPE keyType = CKK_GENERIC_SECRET;
     CK_BBOOL ckTrue = CK_TRUE;
     CK_BBOOL ckFalse = CK_FALSE;
     unsigned char* secretKeyData[2] = { NULL, NULL };
@@ -11816,11 +11851,8 @@ static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
         return CKR_FUNCTION_FAILED;
     }
     if (isMac) {
-        ret = WP11_Object_SetAttr(secret, CKA_KEY_TYPE, (byte*)&keyType,
-                                  sizeof(keyType));
-        if (ret == CKR_OK)
-            ret = WP11_Object_SetAttr(secret, CKA_DERIVE, &ckTrue,
-                                      sizeof(CK_BBOOL));
+        ret = WP11_Object_SetAttr(secret, CKA_DERIVE, &ckTrue,
+                                  sizeof(CK_BBOOL));
         if (ret == CKR_OK)
             ret = WP11_Object_SetAttr(secret, CKA_ENCRYPT, &ckFalse,
                                       sizeof(CK_BBOOL));
@@ -11849,6 +11881,38 @@ static int SetKeyExtract(WP11_Session* session, byte* ptr, CK_ULONG length,
     return CKR_OK;
 }
 
+/* The MAC keys are generic secrets of the MAC size; the template's key type
+ * and length are for the cipher keys. */
+static CK_RV MacKeyTemplate(CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
+                            CK_KEY_TYPE* keyType, CK_ATTRIBUTE** macTmpl,
+                            CK_ULONG* macCnt)
+{
+    CK_ATTRIBUTE* attrs;
+    size_t total = (size_t)ulCount + 1;
+    CK_ULONG i;
+    CK_ULONG n = 0;
+
+    if (total > ((size_t)-1) / sizeof(CK_ATTRIBUTE))
+        return CKR_DEVICE_MEMORY;
+    attrs = (CK_ATTRIBUTE*)XMALLOC(total * sizeof(CK_ATTRIBUTE), NULL,
+                                   DYNAMIC_TYPE_TMP_BUFFER);
+    if (attrs == NULL)
+        return CKR_DEVICE_MEMORY;
+    for (i = 0; i < ulCount; i++) {
+        if (pTemplate[i].type != CKA_KEY_TYPE &&
+                pTemplate[i].type != CKA_VALUE_LEN) {
+            attrs[n++] = pTemplate[i];
+        }
+    }
+    attrs[n].type = CKA_KEY_TYPE;
+    attrs[n].pValue = keyType;
+    attrs[n].ulValueLen = sizeof(*keyType);
+
+    *macTmpl = attrs;
+    *macCnt = n + 1;
+    return CKR_OK;
+}
+
 /* The sizes are passed in bytes, as checked by the caller, and not read from
  * the caller's parameters again. used is set when keys or IVs were returned,
  * even briefly. */
@@ -11870,11 +11934,18 @@ static int Tls12_Extract_Keys(WP11_Session* session,
     CK_BYTE_PTR ivClient;
     CK_BYTE_PTR ivServer;
     int added = 0;
+    CK_KEY_TYPE macKeyType = CKK_GENERIC_SECRET;
+    CK_ATTRIBUTE* macTmpl = NULL;
+    CK_ULONG macCnt = 0;
 
     *used = 0;
     if (keyMat == NULL) {
         return CKR_FUNCTION_FAILED;
     }
+    ret = (int)MacKeyTemplate(pTemplate, ulAttributeCount, &macKeyType,
+                              &macTmpl, &macCnt);
+    if (ret != 0)
+        return ret;
 
     handles[0] = &keyMat->hClientMacSecret;
     handles[1] = &keyMat->hServerMacSecret;
@@ -11883,12 +11954,15 @@ static int Tls12_Extract_Keys(WP11_Session* session,
 
     for (i = 0; i < 4 && ret == 0; i++) {
         length = (i < 2) ? macSz : keySz;
-        ret = SetKeyExtract(session, ptr, length, pTemplate,
-                ulAttributeCount, (i < 2) ? CK_TRUE : CK_FALSE,
+        ret = SetKeyExtract(session, ptr, length,
+                (i < 2) ? macTmpl : pTemplate,
+                (i < 2) ? macCnt : ulAttributeCount,
+                (i < 2) ? CK_TRUE : CK_FALSE,
                 baseSensitive, baseExtractable, baseAlwaysSensitive,
                 baseNeverExtractable, &keys[i]);
         ptr += length;
     }
+    XFREE(macTmpl, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     while (ret == 0 && added < 4) {
         ret = (int)AddObject(session, keys[added], pTemplate, ulAttributeCount,
                              handles[added]);
@@ -12379,11 +12453,17 @@ static CK_RV wp11_C_DeriveKey(CK_SESSION_HANDLE hSession,
             rv = GetTemplateValueLen(obj, CKA_DERIVE_TEMPLATE, &tmplLen);
             if (rv != CKR_OK)
                 return rv;
-            /* SymmKeyLen shortens each key to CKA_VALUE_LEN but never
-             * lengthens it. */
-            if (tmplLen != 0 && (tmplLen > macBits / 8 ||
-                                 tmplLen > keyBits / 8))
+            /* A derive template length must match the MAC key size. */
+            if (tmplLen != 0 && tmplLen != macBits / 8)
                 return CKR_TEMPLATE_INCONSISTENT;
+            FindAttributeType(pTemplate, ulAttributeCount, CKA_VALUE_LEN,
+                              &valueLenAttr);
+            if ((valueLenAttr != NULL) && (valueLenAttr->pValue != NULL) &&
+                    (valueLenAttr->ulValueLen == sizeof(CK_ULONG))) {
+                XMEMCPY(&reqValueLen, valueLenAttr->pValue, sizeof(CK_ULONG));
+                if (reqValueLen != keyBits / 8)
+                    return CKR_TEMPLATE_INCONSISTENT;
+            }
             /* The caps also keep the key block length far below word32. */
             if (macBits > TLS12_KEY_MAT_MAX_MAC_BITS ||
                     keyBits > TLS12_KEY_MAT_MAX_KEY_BITS) {

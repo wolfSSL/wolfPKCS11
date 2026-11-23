@@ -17444,20 +17444,46 @@ static int wp11_Object_PolicyChanged(WP11_Object* object,
 }
 #endif
 
+/* Whether a flag change is one the spec allows only in one direction. */
+static int wp11_Object_OneWayRefused(WP11_Object* object,
+                                     CK_ATTRIBUTE_TYPE type, byte* data)
+{
+    word32 flags = object->opFlag;
+
+    switch (type) {
+        case CKA_SENSITIVE:
+            return (flags & WP11_FLAG_SENSITIVE) != 0 && !*(CK_BBOOL*)data;
+        case CKA_EXTRACTABLE:
+            return (flags & WP11_FLAG_EXTRACTABLE) == 0 && *(CK_BBOOL*)data;
+        case CKA_WRAP_WITH_TRUSTED:
+            return (flags & WP11_FLAG_WRAP_WITH_TRUSTED) != 0 &&
+                   !*(CK_BBOOL*)data;
+        case CKA_COPYABLE:
+            return (flags & WP11_FLAG_NOT_COPYABLE) != 0 && *(CK_BBOOL*)data;
+        case CKA_DESTROYABLE:
+            return (flags & WP11_FLAG_NOT_DESTROYABLE) != 0 &&
+                   *(CK_BBOOL*)data;
+        default:
+            return 0;
+    }
+}
+
+#ifdef DEBUG_WOLFPKCS11
+static void (*wp11_objectUpdateHook)(void) = NULL;
+
 /**
- * Set an attribute against the object.
+ * Test hook: called by WP11_Object_UpdateAttr before it locks the object.
  *
- * @param  object  [in]  Object object.
- * @param  type    [in]  Attribute type.
- * @param  data    [in]  Attribute data to set.
- * @param  len     [in]  Length of attribute data in bytes.
- * @return  BUFFER_E when data is too small.
- *          BAD_FUNC_ARG when type is not supported with object.
- *          BAD_STATE_E when a policy change cannot be bound to the stored key.
- *          0 on success.
+ * @param  hook  [in]  Function to call, or NULL to remove the hook.
  */
-int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
-                        CK_ULONG len)
+WP11_API void WP11_Object_SetUpdateHook(void (*hook)(void))
+{
+    wp11_objectUpdateHook = hook;
+}
+#endif
+
+static int wp11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
+                               byte* data, CK_ULONG len, int update)
 {
     int ret = 0;
 #ifndef WOLFPKCS11_NO_STORE
@@ -17467,6 +17493,11 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
 
     if (object->lock != NULL)
         WP11_Lock_LockRW(object->lock);
+    if (update && wp11_Object_OneWayRefused(object, type, data)) {
+        if (object->lock != NULL)
+            WP11_Lock_UnlockRW(object->lock);
+        return NOT_AVAILABLE_E;
+    }
 #ifndef WOLFPKCS11_NO_STORE
     prevClass = object->objClass;
     prevFlag = object->opFlag;
@@ -17857,6 +17888,44 @@ int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
         WP11_Lock_UnlockRW(object->lock);
 
     return ret;
+}
+
+/**
+ * Set an attribute against the object.
+ *
+ * @param  object  [in]  Object object.
+ * @param  type    [in]  Attribute type.
+ * @param  data    [in]  Attribute data to set.
+ * @param  len     [in]  Length of attribute data in bytes.
+ * @return  BUFFER_E when data is too small.
+ *          BAD_FUNC_ARG when type is not supported with object.
+ *          BAD_STATE_E when a policy change cannot be bound to the stored key.
+ *          0 on success.
+ */
+int WP11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type, byte* data,
+                        CK_ULONG len)
+{
+    return wp11_Object_SetAttr(object, type, data, len, 0);
+}
+
+/**
+ * Set an attribute of an existing object, as WP11_Object_SetAttr does.
+ *
+ * @param  object  [in]  Object object.
+ * @param  type    [in]  Attribute type.
+ * @param  data    [in]  Attribute data to set.
+ * @param  len     [in]  Length of attribute data in bytes.
+ * @return  NOT_AVAILABLE_E when a one-way flag would change back.
+ *          Other values as WP11_Object_SetAttr.
+ */
+int WP11_Object_UpdateAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
+                           byte* data, CK_ULONG len)
+{
+#ifdef DEBUG_WOLFPKCS11
+    if (wp11_objectUpdateHook != NULL)
+        wp11_objectUpdateHook();
+#endif
+    return wp11_Object_SetAttr(object, type, data, len, 1);
 }
 
 /**
