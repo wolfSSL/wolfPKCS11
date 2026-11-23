@@ -11006,7 +11006,7 @@ static CK_RV test_aes_cbc_update(CK_SESSION_HANDLE session, unsigned char* exp,
     if (ret == CKR_OK) {
         decSz = sizeof(dec);
         ret = funcList->C_DecryptFinal(session, dec, &decSz);
-        CHECK_CKR_FAIL(ret, CKR_DATA_LEN_RANGE,
+        CHECK_CKR_FAIL(ret, CKR_ENCRYPTED_DATA_LEN_RANGE,
                                        "AES-CBC Decrypt Final less than block");
     }
 
@@ -20499,10 +20499,8 @@ static CK_RV test_op_active_after_data_len_range(void* args)
 #endif
 }
 
-/* C_EncryptUpdate / C_DecryptUpdate must terminate the active op when they
- * return CKR_DATA_LEN_RANGE so the next C_EncryptInit/C_DecryptInit succeeds.
- * Forces the failure via the CK_ULONG_FITS_WORD32 path on AES-CBC (only
- * meaningful on 64-bit). */
+/* An over-long AES-CBC update (CKR_DATA_LEN_RANGE on encrypt,
+ * CKR_ENCRYPTED_DATA_LEN_RANGE on decrypt) ends the op; 64-bit only. */
 static CK_RV test_op_active_after_update_data_len_range(void* args)
 {
 #if SIZEOF_LONG > 4
@@ -20552,7 +20550,7 @@ static CK_RV test_op_active_after_update_data_len_range(void* args)
     if (ret == CKR_OK) {
         encSz = sizeof(enc);
         ret = funcList->C_DecryptUpdate(session, plain, bigLen, enc, &encSz);
-        CHECK_CKR_FAIL(ret, CKR_DATA_LEN_RANGE,
+        CHECK_CKR_FAIL(ret, CKR_ENCRYPTED_DATA_LEN_RANGE,
                        "DecryptUpdate rejects oversized part length");
     }
     if (ret == CKR_OK) {

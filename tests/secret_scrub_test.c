@@ -571,7 +571,8 @@ int main(int argc, char* argv[])
             "CBC buffered plaintext wiped after a rejected C_EncryptFinal");
         cbc_buffered_scrub_test(CKM_AES_CBC_PAD, 0, 0, CKR_OK,
             "CBC-PAD buffered plaintext wiped when the session is freed");
-        cbc_buffered_scrub_test(CKM_AES_CBC, 1, 1, CKR_DATA_LEN_RANGE,
+        cbc_buffered_scrub_test(CKM_AES_CBC, 1, 1,
+            CKR_ENCRYPTED_DATA_LEN_RANGE,
             "CBC buffered input wiped after a rejected C_DecryptFinal");
         cbc_buffered_scrub_test(CKM_AES_CBC_PAD, 1, 1, CKR_OK,
             "CBC-PAD buffered block wiped after C_DecryptFinal");

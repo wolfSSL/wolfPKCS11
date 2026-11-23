@@ -4192,6 +4192,9 @@ CK_RV C_EncryptInit(CK_SESSION_HANDLE hSession,
  *          CKR_ARGUMENTS_BAD when pData or pulEncryptedDataLen is NULL.
  *          CKR_OPERATION_NOT_INITIALIZED when C_EncryptInit has not been
  *          successfully called.
+ *          CKR_DATA_LEN_RANGE when the data length is not valid for the
+ *          mechanism.
+ *          CKR_DATA_INVALID when raw RSA input is not below the modulus.
  *          CKR_BUFFER_TOO_SMALL when the output length is too small for
  *          encrypted data.
  *          CKR_FUNCTION_FAILED when encrypting failed.
@@ -4207,6 +4210,9 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
     WP11_Object* obj = NULL;
     word32 encDataLen;
     CK_MECHANISM_TYPE mechanism;
+#if !defined(NO_RSA) && !defined(WC_NO_RSA_OAEP)
+    int hashLen;
+#endif
 
     WOLFPKCS11_ENTER("C_Encrypt");
     #ifdef DEBUG_WOLFPKCS11
@@ -4256,6 +4262,10 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 WP11_Session_AbortOp(session);
                 return CKR_FUNCTION_FAILED;
             }
+            if (ulDataLen == 0 || ulDataLen > (CK_ULONG)encDataLen) {
+                WP11_Session_AbortOp(session);
+                return CKR_DATA_LEN_RANGE;
+            }
             if (pEncryptedData == NULL) {
                 *pulEncryptedDataLen = encDataLen;
                 return CKR_OK;
@@ -4268,6 +4278,10 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             ret = WP11_Rsa_PublicEncrypt(pData, (int)ulDataLen, pEncryptedData,
                                                  &encDataLen, obj,
                                                  WP11_Session_GetSlot(session));
+            if (ret == RSA_OUT_OF_RANGE_E) {
+                WP11_Session_AbortOp(session);
+                return CKR_DATA_INVALID;
+            }
             if (ret < 0)
                 break;
             *pulEncryptedDataLen = encDataLen;
@@ -4284,6 +4298,11 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             if (encDataLen == 0) {
                 WP11_Session_AbortOp(session);
                 return CKR_FUNCTION_FAILED;
+            }
+            if (ulDataLen == 0 || encDataLen < (word32)RSA_MIN_PAD_SZ ||
+                    ulDataLen > (CK_ULONG)(encDataLen - RSA_MIN_PAD_SZ)) {
+                WP11_Session_AbortOp(session);
+                return CKR_DATA_LEN_RANGE;
             }
             if (pEncryptedData == NULL) {
                 *pulEncryptedDataLen = encDataLen;
@@ -4316,6 +4335,16 @@ static CK_RV wp11_C_Encrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             if (encDataLen == 0) {
                 WP11_Session_AbortOp(session);
                 return CKR_FUNCTION_FAILED;
+            }
+            hashLen = WP11_Session_GetOaepHashLen(session);
+            if (hashLen < 0) {
+                WP11_Session_AbortOp(session);
+                return CKR_FUNCTION_FAILED;
+            }
+            if (ulDataLen == 0 || encDataLen < (word32)(2 * hashLen + 2) ||
+                    ulDataLen > (CK_ULONG)(encDataLen - 2 * hashLen - 2)) {
+                WP11_Session_AbortOp(session);
+                return CKR_DATA_LEN_RANGE;
             }
             if (pEncryptedData == NULL) {
                 *pulEncryptedDataLen = encDataLen;
@@ -5459,6 +5488,9 @@ CK_RV C_DecryptInit(CK_SESSION_HANDLE hSession,
  *          CKR_ARGUMENTS_BAD when pEncryptedData or pulDataLen is NULL.
  *          CKR_OPERATION_NOT_INITIALIZED when C_DecryptInit has not been
  *          successfully called.
+ *          CKR_ENCRYPTED_DATA_LEN_RANGE when the encrypted data length is not
+ *          valid for the mechanism.
+ *          CKR_ENCRYPTED_DATA_INVALID when the encrypted data is not valid.
  *          CKR_BUFFER_TOO_SMALL when the output length is too small for
  *          decrypted data.
  *          CKR_FUNCTION_FAILED when decrypting failed.
@@ -5518,6 +5550,10 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 WP11_Session_AbortOp(session);
                 return CKR_FUNCTION_FAILED;
             }
+            if (ulEncryptedDataLen != (CK_ULONG)decDataLen) {
+                WP11_Session_AbortOp(session);
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
+            }
             if (pData == NULL) {
                 *pulDataLen = decDataLen;
                 return CKR_OK;
@@ -5547,6 +5583,10 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
             if (decDataLen == 0) {
                 WP11_Session_AbortOp(session);
                 return CKR_FUNCTION_FAILED;
+            }
+            if (ulEncryptedDataLen != (CK_ULONG)decDataLen) {
+                WP11_Session_AbortOp(session);
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
             }
             if (pData == NULL) {
                 *pulDataLen = decDataLen;
@@ -5581,6 +5621,10 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 WP11_Session_AbortOp(session);
                 return CKR_FUNCTION_FAILED;
             }
+            if (ulEncryptedDataLen != (CK_ULONG)decDataLen) {
+                WP11_Session_AbortOp(session);
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
+            }
             if (pData == NULL) {
                 *pulDataLen = decDataLen;
                 return CKR_OK;
@@ -5606,7 +5650,7 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 return CKR_OPERATION_NOT_INITIALIZED;
             if (!CK_ULONG_FITS_WORD32(ulEncryptedDataLen)) {
                 WP11_Session_AbortOp(session);
-                return CKR_DATA_LEN_RANGE;
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
             }
             if ((ulEncryptedDataLen % AES_BLOCK_SIZE) != 0) {
                 WP11_AesCbc_DecryptFinal(session);
@@ -5637,7 +5681,7 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
             }
             if (!CK_ULONG_FITS_WORD32(ulEncryptedDataLen)) {
                 WP11_Session_AbortOp(session);
-                return CKR_DATA_LEN_RANGE;
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
             }
 
             decDataLen = (word32)ulEncryptedDataLen;
@@ -5698,7 +5742,7 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
             ret = WP11_AesCtr_Do(pEncryptedData,
                     (word32)ulEncryptedDataLen, pData, &decDataLen, session);
             if (ret == WP11_CTR_OVERFLOW_E)
-                return CKR_DATA_LEN_RANGE;
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
             if (ret != 0)
                 break;
             *pulDataLen = decDataLen;
@@ -5708,6 +5752,10 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
         case CKM_AES_GCM:
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_GCM_DEC))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            if (!CK_ULONG_FITS_WORD32(ulEncryptedDataLen)) {
+                WP11_Session_AbortOp(session);
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
+            }
 
             if (ulEncryptedDataLen < (CK_ULONG)WP11_AesGcm_GetTagBits(session) / 8) {
                 WP11_Session_AbortOp(session);
@@ -5735,6 +5783,10 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
         case CKM_AES_CCM:
             if (!WP11_Session_IsOpInitialized(session, WP11_INIT_AES_CCM_DEC))
                 return CKR_OPERATION_NOT_INITIALIZED;
+            if (!CK_ULONG_FITS_WORD32(ulEncryptedDataLen)) {
+                WP11_Session_AbortOp(session);
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
+            }
 
             if (ulEncryptedDataLen < (CK_ULONG)WP11_AesCcm_GetMacLen(session)) {
                 WP11_Session_AbortOp(session);
@@ -5764,7 +5816,7 @@ static CK_RV wp11_C_Decrypt(CK_SESSION_HANDLE hSession,
                 return CKR_OPERATION_NOT_INITIALIZED;
             if (!CK_ULONG_FITS_WORD32(ulEncryptedDataLen)) {
                 WP11_Session_AbortOp(session);
-                return CKR_DATA_LEN_RANGE;
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
             }
             if ((ulEncryptedDataLen % AES_BLOCK_SIZE) != 0) {
                 WP11_Session_AbortOp(session);
@@ -5933,6 +5985,8 @@ CK_RV C_Decrypt(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
  *          CKR_ARGUMENTS_BAD when pEncryptedData or pulDataLen is NULL.
  *          CKR_OPERATION_NOT_INITIALIZED when C_DecryptInit has not been
  *          successfully called.
+ *          CKR_ENCRYPTED_DATA_LEN_RANGE when the encrypted data length is not
+ *          valid for the mechanism.
  *          CKR_BUFFER_TOO_SMALL when the output length is too small for
  *          decrypted data.
  *          CKR_FUNCTION_FAILED when decrypting failed.
@@ -5981,7 +6035,7 @@ static CK_RV wp11_C_DecryptUpdate(CK_SESSION_HANDLE hSession,
                 return CKR_OPERATION_NOT_INITIALIZED;
             if (!CK_ULONG_FITS_WORD32(ulEncryptedPartLen)) {
                 WP11_Session_AbortOp(session);
-                return CKR_DATA_LEN_RANGE;
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
             }
 
             decPartLen = (word32)ulEncryptedPartLen +
@@ -6012,7 +6066,7 @@ static CK_RV wp11_C_DecryptUpdate(CK_SESSION_HANDLE hSession,
             }
             if (!CK_ULONG_FITS_WORD32(ulEncryptedPartLen)) {
                 WP11_Session_AbortOp(session);
-                return CKR_DATA_LEN_RANGE;
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
             }
 
             decPartLen = (word32)ulEncryptedPartLen +
@@ -6100,7 +6154,7 @@ static CK_RV wp11_C_DecryptUpdate(CK_SESSION_HANDLE hSession,
                                      pPart, &decPartLen, session);
             if (ret == WP11_CTR_OVERFLOW_E) {
                 WP11_AesCtr_Final(session);
-                return CKR_DATA_LEN_RANGE;
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
             }
             if (ret < 0) {
                 WP11_Session_AbortOp(session);
@@ -6202,6 +6256,8 @@ CK_RV C_DecryptUpdate(CK_SESSION_HANDLE hSession,
  *          CKR_ARGUMENTS_BAD when pulLastPartLen is NULL.
  *          CKR_OPERATION_NOT_INITIALIZED when C_DecryptInit has not been
  *          successfully called.
+ *          CKR_ENCRYPTED_DATA_LEN_RANGE when the encrypted data is not a
+ *          whole number of blocks.
  *          CKR_BUFFER_TOO_SMALL when the output length is too small for
  *          decrypted data.
  *          CKR_FUNCTION_FAILED when decrypting failed.
@@ -6252,7 +6308,7 @@ static CK_RV wp11_C_DecryptFinal(CK_SESSION_HANDLE hSession,
             if (decPartLen != 0) {
                 WP11_AesCbc_DecryptFinal(session);
                 WP11_Session_SetOpInitialized(session, 0);
-                return CKR_DATA_LEN_RANGE;
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
             }
             *pulLastPartLen = 0;
             if (pLastPart == NULL)
@@ -6274,7 +6330,7 @@ static CK_RV wp11_C_DecryptFinal(CK_SESSION_HANDLE hSession,
             if (decPartLen != 16) {
                 WP11_AesCbc_DecryptFinal(session);
                 WP11_Session_SetOpInitialized(session, 0);
-                return CKR_DATA_LEN_RANGE;
+                return CKR_ENCRYPTED_DATA_LEN_RANGE;
             }
             if (pLastPart == NULL) {
                 /* Size query: report the maximum possible unpadded size. */
@@ -7503,6 +7559,9 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
  *          CKR_ARGUMENTS_BAD when pData or pulSignatureLen is NULL.
  *          CKR_OPERATION_NOT_INITIALIZED when C_SignInit has not been
  *          successfully called.
+ *          CKR_DATA_LEN_RANGE when the data length is not valid for the
+ *          mechanism.
+ *          CKR_DATA_INVALID when raw RSA input is not below the modulus.
  *          CKR_BUFFER_TOO_SMALL when the output length is too small for
  *          signature data.
  *          CKR_FUNCTION_FAILED when signing fails.
@@ -7564,6 +7623,10 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
                 WP11_Session_AbortOp(session);
                 return CKR_FUNCTION_FAILED;
             }
+            if (ulDataLen == 0 || ulDataLen > (CK_ULONG)sigLen) {
+                WP11_Session_AbortOp(session);
+                return CKR_DATA_LEN_RANGE;
+            }
             if (pSignature == NULL) {
                 *pulSignatureLen = sigLen;
                 return CKR_OK;
@@ -7575,6 +7638,10 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 
             ret = WP11_Rsa_Sign(pData, (int)ulDataLen, pSignature, &sigLen, obj,
                                                  WP11_Session_GetSlot(session));
+            if (ret == RSA_OUT_OF_RANGE_E) {
+                WP11_Session_AbortOp(session);
+                return CKR_DATA_INVALID;
+            }
             *pulSignatureLen = sigLen;
             break;
     #endif
@@ -7608,6 +7675,12 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             if (sigLen == 0) {
                 WP11_Session_AbortOp(session);
                 return CKR_FUNCTION_FAILED;
+            }
+            if (hash_type == WC_HASH_TYPE_NONE &&
+                    (ulDataLen == 0 || sigLen < (word32)RSA_MIN_PAD_SZ ||
+                     ulDataLen > (CK_ULONG)(sigLen - RSA_MIN_PAD_SZ))) {
+                WP11_Session_AbortOp(session);
+                return CKR_DATA_LEN_RANGE;
             }
             if (pSignature == NULL) {
                 *pulSignatureLen = sigLen;
@@ -7669,6 +7742,12 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
             if (sigLen == 0) {
                 WP11_Session_AbortOp(session);
                 return CKR_FUNCTION_FAILED;
+            }
+            if (hash_type == WC_HASH_TYPE_NONE &&
+                    ulDataLen !=
+                    (CK_ULONG)WP11_Session_GetPssHashLen(session)) {
+                WP11_Session_AbortOp(session);
+                return CKR_DATA_LEN_RANGE;
             }
             if (pSignature == NULL) {
                 *pulSignatureLen = sigLen;

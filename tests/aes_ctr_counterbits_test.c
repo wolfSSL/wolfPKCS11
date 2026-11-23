@@ -359,7 +359,18 @@ static int test_ctr_overflow(CK_SESSION_HANDLE session, CK_OBJECT_HANDLE key)
     outSz = 17;
     ret = funcList->C_Decrypt(session, in, 17, out, &outSz);
     CHECK_CKR(ret, "C_Decrypt rejects maximum counter overflow",
-              CKR_DATA_LEN_RANGE);
+              CKR_ENCRYPTED_DATA_LEN_RANGE);
+
+    ctr_mech_init(&mech, &ctrParams, 1);
+    ret = funcList->C_DecryptInit(session, &mech, key);
+    CHECK_CKR(ret, "C_DecryptInit multipart ulCounterBits=1", CKR_OK);
+    outSz = 32;
+    ret = funcList->C_DecryptUpdate(session, in, 32, out, &outSz);
+    CHECK_CKR(ret, "C_DecryptUpdate consumes both counters", CKR_OK);
+    outSz = 1;
+    ret = funcList->C_DecryptUpdate(session, in + 32, 1, out + 32, &outSz);
+    CHECK_CKR(ret, "C_DecryptUpdate rejects exhausted counter",
+              CKR_ENCRYPTED_DATA_LEN_RANGE);
 
 cleanup:
     return result;

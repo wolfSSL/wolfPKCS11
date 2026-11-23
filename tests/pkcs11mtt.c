@@ -4998,7 +4998,7 @@ static CK_RV test_aes_cbc_update(CK_SESSION_HANDLE session, unsigned char* exp,
     if (ret == CKR_OK) {
         decSz = sizeof(dec);
         ret = funcList->C_DecryptFinal(session, dec, &decSz);
-        CHECK_CKR_FAIL(ret, CKR_DATA_LEN_RANGE,
+        CHECK_CKR_FAIL(ret, CKR_ENCRYPTED_DATA_LEN_RANGE,
                                        "AES-CBC Decrypt Final less than block");
     }
 
