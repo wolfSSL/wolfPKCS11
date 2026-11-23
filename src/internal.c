@@ -810,6 +810,19 @@ static void wp11_Session_FreeSignHash(WP11_Session* session)
     }
 }
 
+#ifndef NO_AES
+/**
+ * Free the AES object and zeroize it.
+ *
+ * @param  aes  [in]  AES object.
+ */
+static WC_MAYBE_UNUSED void wp11_AesFree(Aes* aes)
+{
+    wc_AesFree(aes);
+    wc_ForceZero(aes, sizeof(*aes));
+}
+#endif
+
 /**
  * Release the resources owned by the session's current operation and mark no
  * operation as initialized.
@@ -4507,6 +4520,7 @@ static int wp11_EncryptData(byte* out, byte* data, int len, byte* key,
     Aes aes;
     int ret;
 
+    XMEMSET(&aes, 0, sizeof(aes));
     ret = wc_AesInit(&aes, NULL, devId);
     if (ret == 0) {
         ret = wc_AesGcmSetKey(&aes, key, keySz);
@@ -4515,7 +4529,7 @@ static int wp11_EncryptData(byte* out, byte* data, int len, byte* key,
         ret = wc_AesGcmEncrypt(&aes, out, data, len, iv, ivSz, out + len,
                                                     AES_BLOCK_SIZE, aad, aadSz);
     }
-    wc_AesFree(&aes);
+    wp11_AesFree(&aes);
 
     return ret;
 }
@@ -4545,6 +4559,7 @@ static int wp11_DecryptData(byte* out, byte* data, int len, byte* key,
     Aes aes;
     int ret;
 
+    XMEMSET(&aes, 0, sizeof(aes));
     ret = wc_AesInit(&aes, NULL, devId);
     if (ret == 0) {
         ret = wc_AesGcmSetKey(&aes, key, keySz);
@@ -4553,7 +4568,7 @@ static int wp11_DecryptData(byte* out, byte* data, int len, byte* key,
         ret = wc_AesGcmDecrypt(&aes, out, data, len, iv, ivSz, data + len,
                                                     AES_BLOCK_SIZE, aad, aadSz);
     }
-    wc_AesFree(&aes);
+    wp11_AesFree(&aes);
 
     return ret;
 }
@@ -12710,7 +12725,7 @@ int WP11_Session_SetCbcParams(WP11_Session* session, unsigned char* iv,
     }
 
     if (ret != 0 && aesInit)
-        wc_AesFree(&cbc->aes);
+        wp11_AesFree(&cbc->aes);
 
     return ret;
 }
@@ -12754,7 +12769,7 @@ int WP11_Session_SetCtrParams(WP11_Session* session, CK_ULONG ulCounterBits,
         if (object->lock != NULL)
             WP11_Lock_UnlockRO(object->lock);
         if (ret != 0)
-            wc_AesFree(&ctr->aes);
+            wp11_AesFree(&ctr->aes);
     }
     if (ret == 0) {
         XMEMCPY(ctr->counter, cb, sizeof(ctr->counter));
@@ -12788,7 +12803,7 @@ int WP11_Session_SetAesWrapParams(WP11_Session* session, byte* iv, word32 ivLen,
         if (object->lock != NULL)
             WP11_Lock_UnlockRO(object->lock);
         if (ret != 0)
-            wc_AesFree(&wrap->aes);
+            wp11_AesFree(&wrap->aes);
     }
     if (ret == 0) {
         if (iv != NULL)
@@ -12961,7 +12976,7 @@ int WP11_Session_SetCtsParams(WP11_Session* session, unsigned char* iv,
         if (object->lock != NULL)
             WP11_Lock_UnlockRO(object->lock);
         if (ret != 0)
-            wc_AesFree(&cts->aes);
+            wp11_AesFree(&cts->aes);
     }
 
     return ret;
@@ -21378,7 +21393,7 @@ int WP11_AesCbc_DeriveKey(unsigned char* plain, word32 plainSz,
     }
     if (ret == 0)
         ret = wc_AesCbcEncrypt(&aes, enc, plain, plainSz);
-    wc_AesFree(&aes);
+    wp11_AesFree(&aes);
 
     return ret;
 }
@@ -21408,7 +21423,7 @@ int WP11_AesCbc_Encrypt(unsigned char* plain, word32 plainSz,
     if (ret == 0)
         *encSz = plainSz;
 
-    wc_AesFree(&cbc->aes);
+    wp11_AesFree(&cbc->aes);
     session->init = 0;
 
     return ret;
@@ -21503,7 +21518,7 @@ int WP11_AesCbc_EncryptFinal(WP11_Session* session)
     int ret = 0;
     WP11_CbcParams* cbc = &session->params.cbc;
 
-    wc_AesFree(&cbc->aes);
+    wp11_AesFree(&cbc->aes);
     wc_ForceZero(cbc->partial, sizeof(cbc->partial));
     cbc->partialSz = 0;
     session->init = 0;
@@ -21535,7 +21550,7 @@ int WP11_AesCbc_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
     if (ret == 0)
         *decSz = encSz;
 
-    wc_AesFree(&cbc->aes);
+    wp11_AesFree(&cbc->aes);
     session->init = 0;
 
     return ret;
@@ -21624,7 +21639,7 @@ int WP11_AesCbc_DecryptFinal(WP11_Session* session)
     int ret = 0;
     WP11_CbcParams* cbc = &session->params.cbc;
 
-    wc_AesFree(&cbc->aes);
+    wp11_AesFree(&cbc->aes);
     wc_ForceZero(cbc->partial, sizeof(cbc->partial));
     cbc->partialSz = 0;
     session->init = 0;
@@ -21712,7 +21727,7 @@ int WP11_AesCbcPad_EncryptFinal(unsigned char* enc, word32* encSz,
     if (ret == 0)
         *encSz = AES_BLOCK_SIZE;
 
-    wc_AesFree(&cbc->aes);
+    wp11_AesFree(&cbc->aes);
     wc_ForceZero(cbc->partial, sizeof(cbc->partial));
     cbc->partialSz = 0;
     session->init = 0;
@@ -21979,7 +21994,7 @@ int WP11_AesCbcPad_DecryptFinal(unsigned char* dec, word32* decSz,
         *decSz = outSz;
     }
 
-    wc_AesFree(&cbc->aes);
+    wp11_AesFree(&cbc->aes);
     wc_ForceZero(cbc->partial, sizeof(cbc->partial));
     wc_ForceZero(cbc->final, sizeof(cbc->final));
     cbc->partialSz = 0;
@@ -22067,7 +22082,7 @@ int WP11_AesCtr_Do(unsigned char* in, word32 inSz, unsigned char* out,
 
     ret = WP11_AesCtr_Update(in, inSz, out, outSz, session);
 
-    wc_AesFree(&ctr->aes);
+    wp11_AesFree(&ctr->aes);
     session->init = 0;
     return ret;
 }
@@ -22202,7 +22217,7 @@ int WP11_AesGcm_Encrypt(unsigned char* plain, word32 plainSz,
             gcm->aad = NULL;
         }
 
-        wc_AesFree(&aes);
+        wp11_AesFree(&aes);
     }
 
     return ret;
@@ -22286,7 +22301,7 @@ int WP11_AesGcm_EncryptUpdate(unsigned char* plain, word32 plainSz,
             if (secret->lock != NULL)
                 WP11_Lock_UnlockRO(secret->lock);
             if (ret != 0)
-                wc_AesFree(&gcm->aes);
+                wp11_AesFree(&gcm->aes);
         }
         if (ret != 0)
             return ret;
@@ -22352,7 +22367,7 @@ int WP11_AesGcm_EncryptUpdate(unsigned char* plain, word32 plainSz,
             *encSz = plainSz;
         }
 
-        wc_AesFree(&aes);
+        wp11_AesFree(&aes);
     }
 
     XFREE(fullEnc, NULL, DYNAMIC_TYPE_TMP_BUFFER);
@@ -22401,7 +22416,7 @@ int WP11_AesGcm_EncryptFinal(unsigned char* enc, word32* encSz,
                 if (secret->lock != NULL)
                     WP11_Lock_UnlockRO(secret->lock);
                 if (ret != 0)
-                    wc_AesFree(&gcm->aes);
+                    wp11_AesFree(&gcm->aes);
             }
             if (ret == 0) {
                 gcm->streamInit = 1;
@@ -22415,7 +22430,7 @@ int WP11_AesGcm_EncryptFinal(unsigned char* enc, word32* encSz,
             *encSz = authTagSz;
 
         if (gcm->streamInit) {
-            wc_AesFree(&gcm->aes);
+            wp11_AesFree(&gcm->aes);
             gcm->streamInit = 0;
         }
     }
@@ -22448,7 +22463,7 @@ int WP11_AesGcm_EncryptFinal(unsigned char* enc, word32* encSz,
             if (ret == 0)
                 *encSz = authTagSz;
 
-            wc_AesFree(&aes);
+            wp11_AesFree(&aes);
         }
     }
 
@@ -22523,7 +22538,7 @@ int WP11_AesGcm_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
             gcm->aad = NULL;
         }
 
-        wc_AesFree(&aes);
+        wp11_AesFree(&aes);
     }
 
     return ret;
@@ -22687,7 +22702,7 @@ int WP11_AesCcm_Encrypt(unsigned char* plain, word32 plainSz,
             ccm->aadSz = 0;
         }
 
-        wc_AesFree(&aes);
+        wp11_AesFree(&aes);
     }
 
     return ret;
@@ -22746,7 +22761,7 @@ int WP11_AesCcm_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
             ccm->aadSz = 0;
         }
 
-        wc_AesFree(&aes);
+        wp11_AesFree(&aes);
     }
 
     return ret;
@@ -22787,10 +22802,8 @@ static int wp11_AesEcb_SetKey(Aes* aes, WP11_Object* secret, int dir)
         if (secret->lock != NULL)
             WP11_Lock_UnlockRO(secret->lock);
     }
-    if (ret != 0) {
-        wc_AesFree(aes);
-        wc_ForceZero(aes, sizeof(*aes));
-    }
+    if (ret != 0)
+        wp11_AesFree(aes);
 
     return ret;
 }
@@ -22823,9 +22836,8 @@ int WP11_AesEcb_Encrypt(unsigned char* plain, word32 plainSz,
         if (ret == 0)
             *encSz = plainSz;
 
-        wc_AesFree(&aes);
+        wp11_AesFree(&aes);
     }
-    wc_ForceZero(&aes, sizeof(aes));
 
     (void)session;
     return ret;
@@ -22859,9 +22871,8 @@ int WP11_AesEcb_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
             *decSz = encSz;
         }
 
-        wc_AesFree(&aes);
+        wp11_AesFree(&aes);
     }
-    wc_ForceZero(&aes, sizeof(aes));
 
     (void)session;
     return ret;
@@ -22966,8 +22977,7 @@ int WP11_AesEcb_Update(unsigned char* in, word32 inSz, unsigned char* out,
     if (ret == 0)
         *outSz = total + sz;
     WP11_Lock_UnlockRW(&session->slot->lock);
-    wc_AesFree(&aes);
-    wc_ForceZero(&aes, sizeof(aes));
+    wp11_AesFree(&aes);
     wc_ForceZero(tail, sizeof(tail));
 
     return ret;
@@ -22983,7 +22993,7 @@ int WP11_AesKeyWrap_Encrypt(unsigned char* plain, word32 plainSz,
 
     ret = wc_AesKeyWrap_ex(&wrap->aes, plain, plainSz, enc, *encSz,
             wrap->ivSz != 0 ? wrap->iv : NULL);
-    wc_AesFree(&wrap->aes);
+    wp11_AesFree(&wrap->aes);
     session->init = 0;
     if (ret < 0)
         return ret;
@@ -22999,7 +23009,7 @@ int WP11_AesKeyWrap_Decrypt(unsigned char* enc, word32 encSz,
 
     ret = wc_AesKeyUnWrap_ex(&wrap->aes, enc, encSz, dec, *decSz,
             wrap->ivSz != 0 ? wrap->iv : NULL);
-    wc_AesFree(&wrap->aes);
+    wp11_AesFree(&wrap->aes);
     session->init = 0;
     if (ret < 0)
         return ret;
@@ -23158,7 +23168,7 @@ int WP11_AesKeyWrapPad_Encrypt(unsigned char* plain, word32 plainSz,
         wc_ForceZero(buf, padded);
         XFREE(buf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     }
-    wc_AesFree(&wrap->aes);
+    wp11_AesFree(&wrap->aes);
     session->init = 0;
     return ret;
 }
@@ -23234,7 +23244,7 @@ int WP11_AesKeyWrapPad_Decrypt(unsigned char* enc, word32 encSz,
     wc_ForceZero(padBuf, paddedSz);
     XFREE(padBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     if (ret != BUFFER_E) {
-        wc_AesFree(&wrap->aes);
+        wp11_AesFree(&wrap->aes);
         session->init = 0;
     }
     return ret;
@@ -23273,7 +23283,7 @@ int WP11_AesCts_Encrypt(unsigned char* plain, word32 plainSz,
     if (ret == 0)
         *encSz = outSz + tmpSz;
 
-    wc_AesFree(&cts->aes);
+    wp11_AesFree(&cts->aes);
     session->init = 0;
     return ret;
 }
@@ -23317,7 +23327,7 @@ int WP11_AesCts_EncryptFinal(unsigned char* enc, word32* encSz,
     ret = wc_AesCtsEncryptFinal(&cts->aes, enc, encSz);
     /* A short buffer leaves the state untouched so the caller can retry. */
     if (ret != BUFFER_E) {
-        wc_AesFree(&cts->aes);
+        wp11_AesFree(&cts->aes);
         session->init = 0;
     }
 
@@ -23354,7 +23364,7 @@ int WP11_AesCts_Decrypt(unsigned char* enc, word32 encSz, unsigned char* dec,
     if (ret == 0)
         *decSz = outSz + tmpSz;
 
-    wc_AesFree(&cts->aes);
+    wp11_AesFree(&cts->aes);
     session->init = 0;
     return ret;
 }
@@ -23399,7 +23409,7 @@ int WP11_AesCts_DecryptFinal(unsigned char* dec, word32* decSz,
     ret = wc_AesCtsDecryptFinal(&cts->aes, dec, decSz);
     /* A short buffer leaves the state untouched so the caller can retry. */
     if (ret != BUFFER_E) {
-        wc_AesFree(&cts->aes);
+        wp11_AesFree(&cts->aes);
         session->init = 0;
     }
 
