@@ -19069,6 +19069,7 @@ static CK_RV test_derive_tls12_master_key(void* args) {
 
     return ret;
 }
+#endif
 #ifdef WOLFPKCS11_NSS
 /* Test creating a CKO_NSS_TRUST object and verifying its attributes */
 static CK_RV test_nss_trust_object(void* args)
@@ -19262,7 +19263,9 @@ static CK_RV test_nss_trust_object(void* args)
 
     return ret;
 }
+#endif
 
+#if defined(WOLFSSL_HAVE_PRF) && defined(WOLFPKCS11_NSS)
 static CK_RV test_nss_derive_tls12_master_key(void* args) {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     CK_RV ret;
@@ -19383,7 +19386,9 @@ static CK_RV test_nss_derive_tls12_master_key(void* args) {
 
     return ret;
 }
+#endif
 
+#ifdef WOLFPKCS11_NSS
 /* Test CKA_NSS_EMAIL attribute for certificate objects */
 static CK_RV test_nss_email_attribute(void* args)
 {
@@ -19464,7 +19469,6 @@ static CK_RV test_nss_email_attribute(void* args)
 
     return ret;
 }
-#endif
 #endif
 
 static CK_RV pkcs11_lib_init(void)
@@ -21464,9 +21468,12 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_derive_tls12_key_and_mac_class),
     PKCS11TEST_FUNC_SESS_DECL(test_derive_tls12_master_key),
 #ifdef WOLFPKCS11_NSS
+    PKCS11TEST_FUNC_SESS_DECL(test_nss_derive_tls12_master_key),
+#endif
+#endif
+#ifdef WOLFPKCS11_NSS
     PKCS11TEST_FUNC_SESS_DECL(test_nss_trust_object),
     PKCS11TEST_FUNC_SESS_DECL(test_nss_trust_object_token_storage),
-    PKCS11TEST_FUNC_SESS_DECL(test_nss_derive_tls12_master_key),
     PKCS11TEST_FUNC_SESS_DECL(test_nss_email_attribute),
 #ifndef NO_HMAC
     PKCS11TEST_FUNC_SESS_DECL(test_nss_pkcs12_pbe_sha224_hmac_key_gen),
@@ -21474,7 +21481,6 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_nss_pkcs12_pbe_sha384_hmac_key_gen),
     PKCS11TEST_FUNC_SESS_DECL(test_nss_pkcs12_pbe_sha512_hmac_key_gen),
     PKCS11TEST_FUNC_SESS_DECL(test_nss_pkcs12_pbe_key_sizes),
-#endif
 #endif
 #endif
 #ifndef NO_HMAC
