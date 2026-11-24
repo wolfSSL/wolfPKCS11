@@ -501,6 +501,12 @@ static void Rng_Free(WC_RNG* rng)
     wc_FreeRng(rng);
 }
 
+/* Make a private RNG seeded from the token RNG of a slot. */
+int wp11_Slot_NewRng(WP11_Slot* slot, WC_RNG* rng)
+{
+    return Rng_New(&slot->token.rng, &slot->token.rngLock, rng);
+}
+
 
 /**
  * Allocate and initialize a new session.
@@ -989,6 +995,18 @@ WP11_API void WP11_Test_TpmStoreShortBy(int bytes)
 {
     tpmStoreShortBy = bytes;
 }
+
+static int tpmStoreOpenRc = 0;
+
+/**
+ * Test hook: fail every NV index open for reading with the given TPM code.
+ *
+ * @param  rc  [in]  TPM response code, or 0 to disable the hook.
+ */
+WP11_API void WP11_Test_TpmStoreOpenRc(int rc)
+{
+    tpmStoreOpenRc = rc;
+}
 #endif
 
 /**
@@ -1108,6 +1126,9 @@ static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
         case WOLFPKCS11_STORE_MLKEMKEY_PRIV:
         case WOLFPKCS11_STORE_MLKEMKEY_PUB:
         case WOLFPKCS11_STORE_HSSKEY_PUB:
+    #ifdef WOLFPKCS11_LMS_PRIVATE
+        case WOLFPKCS11_STORE_HSSKEY_PRIV:
+    #endif
         case WOLFPKCS11_STORE_XMSSKEY_PUB:
             maxSz = sizeof(word32) + variableSz;
             break;
@@ -1169,9 +1190,20 @@ typedef struct WP11_FileStoreCtx {
     XFILE file;
     int   is_write;
     int   has_temp;
+    int   durable;   /* Committed at close, never staged in a store batch */
     char  final_name[WP11_STORE_MAX_PATH];
     char  temp_name[WP11_STORE_MAX_PATH];
 } WP11_FileStoreCtx;
+
+#ifdef WOLFPKCS11_STATEFUL_SIG_PRIVATE
+/* Call after the store is opened for write, before writing. */
+void wp11_storage_set_durable(void* store, int durable)
+{
+    WP11_FileStoreCtx* ctx = (WP11_FileStoreCtx*)store;
+    if (ctx != NULL)
+        ctx->durable = durable ? 1 : 0;
+}
+#endif
 
 static void wolfPKCS11_StoreAbortTemp(WP11_FileStoreCtx* ctx)
 {
@@ -1184,6 +1216,7 @@ static void wolfPKCS11_StoreAbortTemp(WP11_FileStoreCtx* ctx)
 #if defined(DEBUG_WOLFPKCS11) && !defined(_WIN32) && !defined(_MSC_VER)
 static int wp11_storeExitAfter = 0;
 static int wp11_storeCloseFailAfter = -1;
+static int wp11_storeDirSyncEinval = 0;
 
 /**
  * Test hook: end the process right after the given number of store renames,
@@ -1205,6 +1238,17 @@ WP11_API void WP11_Test_StoreExitAfterRenames(int renames)
 WP11_API void WP11_Test_StoreCloseFailAfter(int closes)
 {
     wp11_storeCloseFailAfter = closes;
+}
+
+/**
+ * Test hook: make every directory flush fail with EINVAL, as on a filesystem
+ * without directory flushing.
+ *
+ * @param  on  [in]  Non-zero to enable the hook, 0 to disable it.
+ */
+WP11_API void WP11_Test_StoreDirSyncEinval(int on)
+{
+    wp11_storeDirSyncEinval = on;
 }
 #endif
 
@@ -1264,28 +1308,38 @@ static int wolfPKCS11_StoreSyncFile(XFILE file)
  * Make the renames done in a store directory durable. Windows has no
  * directory flush; its renames are done write-through instead.
  *
- * @param [in]  dir  Store directory.
+ * @param [in]  dir     Store directory.
+ * @param [in]  strict  Fail on filesystems without directory flushing.
  * @return  0 on success.
  * @return  READ_ONLY_E when the directory could not be flushed.
  */
-static int wolfPKCS11_StoreSyncDir(const char* dir)
+static int wolfPKCS11_StoreSyncDir(const char* dir, int strict)
 {
     int ret = 0;
 #if !defined(_WIN32) && !defined(_MSC_VER)
     int fd;
+    int rc;
 
     fd = open(dir, O_RDONLY);
     if (fd < 0) {
         ret = READ_ONLY_E;
     }
     else {
+        rc = fsync(fd);
+    #ifdef DEBUG_WOLFPKCS11
+        if (wp11_storeDirSyncEinval) {
+            rc = -1;
+            errno = EINVAL;
+        }
+    #endif
         /* Filesystems without directory flushing answer EINVAL. */
-        if (fsync(fd) != 0 && errno != EINVAL)
+        if (rc != 0 && (strict || errno != EINVAL))
             ret = READ_ONLY_E;
         close(fd);
     }
 #else
     (void)dir;
+    (void)strict;
 #endif
 
     return ret;
@@ -1294,11 +1348,12 @@ static int wolfPKCS11_StoreSyncDir(const char* dir)
 /**
  * Make a rename of a store file durable by flushing its directory.
  *
- * @param [in]  name  Renamed store file.
+ * @param [in]  name    Renamed store file.
+ * @param [in]  strict  Fail on filesystems without directory flushing.
  * @return  0 on success.
  * @return  READ_ONLY_E when the directory could not be flushed.
  */
-static int wolfPKCS11_StoreSyncParent(const char* name)
+static int wolfPKCS11_StoreSyncParent(const char* name, int strict)
 {
     size_t len = XSTRLEN(name);
     size_t i;
@@ -1314,7 +1369,7 @@ static int wolfPKCS11_StoreSyncParent(const char* name)
     XMEMCPY(dir, name, sep);
     dir[sep] = '\0';
 
-    return wolfPKCS11_StoreSyncDir(dir);
+    return wolfPKCS11_StoreSyncDir(dir, strict);
 }
 
 static int wolfPKCS11_StoreCommitTemp(WP11_FileStoreCtx* ctx)
@@ -1328,7 +1383,7 @@ static int wolfPKCS11_StoreCommitTemp(WP11_FileStoreCtx* ctx)
     ret = wolfPKCS11_StoreRename(ctx->temp_name, ctx->final_name);
     if (ret == 0) {
         ctx->has_temp = 0;
-        ret = wolfPKCS11_StoreSyncParent(ctx->final_name);
+        ret = wolfPKCS11_StoreSyncParent(ctx->final_name, ctx->durable);
     }
 
     return ret;
@@ -1626,6 +1681,9 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
             break;
         case WOLFPKCS11_STORE_HSSKEY_PUB:
             kind = "hsskey_pub";
+            break;
+        case WOLFPKCS11_STORE_HSSKEY_PRIV:
+            kind = "hsskey_priv";
             break;
         case WOLFPKCS11_STORE_XMSSKEY_PUB:
             kind = "xmsskey_pub";
@@ -1976,7 +2034,7 @@ static int wolfPKCS11_StoreBatchRecover(void)
             WP11_BATCH_APPLY);
         /* The marker outlives the records it names until they are durable. */
         if (ret == 0)
-            ret = wolfPKCS11_StoreSyncDir(storeBatch.dir);
+            ret = wolfPKCS11_StoreSyncDir(storeBatch.dir, 0);
         if (ret == 0)
             (void)remove(storeBatch.commitName);
     }
@@ -2166,7 +2224,7 @@ static int wolfPKCS11_StoreBatchPurgeDone(int removed)
     byte flags = 0;
 
     if (removed)
-        ret = wolfPKCS11_StoreSyncDir(storeBatch.dir);
+        ret = wolfPKCS11_StoreSyncDir(storeBatch.dir, 0);
     if (ret == 0)
         ret = wolfPKCS11_StoreBatchGen(&gen, &flags);
     if (ret == 0 && removed && (flags & WP11_BATCH_PURGE)) {
@@ -2312,6 +2370,21 @@ static int wolfPKCS11_StoreStageTemp(WP11_FileStoreCtx* ctx)
 }
 
 /**
+ * Remove the copy of a record staged by a store pass that did not finish.
+ *
+ * @param [in]  finalName  Name of the record.
+ */
+static void wolfPKCS11_StoreDropStaged(const char* finalName)
+{
+    char stagedName[WP11_STORE_STAGED_MAX];
+    int len;
+
+    len = XSNPRINTF(stagedName, sizeof(stagedName), "%s.new", finalName);
+    if (len > 0 && len < (int)sizeof(stagedName))
+        (void)remove(stagedName);
+}
+
+/**
  * End a store pass. When committing, the intent becomes the commit marker and
  * the staged records are renamed into place; otherwise they are removed.
  * Once the marker exists the pass is committed and reported as such, and any
@@ -2350,7 +2423,7 @@ static int wolfPKCS11_StoreBatchEnd(int commit, WP11_Slot** held)
         }
         /* The staged records must be durable before the marker can be. */
         if (ret == 0 && commit)
-            ret = wolfPKCS11_StoreSyncDir(storeBatch.dir);
+            ret = wolfPKCS11_StoreSyncDir(storeBatch.dir, 0);
         /* Written before the marker so a committed pass is always counted. */
         if (ret == 0 && commit && storeBatch.genToken != NULL) {
             bumped = 1;
@@ -2367,10 +2440,10 @@ static int wolfPKCS11_StoreBatchEnd(int commit, WP11_Slot** held)
                 storeBatch.commitName);
         }
         if (ret == 0 && commit) {
-            (void)wolfPKCS11_StoreSyncDir(storeBatch.dir);
+            (void)wolfPKCS11_StoreSyncDir(storeBatch.dir, 0);
             if (wolfPKCS11_StoreBatchApply(storeBatch.commitName,
                     WP11_BATCH_APPLY) == 0 &&
-                    wolfPKCS11_StoreSyncDir(storeBatch.dir) == 0) {
+                    wolfPKCS11_StoreSyncDir(storeBatch.dir, 0) == 0) {
                 (void)remove(storeBatch.commitName);
             }
             if (bumped) {
@@ -2522,8 +2595,14 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
     if (ret == 0 && read) {
         /* Try and open handle */
         ret = wolfTPM2_NVOpen(tpmStore->dev, &tpmStore->nv, nvIndex, NULL, 0);
+    #ifdef DEBUG_WOLFPKCS11
+        if (tpmStoreOpenRc != 0)
+            ret = tpmStoreOpenRc;
+    #endif
         if (ret != 0) {
-            ret = NOT_AVAILABLE_E; /* read for handle that doesn't exist */
+            /* Only an NV index that does not exist is a missing record. */
+            ret = ((ret & RC_MAX_FMT1) == TPM_RC_HANDLE) ? NOT_AVAILABLE_E :
+                READ_ONLY_E;
         }
     }
     else if (ret == 0 && tpmNvIndexMax != 0 && (word32)maxSz > tpmNvIndexMax) {
@@ -2600,9 +2679,10 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
         }
 
         if (ret == 0 && read) {
+            errno = 0;
             ctx->file = XFOPEN(name, "rb");
             if (ctx->file == NULL) {
-                ret = NOT_AVAILABLE_E;
+                ret = (errno == ENOENT) ? NOT_AVAILABLE_E : READ_ONLY_E;
             }
         }
         else if (ret == 0) {
@@ -2797,6 +2877,9 @@ int wolfPKCS11_Store_CloseCommit(void* store, int commit)
 #else
     if (ctx != NULL) {
         int commitRet = 0;
+    #ifdef WP11_STORE_BATCH
+        int staged = 0;
+    #endif
 
         if (ctx->file != XBADFILE && ctx->file != NULL) {
             if (ctx->is_write && commit &&
@@ -2820,7 +2903,12 @@ int wolfPKCS11_Store_CloseCommit(void* store, int commit)
 
         if (ctx->is_write && ctx->has_temp && commit) {
         #ifdef WP11_STORE_BATCH
-            if (storeBatch.active)
+            staged = !ctx->durable && storeBatch.active;
+            /* An unfinished pass would otherwise rename its older copy over
+             * this one. */
+            if (ctx->durable)
+                wolfPKCS11_StoreDropStaged(ctx->final_name);
+            if (staged)
                 commitRet = wolfPKCS11_StoreStageTemp(ctx);
             else
         #endif
@@ -2828,7 +2916,7 @@ int wolfPKCS11_Store_CloseCommit(void* store, int commit)
             ret = commitRet;
             if (commitRet != 0) {
             #ifdef WP11_STORE_BATCH
-                if (storeBatch.active)
+                if (staged)
                     storeBatch.failed = 1;
             #endif
                 wolfPKCS11_StoreAbortTemp(ctx);
@@ -2896,16 +2984,22 @@ int wolfPKCS11_Store_Read(void* store, unsigned char* buffer, int len)
         if (ret == TPM_RC_NV_RANGE)
             ret = BUFFER_E;
         else {
-            /* log failure and make negative error code */
         #ifdef WOLFPKCS11_DEBUG_STORE
             printf("TPM NV Read Error 0x%x: %s\n", ret, wolfTPM2_GetRCString(ret));
         #endif
-            ret = -ret;
+            ret = READ_ONLY_E;
         }
     }
 #else
     if (ctx != NULL && ctx->file != XBADFILE && ctx->file != NULL) {
         ret = (int)XFREAD(buffer, 1, len, ctx->file);
+    #ifdef XFERROR
+        if (ret < len && XFERROR(ctx->file))
+            ret = READ_ONLY_E;
+    #else
+        if (ret < len && ferror(ctx->file))
+            ret = READ_ONLY_E;
+    #endif
     }
 #endif
     return ret;
@@ -3028,7 +3122,9 @@ int wp11_storage_open_readonly(int type, CK_ULONG id1, CK_ULONG id2,
     int ret = wolfPKCS11_Store_Open(type, id1, id2, 1, storage);
 
 #ifdef WOLFPKCS11_CUSTOM_STORE
-    ret = wp11_storage_custom_ret(ret, 1);
+    /* Not BUFFER_E: that reads as a missing or damaged stateful key record. */
+    if (ret != 0 && ret != NOT_AVAILABLE_E)
+        ret = WC_HW_E;
 #endif
     return ret;
 }
@@ -3064,7 +3160,17 @@ int wp11_storage_open(int type, CK_ULONG id1, CK_ULONG id2,
 #endif
 }
 
-static int wp11_storage_remove(int type, CK_ULONG id1, CK_ULONG id2)
+/* Whether the records written in one store pass commit together. */
+int wp11_storage_atomic(void)
+{
+#ifdef WP11_STORE_BATCH
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+int wp11_storage_remove(int type, CK_ULONG id1, CK_ULONG id2)
 {
     int ret = wolfPKCS11_Store_Remove(type, id1, id2);
 
@@ -3085,6 +3191,16 @@ void wp11_storage_close(void* storage)
 {
     wolfPKCS11_Store_Close(storage);
 }
+
+#if defined(WOLFPKCS11_STATEFUL_SIG_PRIVATE) && \
+    (defined(WOLFPKCS11_TPM_STORE) || defined(WOLFPKCS11_CUSTOM_STORE))
+/* These stores commit every write at close. */
+void wp11_storage_set_durable(void* store, int durable)
+{
+    (void)store;
+    (void)durable;
+}
+#endif
 
 /*
  * Closes access to location being written, committing the data only when
@@ -3135,6 +3251,33 @@ static int wp11_storage_left(void* storage, long* left)
     return NOT_AVAILABLE_E;
 #endif
 }
+
+#ifdef WOLFPKCS11_STATEFUL_SIG_PRIVATE
+/**
+ * Check that a durable write of a record can be committed.
+ *
+ * @param [in]  type  Type of data to be stored. See WOLFPKCS11_STORE_*.
+ * @param [in]  id1   Numeric identifier 1.
+ * @param [in]  id2   Numeric identifier 2.
+ * @return  0 on success.
+ * @return  READ_ONLY_E when the store directory cannot be flushed.
+ */
+int wp11_storage_check_durable(int type, CK_ULONG id1, CK_ULONG id2)
+{
+#if !defined(WOLFPKCS11_CUSTOM_STORE) && !defined(WOLFPKCS11_TPM_STORE)
+    char name[WP11_STORE_MAX_PATH];
+
+    if (wolfPKCS11_Store_Name(type, id1, id2, name, (int)sizeof(name)) <= 0)
+        return READ_ONLY_E;
+    return wolfPKCS11_StoreSyncParent(name, 1);
+#else
+    (void)type;
+    (void)id1;
+    (void)id2;
+    return 0;
+#endif
+}
+#endif
 
 /**
  * Reads a specific number of bytes into buffer.
@@ -4051,6 +4194,11 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
     if (src->objClass == CKO_NSS_TRUST)
         return BAD_FUNC_ARG;
 #endif
+#ifdef WOLFPKCS11_STATEFUL_SIG_PRIVATE
+    /* A copy would sign from the same one-time keys. */
+    if (wp11_Stateful_IsKey(src))
+        return NOT_AVAILABLE_E;
+#endif
 
     /* We save data copying for the last step */
 
@@ -4467,11 +4615,7 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
                 case CKK_XMSSMT:
 #endif
 #if defined(WOLFPKCS11_LMS) || defined(WOLFPKCS11_XMSS)
-                    /* Copying is prohibited for all LMS/XMSS keys. Public keys
-                     * carry no secret state, but future sign-capable builds add
-                     * private keys whose one-time signature state must never be
-                     * duplicated; rejecting every HBS key copy keeps that
-                     * invariant uniform across key classes. */
+                    /* A copy would duplicate one-time signature state. */
                     ret = BAD_FUNC_ARG;
                     break;
 #endif
@@ -4514,9 +4658,9 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
  * @return  0 on success.
  * @return  -ve on failure.
  */
-static int wp11_EncryptData(byte* out, byte* data, int len, byte* key,
-                            int keySz, byte* iv, int ivSz, const byte* aad,
-                            word32 aadSz, int devId)
+int wp11_EncryptData(byte* out, const byte* data, int len, const byte* key,
+                     int keySz, const byte* iv, int ivSz, const byte* aad,
+                     word32 aadSz, int devId)
 {
     Aes aes;
     int ret;
@@ -4553,9 +4697,9 @@ static int wp11_EncryptData(byte* out, byte* data, int len, byte* key,
  * @return  AES_GCM_AUTH_E when encrypted data could not be verified.
  * @return  Other -ve on failure.
  */
-static int wp11_DecryptData(byte* out, byte* data, int len, byte* key,
-                            int keySz, byte* iv, int ivSz, const byte* aad,
-                            word32 aadSz, int devId)
+int wp11_DecryptData(byte* out, const byte* data, int len, const byte* key,
+                     int keySz, const byte* iv, int ivSz, const byte* aad,
+                     word32 aadSz, int devId)
 {
     Aes aes;
     int ret;
@@ -7616,6 +7760,13 @@ static int wp11_Object_EncodeData(WP11_Object* object, int protect)
         #ifdef WOLFPKCS11_LMS
             case CKK_HSS:
                 ret = wp11_Object_Encode_HssKey(object);
+        #ifdef WOLFPKCS11_LMS_PRIVATE
+                if (protect && ret == 0 && object->objClass == CKO_PRIVATE_KEY) {
+                    wc_LmsKey_Free(object->data.lmsKey);
+                    object->encoded = 1;
+                    object->statefulState = 0;
+                }
+        #endif
                 break;
         #endif
         #ifdef WOLFPKCS11_XMSS
@@ -7696,6 +7847,8 @@ typedef struct WP11_ReKeyData {
     WP11_Object* object;                  /* Object the key data is for    */
     byte* keyData;                        /* Key data not in the object    */
     byte iv[FIELD_SIZE(WP11_Object, iv)]; /* IV used with keyData          */
+    byte stateful;                        /* resealed holds the old mark   */
+    byte resealed;                        /* statefulResealed before       */
 } WP11_ReKeyData;
 
 /**
@@ -7715,6 +7868,11 @@ static int wp11_Object_NeedsReKey(WP11_Object* object)
     }
 #ifdef WOLFPKCS11_TPM
     if (object->opFlag & WP11_FLAG_TPM)
+        return 0;
+#endif
+#ifdef WOLFPKCS11_STATEFUL_SIG_PRIVATE
+    /* Re-keyed by wp11_Stateful_ReKey: the record holds its own IV. */
+    if (wp11_Stateful_IsKey(object))
         return 0;
 #endif
     return wp11_Object_IsEncrypted(object);
@@ -7794,8 +7952,8 @@ static int wp11_Object_ReKey(WP11_Object* object, byte* oldKey, byte* newKey,
 }
 
 /**
- * Create new encrypted key data for all protected token objects without
- * changing any object.
+ * Create new encrypted key data for all protected token objects. Only a
+ * stateful key changes: it may take over a newer stored record.
  * Must be called with the slot lock and the token lock held.
  *
  * @param [in]   token   Token object.
@@ -7839,6 +7997,17 @@ static int wp11_Token_ReKeyPrepare(WP11_Token* token, byte* oldKey,
             if (ret == AES_GCM_AUTH_E)
                 ret = 0;
         }
+    #ifdef WOLFPKCS11_STATEFUL_SIG_PRIVATE
+        else if (wp11_Stateful_IsKey(object) && object->keyData != NULL) {
+            XMEMCPY(data[i].iv, object->iv, sizeof(data[i].iv));
+            data[i].stateful = 1;
+            data[i].resealed = object->statefulResealed;
+            ret = wp11_Stateful_ReKey(object, oldKey, newKey,
+                &data[i].keyData);
+            if (ret == AES_GCM_AUTH_E || ret == BAD_FUNC_ARG)
+                ret = 0;
+        }
+    #endif
         object = object->next;
     }
 
@@ -7875,6 +8044,25 @@ static void wp11_Token_ReKeySwap(WP11_ReKeyData* reKey, int cnt)
         }
     }
 }
+
+#ifdef WOLFPKCS11_STATEFUL_SIG_PRIVATE
+/**
+ * Put back the re-seal marks that a failed re-key set on stateful keys.
+ * Must be called with the token lock held.
+ *
+ * @param [in]  reKey  Re-key data.
+ * @param [in]  cnt    Number of entries in reKey.
+ */
+static void wp11_Token_ReKeyUndoMarks(WP11_ReKeyData* reKey, int cnt)
+{
+    int i;
+
+    for (i = 0; i < cnt; i++) {
+        if (reKey[i].stateful)
+            reKey[i].object->statefulResealed = reKey[i].resealed;
+    }
+}
+#endif
 
 /**
  * Free the re-key data.
@@ -7939,6 +8127,15 @@ static void wp11_Object_Scrub(WP11_Object* object)
             if (object->objClass == CKO_PRIVATE_KEY) {
                 wc_MlKemKey_Free(object->data.mlKemKey);
                 object->encoded = 1;
+            }
+            break;
+    #endif
+    #ifdef WOLFPKCS11_LMS_PRIVATE
+        case CKK_HSS:
+            if (object->objClass == CKO_PRIVATE_KEY) {
+                wc_LmsKey_Free(object->data.lmsKey);
+                object->encoded = 1;
+                object->statefulState = 0;
             }
             break;
     #endif
@@ -8051,6 +8248,10 @@ static int wp11_Object_StoreType(WP11_Object* object)
     #ifdef WOLFPKCS11_LMS
         case CKK_HSS:
             storeObjType = WOLFPKCS11_STORE_HSSKEY_PUB;
+    #ifdef WOLFPKCS11_LMS_PRIVATE
+            if (object->objClass == CKO_PRIVATE_KEY)
+                storeObjType = WOLFPKCS11_STORE_HSSKEY_PRIV;
+    #endif
             break;
     #endif
     #ifdef WOLFPKCS11_XMSS
@@ -8841,6 +9042,9 @@ static int wp11_StoreType_Written(int type)
     #ifdef WOLFPKCS11_LMS
         case WOLFPKCS11_STORE_HSSKEY_PUB:
     #endif
+    #ifdef WOLFPKCS11_LMS_PRIVATE
+        case WOLFPKCS11_STORE_HSSKEY_PRIV:
+    #endif
     #ifdef WOLFPKCS11_XMSS
         case WOLFPKCS11_STORE_XMSSKEY_PUB:
     #endif
@@ -8968,10 +9172,8 @@ static int wp11_Token_Purge(WP11_Token* token, int tokenId)
             if (t != WOLFPKCS11_STORE_OBJECT && !wp11_StoreType_Written(t))
                 continue;
         #else
-            if (t == WOLFPKCS11_STORE_HSSKEY_PRIV ||
-                    t == WOLFPKCS11_STORE_XMSSKEY_PRIV) {
+            if (t == WOLFPKCS11_STORE_XMSSKEY_PRIV)
                 continue;
-            }
         #endif
             if (keep != -1 && (t == WOLFPKCS11_STORE_OBJECT || t == keep))
                 continue;
@@ -9121,6 +9323,9 @@ static int wp11_Token_StoreSome(WP11_Token* token, int tokenId, int what,
 #ifdef WP11_STORE_BATCH
     wolfPKCS11_StoreBatchRelease(held);
 #endif
+#ifdef WOLFPKCS11_STATEFUL_SIG_PRIVATE
+    wp11_Stateful_StoreDone(token, ret == 0);
+#endif
 
     if (ret == 0) {
         if (what == WP11_STORE_PASS_ALL)
@@ -9153,6 +9358,87 @@ static int wp11_Token_Store(WP11_Token* token, int tokenId)
 {
     return wp11_Token_StoreSome(token, tokenId, WP11_STORE_PASS_ALL, NULL);
 }
+
+#ifdef WOLFPKCS11_STATEFUL_SIG_PRIVATE
+/**
+ * Get the store id of a token object: its position counted from the oldest.
+ *
+ * @param [in]  token   Token object. Caller holds its lock.
+ * @param [in]  object  Object on the token.
+ * @return  Store id, or -1 when the object is not on the token.
+ */
+int wp11_Token_ObjectId(WP11_Token* token, WP11_Object* object)
+{
+    int id = token->objCnt - 1;
+    WP11_Object* curr;
+
+    for (curr = token->object; curr != NULL; curr = curr->next, id--) {
+        if (curr == object)
+            return id;
+    }
+    return -1;
+}
+
+/**
+ * Store the whole token when an earlier store pass failed, so stored ids
+ * match the object list again.
+ *
+ * @param [in]  slot  Slot. Caller holds the token lock for writing.
+ * @return  0 on success or when nothing was pending.
+ * @return  Other value when the store pass failed.
+ */
+int wp11_Token_StoreIfDirty(WP11_Slot* slot)
+{
+    if (!slot->token.storeDirty)
+        return 0;
+    return wp11_Token_Store(&slot->token, (int)slot->id);
+}
+
+/**
+ * Take the locks that keep token store passes, here and in other processes
+ * sharing the store, away from the records of the slot.
+ *
+ * @param [in]   slot  Slot.
+ * @param [out]  held  Value to pass to wp11_Slot_StateUnlock.
+ * @return  0 on success.
+ * @return  Other value when an interrupted store pass could not be finished.
+ */
+int wp11_Slot_StateLock(WP11_Slot* slot, void** held)
+{
+#ifdef WP11_STORE_BATCH
+    int ret;
+    WP11_Slot* batchSlot = NULL;
+
+    ret = wolfPKCS11_StoreBatchCheck((int)slot->id, &batchSlot);
+    /* No slot held means storage is turned off. */
+    if (ret == 0 && batchSlot == NULL)
+        ret = NOT_AVAILABLE_E;
+    /* Without the lock file other processes are not kept out. */
+    if (ret == 0 && !storeBatch.locked)
+        ret = READ_ONLY_E;
+    if (ret != 0) {
+        wolfPKCS11_StoreBatchRelease(batchSlot);
+        batchSlot = NULL;
+    }
+    *held = batchSlot;
+    return ret;
+#else
+    WP11_Lock_LockRW(&slot->storeLock);
+    *held = slot;
+    return 0;
+#endif
+}
+
+void wp11_Slot_StateUnlock(void* held)
+{
+#ifdef WP11_STORE_BATCH
+    wolfPKCS11_StoreBatchRelease((WP11_Slot*)held);
+#else
+    if (held != NULL)
+        WP11_Lock_UnlockRW(&((WP11_Slot*)held)->storeLock);
+#endif
+}
+#endif /* WOLFPKCS11_STATEFUL_SIG_PRIVATE */
 #endif /* !WOLFPKCS11_NO_STORE */
 
 /**
@@ -10226,6 +10512,18 @@ static void wp11_Slot_StoreLockout(WP11_Slot* slot, int failed)
 #endif
 
 #ifdef DEBUG_WOLFPKCS11
+static void (*wp11_setPinStoreHook)(void) = NULL;
+
+/**
+ * Test hook: called in C_SetPIN between re-keying and storing the token.
+ *
+ * @param  hook  [in]  Function to call, or NULL to remove the hook.
+ */
+WP11_API void WP11_Test_SetPinStoreHook(void (*hook)(void))
+{
+    wp11_setPinStoreHook = hook;
+}
+
 static void (*wp11_pinCheckHook)(void) = NULL;
 
 /**
@@ -11361,7 +11659,15 @@ static int wp11_Slot_SetUserPin(WP11_Slot* slot, const word32* since,
     #ifdef WP11_STORE_BATCH
         oldDirty = token->storeDirty;
     #endif
+        /* Stateful records found newer in the pass re-seal from the old key. */
+        if (oldPin != NULL)
+            token->reKeyOld = d->oldKey;
+    #ifdef DEBUG_WOLFPKCS11
+        if (wp11_setPinStoreHook != NULL)
+            wp11_setPinStoreHook();
+    #endif
         ret = wp11_Token_Store(token, (int)slot->id);
+        token->reKeyOld = NULL;
         if (ret != 0) {
             wp11_Token_ReKeySwap(reKey, reKeyCnt);
             wp11_Token_RestoreUserPinState(token, &d->prev);
@@ -11376,6 +11682,10 @@ static int wp11_Slot_SetUserPin(WP11_Slot* slot, const word32* since,
         }
     #endif
     }
+#ifdef WOLFPKCS11_STATEFUL_SIG_PRIVATE
+    if (ret != 0)
+        wp11_Token_ReKeyUndoMarks(reKey, reKeyCnt);
+#endif
     WP11_Lock_UnlockRW(&token->lock);
     WP11_Lock_UnlockRW(&slot->lock);
     /* Stores the counts unless the PIN change above stored them. */
@@ -11959,6 +12269,9 @@ static int wp11_init_get_op_category(int init)
         case WP11_INIT_AES_CMAC_SIGN:
         case WP11_INIT_TLS_MAC_SIGN:
         case WP11_INIT_MLDSA_SIGN:
+#ifdef WOLFPKCS11_LMS_PRIVATE
+        case WP11_INIT_HSS_SIGN:
+#endif
             return WP11_OP_SIGN;
 
         case WP11_INIT_HMAC_VERIFY:
@@ -13395,7 +13708,6 @@ int WP11_Session_RemoveObjectByHandle(WP11_Session* session,
             id--;
         *curr = object->next;
         token->objCnt--;
-
         /* Removing the object would shift the ids of every newer object down
          * by one, and each of them would have to be rewritten. Instead move
          * the head into the place of the removed object, so it takes the
@@ -13932,6 +14244,12 @@ void WP11_Object_Free(WP11_Object* object)
 
     if (object == NULL)
         return;
+#ifdef WOLFPKCS11_STATEFUL_SIG_PRIVATE
+    if (object->statefulBuf != NULL) {
+        wc_ForceZero(object->statefulBuf, object->statefulBufLen);
+        XFREE(object->statefulBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    }
+#endif
 #ifdef WOLFPKCS11_TPM
     if (object->tpmKey != NULL) {
         wolfTPM2_UnloadHandle(&object->slot->tpmDev, &object->tpmKey->handle);
@@ -17520,12 +17838,24 @@ static int wp11_Object_PolicyChanged(WP11_Object* object,
                                      CK_OBJECT_CLASS prevClass, word32 prevFlag)
 {
     int ret = 0;
+    word32 skip = WP11_FLAG_POLICY_EXCLUDED;
 
+#ifdef WOLFPKCS11_STATEFUL_SIG_PRIVATE
+    /* The record of a stateful key binds its own set of flags. */
+    if (wp11_Stateful_IsKey(object))
+        skip = WP11_STATEFUL_POLICY_SKIP;
+#endif
     if (object->onToken && wp11_Object_IsEncrypted(object) &&
             (object->objClass != prevClass ||
-             ((object->opFlag ^ prevFlag) &
-              ~(word32)WP11_FLAG_POLICY_EXCLUDED) != 0)) {
-        if (wp11_Object_KeyStateLocked(object) != 0) {
+             ((object->opFlag ^ prevFlag) & ~skip) != 0)) {
+        if (wp11_Object_KeyStateLocked(object) != 0
+        #ifdef WOLFPKCS11_STATEFUL_SIG_PRIVATE
+                /* A stateful record that does not load cannot be re-sealed. */
+                || (wp11_Stateful_IsKey(object) &&
+                    (object->statefulState & (WP11_STATEFUL_VALID |
+                                              WP11_STATEFUL_EXHAUSTED)) == 0)
+        #endif
+                ) {
             object->objClass = prevClass;
             object->opFlag = prevFlag;
             ret = BAD_STATE_E;
@@ -17939,12 +18269,8 @@ static int wp11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
         case CKA_HSS_LEVELS:
         case CKA_HSS_LMS_TYPE:
         case CKA_HSS_LMOTS_TYPE:
-            /* Scalar HSS parameter attributes are key-derived and read-only.
-             * WP11_Object_SetHssKey validated any supplied value against the
-             * imported public key (rejecting a value-less or mismatched set
-             * with CKR_ATTRIBUTE_VALUE_INVALID) before this runs, so accept them
-             * as a no-op on an HSS object so recreating one from its own
-             * attributes is not rejected; a foreign key type is rejected. */
+            /* Read-only; import and keygen check the values against the key,
+             * so a key recreated from its own attributes is accepted. */
             if (object->type != CKK_HSS)
                 ret = BAD_FUNC_ARG;
             break;
@@ -17957,8 +18283,8 @@ static int wp11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
             else
                 ret = wp11_HssCheckTypesAttr(object, type, data, len);
             break;
-        case CKA_HSS_KEYS_REMAINING:
-            /* Read-only, and a verify-only build never reports it. */
+        case CKA_KEYS_REMAINING:
+            /* Read-only, reported by private keys of a sign-capable build. */
             ret = BAD_FUNC_ARG;
             break;
 #endif

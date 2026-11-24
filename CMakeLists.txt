@@ -536,6 +536,22 @@ add_option("WOLFPKCS11_LMS"
     "no" "yes;no"
 )
 
+# LMS/HSS keygen + signing (EXPERIMENTAL, stateful private keys; default: disabled)
+add_option("WOLFPKCS11_LMS_PRIVATE"
+    "Enable wolfPKCS11 LMS/HSS keygen and signing (EXPERIMENTAL, stateful private keys, default: disabled)"
+    "no" "yes;no"
+)
+
+if(WOLFPKCS11_LMS_PRIVATE AND NOT WOLFPKCS11_SHA256)
+    message(STATUS "LMS/HSS requires SHA-256 support (disabled); disabling WOLFPKCS11_LMS_PRIVATE")
+    override_cache(WOLFPKCS11_LMS_PRIVATE "no")
+endif()
+
+if(WOLFPKCS11_LMS_PRIVATE AND NOT WOLFPKCS11_LMS)
+    message(STATUS "WOLFPKCS11_LMS_PRIVATE requires WOLFPKCS11_LMS - enabling WOLFPKCS11_LMS automatically")
+    override_cache(WOLFPKCS11_LMS "yes")
+endif()
+
 if(WOLFPKCS11_LMS AND NOT WOLFPKCS11_SHA256)
     message(STATUS "LMS/HSS requires SHA-256 support (disabled); disabling WOLFPKCS11_LMS")
     override_cache(WOLFPKCS11_LMS "no")
@@ -552,6 +568,10 @@ if(WOLFPKCS11_LMS)
         list(APPEND WOLFPKCS11_DEFINITIONS "-DWOLFPKCS11_PKCS11_V3_2")
     endif()
     list(APPEND WOLFPKCS11_DEFINITIONS "-DWOLFPKCS11_LMS")
+endif()
+
+if(WOLFPKCS11_LMS_PRIVATE)
+    list(APPEND WOLFPKCS11_DEFINITIONS "-DWOLFPKCS11_LMS_PRIVATE")
 endif()
 
 # XMSS/XMSS^MT (RFC 8391) verify + public-key import (default: disabled)
@@ -843,6 +863,16 @@ if(WOLFPKCS11_TESTS)
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/hbs_persistence_test.c)
         set_tests_properties(hbs_persistence_test PROPERTIES SKIP_RETURN_CODE 77)
     endif()
+
+    # LMS/HSS keygen and signing tests; each uses its own token directory.
+    add_wpkcs11_test(hbs_private_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/hbs_private_test.c)
+    set_tests_properties(hbs_private_test PROPERTIES SKIP_RETURN_CODE 77)
+    # Debug builds of the test call the library's WP11_Test_* hooks.
+    target_link_libraries(hbs_private_test wolfpkcs11)
+    add_wpkcs11_test(hss_concurrency_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/hss_concurrency_test.c)
+    set_tests_properties(hss_concurrency_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 if(WOLFPKCS11_EXAMPLES)

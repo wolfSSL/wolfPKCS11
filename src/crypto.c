@@ -370,7 +370,7 @@ static AttributeType attrType[] = {
     { CKA_HSS_LMOTS_TYPE,              ATTR_TYPE_ULONG },
     { CKA_HSS_LMS_TYPES,               ATTR_TYPE_DATA  },
     { CKA_HSS_LMOTS_TYPES,             ATTR_TYPE_DATA  },
-    { CKA_HSS_KEYS_REMAINING,          ATTR_TYPE_ULONG },
+    { CKA_KEYS_REMAINING,              ATTR_TYPE_ULONG },
 #ifdef WOLFPKCS11_NSS
     { CKA_CERT_SHA1_HASH,              ATTR_TYPE_DATA  },
     { CKA_CERT_MD5_HASH,               ATTR_TYPE_DATA  },
@@ -1454,6 +1454,9 @@ static CK_RV SetAttributeDefaults(WP11_Object* obj, CK_OBJECT_CLASS keyType,
             sign = CK_TRUE;
             break;
         case CKK_ML_DSA:
+#ifdef WOLFPKCS11_LMS_PRIVATE
+        case CKK_HSS:
+#endif
             derive = CK_FALSE;
             verify = CK_TRUE;
             encrypt = CK_FALSE;
@@ -2576,6 +2579,19 @@ static CK_RV CreateObject(WP11_Session* session, CK_ATTRIBUTE_PTR pTemplate,
     else {
         return CKR_ATTRIBUTE_VALUE_INVALID;
     }
+
+#ifdef WOLFPKCS11_LMS_PRIVATE
+    /* Only C_GenerateKeyPair fills in an HSS key object created empty. */
+    if (objType == CKK_HSS && objectClass == CKO_PRIVATE_KEY)
+        return CKR_ATTRIBUTE_VALUE_INVALID;
+    if (objType == CKK_HSS && objectClass == CKO_PUBLIC_KEY) {
+        CK_ATTRIBUTE_PTR value = NULL;
+
+        FindAttributeType(pTemplate, ulCount, CKA_VALUE, &value);
+        if (value == NULL || value->pValue == NULL || value->ulValueLen == 0)
+            return CKR_ATTRIBUTE_VALUE_INVALID;
+    }
+#endif
 
     rv = NewObject(session, objType, objectClass, pTemplate, ulCount, object);
 
@@ -7380,6 +7396,18 @@ static CK_RV wp11_C_SignInit(CK_SESSION_HANDLE hSession,
             init |= WP11_INIT_MLDSA_SIGN;
             break;
 #endif
+#ifdef WOLFPKCS11_LMS_PRIVATE
+        case CKM_HSS:
+            if (type != CKK_HSS ||
+                    WP11_Object_GetClass(obj) != CKO_PRIVATE_KEY) {
+                return CKR_KEY_TYPE_INCONSISTENT;
+            }
+            if (pMechanism->pParameter != NULL ||
+                    pMechanism->ulParameterLen != 0)
+                return CKR_MECHANISM_PARAM_INVALID;
+            init |= WP11_INIT_HSS_SIGN;
+            break;
+#endif
 #ifndef NO_HMAC
     #ifndef NO_MD5
         case CKM_MD5_HMAC:
@@ -7833,6 +7861,51 @@ static CK_RV wp11_C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData,
 
             ret = WP11_Mldsa_Sign(pData, (int)ulDataLen, pSignature,
                                   &sigLen, obj, session);
+            *pulSignatureLen = sigLen;
+            break;
+#endif
+#ifdef WOLFPKCS11_LMS_PRIVATE
+        case CKM_HSS:
+            if (!WP11_Session_IsOpInitialized(session, WP11_INIT_HSS_SIGN))
+                return CKR_OPERATION_NOT_INITIALIZED;
+
+            sigLen = WP11_Hss_SigLen(obj);
+            /* A key whose record or state did not load has no length. */
+            if (sigLen == 0) {
+                WP11_Session_AbortOp(session);
+                rv = CheckKeyDecoded(obj);
+                return (rv != CKR_OK) ? rv : CKR_DEVICE_ERROR;
+            }
+            if (pSignature == NULL) {
+                /* Length query - operation remains active per PKCS#11. */
+                *pulSignatureLen = sigLen;
+                return CKR_OK;
+            }
+            if ((CK_ULONG)sigLen > *pulSignatureLen) {
+                *pulSignatureLen = sigLen;
+                return CKR_BUFFER_TOO_SMALL;
+            }
+
+            if (ulDataLen > (CK_ULONG)INT_MAX) {
+                WP11_Session_AbortOp(session);
+                return CKR_DATA_LEN_RANGE;
+            }
+            ret = WP11_Hss_Sign(pData, (word32)ulDataLen, pSignature, &sigLen,
+                                obj);
+            if (ret == KEY_EXHAUSTED_E) {
+                WP11_Session_AbortOp(session);
+                return CKR_KEY_EXHAUSTED;
+            }
+            if (ret == MEMORY_E) {
+                WP11_Session_AbortOp(session);
+                return CKR_DEVICE_MEMORY;
+            }
+            if (ret == NOT_AVAILABLE_E || ret == BAD_STATE_E) {
+                /* Disabled until reloaded, unless a logout released the key. */
+                WP11_Session_AbortOp(session);
+                rv = CheckKeyDecoded(obj);
+                return (rv != CKR_OK) ? rv : CKR_DEVICE_ERROR;
+            }
             *pulSignatureLen = sigLen;
             break;
 #endif
@@ -8648,6 +8721,10 @@ static CK_RV wp11_C_VerifyInit(CK_SESSION_HANDLE hSession,
         case CKM_HSS:
             if (type != CKK_HSS)
                 return CKR_KEY_TYPE_INCONSISTENT;
+        #ifdef WOLFPKCS11_LMS_PRIVATE
+            if (WP11_Object_GetClass(obj) != CKO_PUBLIC_KEY)
+                return CKR_KEY_TYPE_INCONSISTENT;
+        #endif
             if (pMechanism->pParameter != NULL ||
                     pMechanism->ulParameterLen != 0)
                 return CKR_MECHANISM_PARAM_INVALID;
@@ -10594,6 +10671,149 @@ static CK_RV CheckGenPairAttrs(CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
     return CKR_OK;
 }
 
+#ifdef WOLFPKCS11_LMS_PRIVATE
+/* True when the template holds CKA_TOKEN with the value CK_TRUE. */
+static int HssTemplateIsToken(CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount)
+{
+    CK_ATTRIBUTE_PTR attr = NULL;
+
+    FindAttributeType(pTemplate, ulCount, CKA_TOKEN, &attr);
+    return attr != NULL && attr->pValue != NULL &&
+           attr->ulValueLen == sizeof(CK_BBOOL) &&
+           *(CK_BBOOL*)attr->pValue == CK_TRUE;
+}
+
+/* The private key must be a token object, so its state is stored, and is
+ * never copyable. */
+static CK_RV HssKeyPairGenCheckPriv(CK_ATTRIBUTE_PTR pPrivateKeyTemplate,
+                                    CK_ULONG ulPrivateKeyAttributeCount)
+{
+    CK_ATTRIBUTE_PTR attr = NULL;
+
+    if (!HssTemplateIsToken(pPrivateKeyTemplate, ulPrivateKeyAttributeCount))
+        return CKR_TEMPLATE_INCONSISTENT;
+    FindAttributeType(pPrivateKeyTemplate, ulPrivateKeyAttributeCount,
+                      CKA_COPYABLE, &attr);
+    if (attr != NULL && attr->pValue != NULL &&
+            attr->ulValueLen == sizeof(CK_BBOOL) &&
+            *(CK_BBOOL*)attr->pValue == CK_TRUE) {
+        return CKR_TEMPLATE_INCONSISTENT;
+    }
+    return CKR_OK;
+}
+
+/* Read a CKA_HSS_LMS_TYPES or CKA_HSS_LMOTS_TYPES list from the private key
+ * template. wolfSSL uses one type for every level, so all entries must match.
+ *
+ * @return  CKR_TEMPLATE_INCOMPLETE when the attribute is absent.
+ * @return  CKR_ATTRIBUTE_VALUE_INVALID when the list does not have one entry
+ *          per level or its entries differ.
+ * @return  CKR_OK on success.
+ */
+static CK_RV HssFindGenTypes(CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
+                             CK_ATTRIBUTE_TYPE type, CK_ULONG levels,
+                             CK_ULONG* value)
+{
+    CK_ATTRIBUTE_PTR attr = NULL;
+    CK_ULONG entry;
+    CK_ULONG i;
+
+    FindAttributeType(pTemplate, ulCount, type, &attr);
+    if (attr == NULL)
+        return CKR_TEMPLATE_INCOMPLETE;
+    if (attr->pValue == NULL || attr->ulValueLen != levels * sizeof(CK_ULONG))
+        return CKR_ATTRIBUTE_VALUE_INVALID;
+    XMEMCPY(value, attr->pValue, sizeof(CK_ULONG));
+    for (i = 1; i < levels; i++) {
+        XMEMCPY(&entry, (byte*)attr->pValue + i * sizeof(CK_ULONG),
+                sizeof(entry));
+        if (entry != *value)
+            return CKR_ATTRIBUTE_VALUE_INVALID;
+    }
+    return CKR_OK;
+}
+
+/* Collect CKA_HSS_LEVELS and the per-level type lists from the private key
+ * template; the public key takes its HSS attributes from the generated key.
+ *
+ * @return  CKR_TEMPLATE_INCOMPLETE when an attribute is absent.
+ * @return  CKR_TEMPLATE_INCONSISTENT when an HSS attribute is on the wrong
+ *          template.
+ * @return  CKR_ATTRIBUTE_VALUE_INVALID when one has no value or a bad length,
+ *          the levels are out of range, or the per-level types differ.
+ * @return  CKR_OK on success.
+ */
+static CK_RV HssKeyPairGenParams(CK_ATTRIBUTE_PTR pPublicKeyTemplate,
+                                 CK_ULONG ulPublicKeyAttributeCount,
+                                 CK_ATTRIBUTE_PTR pPrivateKeyTemplate,
+                                 CK_ULONG ulPrivateKeyAttributeCount,
+                                 CK_ULONG* levels, CK_LMS_TYPE* lmsType,
+                                 CK_LMOTS_TYPE* lmotsType)
+{
+    static const CK_ATTRIBUTE_TYPE hssTypes[] = {
+        CKA_HSS_LMS_TYPE, CKA_HSS_LMOTS_TYPE,
+        CKA_HSS_LEVELS, CKA_HSS_LMS_TYPES, CKA_HSS_LMOTS_TYPES
+    };
+    CK_ATTRIBUTE_PTR attr = NULL;
+    CK_RV rv = CKR_OK;
+    size_t i;
+
+    for (i = 0; i < sizeof(hssTypes) / sizeof(*hssTypes); i++) {
+        FindAttributeType(pPublicKeyTemplate, ulPublicKeyAttributeCount,
+                          hssTypes[i], &attr);
+        if (attr != NULL)
+            return CKR_TEMPLATE_INCONSISTENT;
+    }
+    for (i = 0; i < 2; i++) {
+        FindAttributeType(pPrivateKeyTemplate, ulPrivateKeyAttributeCount,
+                          hssTypes[i], &attr);
+        if (attr != NULL)
+            return CKR_TEMPLATE_INCONSISTENT;
+    }
+
+    FindAttributeType(pPrivateKeyTemplate, ulPrivateKeyAttributeCount,
+                      CKA_HSS_LEVELS, &attr);
+    if (attr == NULL)
+        return CKR_TEMPLATE_INCOMPLETE;
+    if (attr->pValue == NULL || attr->ulValueLen != sizeof(CK_ULONG))
+        return CKR_ATTRIBUTE_VALUE_INVALID;
+    *levels = *(CK_ULONG*)attr->pValue;
+    if (*levels < 1 || *levels > (CK_ULONG)LMS_MAX_LEVELS)
+        return CKR_ATTRIBUTE_VALUE_INVALID;
+
+    rv = HssFindGenTypes(pPrivateKeyTemplate, ulPrivateKeyAttributeCount,
+                         CKA_HSS_LMS_TYPES, *levels, lmsType);
+    if (rv == CKR_OK) {
+        rv = HssFindGenTypes(pPrivateKeyTemplate, ulPrivateKeyAttributeCount,
+                             CKA_HSS_LMOTS_TYPES, *levels, lmotsType);
+    }
+    return rv;
+}
+
+/* Copy of the private key template without the HSS parameters, which the new
+ * key cannot check before it is generated. */
+static CK_RV HssStripGenParams(CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
+                               CK_ATTRIBUTE_PTR* out, CK_ULONG* outCount)
+{
+    CK_ULONG i;
+    CK_ULONG n = 0;
+
+    *out = (CK_ATTRIBUTE_PTR)XMALLOC((ulCount + 1) * sizeof(CK_ATTRIBUTE),
+                                     NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    if (*out == NULL)
+        return CKR_HOST_MEMORY;
+    for (i = 0; i < ulCount; i++) {
+        if (pTemplate[i].type != CKA_HSS_LEVELS &&
+                pTemplate[i].type != CKA_HSS_LMS_TYPES &&
+                pTemplate[i].type != CKA_HSS_LMOTS_TYPES) {
+            (*out)[n++] = pTemplate[i];
+        }
+    }
+    *outCount = n;
+    return CKR_OK;
+}
+#endif /* WOLFPKCS11_LMS_PRIVATE */
+
 static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
                                     CK_MECHANISM_PTR pMechanism,
                                     CK_ATTRIBUTE_PTR pPublicKeyTemplate,
@@ -10708,6 +10928,11 @@ static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
             pairType = CKK_DH;
             break;
 #endif
+#ifdef WOLFPKCS11_LMS_PRIVATE
+        case CKM_HSS_KEY_PAIR_GEN:
+            pairType = CKK_HSS;
+            break;
+#endif
         default:
             knownMech = 0;
             break;
@@ -10792,6 +11017,66 @@ static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
                     rv = CKR_FUNCTION_FAILED;
             }
             break;
+#endif
+#ifdef WOLFPKCS11_LMS_PRIVATE
+        case CKM_HSS_KEY_PAIR_GEN: {
+            CK_ULONG hssLevels;
+            CK_LMS_TYPE hssLms;
+            CK_LMOTS_TYPE hssLmots;
+            CK_ATTRIBUTE* valueAttr = NULL;
+            CK_ATTRIBUTE_PTR privTmpl = NULL;
+            CK_ULONG privTmplCnt = 0;
+
+            /* v3.3: the keygen mechanism carries no parameter. */
+            if (pMechanism->pParameter != NULL ||
+                    pMechanism->ulParameterLen != 0) {
+                return CKR_MECHANISM_PARAM_INVALID;
+            }
+            rv = HssKeyPairGenCheckPriv(pPrivateKeyTemplate,
+                ulPrivateKeyAttributeCount);
+            if (rv != CKR_OK)
+                return rv;
+            FindAttributeType(pPublicKeyTemplate, ulPublicKeyAttributeCount,
+                CKA_VALUE, &valueAttr);
+            if (valueAttr != NULL)
+                return CKR_TEMPLATE_INCONSISTENT;
+            /* The state is sealed with the user's token key. */
+            if (!WP11_Slot_IsUserLoggedIn(WP11_Session_GetSlot(session)) &&
+                    !WP11_Slot_Has_Empty_Pin(WP11_Session_GetSlot(session))) {
+                return CKR_USER_NOT_LOGGED_IN;
+            }
+
+            rv = HssKeyPairGenParams(pPublicKeyTemplate,
+                ulPublicKeyAttributeCount, pPrivateKeyTemplate,
+                ulPrivateKeyAttributeCount, &hssLevels, &hssLms, &hssLmots);
+            if (rv != CKR_OK)
+                return rv;
+
+            *phPublicKey = *phPrivateKey = CK_INVALID_HANDLE;
+            rv = HssStripGenParams(pPrivateKeyTemplate,
+                ulPrivateKeyAttributeCount, &privTmpl, &privTmplCnt);
+            if (rv == CKR_OK) {
+                rv = NewObject(session, CKK_HSS, CKO_PUBLIC_KEY,
+                    pPublicKeyTemplate, ulPublicKeyAttributeCount, &pub);
+            }
+            if (rv == CKR_OK) {
+                rv = NewObject(session, CKK_HSS, CKO_PRIVATE_KEY, privTmpl,
+                    privTmplCnt, &priv);
+            }
+            if (privTmpl != NULL)
+                XFREE(privTmpl, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            if (rv == CKR_OK) {
+                ret = WP11_Hss_GenerateKeyPair(pub, priv, hssLevels, hssLms,
+                    hssLmots, WP11_Session_GetSlot(session));
+                if (ret == BAD_FUNC_ARG)
+                    rv = CKR_ATTRIBUTE_VALUE_INVALID;
+                else if (ret == MEMORY_E)
+                    rv = CKR_DEVICE_MEMORY;
+                else if (ret != 0)
+                    rv = CKR_FUNCTION_FAILED;
+            }
+            break;
+        }
 #endif
 #ifdef WOLFPKCS11_MLDSA
         case CKM_ML_DSA_KEY_PAIR_GEN:
@@ -10984,6 +11269,12 @@ static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
         rv = AddObject(session, priv, pPrivateKeyTemplate,
                                       ulPrivateKeyAttributeCount, phPrivateKey);
     }
+#ifdef WOLFPKCS11_LMS_PRIVATE
+    if (rv == CKR_OK && pMechanism->mechanism == CKM_HSS_KEY_PAIR_GEN &&
+            !WP11_Hss_IsStored(priv)) {
+        rv = CKR_DEVICE_ERROR;
+    }
+#endif
 
     if (rv != CKR_OK && pub != NULL) {
         if (*phPublicKey != CK_INVALID_HANDLE)

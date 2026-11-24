@@ -235,6 +235,30 @@ jobs:
     uses: ./.github/workflows/build-workflow.yml
     with:
       config: --enable-lms --enable-xmss --disable-shared
+  # LMS/HSS keygen and signing, against a sign-capable wolfSSL LMS build.
+  lms_private:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --enable-lms-private
+      wolfssl_config: --enable-lms
+  lms_private_static:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --enable-lms-private --disable-shared
+      wolfssl_config: --enable-lms
+  # Debug builds add the test hooks some of the HSS tests need.
+  lms_private_debug:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --enable-lms-private --enable-debug
+      wolfssl_config: --enable-lms
+  # WOLFSSL_WC_LMS_SMALL changes the private state size. wolfSSL's own
+  # crypttests fail to link in this config, so they are skipped.
+  lms_private_small:
+    uses: ./.github/workflows/build-workflow.yml
+    with:
+      config: --enable-lms-private
+      wolfssl_config: --enable-lms=small --disable-crypttests
   debug:
     uses: ./.github/workflows/build-workflow.yml
     with:
