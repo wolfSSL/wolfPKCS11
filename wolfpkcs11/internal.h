@@ -525,6 +525,9 @@ WP11_API void WP11_Test_StoreExitAfterRenames(int renames);
 WP11_API void WP11_Test_StoreCloseFailAfter(int closes);
 WP11_API void WP11_Test_StoreDirSyncEinval(int on);
 #endif
+#if !defined(WOLFPKCS11_NO_STORE) && !defined(WOLFPKCS11_CUSTOM_STORE)
+WP11_API int WP11_Test_StoreReadFailAfter(int reads);
+#endif
 #ifndef WOLFPKCS11_NO_STORE
 WP11_API int WP11_Test_StoreWriteFailAfter(int writes);
 WP11_API int WP11_Test_StoreWriteFailOnce(int writes);
