@@ -641,6 +641,25 @@ AC_ARG_ENABLE([xmss],
     [ ENABLED_XMSS=no ]
     )
 
+# XMSS/XMSS^MT key generation and signing
+AC_ARG_ENABLE([xmss-private],
+    [AS_HELP_STRING([--enable-xmss-private],[Enable XMSS/XMSS^MT keygen and signing (EXPERIMENTAL, stateful private keys, default: disabled)])],
+    [ ENABLED_XMSS_PRIVATE=$enableval ],
+    [ ENABLED_XMSS_PRIVATE=no ]
+    )
+
+if test "$ENABLED_SHA256" = "no" && test "$ENABLED_XMSS_PRIVATE" = "yes"
+then
+    echo "XMSS requires SHA-256 support (disabled), disabling XMSS keygen+sign"
+    ENABLED_XMSS_PRIVATE=no
+fi
+
+if test "$ENABLED_XMSS_PRIVATE" = "yes" && test "$ENABLED_XMSS" = "no"
+then
+    AC_MSG_NOTICE([--enable-xmss-private implies --enable-xmss; enabling])
+    ENABLED_XMSS=yes
+fi
+
 if test "$ENABLED_SHA256" = "no"
 then
     if test "$ENABLED_XMSS" = "yes"; then
@@ -717,6 +736,33 @@ then
     AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_LMS_PRIVATE"
 fi
 
+# A verify-only wolfSSL XMSS build has no wc_XmssKey_MakeKey.
+if test "$ENABLED_XMSS_PRIVATE" = "yes"
+then
+    AC_MSG_CHECKING([for a sign-capable wolfSSL XMSS build])
+    SAVED_LIBS="$LIBS"
+    AS_IF([test "x$WOLFPKCS11_STATIC_WOLFSSL" = "xyes"],
+          [LIBS="$LIBS $STATIC_WOLFSSL -lm"],
+          [LIBS="$LIBS -lwolfssl"])
+    AC_LINK_IFELSE(
+        [AC_LANG_PROGRAM(
+            [[#include <wolfssl/options.h>
+              #include <wolfssl/version.h>
+              #include <wolfssl/wolfcrypt/random.h>
+              #include <wolfssl/wolfcrypt/wc_xmss.h>]],
+            [[#if LIBWOLFSSL_VERSION_HEX < 0x05009004
+              #error wolfSSL too old
+              #endif
+              XmssKey* k = (XmssKey*)0; WC_RNG* r = (WC_RNG*)0;
+              return wc_XmssKey_MakeKey(k, r);]])],
+        [AC_MSG_RESULT([yes])],
+        [AC_MSG_RESULT([no])
+         AC_MSG_ERROR([--enable-xmss-private needs wolfSSL 5.9.4 or later with a sign-capable XMSS build; the installed wolfSSL is older, has no XMSS support or was configured with --enable-xmss=verify-only. Rebuild wolfSSL with --enable-xmss=yes.])])
+    LIBS="$SAVED_LIBS"
+
+    AM_CFLAGS="$AM_CFLAGS -DWOLFPKCS11_XMSS_PRIVATE"
+fi
+
 
 
 # HARDEN FLAGS
@@ -726,7 +772,7 @@ OPTION_FLAGS="$CFLAGS $CPPFLAGS $AM_CFLAGS"
 
 # The custom store tests build the library with WOLFPKCS11_CUSTOM_STORE. NSS
 # needs the file store, and a custom store cannot be built with the TPM store.
-# The legacy custom store has no commit report, which LMS/HSS keys need.
+# The legacy custom store has no commit report, which stateful keys need.
 AS_CASE([" $OPTION_FLAGS "],
     [*" -DWOLFPKCS11_NSS "*|*" -DWOLFPKCS11_NSS="*],
     [ENABLED_CUSTOM_STORE_TEST=no],
@@ -736,6 +782,8 @@ AS_CASE([" $OPTION_FLAGS "],
 ENABLED_CUSTOM_STORE_LEGACY_TEST=$ENABLED_CUSTOM_STORE_TEST
 AS_CASE([" $OPTION_FLAGS "],
     [*" -DWOLFPKCS11_LMS_PRIVATE "*|*" -DWOLFPKCS11_LMS_PRIVATE="*],
+    [ENABLED_CUSTOM_STORE_LEGACY_TEST=no],
+    [*" -DWOLFPKCS11_XMSS_PRIVATE "*|*" -DWOLFPKCS11_XMSS_PRIVATE="*],
     [ENABLED_CUSTOM_STORE_LEGACY_TEST=no])
 AM_CONDITIONAL([BUILD_CUSTOM_STORE_TEST],
     [test "x$ENABLED_CUSTOM_STORE_TEST" = "xyes"])
@@ -936,6 +984,7 @@ echo "   * ML-KEM:                     $ENABLED_MLKEM"
 echo "   * LMS/HSS verify:             $ENABLED_LMS"
 echo "   * LMS/HSS sign+keygen (EXP):  $ENABLED_LMS_PRIVATE"
 echo "   * XMSS/XMSS^MT verify:        $ENABLED_XMSS"
+echo "   * XMSS sign+keygen (EXP):     $ENABLED_XMSS_PRIVATE"
 echo "   * NSS modifications:          $ENABLED_NSS"
 echo "   * Default token path:         $WOLFPKCS11_DEFAULT_TOKEN_PATH"
 echo "   * PKCS#11 Version 3.0:        $ENABLED_PKCS11V3_0"

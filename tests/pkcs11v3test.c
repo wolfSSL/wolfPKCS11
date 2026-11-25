@@ -771,6 +771,32 @@ static CK_RV test_mldsa_gen_keys(void* args)
     return ret;
 }
 
+static CK_RV test_mldsa_unsupported_param_set(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_ML_DSA_PARAMETER_SET_TYPE paramSet = 0x99;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_ML_DSA_KEY_PAIR_GEN, NULL, 0 };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_PARAMETER_SET, &paramSet, sizeof(paramSet) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_SIGN, &ckTrue, sizeof(ckTrue) },
+    };
+
+    ret = funcList->C_GenerateKeyPair(session, &mech, pubTmpl, 1, privTmpl, 1,
+                                      &pub, &priv);
+    CHECK_CKR_FAIL(ret, CKR_PARAMETER_SET_NOT_SUPPORTED,
+                   "ML-DSA keygen with an unknown parameter set");
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+    return ret;
+}
+
 static CK_RV test_mldsa_gen_keys_id(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -1525,6 +1551,32 @@ static CK_RV test_mlkem_gen_keys(void* args)
     if (pub != CK_INVALID_HANDLE)
         funcList->C_DestroyObject(session, pub);
 
+    return ret;
+}
+
+static CK_RV test_mlkem_unsupported_param_set(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_ML_KEM_PARAMETER_SET_TYPE paramSet = 0x99;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_ML_KEM_KEY_PAIR_GEN, NULL, 0 };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_PARAMETER_SET, &paramSet, sizeof(paramSet) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_DECAPSULATE, &ckTrue, sizeof(ckTrue) },
+    };
+
+    ret = funcList->C_GenerateKeyPair(session, &mech, pubTmpl, 1, privTmpl, 1,
+                                      &pub, &priv);
+    CHECK_CKR_FAIL(ret, CKR_PARAMETER_SET_NOT_SUPPORTED,
+                   "ML-KEM keygen with an unknown parameter set");
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
     return ret;
 }
 
@@ -3555,6 +3607,14 @@ static CK_RV hbs_keygen_rejected(CK_SESSION_HANDLE session,
     }
     else
 #endif
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+    if (kgMech == CKM_XMSS_KEY_PAIR_GEN) {
+        /* The template has no CKA_TOKEN, which XMSS keygen requires. */
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+            "XMSS keygen with incomplete template rejected");
+    }
+    else
+#endif
     {
         CHECK_CKR_FAIL(ret, CKR_MECHANISM_INVALID,
             "HBS keygen rejected (no sign support for this scheme)");
@@ -3564,6 +3624,45 @@ static CK_RV hbs_keygen_rejected(CK_SESSION_HANDLE session,
         funcList->C_DestroyObject(session, pub);
     if (priv != CK_INVALID_HANDLE)
         funcList->C_DestroyObject(session, priv);
+    return ret;
+}
+
+/* An imported public key gets the same usage defaults in every build. */
+static CK_RV hbs_pub_defaults(CK_SESSION_HANDLE session, CK_KEY_TYPE keyType,
+    const CK_BYTE* pub, CK_ULONG pubLen)
+{
+    CK_RV ret;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_BBOOL flags[5] = { CK_TRUE, CK_FALSE, CK_TRUE, CK_TRUE, CK_TRUE };
+    CK_ATTRIBUTE get[] = {
+        { CKA_ENCRYPT,        &flags[0], sizeof(CK_BBOOL) },
+        { CKA_VERIFY,         &flags[1], sizeof(CK_BBOOL) },
+        { CKA_VERIFY_RECOVER, &flags[2], sizeof(CK_BBOOL) },
+        { CKA_WRAP,           &flags[3], sizeof(CK_BBOOL) },
+        { CKA_DERIVE,         &flags[4], sizeof(CK_BBOOL) },
+    };
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,    &pubKeyClass,  sizeof(pubKeyClass) },
+        { CKA_KEY_TYPE, &keyType,      sizeof(keyType)     },
+        { CKA_VALUE,    (CK_BYTE*)pub, pubLen              },
+    };
+
+    ret = funcList->C_CreateObject(session, tmpl,
+        sizeof(tmpl) / sizeof(*tmpl), &obj);
+    CHECK_CKR(ret, "HBS public key import without usage attributes");
+    if (ret == CKR_OK) {
+        ret = funcList->C_GetAttributeValue(session, obj, get,
+            sizeof(get) / sizeof(*get));
+        CHECK_CKR(ret, "HBS public key usage attributes");
+    }
+    if (ret == CKR_OK && (flags[0] != CK_FALSE || flags[1] != CK_TRUE ||
+            flags[2] != CK_FALSE || flags[3] != CK_FALSE ||
+            flags[4] != CK_FALSE)) {
+        ret = CKR_GENERAL_ERROR;
+        CHECK_CKR(ret, "HBS public key usage defaults");
+    }
+    if (obj != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, obj);
     return ret;
 }
 
@@ -3644,6 +3743,15 @@ static CK_RV hbs_mech_info(CK_MECHANISM_TYPE mechType)
     }
     else
 #endif
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+    if (mechType == CKM_XMSS || mechType == CKM_XMSSMT) {
+        if (ret == CKR_OK && (info.flags & CKF_SIGN) == 0) {
+            ret = CKR_GENERAL_ERROR;
+            CHECK_CKR(ret, "XMSS mech info missing CKF_SIGN (sign build)");
+        }
+    }
+    else
+#endif
     if (ret == CKR_OK && (info.flags & CKF_SIGN) != 0) {
         ret = CKR_GENERAL_ERROR;
         CHECK_CKR(ret, "HBS mech info unexpectedly claims CKF_SIGN");
@@ -3719,6 +3827,12 @@ static CK_RV test_hss_verify_only_no_keygen(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
     return hbs_keygen_rejected(session, CKM_HSS_KEY_PAIR_GEN);
+}
+
+static CK_RV test_hss_pub_defaults(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    return hbs_pub_defaults(session, CKK_HSS, hss_kat_pub, sizeof(hss_kat_pub));
 }
 
 static CK_RV test_hss_getattr_value(void* args)
@@ -4180,6 +4294,13 @@ static CK_RV test_xmss_verify_only_no_keygen(void* args)
     return hbs_keygen_rejected(session, CKM_XMSS_KEY_PAIR_GEN);
 }
 
+static CK_RV test_xmss_pub_defaults(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    return hbs_pub_defaults(session, CKK_XMSS, xmss_kat_pub,
+        sizeof(xmss_kat_pub));
+}
+
 static CK_RV test_xmss_getattr_value(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -4198,6 +4319,35 @@ static CK_RV test_xmss_mech_info(void* args)
 {
     (void)args;
     return hbs_mech_info(CKM_XMSS);
+}
+
+/* The keygen mechanisms exist only in a sign-capable build. */
+static CK_RV test_xmss_kg_mech_info(void* args)
+{
+    CK_RV ret = CKR_OK;
+    CK_RV rv;
+    CK_MECHANISM_INFO info;
+    CK_MECHANISM_TYPE mechs[] = { CKM_XMSS_KEY_PAIR_GEN,
+                                  CKM_XMSSMT_KEY_PAIR_GEN };
+    int i;
+
+    (void)args;
+    for (i = 0; ret == CKR_OK && i < 2; i++) {
+        XMEMSET(&info, 0, sizeof(info));
+        rv = funcList->C_GetMechanismInfo(slot, mechs[i], &info);
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+        CHECK_CKR(rv, "XMSS keygen mechanism info");
+        if (rv == CKR_OK && info.flags != CKF_GENERATE_KEY_PAIR) {
+            rv = CKR_GENERAL_ERROR;
+            CHECK_CKR(rv, "XMSS keygen mechanism flags");
+        }
+#else
+        CHECK_CKR_FAIL(rv, CKR_MECHANISM_INVALID,
+            "XMSS keygen mechanism in a verify-only build");
+#endif
+        ret = rv;
+    }
+    return ret;
 }
 
 static CK_RV test_xmssmt_mech_info(void* args)
@@ -4219,9 +4369,7 @@ static CK_RV test_xmss_bad_pubkey_len(void* args)
         xmss_kat_pub, sizeof(xmss_kat_pub));
 }
 
-/* A structurally invalid XMSS public key of the correct length (here an unknown
- * parameter-set OID in the leading bytes) must be rejected as a bad attribute
- * value, not a function failure. Complements test_xmss_bad_pubkey_len. */
+/* A public key of the right length with an unknown parameter-set OID. */
 static CK_RV test_xmss_bad_pubkey_value(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -4236,8 +4384,6 @@ static CK_RV test_xmss_bad_pubkey_value(void* args)
         { CKA_VALUE,    badPub,       sizeof(badPub)      },
     };
 
-    /* Corrupt the leading parameter-set OID to an unknown value; length stays
-     * correct so this exercises the structural-rejection path. */
     XMEMCPY(badPub, xmss_kat_pub, sizeof(badPub));
     badPub[0] = 0xFF;
     badPub[1] = 0xFF;
@@ -4246,8 +4392,8 @@ static CK_RV test_xmss_bad_pubkey_value(void* args)
 
     ret = funcList->C_CreateObject(session, tmpl,
         sizeof(tmpl) / sizeof(*tmpl), &obj);
-    CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
-        "XMSS structurally invalid public key rejected");
+    CHECK_CKR_FAIL(ret, CKR_PARAMETER_SET_NOT_SUPPORTED,
+        "XMSS public key with an unknown OID rejected");
     if (obj != CK_INVALID_HANDLE)
         funcList->C_DestroyObject(session, obj);
     return ret;
@@ -4533,6 +4679,7 @@ static TEST_FUNC testFunc[] = {
 #ifdef WOLFPKCS11_PKCS11_V3_2
 #ifdef WOLFPKCS11_MLDSA
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_gen_keys),
+    PKCS11TEST_FUNC_SESS_DECL(test_mldsa_unsupported_param_set),
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_gen_keys_id),
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_gen_keys_token),
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_token_keys),
@@ -4548,6 +4695,7 @@ static TEST_FUNC testFunc[] = {
 #endif
 #ifdef WOLFPKCS11_MLKEM
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_gen_keys),
+    PKCS11TEST_FUNC_SESS_DECL(test_mlkem_unsupported_param_set),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_gen_keys_768),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_gen_keys_1024),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_gen_keys_id),
@@ -4577,6 +4725,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_hss_priv_import_rejected),
     PKCS11TEST_FUNC_SESS_DECL(test_hss_verify_only_no_keygen),
     PKCS11TEST_FUNC_SESS_DECL(test_hss_getattr_value),
+    PKCS11TEST_FUNC_SESS_DECL(test_hss_pub_defaults),
     PKCS11TEST_FUNC_SESS_DECL(test_hss_getattr_params),
     PKCS11TEST_FUNC_SESS_DECL(test_hss_getattr_array_params),
     PKCS11TEST_FUNC_SESS_DECL(test_hss_setattr_rejected),
@@ -4594,9 +4743,11 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_xmss_priv_import_rejected),
     PKCS11TEST_FUNC_SESS_DECL(test_xmss_verify_only_no_keygen),
     PKCS11TEST_FUNC_SESS_DECL(test_xmss_getattr_value),
+    PKCS11TEST_FUNC_SESS_DECL(test_xmss_pub_defaults),
     PKCS11TEST_FUNC_SESS_DECL(test_xmssmt_getattr_value),
     PKCS11TEST_FUNC_SESS_DECL(test_xmss_mech_info),
     PKCS11TEST_FUNC_SESS_DECL(test_xmssmt_mech_info),
+    PKCS11TEST_FUNC_SESS_DECL(test_xmss_kg_mech_info),
     PKCS11TEST_FUNC_SESS_DECL(test_xmss_empty_template_rejected),
     PKCS11TEST_FUNC_SESS_DECL(test_xmss_bad_pubkey_len),
     PKCS11TEST_FUNC_SESS_DECL(test_xmss_bad_pubkey_value),

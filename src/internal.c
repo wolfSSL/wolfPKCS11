@@ -1130,6 +1130,9 @@ static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
         case WOLFPKCS11_STORE_HSSKEY_PRIV:
     #endif
         case WOLFPKCS11_STORE_XMSSKEY_PUB:
+    #ifdef WOLFPKCS11_XMSS_PRIVATE
+        case WOLFPKCS11_STORE_XMSSKEY_PRIV:
+    #endif
             maxSz = sizeof(word32) + variableSz;
             break;
 
@@ -1687,6 +1690,9 @@ static int wolfPKCS11_Store_Name(int type, CK_ULONG id1, CK_ULONG id2, char* nam
             break;
         case WOLFPKCS11_STORE_XMSSKEY_PUB:
             kind = "xmsskey_pub";
+            break;
+        case WOLFPKCS11_STORE_XMSSKEY_PRIV:
+            kind = "xmsskey_priv";
             break;
 
         default:
@@ -7837,6 +7843,14 @@ static int wp11_Object_EncodeData(WP11_Object* object, int protect)
             case CKK_XMSS:
             case CKK_XMSSMT:
                 ret = wp11_Object_Encode_XmssKey(object);
+        #ifdef WOLFPKCS11_XMSS_PRIVATE
+                if (protect && ret == 0 &&
+                        object->objClass == CKO_PRIVATE_KEY) {
+                    wc_XmssKey_Free(object->data.xmssKey);
+                    object->encoded = 1;
+                    object->statefulState = 0;
+                }
+        #endif
                 break;
         #endif
         #ifndef NO_AES
@@ -8203,6 +8217,16 @@ static void wp11_Object_Scrub(WP11_Object* object)
             }
             break;
     #endif
+    #ifdef WOLFPKCS11_XMSS_PRIVATE
+        case CKK_XMSS:
+        case CKK_XMSSMT:
+            if (object->objClass == CKO_PRIVATE_KEY) {
+                wc_XmssKey_Free(object->data.xmssKey);
+                object->encoded = 1;
+                object->statefulState = 0;
+            }
+            break;
+    #endif
     #ifndef NO_AES
         case CKK_AES:
     #endif
@@ -8322,6 +8346,10 @@ static int wp11_Object_StoreType(WP11_Object* object)
         case CKK_XMSS:
         case CKK_XMSSMT:
             storeObjType = WOLFPKCS11_STORE_XMSSKEY_PUB;
+    #ifdef WOLFPKCS11_XMSS_PRIVATE
+            if (object->objClass == CKO_PRIVATE_KEY)
+                storeObjType = WOLFPKCS11_STORE_XMSSKEY_PRIV;
+    #endif
             break;
     #endif
     #ifndef NO_AES
@@ -9112,6 +9140,9 @@ static int wp11_StoreType_Written(int type)
     #ifdef WOLFPKCS11_XMSS
         case WOLFPKCS11_STORE_XMSSKEY_PUB:
     #endif
+    #ifdef WOLFPKCS11_XMSS_PRIVATE
+        case WOLFPKCS11_STORE_XMSSKEY_PRIV:
+    #endif
             return 1;
         default:
             return 0;
@@ -9234,9 +9265,6 @@ static int wp11_Token_Purge(WP11_Token* token, int tokenId)
         #ifdef WOLFPKCS11_CUSTOM_STORE
             /* A custom store may refuse types this build never writes. */
             if (t != WOLFPKCS11_STORE_OBJECT && !wp11_StoreType_Written(t))
-                continue;
-        #else
-            if (t == WOLFPKCS11_STORE_XMSSKEY_PRIV)
                 continue;
         #endif
             if (keep != -1 && (t == WOLFPKCS11_STORE_OBJECT || t == keep))
@@ -12335,6 +12363,9 @@ static int wp11_init_get_op_category(int init)
         case WP11_INIT_MLDSA_SIGN:
 #ifdef WOLFPKCS11_LMS_PRIVATE
         case WP11_INIT_HSS_SIGN:
+#endif
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+        case WP11_INIT_XMSS_SIGN:
 #endif
             return WP11_OP_SIGN;
 
@@ -15673,7 +15704,7 @@ int WP11_Object_SetEcKey(WP11_Object* object, unsigned char** data,
  * @param  params [in]  Pointer to parameters structure.
  * @param  len    [in]  Length of parameters.
  * @return  BUFFER_E when len is too short.
- *          ASN_PARSE_E when parameter is bad.
+ *          NOT_COMPILED_IN when the parameter set is not supported.
  *          Other -ve on failure.
  *          0 on success.
  */
@@ -15701,7 +15732,7 @@ static int mldsaSetParameters(wc_MlDsaKey* key,
             ret = wc_MlDsaKey_SetParams(key, WC_ML_DSA_87);
             break;
         default:
-            ret = ASN_PARSE_E;
+            ret = NOT_COMPILED_IN;
             break;
     }
 
@@ -15915,7 +15946,7 @@ int WP11_Object_SetMlKemKey(WP11_Object* object, unsigned char** data,
         default:
             if (object->lock != NULL)
                 WP11_Lock_UnlockRW(object->lock);
-            return ASN_PARSE_E;
+            return NOT_COMPILED_IN;
     }
 
     /* Set seed (only for private keys). */

@@ -410,6 +410,10 @@ static CK_MECHANISM_TYPE mechanismList[] = {
 #ifdef WOLFPKCS11_XMSS
     CKM_XMSS,
     CKM_XMSSMT,
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+    CKM_XMSS_KEY_PAIR_GEN,
+    CKM_XMSSMT_KEY_PAIR_GEN,
+#endif
 #endif
 #ifndef NO_AES
     CKM_AES_KEY_GEN,
@@ -711,10 +715,18 @@ static CK_MECHANISM_INFO hssKgMechInfo = {
 #endif
 #endif
 #ifdef WOLFPKCS11_XMSS
-/* Info on the XMSS / XMSS^MT verify mechanisms. 0..0 envelope, verify-only. */
+/* PKCS#11 defines no key size for XMSS, so the range is 0..0. */
 static CK_MECHANISM_INFO xmssMechInfo = {
     0, 0, CKF_VERIFY
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+    | CKF_SIGN
+#endif
 };
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+static CK_MECHANISM_INFO xmssKgMechInfo = {
+    0, 0, CKF_GENERATE_KEY_PAIR
+};
+#endif
 #endif
 #ifdef WOLFPKCS11_HKDF
 static CK_MECHANISM_INFO hkdfMechInfo = {
@@ -1105,6 +1117,12 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
         case CKM_XMSSMT:
             XMEMCPY(pInfo, &xmssMechInfo, sizeof(CK_MECHANISM_INFO));
             break;
+#ifdef WOLFPKCS11_XMSS_PRIVATE
+        case CKM_XMSS_KEY_PAIR_GEN:
+        case CKM_XMSSMT_KEY_PAIR_GEN:
+            XMEMCPY(pInfo, &xmssKgMechInfo, sizeof(CK_MECHANISM_INFO));
+            break;
+#endif
 #endif
 #ifdef WOLFPKCS11_HKDF
         case CKM_HKDF_DERIVE:

@@ -580,6 +580,22 @@ add_option("WOLFPKCS11_XMSS"
     "no" "yes;no"
 )
 
+# XMSS/XMSS^MT keygen + signing (EXPERIMENTAL, stateful private keys; default: disabled)
+add_option("WOLFPKCS11_XMSS_PRIVATE"
+    "Enable wolfPKCS11 XMSS/XMSS^MT keygen and signing (EXPERIMENTAL, stateful private keys, default: disabled)"
+    "no" "yes;no"
+)
+
+if(WOLFPKCS11_XMSS_PRIVATE AND NOT WOLFPKCS11_SHA256)
+    message(STATUS "XMSS requires SHA-256 support (disabled); disabling WOLFPKCS11_XMSS_PRIVATE")
+    override_cache(WOLFPKCS11_XMSS_PRIVATE "no")
+endif()
+
+if(WOLFPKCS11_XMSS_PRIVATE AND NOT WOLFPKCS11_XMSS)
+    message(STATUS "WOLFPKCS11_XMSS_PRIVATE requires WOLFPKCS11_XMSS - enabling WOLFPKCS11_XMSS automatically")
+    override_cache(WOLFPKCS11_XMSS "yes")
+endif()
+
 if(WOLFPKCS11_XMSS AND NOT WOLFPKCS11_SHA256)
     message(STATUS "XMSS requires SHA-256 support (disabled); disabling WOLFPKCS11_XMSS")
     override_cache(WOLFPKCS11_XMSS "no")
@@ -596,6 +612,10 @@ if(WOLFPKCS11_XMSS)
         list(APPEND WOLFPKCS11_DEFINITIONS "-DWOLFPKCS11_PKCS11_V3_2")
     endif()
     list(APPEND WOLFPKCS11_DEFINITIONS "-DWOLFPKCS11_XMSS")
+endif()
+
+if(WOLFPKCS11_XMSS_PRIVATE)
+    list(APPEND WOLFPKCS11_DEFINITIONS "-DWOLFPKCS11_XMSS_PRIVATE")
 endif()
 
 
@@ -873,6 +893,9 @@ if(WOLFPKCS11_TESTS)
     add_wpkcs11_test(hss_concurrency_test
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/hss_concurrency_test.c)
     set_tests_properties(hss_concurrency_test PROPERTIES SKIP_RETURN_CODE 77)
+    add_wpkcs11_test(xmss_private_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/xmss_private_test.c)
+    set_tests_properties(xmss_private_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 if(WOLFPKCS11_EXAMPLES)

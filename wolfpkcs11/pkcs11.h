@@ -491,6 +491,7 @@ extern "C" {
 #define CKR_FUNCTION_REJECTED                 0x00000200UL
 #define CKR_OPERATION_CANCEL_FAILED           0x00000202UL
 #define CKR_KEY_EXHAUSTED                     0x00000203UL
+#define CKR_PARAMETER_SET_NOT_SUPPORTED       0x00000209UL
 #define CKR_VENDOR_DEFINED                    0x80000000UL
 
 
