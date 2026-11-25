@@ -2019,14 +2019,16 @@ static int wolfPKCS11_StoreBatchApply(const char* listName, int mode)
  * not. Caller holds the batch locks and has set the batch names.
  *
  * @return  0 on success.
- * @return  READ_ONLY_E when a committed pass could not be finished; the
- *          marker is kept so a later attempt can finish it.
+ * @return  READ_ONLY_E when a committed pass could not be finished, or the
+ *          marker cannot be opened; the marker is kept so a later attempt
+ *          can finish it.
  */
 static int wolfPKCS11_StoreBatchRecover(void)
 {
     int ret = 0;
     XFILE marker;
 
+    errno = 0;
     marker = XFOPEN(storeBatch.commitName, "rb");
     if (marker != XBADFILE) {
         XFCLOSE(marker);
@@ -2038,10 +2040,13 @@ static int wolfPKCS11_StoreBatchRecover(void)
         if (ret == 0)
             (void)remove(storeBatch.commitName);
     }
-    else {
+    else if (errno == ENOENT) {
         (void)wolfPKCS11_StoreBatchApply(storeBatch.intentName,
             WP11_BATCH_DISCARD);
         (void)remove(storeBatch.intentName);
+    }
+    else {
+        ret = READ_ONLY_E;
     }
 
     return ret;
@@ -2158,9 +2163,13 @@ static int wolfPKCS11_StoreBatchCheck(int tokenId, WP11_Slot** held)
         }
         else {
             /* A committed pass that cannot be finished must not be read. */
+            errno = 0;
             marker = XFOPEN(storeBatch.commitName, "rb");
             if (marker != XBADFILE) {
                 XFCLOSE(marker);
+                ret = READ_ONLY_E;
+            }
+            else if (errno != ENOENT) {
                 ret = READ_ONLY_E;
             }
         }
@@ -2539,6 +2548,32 @@ int wolfPKCS11_Store_Remove(int type, CK_ULONG id1, CK_ULONG id2)
     return ret;
 }
 
+#ifdef DEBUG_WOLFPKCS11
+static int wp11_storeReadFailAfter = -1;
+
+/**
+ * Test hook: make one store read or record open fail with an I/O error,
+ * after the given number of them succeed.
+ *
+ * @param  reads  [in]  Reads to allow first, or -1 to disable the hook.
+ * @return  Reads still allowed before this call, or -1 when the armed read
+ *          failure happened or none was armed.
+ */
+WP11_API int WP11_Test_StoreReadFailAfter(int reads)
+{
+    int left = wp11_storeReadFailAfter;
+
+    wp11_storeReadFailAfter = reads;
+    return left;
+}
+
+/* Returns 1 when the armed store read failure is due. */
+static int wp11_StoreReadFailNow(void)
+{
+    return wp11_storeReadFailAfter >= 0 && wp11_storeReadFailAfter-- == 0;
+}
+#endif
+
 /**
  * Opens access to location to read/write token data.
  *
@@ -2598,6 +2633,8 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
     #ifdef DEBUG_WOLFPKCS11
         if (tpmStoreOpenRc != 0)
             ret = tpmStoreOpenRc;
+        else if (ret == 0 && wp11_StoreReadFailNow())
+            ret = TPM_RC_FAILURE;
     #endif
         if (ret != 0) {
             /* Only an NV index that does not exist is a missing record. */
@@ -2684,6 +2721,14 @@ int wolfPKCS11_Store_OpenSz(int type, CK_ULONG id1, CK_ULONG id2, int read,
             if (ctx->file == NULL) {
                 ret = (errno == ENOENT) ? NOT_AVAILABLE_E : READ_ONLY_E;
             }
+        #ifdef DEBUG_WOLFPKCS11
+            else if (wp11_StoreReadFailNow()) {
+                /* Test hook: the open fails. */
+                XFCLOSE(ctx->file);
+                ctx->file = NULL;
+                ret = READ_ONLY_E;
+            }
+        #endif
         }
         else if (ret == 0) {
             for (i = 0; i < nameLen; i++) {
@@ -2959,7 +3004,7 @@ void wolfPKCS11_Store_Close(void* store)
  */
 int wolfPKCS11_Store_Read(void* store, unsigned char* buffer, int len)
 {
-    int ret = BUFFER_E;
+    int ret = READ_ONLY_E;
 #ifdef WOLFPKCS11_TPM_STORE
     WP11_TpmStore* tpmStore = (WP11_TpmStore*)store;
     word32 readSize;
@@ -2975,6 +3020,12 @@ int wolfPKCS11_Store_Read(void* store, unsigned char* buffer, int len)
     wolfTPM2_SetAuthHandle(tpmStore->dev, 0, &tpmStore->nv.handle);
     ret = wolfTPM2_NVReadAuth(tpmStore->dev, &tpmStore->nv,
         tpmStore->nv.handle.hndl, buffer, &readSize, tpmStore->offset);
+#ifdef DEBUG_WOLFPKCS11
+    if (wp11_StoreReadFailNow()) {
+        /* Test hook: the TPM rejects a read parameter. */
+        ret = TPM_RC_VALUE;
+    }
+#endif
     if (ret == 0) {
         tpmStore->offset += readSize;
         ret = readSize;
@@ -3000,6 +3051,12 @@ int wolfPKCS11_Store_Read(void* store, unsigned char* buffer, int len)
         if (ret < len && ferror(ctx->file))
             ret = READ_ONLY_E;
     #endif
+    #ifdef DEBUG_WOLFPKCS11
+        if (wp11_StoreReadFailNow()) {
+            /* Test hook: the read fails. */
+            ret = READ_ONLY_E;
+        }
+    #endif
     }
 #endif
     return ret;
@@ -3012,7 +3069,7 @@ int wolfPKCS11_Store_Read(void* store, unsigned char* buffer, int len)
  * @param [in]   store  Context for operation.
  * @param [out]  left   Number of bytes after the read position.
  * @return  0 on success.
- * @return  BUFFER_E when the position cannot be worked out or restored.
+ * @return  READ_ONLY_E when the position cannot be worked out or restored.
  */
 static int wolfPKCS11_Store_Left(void* store, long* left)
 {
@@ -3029,7 +3086,7 @@ static int wolfPKCS11_Store_Left(void* store, long* left)
             end = -1;
     }
     if (pos < 0 || end < pos)
-        return BUFFER_E;
+        return READ_ONLY_E;
     *left = end - pos;
     return 0;
 }
@@ -3713,9 +3770,11 @@ int wp11_storage_write_array(void* storage,
  * @param [out]  buffer   Allocated data, set on success when *len > 0.
  * @param [out]  len      Length of data, read from storage.
  * @return  0 on success.
- * @return  BUFFER_E to indicate failure.
- * @return  ASN_PARSE_E when the stored length is negative.
+ * @return  BUFFER_E when the stored data ends first.
+ * @return  ASN_PARSE_E when the stored length is negative, or longer than
+ *          the data a file store holds.
  * @return  MEMORY_E when dynamic memory allocation fails.
+ * @return  Other -ve value when the store read fails.
  */
 int wp11_storage_read_alloc_array(void* storage,
                                   unsigned char** buffer, int* len)
@@ -3739,8 +3798,10 @@ int wp11_storage_read_alloc_array(void* storage,
     if (ret == 0 && *len > 0) {
         /* When the store knows its size, allocate once if the data is there. */
         ret = wp11_storage_left(storage, &left);
-        if (ret == 0 && (long)*len > left)
-            ret = BUFFER_E;
+        if (ret == 0 && (long)*len > left) {
+            *len = 0;
+            ret = ASN_PARSE_E;
+        }
         else if (ret == 0)
             first = *len;
         else if (ret == NOT_AVAILABLE_E)
@@ -7273,8 +7334,10 @@ static int wp11_Object_Load_Object(WP11_Object* object, int tokenId, int objId)
                     /* Read email of the object. (variable emailLen) */
                     ret = wp11_storage_read_alloc_array(storage,
                         &object->email, &object->emailLen);
-                    if (ret == BUFFER_E)
+                    if (ret == BUFFER_E) {
+                        object->emailLen = 0;
                         ret = 0;
+                    }
                 }
 #endif
                 if (ret == 0 && (recFlags & WP11_OBJ_REC_TMPL) != 0) {
@@ -7294,6 +7357,7 @@ static int wp11_Object_Load_Object(WP11_Object* object, int tokenId, int objId)
                 /* Older version of the storage format, doesn't have these, so
                  * skip reading.
                  */
+                object->issuerLen = 0;
                 ret = 0;
             }
         }
