@@ -1998,6 +1998,9 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
                     ret = WP11_Object_SetMldsaKey(obj, data, len);
                     if (ret == NOT_COMPILED_IN)
                         return CKR_PARAMETER_SET_NOT_SUPPORTED;
+                    if (ret == BAD_FUNC_ARG || ret == BUFFER_E ||
+                            ret == PUBLIC_KEY_E)
+                        return CKR_ATTRIBUTE_VALUE_INVALID;
                     break;
         #endif
         #ifndef NO_DH
@@ -2013,6 +2016,9 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
                     ret = WP11_Object_SetMlKemKey(obj, data, len);
                     if (ret == NOT_COMPILED_IN)
                         return CKR_PARAMETER_SET_NOT_SUPPORTED;
+                    if (ret == BAD_FUNC_ARG || ret == BUFFER_E ||
+                            ret == PUBLIC_KEY_E)
+                        return CKR_ATTRIBUTE_VALUE_INVALID;
                     break;
         #endif
         #ifdef WOLFPKCS11_LMS
@@ -2772,6 +2778,22 @@ static CK_RV CheckCreateRequiredAttributes(CK_ATTRIBUTE_PTR pTemplate,
                 if (rv == CKR_OK)
                     rv = RequireAttribute(pTemplate, ulCount, CKA_BASE);
                 if (rv == CKR_OK)
+                    rv = RequireAttribute(pTemplate, ulCount, CKA_VALUE);
+                break;
+        #endif
+        #if defined(WOLFPKCS11_MLDSA) || defined(WOLFPKCS11_MLKEM)
+        #ifdef WOLFPKCS11_MLDSA
+            case CKK_ML_DSA:
+        #endif
+        #ifdef WOLFPKCS11_MLKEM
+            case CKK_ML_KEM:
+        #endif
+                rv = RequireAttribute(pTemplate, ulCount, CKA_PARAMETER_SET);
+                if (rv != CKR_OK)
+                    break;
+                /* A private key may be given as a seed, a value or both. */
+                FindAttributeType(pTemplate, ulCount, CKA_SEED, &attr);
+                if (objectClass == CKO_PUBLIC_KEY || attr == NULL)
                     rv = RequireAttribute(pTemplate, ulCount, CKA_VALUE);
                 break;
         #endif
@@ -7384,12 +7406,9 @@ static CK_RV wp11_C_SignInit(CK_SESSION_HANDLE hSession,
         case CKM_HASH_ML_DSA:
             if (type != CKK_ML_DSA)
                 return CKR_KEY_TYPE_INCONSISTENT;
-            if ((pMechanism->pParameter != NULL) &&
+            if ((pMechanism->pParameter == NULL) ||
                 (pMechanism->ulParameterLen !=
                                        sizeof(CK_HASH_SIGN_ADDITIONAL_CONTEXT)))
-                return CKR_MECHANISM_PARAM_INVALID;
-            if ((pMechanism->pParameter == NULL) &&
-                                              (pMechanism->ulParameterLen != 0))
                 return CKR_MECHANISM_PARAM_INVALID;
 
             ret = WP11_Session_SetMldsaParams(session,
@@ -8766,12 +8785,9 @@ static CK_RV wp11_C_VerifyInit(CK_SESSION_HANDLE hSession,
         case CKM_HASH_ML_DSA:
             if (type != CKK_ML_DSA)
                 return CKR_KEY_TYPE_INCONSISTENT;
-            if ((pMechanism->pParameter != NULL) &&
+            if ((pMechanism->pParameter == NULL) ||
                 (pMechanism->ulParameterLen !=
                                        sizeof(CK_HASH_SIGN_ADDITIONAL_CONTEXT)))
-                return CKR_MECHANISM_PARAM_INVALID;
-            if ((pMechanism->pParameter == NULL) &&
-                                              (pMechanism->ulParameterLen != 0))
                 return CKR_MECHANISM_PARAM_INVALID;
 
             ret = WP11_Session_SetMldsaParams(session,

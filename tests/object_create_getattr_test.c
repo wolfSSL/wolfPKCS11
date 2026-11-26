@@ -509,7 +509,7 @@ static CK_RV gen_pq_key_pair(CK_SESSION_HANDLE session, CK_MECHANISM_TYPE type,
         sizeof(privTmpl) / sizeof(*privTmpl), pub, priv);
 }
 
-/* Create a public key object carrying only its parameter set. */
+/* Try to create a public key object carrying only its parameter set. */
 static CK_RV create_pq_params_only(CK_SESSION_HANDLE session,
                                    CK_KEY_TYPE keyType, CK_ULONG paramSet,
                                    CK_OBJECT_HANDLE* obj)
@@ -547,11 +547,7 @@ static void check_pq_unavailable(CK_SESSION_HANDLE session,
 
     rv = create_pq_params_only(session, keyType, paramSet, &noPub);
     snprintf(msg, sizeof(msg), "%s public key without value", name);
-    CHECK_RV(rv, msg, CKR_OK);
-    if (rv == CKR_OK) {
-        snprintf(msg, sizeof(msg), "%s missing public CKA_VALUE", name);
-        expect_unavailable(session, noPub, CKA_VALUE, msg);
-    }
+    CHECK_RV(rv, msg, CKR_TEMPLATE_INCOMPLETE);
 
     destroy_obj(session, &noPub);
     destroy_obj(session, &priv);

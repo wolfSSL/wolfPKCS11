@@ -894,11 +894,70 @@ static CK_RV test_mldsa_sig_fail(void* args)
         CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
                        "HASH-ML-DSA Sign Init bad hash");
     }
+    if (ret == CKR_OK) {
+        mech.mechanism = CKM_HASH_ML_DSA;
+        mech.pParameter = NULL;
+        mech.ulParameterLen = 0;
+        ret = funcList->C_SignInit(session, &mech, priv);
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
+                       "HASH-ML-DSA Sign Init no parameter");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_VerifyInit(session, &mech, pub);
+        CHECK_CKR_FAIL(ret, CKR_MECHANISM_PARAM_INVALID,
+                       "HASH-ML-DSA Verify Init no parameter");
+    }
 
     if (priv != CK_INVALID_HANDLE)
         funcList->C_DestroyObject(session, priv);
     if (pub != CK_INVALID_HANDLE)
         funcList->C_DestroyObject(session, pub);
+
+    return ret;
+}
+
+static CK_RV test_mldsa_create_invalid(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_ML_DSA_PARAMETER_SET_TYPE paramSet = CKP_ML_DSA_44;
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_CLASS,         &pubKeyClass,   sizeof(pubKeyClass)  },
+        { CKA_KEY_TYPE,      &mldsaKeyType,  sizeof(mldsaKeyType) },
+        { CKA_VERIFY,        &ckTrue,        sizeof(ckTrue)       },
+        { CKA_VALUE,         mldsa_44_pub,   sizeof(mldsa_44_pub) },
+        { CKA_PARAMETER_SET, &paramSet,      sizeof(paramSet)     },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_CLASS,         &privKeyClass,  sizeof(privKeyClass) },
+        { CKA_KEY_TYPE,      &mldsaKeyType,  sizeof(mldsaKeyType) },
+        { CKA_SIGN,          &ckTrue,        sizeof(ckTrue)       },
+        { CKA_PARAMETER_SET, &paramSet,      sizeof(paramSet)     },
+    };
+    int pubCnt = sizeof(pubTmpl)/sizeof(*pubTmpl);
+    int privCnt = sizeof(privTmpl)/sizeof(*privTmpl);
+
+    pubTmpl[3].ulValueLen = sizeof(mldsa_44_pub) - 1;
+    ret = funcList->C_CreateObject(session, pubTmpl, pubCnt, &obj);
+    CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+                   "ML-DSA Pub Key CreateObject short value");
+    if (ret == CKR_OK) {
+        pubTmpl[3].ulValueLen = sizeof(mldsa_44_pub);
+        ret = funcList->C_CreateObject(session, pubTmpl, pubCnt - 1, &obj);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCOMPLETE,
+                       "ML-DSA Pub Key CreateObject no parameter set");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, privTmpl, privCnt, &obj);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCOMPLETE,
+                       "ML-DSA Priv Key CreateObject no seed or value");
+    }
+    if (ret == CKR_OK) {
+        ret = funcList->C_CreateObject(session, privTmpl, privCnt - 1, &obj);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCOMPLETE,
+                       "ML-DSA Priv Key CreateObject no parameter set");
+    }
 
     return ret;
 }
@@ -1886,7 +1945,7 @@ static CK_RV test_mlkem_seed_invalid(void* args)
         };
         int cnt = sizeof(tmpl)/sizeof(*tmpl);
         ret = funcList->C_CreateObject(session, tmpl, cnt, &obj);
-        CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED,
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCOMPLETE,
                        "ML-KEM Pub Key CreateObject from seed must fail");
         obj = CK_INVALID_HANDLE;
     }
@@ -1902,7 +1961,7 @@ static CK_RV test_mlkem_seed_invalid(void* args)
         };
         int cnt = sizeof(tmpl)/sizeof(*tmpl);
         ret = funcList->C_CreateObject(session, tmpl, cnt, &obj);
-        CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED,
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
                        "ML-KEM Priv Key CreateObject bad seed length");
         obj = CK_INVALID_HANDLE;
     }
@@ -1926,7 +1985,7 @@ static CK_RV test_mlkem_seed_invalid(void* args)
         };
         int cnt = sizeof(tmpl)/sizeof(*tmpl);
         ret = funcList->C_CreateObject(session, tmpl, cnt, &obj);
-        CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED,
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
                        "ML-KEM Priv Key CreateObject mismatch seed and key");
     }
 
@@ -1936,6 +1995,70 @@ static CK_RV test_mlkem_seed_invalid(void* args)
         free(privKeyDataAlt);
     if (pubKeyDataAlt != NULL)
         free(pubKeyDataAlt);
+
+    return ret;
+}
+
+static CK_RV test_mlkem_create_invalid(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret = CKR_OK;
+    CK_ML_KEM_PARAMETER_SET_TYPE paramSet = CKP_ML_KEM_512;
+    CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+    CK_BYTE* privKeyData = NULL;
+    CK_BYTE* pubKeyData = NULL;
+    CK_ULONG privKeyLen = 0;
+    CK_ULONG pubKeyLen = 0;
+
+    ret = mlkem_keypair_from_seed(paramSet, mlkem_512_seed,
+                                  sizeof(mlkem_512_seed), &privKeyData,
+                                  &privKeyLen, &pubKeyData, &pubKeyLen);
+    CHECK_CKR(ret, "ML-KEM keypair from seed");
+    if (ret == CKR_OK) {
+        CK_ATTRIBUTE tmpl[] = {
+            { CKA_CLASS,         &pubKeyClass,  sizeof(pubKeyClass)  },
+            { CKA_KEY_TYPE,      &mlkemKeyType, sizeof(mlkemKeyType) },
+            { CKA_ENCAPSULATE,   &ckTrue,       sizeof(ckTrue)       },
+            { CKA_VALUE,         pubKeyData,    pubKeyLen - 1        },
+            { CKA_PARAMETER_SET, &paramSet,     sizeof(paramSet)     },
+        };
+        int cnt = sizeof(tmpl)/sizeof(*tmpl);
+
+        ret = funcList->C_CreateObject(session, tmpl, cnt, &obj);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+                       "ML-KEM Pub Key CreateObject short value");
+        if (ret == CKR_OK) {
+            tmpl[3].ulValueLen = pubKeyLen;
+            ret = funcList->C_CreateObject(session, tmpl, cnt - 1, &obj);
+            CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCOMPLETE,
+                           "ML-KEM Pub Key CreateObject no parameter set");
+        }
+    }
+    if (ret == CKR_OK) {
+        CK_ATTRIBUTE tmpl[] = {
+            { CKA_CLASS,         &privKeyClass, sizeof(privKeyClass) },
+            { CKA_KEY_TYPE,      &mlkemKeyType, sizeof(mlkemKeyType) },
+            { CKA_DECAPSULATE,   &ckTrue,       sizeof(ckTrue)       },
+            { CKA_VALUE,         privKeyData,   privKeyLen - 1       },
+            { CKA_PARAMETER_SET, &paramSet,     sizeof(paramSet)     },
+        };
+        int cnt = sizeof(tmpl)/sizeof(*tmpl);
+
+        ret = funcList->C_CreateObject(session, tmpl, cnt, &obj);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+                       "ML-KEM Priv Key CreateObject short value");
+        if (ret == CKR_OK) {
+            tmpl[3].type = CKA_LABEL;
+            ret = funcList->C_CreateObject(session, tmpl, cnt, &obj);
+            CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCOMPLETE,
+                           "ML-KEM Priv Key CreateObject no seed or value");
+        }
+    }
+
+    if (privKeyData != NULL)
+        free(privKeyData);
+    if (pubKeyData != NULL)
+        free(pubKeyData);
 
     return ret;
 }
@@ -4684,6 +4807,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_gen_keys_token),
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_token_keys),
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_sig_fail),
+    PKCS11TEST_FUNC_SESS_DECL(test_mldsa_create_invalid),
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_fixed_keys_expanded),
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_fixed_keys_seed),
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_fixed_keys_both),
@@ -4705,6 +4829,7 @@ static TEST_FUNC testFunc[] = {
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_fixed_keys_seed),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_fixed_keys_seed_both),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_seed_invalid),
+    PKCS11TEST_FUNC_SESS_DECL(test_mlkem_create_invalid),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_encap_decap_fail),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_bad_mech_params),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_secret_template_type),
