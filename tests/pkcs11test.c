@@ -12409,6 +12409,33 @@ static CK_RV test_aes_gcm_update(CK_SESSION_HANDLE session, unsigned char* aad,
             CHECK_CKR(ret, "AES-GCM Decrypted data match plain text");
         }
     }
+    if (ret == CKR_OK) {
+        auth[0] ^= 0x01;
+        ret = funcList->C_DecryptInit(session, &mech, key);
+        CHECK_CKR(ret, "AES-GCM Decrypt Init bad tag");
+    }
+    if (ret == CKR_OK) {
+        decSz = sizeof(dec);
+        ret = funcList->C_DecryptUpdate(session, enc, encSz, dec, &decSz);
+        CHECK_CKR(ret, "AES-GCM Decrypt Update bad tag");
+    }
+    if (ret == CKR_OK) {
+        decSz = sizeof(dec);
+        ret = funcList->C_DecryptUpdate(session, auth, authSz, dec, &decSz);
+        CHECK_CKR(ret, "AES-GCM Decrypt Update tag bad tag");
+    }
+    if (ret == CKR_OK) {
+        decSz = sizeof(dec);
+        ret = funcList->C_DecryptFinal(session, dec, &decSz);
+        CHECK_CKR_FAIL(ret, CKR_ENCRYPTED_DATA_INVALID,
+                                               "AES-GCM Decrypt Final bad tag");
+    }
+    if (ret == CKR_OK) {
+        decSz = sizeof(dec);
+        ret = funcList->C_DecryptFinal(session, dec, &decSz);
+        CHECK_CKR_FAIL(ret, CKR_OPERATION_NOT_INITIALIZED,
+                                         "AES-GCM Decrypt Final after bad tag");
+    }
 
     return ret;
 }

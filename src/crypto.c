@@ -6258,6 +6258,7 @@ CK_RV C_DecryptUpdate(CK_SESSION_HANDLE hSession,
  *          successfully called.
  *          CKR_ENCRYPTED_DATA_LEN_RANGE when the encrypted data is not a
  *          whole number of blocks.
+ *          CKR_ENCRYPTED_DATA_INVALID when the AES-GCM tag does not verify.
  *          CKR_BUFFER_TOO_SMALL when the output length is too small for
  *          decrypted data.
  *          CKR_FUNCTION_FAILED when decrypting failed.
@@ -6412,6 +6413,10 @@ static CK_RV wp11_C_DecryptFinal(CK_SESSION_HANDLE hSession,
 
             ret = WP11_AesGcm_DecryptFinal(pLastPart, &decPartLen, obj,
                                                                        session);
+            if (ret == AES_GCM_AUTH_E) {
+                WP11_Session_AbortOp(session);
+                return CKR_ENCRYPTED_DATA_INVALID;
+            }
             if (ret < 0) {
                 WP11_Session_AbortOp(session);
                 return CKR_FUNCTION_FAILED;
