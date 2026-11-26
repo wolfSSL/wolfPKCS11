@@ -797,6 +797,165 @@ static CK_RV test_mldsa_unsupported_param_set(void* args)
     return ret;
 }
 
+static CK_RV test_mldsa_gen_keys_no_param_set(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_ML_DSA_KEY_PAIR_GEN, NULL, 0 };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_VERIFY, &ckTrue, sizeof(ckTrue) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_SIGN, &ckTrue, sizeof(ckTrue) },
+    };
+
+    ret = funcList->C_GenerateKeyPair(session, &mech, pubTmpl, 1, privTmpl, 1,
+                                      &pub, &priv);
+    CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCOMPLETE,
+                   "ML-DSA keygen without a parameter set");
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+    return ret;
+}
+
+static CK_RV test_mldsa_gen_keys_pub_seed(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_ML_DSA_PARAMETER_SET_TYPE paramSet = CKP_ML_DSA_44;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_ML_DSA_KEY_PAIR_GEN, NULL, 0 };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_PARAMETER_SET, &paramSet,     sizeof(paramSet)      },
+        { CKA_SEED,          mldsa_44_seed, sizeof(mldsa_44_seed) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_SIGN, &ckTrue, sizeof(ckTrue) },
+    };
+
+    ret = funcList->C_GenerateKeyPair(session, &mech, pubTmpl, 2, privTmpl, 1,
+                                      &pub, &priv);
+    CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+                   "ML-DSA keygen with a seed in the public template");
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+    return ret;
+}
+
+static CK_RV test_mldsa_gen_keys_priv_seed(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_ML_DSA_PARAMETER_SET_TYPE paramSet = CKP_ML_DSA_44;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_ML_DSA_KEY_PAIR_GEN, NULL, 0 };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_PARAMETER_SET, &paramSet, sizeof(paramSet) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_SIGN, &ckTrue,       sizeof(ckTrue)        },
+        { CKA_SEED, mldsa_44_seed, sizeof(mldsa_44_seed) },
+    };
+
+    ret = funcList->C_GenerateKeyPair(session, &mech, pubTmpl, 1, privTmpl, 2,
+                                      &pub, &priv);
+    CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+                   "ML-DSA keygen with a seed in the private template");
+    if (ret == CKR_OK) {
+        CHECK_COND(pub == CK_INVALID_HANDLE && priv == CK_INVALID_HANDLE, ret,
+                   "ML-DSA keygen with a private seed returns no handles");
+    }
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+    return ret;
+}
+
+static CK_RV test_mldsa_gen_keys_value(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_ML_DSA_PARAMETER_SET_TYPE paramSet = CKP_ML_DSA_44;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_ML_DSA_KEY_PAIR_GEN, NULL, 0 };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_PARAMETER_SET, &paramSet,    sizeof(paramSet)     },
+        { CKA_VALUE,         mldsa_44_pub, sizeof(mldsa_44_pub) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_SIGN,  &ckTrue,       sizeof(ckTrue)        },
+        { CKA_VALUE, mldsa_44_priv, sizeof(mldsa_44_priv) },
+    };
+
+    ret = funcList->C_GenerateKeyPair(session, &mech, pubTmpl, 2, privTmpl, 1,
+                                      &pub, &priv);
+    CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+                   "ML-DSA keygen with a value in the public template");
+    if (ret == CKR_OK) {
+        ret = funcList->C_GenerateKeyPair(session, &mech, pubTmpl, 1, privTmpl,
+                                          2, &pub, &priv);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+                       "ML-DSA keygen with a value in the private template");
+    }
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+    return ret;
+}
+
+static CK_RV test_mldsa_gen_keys_priv_param_set(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_ML_DSA_PARAMETER_SET_TYPE paramSet = CKP_ML_DSA_44;
+    CK_ML_DSA_PARAMETER_SET_TYPE privParamSet = CKP_ML_DSA_65;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_ML_DSA_KEY_PAIR_GEN, NULL, 0 };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_PARAMETER_SET, &paramSet, sizeof(paramSet) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_SIGN,          &ckTrue,       sizeof(ckTrue)       },
+        { CKA_PARAMETER_SET, &privParamSet, sizeof(privParamSet) },
+    };
+
+    ret = funcList->C_GenerateKeyPair(session, &mech, pubTmpl, 1, privTmpl, 2,
+                                      &pub, &priv);
+    CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+                   "ML-DSA keygen with a different private parameter set");
+    if (ret == CKR_OK) {
+        privParamSet = paramSet;
+        privTmpl[1].ulValueLen = sizeof(privParamSet) - 1;
+        ret = funcList->C_GenerateKeyPair(session, &mech, pubTmpl, 1, privTmpl,
+                                          2, &pub, &priv);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+                       "ML-DSA keygen with a short private parameter set");
+    }
+    if (ret == CKR_OK) {
+        privTmpl[1].ulValueLen = sizeof(privParamSet);
+        ret = funcList->C_GenerateKeyPair(session, &mech, pubTmpl, 1, privTmpl,
+                                          2, &pub, &priv);
+        CHECK_CKR(ret, "ML-DSA keygen with a matching private parameter set");
+    }
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+    return ret;
+}
+
 static CK_RV test_mldsa_gen_keys_id(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -928,36 +1087,77 @@ static CK_RV test_mldsa_create_invalid(void* args)
         { CKA_VERIFY,        &ckTrue,        sizeof(ckTrue)       },
         { CKA_VALUE,         mldsa_44_pub,   sizeof(mldsa_44_pub) },
         { CKA_PARAMETER_SET, &paramSet,      sizeof(paramSet)     },
+        { CKA_SEED,          mldsa_44_seed,  sizeof(mldsa_44_seed) },
     };
     CK_ATTRIBUTE privTmpl[] = {
         { CKA_CLASS,         &privKeyClass,  sizeof(privKeyClass) },
         { CKA_KEY_TYPE,      &mldsaKeyType,  sizeof(mldsaKeyType) },
         { CKA_SIGN,          &ckTrue,        sizeof(ckTrue)       },
+        { CKA_SEED,          mldsa_44_seed,  sizeof(mldsa_44_seed) },
         { CKA_PARAMETER_SET, &paramSet,      sizeof(paramSet)     },
+    };
+    CK_ATTRIBUTE privValTmpl[] = {
+        { CKA_CLASS,         &privKeyClass,  sizeof(privKeyClass)  },
+        { CKA_KEY_TYPE,      &mldsaKeyType,  sizeof(mldsaKeyType)  },
+        { CKA_SIGN,          &ckTrue,        sizeof(ckTrue)        },
+        { CKA_PARAMETER_SET, &paramSet,      sizeof(paramSet)      },
+        { CKA_VALUE,         mldsa_44_priv,  sizeof(mldsa_44_priv) },
+        { CKA_SEED,          mldsa_44_seed,  sizeof(mldsa_44_seed) },
     };
     int pubCnt = sizeof(pubTmpl)/sizeof(*pubTmpl);
     int privCnt = sizeof(privTmpl)/sizeof(*privTmpl);
+    int privValCnt = sizeof(privValTmpl)/sizeof(*privValTmpl);
 
     pubTmpl[3].ulValueLen = sizeof(mldsa_44_pub) - 1;
-    ret = funcList->C_CreateObject(session, pubTmpl, pubCnt, &obj);
+    ret = funcList->C_CreateObject(session, pubTmpl, pubCnt - 1, &obj);
     CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
                    "ML-DSA Pub Key CreateObject short value");
     if (ret == CKR_OK) {
         pubTmpl[3].ulValueLen = sizeof(mldsa_44_pub);
-        ret = funcList->C_CreateObject(session, pubTmpl, pubCnt - 1, &obj);
+        ret = funcList->C_CreateObject(session, pubTmpl, pubCnt - 2, &obj);
         CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCOMPLETE,
                        "ML-DSA Pub Key CreateObject no parameter set");
     }
     if (ret == CKR_OK) {
-        ret = funcList->C_CreateObject(session, privTmpl, privCnt, &obj);
-        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCOMPLETE,
-                       "ML-DSA Priv Key CreateObject no seed or value");
+        ret = funcList->C_CreateObject(session, pubTmpl, pubCnt, &obj);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+                       "ML-DSA Pub Key CreateObject with seed");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_CreateObject(session, privTmpl, privCnt - 1, &obj);
         CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCOMPLETE,
                        "ML-DSA Priv Key CreateObject no parameter set");
     }
+    if (ret == CKR_OK) {
+        privTmpl[3].ulValueLen = sizeof(mldsa_44_seed) - 1;
+        ret = funcList->C_CreateObject(session, privTmpl, privCnt, &obj);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+                       "ML-DSA Priv Key CreateObject short seed");
+        privTmpl[3].ulValueLen = sizeof(mldsa_44_seed);
+    }
+    if (ret == CKR_OK) {
+        mldsa_44_priv[0] ^= 0x01;
+        ret = funcList->C_CreateObject(session, privValTmpl, privValCnt, &obj);
+        mldsa_44_priv[0] ^= 0x01;
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+                       "ML-DSA Priv Key CreateObject mismatch seed and value");
+    }
+    if (ret == CKR_OK) {
+        privValTmpl[4].ulValueLen = sizeof(mldsa_44_priv) - 1;
+        ret = funcList->C_CreateObject(session, privValTmpl, privValCnt - 1,
+                                       &obj);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+                       "ML-DSA Priv Key CreateObject short value");
+    }
+    if (ret == CKR_OK) {
+        privTmpl[3].type = CKA_LABEL;
+        ret = funcList->C_CreateObject(session, privTmpl, privCnt, &obj);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCOMPLETE,
+                       "ML-DSA Priv Key CreateObject no seed or value");
+    }
+
+    if (obj != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, obj);
 
     return ret;
 }
@@ -1639,6 +1839,173 @@ static CK_RV test_mlkem_unsupported_param_set(void* args)
     return ret;
 }
 
+static CK_RV test_mlkem_gen_keys_no_param_set(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_ML_KEM_KEY_PAIR_GEN, NULL, 0 };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_ENCAPSULATE, &ckTrue, sizeof(ckTrue) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_DECAPSULATE, &ckTrue, sizeof(ckTrue) },
+    };
+
+    ret = funcList->C_GenerateKeyPair(session, &mech, pubTmpl, 1, privTmpl, 1,
+                                      &pub, &priv);
+    CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCOMPLETE,
+                   "ML-KEM keygen without a parameter set");
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+    return ret;
+}
+
+static CK_RV test_mlkem_gen_keys_pub_seed(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_ML_KEM_PARAMETER_SET_TYPE paramSet = CKP_ML_KEM_512;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_ML_KEM_KEY_PAIR_GEN, NULL, 0 };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_PARAMETER_SET, &paramSet,      sizeof(paramSet)       },
+        { CKA_SEED,          mlkem_512_seed, sizeof(mlkem_512_seed) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_DECAPSULATE, &ckTrue, sizeof(ckTrue) },
+    };
+
+    ret = funcList->C_GenerateKeyPair(session, &mech, pubTmpl, 2, privTmpl, 1,
+                                      &pub, &priv);
+    CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+                   "ML-KEM keygen with a seed in the public template");
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+    return ret;
+}
+
+static CK_RV test_mlkem_gen_keys_priv_seed(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_ML_KEM_PARAMETER_SET_TYPE paramSet = CKP_ML_KEM_512;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_ML_KEM_KEY_PAIR_GEN, NULL, 0 };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_PARAMETER_SET, &paramSet, sizeof(paramSet) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_DECAPSULATE, &ckTrue,        sizeof(ckTrue)         },
+        { CKA_SEED,        mlkem_512_seed, sizeof(mlkem_512_seed) },
+    };
+
+    ret = funcList->C_GenerateKeyPair(session, &mech, pubTmpl, 1, privTmpl, 2,
+                                      &pub, &priv);
+    CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+                   "ML-KEM keygen with a seed in the private template");
+    if (ret == CKR_OK) {
+        CHECK_COND(pub == CK_INVALID_HANDLE && priv == CK_INVALID_HANDLE, ret,
+                   "ML-KEM keygen with a private seed returns no handles");
+    }
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+    return ret;
+}
+
+static CK_RV test_mlkem_gen_keys_value(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_ML_KEM_PARAMETER_SET_TYPE paramSet = CKP_ML_KEM_512;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_ML_KEM_KEY_PAIR_GEN, NULL, 0 };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_PARAMETER_SET, &paramSet,      sizeof(paramSet)       },
+        { CKA_VALUE,         mlkem_512_seed, sizeof(mlkem_512_seed) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_DECAPSULATE, &ckTrue,        sizeof(ckTrue)         },
+        { CKA_VALUE,       mlkem_512_seed, sizeof(mlkem_512_seed) },
+    };
+
+    ret = funcList->C_GenerateKeyPair(session, &mech, pubTmpl, 2, privTmpl, 1,
+                                      &pub, &priv);
+    CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+                   "ML-KEM keygen with a value in the public template");
+    if (ret == CKR_OK) {
+        ret = funcList->C_GenerateKeyPair(session, &mech, pubTmpl, 1, privTmpl,
+                                          2, &pub, &priv);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+                       "ML-KEM keygen with a value in the private template");
+    }
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+    return ret;
+}
+
+static CK_RV test_mlkem_gen_keys_priv_param_set(void* args)
+{
+    CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
+    CK_RV ret;
+    CK_ML_KEM_PARAMETER_SET_TYPE paramSet = CKP_ML_KEM_512;
+    CK_ML_KEM_PARAMETER_SET_TYPE privParamSet = CKP_ML_KEM_768;
+    CK_OBJECT_HANDLE pub = CK_INVALID_HANDLE;
+    CK_OBJECT_HANDLE priv = CK_INVALID_HANDLE;
+    CK_MECHANISM mech = { CKM_ML_KEM_KEY_PAIR_GEN, NULL, 0 };
+    CK_ATTRIBUTE pubTmpl[] = {
+        { CKA_PARAMETER_SET, &paramSet, sizeof(paramSet) },
+    };
+    CK_ATTRIBUTE privTmpl[] = {
+        { CKA_DECAPSULATE,   &ckTrue,       sizeof(ckTrue)       },
+        { CKA_PARAMETER_SET, &privParamSet, sizeof(privParamSet) },
+    };
+
+    ret = funcList->C_GenerateKeyPair(session, &mech, pubTmpl, 1, privTmpl, 2,
+                                      &pub, &priv);
+    CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
+                   "ML-KEM keygen with a different private parameter set");
+    if (ret == CKR_OK) {
+        privParamSet = paramSet;
+        privTmpl[1].ulValueLen = sizeof(privParamSet) - 1;
+        ret = funcList->C_GenerateKeyPair(session, &mech, pubTmpl, 1, privTmpl,
+                                          2, &pub, &priv);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+                       "ML-KEM keygen with a short private parameter set");
+    }
+    if (ret == CKR_OK) {
+        privTmpl[1].pValue = NULL;
+        privTmpl[1].ulValueLen = sizeof(privParamSet);
+        ret = funcList->C_GenerateKeyPair(session, &mech, pubTmpl, 1, privTmpl,
+                                          2, &pub, &priv);
+        CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+                       "ML-KEM keygen with a NULL private parameter set");
+    }
+    if (ret == CKR_OK) {
+        privTmpl[1].pValue = &privParamSet;
+        ret = funcList->C_GenerateKeyPair(session, &mech, pubTmpl, 1, privTmpl,
+                                          2, &pub, &priv);
+        CHECK_CKR(ret, "ML-KEM keygen with a matching private parameter set");
+    }
+    if (priv != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, priv);
+    if (pub != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, pub);
+    return ret;
+}
+
 static CK_RV test_mlkem_gen_keys_768(void* args)
 {
     CK_SESSION_HANDLE session = *(CK_SESSION_HANDLE*)args;
@@ -1934,6 +2301,12 @@ static CK_RV test_mlkem_seed_invalid(void* args)
     CK_ULONG privKeyLenAlt = 0;
     CK_ULONG pubKeyLenAlt = 0;
 
+    ret = mlkem_keypair_from_seed(paramSet, mlkem_512_seed_alt,
+                                  sizeof(mlkem_512_seed_alt),
+                                  &privKeyDataAlt, &privKeyLenAlt,
+                                  &pubKeyDataAlt, &pubKeyLenAlt);
+    CHECK_CKR(ret, "ML-KEM keypair from alternate seed");
+
     /* CKA_SEED is private-key only. */
     if (ret == CKR_OK) {
         CK_ATTRIBUTE tmpl[] = {
@@ -1941,13 +2314,14 @@ static CK_RV test_mlkem_seed_invalid(void* args)
             { CKA_KEY_TYPE,      &mlkemKeyType, sizeof(mlkemKeyType) },
             { CKA_ENCAPSULATE,   &ckTrue,       sizeof(ckTrue)       },
             { CKA_PARAMETER_SET, &paramSet,     sizeof(paramSet)     },
-            { CKA_SEED,          mlkem_512_seed, sizeof(mlkem_512_seed) },
+            { CKA_VALUE,         pubKeyDataAlt, pubKeyLenAlt         },
+            { CKA_SEED,          mlkem_512_seed_alt,
+                                 sizeof(mlkem_512_seed_alt)          },
         };
         int cnt = sizeof(tmpl)/sizeof(*tmpl);
         ret = funcList->C_CreateObject(session, tmpl, cnt, &obj);
-        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCOMPLETE,
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCONSISTENT,
                        "ML-KEM Pub Key CreateObject from seed must fail");
-        obj = CK_INVALID_HANDLE;
     }
 
     /* Invalid seed length must fail. */
@@ -1963,17 +2337,9 @@ static CK_RV test_mlkem_seed_invalid(void* args)
         ret = funcList->C_CreateObject(session, tmpl, cnt, &obj);
         CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
                        "ML-KEM Priv Key CreateObject bad seed length");
-        obj = CK_INVALID_HANDLE;
     }
 
     /* Mismatched seed and expanded key must fail. */
-    if (ret == CKR_OK) {
-        ret = mlkem_keypair_from_seed(paramSet, mlkem_512_seed_alt,
-                                      sizeof(mlkem_512_seed_alt),
-                                      &privKeyDataAlt, &privKeyLenAlt,
-                                      &pubKeyDataAlt, &pubKeyLenAlt);
-        CHECK_CKR(ret, "ML-KEM keypair from alternate seed");
-    }
     if (ret == CKR_OK) {
         CK_ATTRIBUTE tmpl[] = {
             { CKA_CLASS,         &privKeyClass, sizeof(privKeyClass)  },
@@ -2039,6 +2405,19 @@ static CK_RV test_mlkem_create_invalid(void* args)
             { CKA_CLASS,         &privKeyClass, sizeof(privKeyClass) },
             { CKA_KEY_TYPE,      &mlkemKeyType, sizeof(mlkemKeyType) },
             { CKA_DECAPSULATE,   &ckTrue,       sizeof(ckTrue)       },
+            { CKA_SEED,          mlkem_512_seed, sizeof(mlkem_512_seed) },
+        };
+        int cnt = sizeof(tmpl)/sizeof(*tmpl);
+
+        ret = funcList->C_CreateObject(session, tmpl, cnt, &obj);
+        CHECK_CKR_FAIL(ret, CKR_TEMPLATE_INCOMPLETE,
+                       "ML-KEM Priv Key CreateObject no parameter set");
+    }
+    if (ret == CKR_OK) {
+        CK_ATTRIBUTE tmpl[] = {
+            { CKA_CLASS,         &privKeyClass, sizeof(privKeyClass) },
+            { CKA_KEY_TYPE,      &mlkemKeyType, sizeof(mlkemKeyType) },
+            { CKA_DECAPSULATE,   &ckTrue,       sizeof(ckTrue)       },
             { CKA_VALUE,         privKeyData,   privKeyLen - 1       },
             { CKA_PARAMETER_SET, &paramSet,     sizeof(paramSet)     },
         };
@@ -2047,6 +2426,16 @@ static CK_RV test_mlkem_create_invalid(void* args)
         ret = funcList->C_CreateObject(session, tmpl, cnt, &obj);
         CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
                        "ML-KEM Priv Key CreateObject short value");
+    #if LIBWOLFSSL_VERSION_HEX >= 0x05009000
+        if (ret == CKR_OK) {
+            /* Corrupt H(ek), which precedes the 32-byte z at the end. */
+            tmpl[3].ulValueLen = privKeyLen;
+            privKeyData[privKeyLen - 2 * WC_ML_KEM_SYM_SZ] ^= 0x01;
+            ret = funcList->C_CreateObject(session, tmpl, cnt, &obj);
+            CHECK_CKR_FAIL(ret, CKR_ATTRIBUTE_VALUE_INVALID,
+                           "ML-KEM Priv Key CreateObject bad public key hash");
+        }
+    #endif
         if (ret == CKR_OK) {
             tmpl[3].type = CKA_LABEL;
             ret = funcList->C_CreateObject(session, tmpl, cnt, &obj);
@@ -2055,6 +2444,8 @@ static CK_RV test_mlkem_create_invalid(void* args)
         }
     }
 
+    if (obj != CK_INVALID_HANDLE)
+        funcList->C_DestroyObject(session, obj);
     if (privKeyData != NULL)
         free(privKeyData);
     if (pubKeyData != NULL)
@@ -4803,6 +5194,11 @@ static TEST_FUNC testFunc[] = {
 #ifdef WOLFPKCS11_MLDSA
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_gen_keys),
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_unsupported_param_set),
+    PKCS11TEST_FUNC_SESS_DECL(test_mldsa_gen_keys_no_param_set),
+    PKCS11TEST_FUNC_SESS_DECL(test_mldsa_gen_keys_pub_seed),
+    PKCS11TEST_FUNC_SESS_DECL(test_mldsa_gen_keys_priv_seed),
+    PKCS11TEST_FUNC_SESS_DECL(test_mldsa_gen_keys_value),
+    PKCS11TEST_FUNC_SESS_DECL(test_mldsa_gen_keys_priv_param_set),
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_gen_keys_id),
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_gen_keys_token),
     PKCS11TEST_FUNC_SESS_DECL(test_mldsa_token_keys),
@@ -4820,6 +5216,11 @@ static TEST_FUNC testFunc[] = {
 #ifdef WOLFPKCS11_MLKEM
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_gen_keys),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_unsupported_param_set),
+    PKCS11TEST_FUNC_SESS_DECL(test_mlkem_gen_keys_no_param_set),
+    PKCS11TEST_FUNC_SESS_DECL(test_mlkem_gen_keys_pub_seed),
+    PKCS11TEST_FUNC_SESS_DECL(test_mlkem_gen_keys_priv_seed),
+    PKCS11TEST_FUNC_SESS_DECL(test_mlkem_gen_keys_value),
+    PKCS11TEST_FUNC_SESS_DECL(test_mlkem_gen_keys_priv_param_set),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_gen_keys_768),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_gen_keys_1024),
     PKCS11TEST_FUNC_SESS_DECL(test_mlkem_gen_keys_id),
