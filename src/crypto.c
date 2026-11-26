@@ -2240,7 +2240,8 @@ static void RemoveAddedObject(WP11_Session* session, WP11_Object* obj,
  * @param  phKey      [out]  Handle to new key object.
  * @return  CKR_ATTRIBUTE_VALUE_INVALID when attribute value is not valid for
  *          data type.
- *          CKR_USER_NOT_LOGGED_IN when a private object needs a login.
+ *          CKR_USER_NOT_LOGGED_IN when a private object needs a login, or a
+ *          token key object needs the token key of a logged in user.
  *          CKR_DEVICE_MEMORY when the object table is full or memory
  *          allocation fails.
  *          CKR_FUNCTION_FAILED when setting an attribute fails.

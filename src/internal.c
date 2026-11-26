@@ -4851,6 +4851,8 @@ static void wp11_Object_PolicyAadFree(byte* aad, byte* buf)
         XFREE(aad, NULL, DYNAMIC_TYPE_TMP_BUFFER);
 }
 
+static int wp11_Token_KeyInUse(const WP11_Token* token);
+
 /**
  * Encrypt key material with the token key, bound to the object's policy.
  *
@@ -4859,7 +4861,8 @@ static void wp11_Object_PolicyAadFree(byte* aad, byte* buf)
  * @param [in]       data    Key material.
  * @param [in]       len     Length of key material.
  * @return  0 on success.
- * @return  -ve on failure.
+ * @return  PIN_INVALID_E when the token key is not in use.
+ * @return  Other -ve on failure.
  */
 static int wp11_Object_EncryptKeyData(WP11_Object* object, byte* out,
                                       byte* data, int len)
@@ -4868,6 +4871,9 @@ static int wp11_Object_EncryptKeyData(WP11_Object* object, byte* out,
     byte buf[WP11_POLICY_AAD_SZ];
     byte* aad;
     word32 aadSz;
+
+    if (!wp11_Token_KeyInUse(&object->slot->token))
+        return PIN_INVALID_E;
 
     ret = wp11_Object_PolicyAad(object, buf, &aad, &aadSz);
     if (ret == 0) {
@@ -8711,6 +8717,19 @@ static int wp11_Token_KeySet(const WP11_Token* token)
 }
 
 /**
+ * Check whether the token key is the key token objects are encrypted with:
+ * the zero key while no user PIN is set, otherwise the key from the PIN.
+ *
+ * @param  token  [in]  Token.
+ * @return  1 when the token key is in use, 0 otherwise.
+ */
+static int wp11_Token_KeyInUse(const WP11_Token* token)
+{
+    return (token->tokenFlags & WP11_TOKEN_FLAG_USER_PIN_SET) == 0 ||
+        wp11_Token_KeySet(token);
+}
+
+/**
  * Check whether the user PIN is empty, reusing the verdict for PIN data that
  * an earlier copy of the token had, as the check derives a key from the PIN.
  *
@@ -11359,8 +11378,10 @@ int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen)
         XMEMCPY(token->key, d->key, sizeof(token->key));
         object = token->object;
         while (ret == 0 && object != NULL) {
-            if (wp11_Object_IsEncrypted(object) || object->undecoded)
+            if ((wp11_Object_IsEncrypted(object) && object->encoded) ||
+                    object->undecoded) {
                 ret = wp11_Object_Decode(object);
+            }
             if (ret != 0)
                 failed = object;
             object = object->next;
@@ -11586,7 +11607,7 @@ static void wp11_Token_RestoreUserPinState(WP11_Token* token,
 
 /**
  * Set the User's PIN, re-encrypting protected token objects when the old PIN
- * is supplied.
+ * is supplied or the token key is in use.
  *
  * @param  slot       [in]  Slot object.
  * @param  since      [in]  SO PIN change count when the caller checked the
@@ -11624,6 +11645,7 @@ static int wp11_Slot_SetUserPin(WP11_Slot* slot, const word32* since,
 #ifndef WOLFPKCS11_NO_STORE
     WP11_ReKeyData* reKey = NULL;
     int reKeyCnt = 0;
+    int reKeyOld = 0;
     WP11_Object* object;
 #endif
 #ifdef WP11_STORE_BATCH
@@ -11747,6 +11769,15 @@ static int wp11_Slot_SetUserPin(WP11_Slot* slot, const word32* since,
                                 sizeof(d->prev.seed)) != 0) {
             ret = BAD_STATE_E;
         }
+        reKeyOld = 1;
+    #endif
+    }
+#ifndef WOLFPKCS11_NO_STORE
+    if (ret == 0 && oldPin == NULL && wp11_Token_KeyInUse(token)) {
+        XMEMCPY(d->oldKey, token->key, sizeof(d->oldKey));
+        reKeyOld = 1;
+    }
+    if (ret == 0 && reKeyOld) {
         /* Bind pending policy changes under the old key first, so every
          * record re-keys from key data that verifies. */
         for (object = token->object; ret == 0 && object != NULL;
@@ -11760,8 +11791,8 @@ static int wp11_Slot_SetUserPin(WP11_Slot* slot, const word32* since,
             ret = wp11_Token_ReKeyPrepare(token, d->oldKey, d->key, &reKey,
                                           &reKeyCnt);
         }
-    #endif
     }
+#endif
     if (ret == 0) {
     #ifndef WOLFPKCS11_NO_STORE
         wp11_Token_SaveUserPinState(token, &d->prev);
@@ -11780,7 +11811,7 @@ static int wp11_Slot_SetUserPin(WP11_Slot* slot, const word32* since,
         oldDirty = token->storeDirty;
     #endif
         /* Stateful records found newer in the pass re-seal from the old key. */
-        if (oldPin != NULL)
+        if (reKeyOld)
             token->reKeyOld = d->oldKey;
     #ifdef DEBUG_WOLFPKCS11
         if (wp11_setPinStoreHook != NULL)
@@ -13534,7 +13565,7 @@ WP11_API void WP11_Session_SetAddObjectHook(void (*hook)(void))
  *          BAD_MUTEX_E when the lock of a session object cannot be initialized.
  *          BAD_STATE_E when the token is out of date.
  *          PIN_INVALID_E when a logout since the object was created ended the
- *          login it needs.
+ *          login it needs, or the token key to encrypt it with is not set.
  *          0 on success.
  */
 static int wp11_Session_AddObjectOnce(WP11_Session* session, int onToken,
@@ -13689,7 +13720,7 @@ static int wp11_Session_AddObjectOnce(WP11_Session* session, int onToken,
  *          BAD_STATE_E when the token is out of date and cannot be loaded
  *          again.
  *          PIN_INVALID_E when loading the token again ended the login the
- *          object needs.
+ *          object needs, or the token key to encrypt it with is not set.
  *          0 on success.
  */
 int WP11_Session_AddObject(WP11_Session* session, int onToken,
