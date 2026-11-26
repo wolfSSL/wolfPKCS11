@@ -1416,7 +1416,8 @@ static void test_failed_store_keeps_state(void)
     cleanup_test_files();
 }
 
-/* Create a public AES key on the token and change its policy. */
+/* Create a public AES key on the token and change its policy so the next
+ * store pass has to rebind it. The key is only decoded in this process. */
 static CK_RV create_unbound_public_key(CK_SESSION_HANDLE session)
 {
     CK_RV rv;
@@ -1470,6 +1471,8 @@ static int child_undecoded_keys_survive_failed_pin_change(int asSO)
         rv = open_session(slot, 0, &session);
     if (rv == CKR_OK && asSO)
         rv = funcList->C_Login(session, CKU_SO, soPin, sizeof(soPin) - 1);
+    if (rv == CKR_OK && asSO)
+        rv = create_unbound_public_key(session);
     if (rv == CKR_OK && block_store(lockPath, sizeof(lockPath)) != 0)
         rv = CKR_GENERAL_ERROR;
     if (rv == CKR_OK && asSO) {

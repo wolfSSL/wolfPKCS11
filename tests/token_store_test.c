@@ -68,8 +68,8 @@
 #include <unistd.h>
 
 #define TEST_DIR "./store/token_store_test"
-/* SO key seed and the two public-object key copies end the token record. */
-#define PUB_EXT_LEN (16 + 2 * 60)
+/* SO key seed, public-object key copies and PIN seeds end the token record. */
+#define PUB_EXT_LEN (16 + 2 * 60 + 2 * 16)
 
 /* A FIPS PBKDF2 does not hash a PIN shorter than 14 bytes. */
 #ifdef HAVE_FIPS
@@ -5120,8 +5120,9 @@ static void race_add_logout_hook(void)
     }
 }
 
-/* An SO logout during an add does not refuse a public token key. */
-static void test_add_survives_so_logout(void)
+/* An SO logout during an add drops the key a public token key needs once a
+ * user PIN is set. */
+static void test_add_refused_by_so_logout(void)
 {
     CK_RV rv;
     CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
@@ -5151,7 +5152,7 @@ static void test_add_survives_so_logout(void)
         rv = create_token_secret(session, "so-logout-add", &obj);
         WP11_Session_SetAddObjectHook(NULL);
         raceSession = CK_INVALID_HANDLE;
-        CHECK_RV(rv, "key is added", CKR_OK);
+        CHECK_RV(rv, "key is refused", CKR_USER_NOT_LOGGED_IN);
     }
     close_session(other);
     close_session(session);
@@ -6076,7 +6077,7 @@ static int run_tests(void)
     test_init_token_race();
     test_init_token_new_store_race();
     test_so_set_pin_survives_reload();
-    test_add_survives_so_logout();
+    test_add_refused_by_so_logout();
 #ifdef HAVE_ECC
     test_keypair_cleanup_after_reload();
 #endif

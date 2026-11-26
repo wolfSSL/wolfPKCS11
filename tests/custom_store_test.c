@@ -717,6 +717,66 @@ static int custom_store_test(void)
     return 0;
 }
 
+/* An SO PIN change whose token record write fails after the SO PIN seed keeps
+ * the old SO PIN, in storage, in this process and when loaded again. */
+static int so_pin_store_fail_test(void)
+{
+    CK_RV rv;
+    CK_SESSION_HANDLE session;
+    StoreRecord* rec;
+    unsigned char* old;
+    int oldLen;
+    int same;
+    static byte newSoPin[] = "so-pin-changed-1";
+
+    store_free();
+    rv = pkcs11_init();
+    CHECK_RV(rv, "Initialize");
+    rv = provision();
+    CHECK_RV(rv, "Provision token");
+    rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                 NULL, NULL, &session);
+    CHECK_RV(rv, "Open session");
+    rv = funcList->C_Login(session, CKU_SO, soPin, soPinLen);
+    CHECK_RV(rv, "SO login");
+
+    rec = store_find(WOLFPKCS11_STORE_TOKEN, slot, 0);
+    CHECK(rec != NULL, "Token record stored");
+    oldLen = rec->len;
+    old = (unsigned char*)malloc(oldLen);
+    CHECK(old != NULL, "Allocate token record copy");
+    XMEMCPY(old, rec->data, oldLen);
+    /* With no objects, writes 0 to 3 are the token label, SO PIN length, SO PIN
+     * and SO PIN seed. */
+    failWriteAt = writeCnt + 4;
+    rv = funcList->C_SetPIN(session, soPin, soPinLen, newSoPin,
+                            sizeof(newSoPin) - 1);
+    failWriteAt = -1;
+    rec = store_find(WOLFPKCS11_STORE_TOKEN, slot, 0);
+    same = rec != NULL && rec->len == oldLen &&
+           XMEMCMP(rec->data, old, oldLen) == 0;
+    free(old);
+    CHECK(rv == CKR_FUNCTION_FAILED, "Failed store fails the SO PIN change");
+    CHECK(same, "Token record stored before the change is back in storage");
+    (void)funcList->C_Logout(session);
+    rv = funcList->C_Login(session, CKU_SO, soPin, soPinLen);
+    CHECK_RV(rv, "Old SO PIN logs in");
+    (void)funcList->C_Logout(session);
+    (void)funcList->C_CloseSession(session);
+    (void)funcList->C_Finalize(NULL);
+
+    rv = pkcs11_init();
+    CHECK_RV(rv, "Initialize again");
+    rv = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
+                                 NULL, NULL, &session);
+    if (rv == CKR_OK)
+        rv = funcList->C_Login(session, CKU_SO, soPin, soPinLen);
+    (void)funcList->C_Finalize(NULL);
+    CHECK_RV(rv, "Old SO PIN logs in after loading");
+
+    return 0;
+}
+
 #endif /* RUN_TEST */
 
 #if defined(WOLFPKCS11_LMS_PRIVATE) && \
@@ -1202,6 +1262,8 @@ int main(int argc, char* argv[])
     printf("Custom store test (close only)\n");
 #endif
     ret = custom_store_test();
+    if (ret == 0)
+        ret = so_pin_store_fail_test();
 #if defined(WOLFPKCS11_LMS_PRIVATE) && \
     defined(WOLFPKCS11_CUSTOM_STORE_CLOSE_COMMIT)
     if (ret == 0)

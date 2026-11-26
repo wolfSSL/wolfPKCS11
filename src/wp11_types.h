@@ -665,6 +665,7 @@ typedef struct WP11_Token {
     byte storeStale;                   /* Another process changed the store   */
     byte storeKeepGen;                 /* Pass rewrites what is stored        */
     byte pubKeyStored;                 /* Storage holds a pubKey copy         */
+    byte userPinSetEmpty;              /* User PIN this process set is empty  */
     byte* reKeyOld;                    /* Token key being replaced in a pass  */
 #endif
 } WP11_Token;

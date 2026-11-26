@@ -416,13 +416,20 @@ static void test_empty_pin_then_init_pin(void)
         rv = funcList->C_Login(session, CKU_SO, soPin, sizeof(soPin) - 1);
     if (rv == CKR_OK)
         rv = funcList->C_InitPIN(session, (CK_UTF8CHAR_PTR)"", 0);
-    shutdown_lib(session);
-    session = CK_INVALID_HANDLE;
     if (rv == CKR_PIN_LEN_RANGE) {
         printf("SKIP: empty user PIN not allowed\n");
+        shutdown_lib(session);
         return;
     }
     CHECK_RV(rv, "set empty user PIN", CKR_OK);
+    if (rv == CKR_OK)
+        rv = funcList->C_Logout(session);
+    if (rv == CKR_OK)
+        rv = create_aes_key(session, CK_FALSE, soAesId, sizeof(soAesId) - 1);
+    CHECK_RV(rv, "public token key without login after the SO logout",
+             CKR_OK);
+    shutdown_lib(session);
+    session = CK_INVALID_HANDLE;
     if (rv != CKR_OK)
         return;
 

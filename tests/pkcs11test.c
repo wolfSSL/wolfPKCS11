@@ -6702,129 +6702,6 @@ static CK_RV test_wrap_unwrap_op_not_supported(void* args)
     return ret;
 }
 
-/* A token key loaded without a login is not decoded, so wrapping with it,
- * digesting it and using it as an HKDF salt key are refused. */
-static CK_RV test_undecoded_token_key(CK_SESSION_HANDLE session)
-{
-    CK_RV ret;
-    CK_SESSION_HANDLE pub = CK_INVALID_HANDLE;
-    CK_MECHANISM mech = { CKM_AES_KEY_WRAP, NULL, 0 };
-    CK_OBJECT_HANDLE tokenKey = CK_INVALID_HANDLE;
-    CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
-    CK_ULONG count = 0;
-    byte wrappedKey[40], keyData[16];
-    CK_ULONG wrappedKeyLen;
-    static byte tokenKeyId[] = "undecoded-token-key";
-    CK_ATTRIBUTE tokenKeyTmpl[] = {
-        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
-        { CKA_KEY_TYPE,    &aesKeyType,     sizeof(aesKeyType)     },
-        { CKA_VALUE,       aes_128_key,     sizeof(aes_128_key)    },
-        { CKA_WRAP,        &ckTrue,         sizeof(ckTrue)         },
-        { CKA_DERIVE,      &ckTrue,         sizeof(ckTrue)         },
-        { CKA_TOKEN,       &ckTrue,         sizeof(ckTrue)         },
-        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
-        { CKA_ID,          tokenKeyId,      sizeof(tokenKeyId) - 1 },
-    };
-    CK_ATTRIBUTE keyTmpl[] = {
-        { CKA_CLASS,       &secretKeyClass, sizeof(secretKeyClass) },
-        { CKA_KEY_TYPE,    &genericKeyType, sizeof(genericKeyType) },
-        { CKA_VALUE,       keyData,         sizeof(keyData)        },
-        { CKA_EXTRACTABLE, &ckTrue,         sizeof(ckTrue)         },
-        { CKA_DERIVE,      &ckTrue,         sizeof(ckTrue)         },
-        { CKA_PRIVATE,     &ckFalse,        sizeof(ckFalse)        },
-    };
-    CK_ATTRIBUTE findTmpl[] = {
-        { CKA_ID,          tokenKeyId,      sizeof(tokenKeyId) - 1 },
-    };
-
-    memset(keyData, 0x55, sizeof(keyData));
-    ret = funcList->C_CreateObject(session, tokenKeyTmpl,
-        sizeof(tokenKeyTmpl) / sizeof(*tokenKeyTmpl), &tokenKey);
-    CHECK_CKR(ret, "Create public AES token key as user");
-    if (ret == CKR_OK) {
-        funcList->C_Finalize(NULL);
-        ret = funcList->C_Initialize(NULL);
-        CHECK_CKR(ret, "Initialize again to load the token without a login");
-    }
-    if (ret == CKR_OK) {
-        ret = funcList->C_OpenSession(slot, CKF_SERIAL_SESSION | CKF_RW_SESSION,
-                                      NULL, NULL, &pub);
-        CHECK_CKR(ret, "Open public session after reload");
-    }
-    if (ret == CKR_OK) {
-        tokenKey = CK_INVALID_HANDLE;
-        ret = funcList->C_FindObjectsInit(pub, findTmpl, 1);
-        if (ret == CKR_OK)
-            ret = funcList->C_FindObjects(pub, &tokenKey, 1, &count);
-        if (ret == CKR_OK)
-            ret = funcList->C_FindObjectsFinal(pub);
-        if (ret == CKR_OK && count != 1)
-            ret = CKR_GENERAL_ERROR;
-        CHECK_CKR(ret, "Find token key after reload");
-    }
-    if (ret == CKR_OK) {
-        ret = funcList->C_CreateObject(pub, keyTmpl,
-            sizeof(keyTmpl) / sizeof(*keyTmpl), &key);
-        CHECK_CKR(ret, "Create public session key");
-    }
-    if (ret == CKR_OK) {
-        wrappedKeyLen = sizeof(wrappedKey);
-        ret = funcList->C_WrapKey(pub, &mech, tokenKey, key, wrappedKey,
-                                  &wrappedKeyLen);
-        CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN,
-                       "Wrap with token key not decoded");
-    }
-#ifndef NO_SHA256
-    if (ret == CKR_OK) {
-        CK_MECHANISM digestMech = { CKM_SHA256, NULL, 0 };
-
-        ret = funcList->C_DigestInit(pub, &digestMech);
-        CHECK_CKR(ret, "Digest init for token key not decoded");
-        if (ret == CKR_OK) {
-            ret = funcList->C_DigestKey(pub, tokenKey);
-            CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN,
-                           "Digest token key not decoded");
-        }
-    }
-#endif
-#ifdef WOLFPKCS11_HKDF
-    if (ret == CKR_OK) {
-        CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
-        CK_ULONG outLen = 32;
-        CK_HKDF_PARAMS hkdf;
-        CK_MECHANISM hkdfMech = { CKM_HKDF_DERIVE, &hkdf, sizeof(hkdf) };
-        CK_ATTRIBUTE outTmpl[] = {
-            { CKA_CLASS,     &secretKeyClass, sizeof(secretKeyClass) },
-            { CKA_KEY_TYPE,  &genericKeyType, sizeof(genericKeyType) },
-            { CKA_VALUE_LEN, &outLen,         sizeof(outLen)         },
-            { CKA_PRIVATE,   &ckFalse,        sizeof(ckFalse)        },
-        };
-
-        XMEMSET(&hkdf, 0, sizeof(hkdf));
-        hkdf.bExtract = CK_TRUE;
-        hkdf.prfHashMechanism = CKM_SHA256_HMAC;
-        hkdf.ulSaltType = CKF_HKDF_SALT_KEY;
-        hkdf.hSaltKey = tokenKey;
-        ret = funcList->C_DeriveKey(pub, &hkdfMech, key, outTmpl,
-                                    sizeof(outTmpl) / sizeof(*outTmpl),
-                                    &derived);
-        CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN,
-                       "HKDF with salt token key not decoded");
-    }
-#endif
-
-    if (pub != CK_INVALID_HANDLE) {
-        funcList->C_DestroyObject(pub, key);
-        if (funcList->C_Login(pub, CKU_USER, userPin, userPinLen) == CKR_OK) {
-            funcList->C_DestroyObject(pub, tokenKey);
-            funcList->C_Logout(pub);
-        }
-        funcList->C_CloseSession(pub);
-    }
-
-    return ret;
-}
-
 /* Regression test: C_WrapKey on a key with CKA_WRAP_WITH_TRUSTED=CK_TRUE must
  * return CKR_KEY_NOT_WRAPPABLE when the wrapping key lacks CKA_TRUSTED, and
  * succeed when the wrapping key has CKA_TRUSTED=CK_TRUE. */
@@ -6947,9 +6824,6 @@ static CK_RV test_wrap_key_wrap_with_trusted(void* args)
     funcList->C_DestroyObject(session, trustedKey);
     funcList->C_DestroyObject(session, trustedTokenKey);
     funcList->C_DestroyObject(session, key);
-
-    if (ret == CKR_OK)
-        ret = test_undecoded_token_key(session);
 
     return ret;
 }

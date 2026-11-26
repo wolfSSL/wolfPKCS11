@@ -135,10 +135,12 @@ security. wolfPKCS11 therefore:
   signing fails.
 * Requires the user to be logged in for `C_GenerateKeyPair`, or a token with
   an empty user PIN, because the state is encrypted with the user's token key.
-  Private keys cannot be imported with `C_CreateObject`, and cannot be copied
-  (`CKA_COPYABLE` is `CK_FALSE`). As PKCS#11 requires, they are always
-  sensitive and never extractable; a template that asks for
-  `CKA_SENSITIVE=CK_FALSE` or `CKA_EXTRACTABLE=CK_TRUE` is refused.
+  This holds for `CKA_PRIVATE=CK_FALSE` too, so the SO cannot use these keys
+  once a user PIN is set. Private keys cannot be imported with
+  `C_CreateObject`, and cannot be copied (`CKA_COPYABLE` is `CK_FALSE`). As
+  PKCS#11 requires, they are always sensitive and never extractable; a
+  template that asks for `CKA_SENSITIVE=CK_FALSE` or `CKA_EXTRACTABLE=CK_TRUE`
+  is refused.
 
 Because the signature state is durable and per-key, do not clone, snapshot, or
 restore the token storage directory of a machine that signs with LMS/HSS keys -
@@ -512,11 +514,13 @@ versions may need to update templates or error-handling:
 - With the file store, a process that loaded the token before another process
   stored a change loads the token again before it changes the token or logs
   in. Before, the two processes overwrote each other's changes. Object handles
-  stay valid, and a login ends when the other process changed its PIN. A
-  process that still holds a change it could not store cannot load the token
-  again: until it initializes the library again, changing the token returns
-  `CKR_TOKEN_WRITE_PROTECTED`, `C_GetTokenInfo` reports `CKF_WRITE_PROTECTED`
-  and `C_Finalize` fails. Calls that only read the token use it as loaded.
+  stay valid, and a login ends when the other process changed its PIN. An SO
+  login also ends when the other process upgraded a token that an older
+  wolfPKCS11 created. A process that still holds a change it could not store
+  cannot load the token again: until it initializes the library again,
+  changing the token returns `CKR_TOKEN_WRITE_PROTECTED`, `C_GetTokenInfo`
+  reports `CKF_WRITE_PROTECTED` and `C_Finalize` fails. Calls that only read
+  the token use it as loaded.
   Older wolfPKCS11 versions do not take part in this, so processes sharing a
   token directory should use the same version, and the `wp11_txn_*` files in
   that directory must not be removed while they run.
@@ -529,8 +533,15 @@ versions may need to update templates or error-handling:
   `CKR_USER_NOT_LOGGED_IN` once a user PIN is set. Before, the key was stored
   under an all-zero key and lost at the next user login. A key with
   `CKA_PRIVATE=CK_FALSE` is the exception: the SO can create and use it, and
-  the user can use it too. The SO PIN now protects these keys as well as the
-  user PIN, and an older wolfPKCS11 cannot use them.
+  the user can use it too. Either PIN now opens these keys, and an older
+  wolfPKCS11 cannot use them. On a token that an older wolfPKCS11 created with
+  a non-empty user PIN, the SO cannot create or use them, and a `C_InitPIN` by
+  the SO loses them as it loses private keys. Keys created after that
+  `C_InitPIN` are open to both PINs. A copy of the store taken before a user
+  `C_SetPIN` from an empty PIN, or before an SO PIN change, still opens these
+  keys with the old PIN. Once this release has stored such keys, a store that
+  an older wolfPKCS11 writes makes them unusable for good, so do not share the
+  token store with an older release or roll it back to one.
 
 One known gap remains: `CKM_RSA_PKCS_OAEP` does not support an empty message,
 although PKCS#11 and RFC 8017 allow one. wolfCrypt rejects it on both sides, so
