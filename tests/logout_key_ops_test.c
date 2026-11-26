@@ -384,18 +384,6 @@ static void logout_during_destroy(CK_SLOT_ID slot, CK_BBOOL priv, int so,
     rv = open_session(slot, &session);
     if (rv == CKR_OK)
         rv = open_session(slot, &opSession);
-    /* C_InitPIN gives the SO the token key to create token keys with. */
-    if (rv == CKR_OK && so) {
-        rv = funcList->C_Login(session, CKU_SO, (CK_UTF8CHAR_PTR)soPin,
-                               (CK_ULONG)XSTRLEN(soPin));
-        if (rv == CKR_OK) {
-            rv = funcList->C_InitPIN(session, (CK_UTF8CHAR_PTR)userPin,
-                                     (CK_ULONG)XSTRLEN(userPin));
-        }
-        if (rv == CKR_OK)
-            rv = funcList->C_Logout(session);
-        CHECK_RV(rv, "C_InitPIN as SO", CKR_OK);
-    }
     for (i = 0; rv == CKR_OK && i < KEY_OP_CNT; i++) {
         if (so) {
             rv = funcList->C_Login(session, CKU_SO, (CK_UTF8CHAR_PTR)soPin,

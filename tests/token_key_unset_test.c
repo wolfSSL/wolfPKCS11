@@ -328,8 +328,7 @@ static void test_no_user_key(void)
     CHECK_RV(rv, "SO login", CKR_OK);
     if (rv == CKR_OK) {
         CHECK_RV(create_aes_key(session, CK_FALSE, aesId, sizeof(aesId) - 1),
-                 "create public token AES key as SO",
-                 CKR_USER_NOT_LOGGED_IN);
+                 "create public token AES key as SO", CKR_OK);
         (void)funcList->C_Logout(session);
     }
 

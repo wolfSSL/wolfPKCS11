@@ -6887,13 +6887,11 @@ static CK_RV test_wrap_key_wrap_with_trusted(void* args)
                                        trustedWrapTmplCnt, &trustedKey);
         CHECK_CKR(ret, "Create trusted AES wrapping key (SO)");
     }
-    /* No token key is in use for the SO to encrypt a token key with. */
     if (ret == CKR_OK) {
         onToken = CK_TRUE;
         ret = funcList->C_CreateObject(session, trustedWrapTmpl,
                                        trustedWrapTmplCnt, &trustedTokenKey);
-        CHECK_CKR_FAIL(ret, CKR_USER_NOT_LOGGED_IN,
-                       "Create trusted AES wrapping token key (SO)");
+        CHECK_CKR(ret, "Create trusted AES wrapping token key (SO)");
     }
     if (ret == CKR_OK) {
         ret = funcList->C_Logout(session);
@@ -6939,8 +6937,15 @@ static CK_RV test_wrap_key_wrap_with_trusted(void* args)
                                   wrappedKey, &wrappedKeyLen);
         CHECK_CKR(ret, "Wrap CKA_WRAP_WITH_TRUSTED key with trusted wrapping key");
     }
+    if (ret == CKR_OK) {
+        wrappedKeyLen = sizeof(wrappedKey);
+        ret = funcList->C_WrapKey(session, &mech, trustedTokenKey, key,
+                                  wrappedKey, &wrappedKeyLen);
+        CHECK_CKR(ret, "Wrap with trusted token key created by SO");
+    }
     funcList->C_DestroyObject(session, untrustedKey);
     funcList->C_DestroyObject(session, trustedKey);
+    funcList->C_DestroyObject(session, trustedTokenKey);
     funcList->C_DestroyObject(session, key);
 
     if (ret == CKR_OK)

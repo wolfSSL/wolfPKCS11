@@ -325,6 +325,7 @@ struct WP11_Object {
     byte encoded:1;                    /* Key isn't in decoded form           */
     byte undecoded:1;                  /* Loaded key data not yet decoded     */
     byte unbound:1;                    /* Key data not bound to the policy    */
+    byte pubKeyRec:1;                  /* Key data under the public-object key*/
 #endif
 
     WP11_Session* session;             /* Session object belongs to           */
@@ -623,6 +624,11 @@ typedef struct WP11_Token {
 #ifndef WOLFPKCS11_NO_STORE
     byte seed[PIN_SEED_SZ];            /* Seed used to calculate key          */
     byte key[AES_256_KEY_SIZE];        /* Key to en/decrypt private data      */
+    byte soKeySeed[PIN_SEED_SZ];       /* Seed used to calculate soKek        */
+    byte soKek[AES_256_KEY_SIZE];      /* SO PIN key, set while SO logged in  */
+    byte pubKey[AES_256_KEY_SIZE];     /* Key to en/decrypt public key data   */
+    byte pubByUser[WP11_PUB_KEY_WRAP_SZ]; /* pubKey encrypted under key       */
+    byte pubBySo[WP11_PUB_KEY_WRAP_SZ];   /* pubKey encrypted under soKek     */
 #endif
     WC_RNG rng;                        /* Random number generator             */
     WP11_Lock rngLock;                 /* Lock for random access              */
@@ -658,6 +664,7 @@ typedef struct WP11_Token {
     byte storeReset;                   /* Next pass stores a token reset      */
     byte storeStale;                   /* Another process changed the store   */
     byte storeKeepGen;                 /* Pass rewrites what is stored        */
+    byte pubKeyStored;                 /* Storage holds a pubKey copy         */
     byte* reKeyOld;                    /* Token key being replaced in a pass  */
 #endif
 } WP11_Token;

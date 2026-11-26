@@ -525,6 +525,12 @@ versions may need to update templates or error-handling:
   and used 600000. A FIPS build that sets another count cannot log in to a
   token an older build stored, so keep 600000 until the token is initialized
   again.
+- Creating a token secret or private key without a user login returns
+  `CKR_USER_NOT_LOGGED_IN` once a user PIN is set. Before, the key was stored
+  under an all-zero key and lost at the next user login. A key with
+  `CKA_PRIVATE=CK_FALSE` is the exception: the SO can create and use it, and
+  the user can use it too. The SO PIN now protects these keys as well as the
+  user PIN, and an older wolfPKCS11 cannot use them.
 
 One known gap remains: `CKM_RSA_PKCS_OAEP` does not support an empty message,
 although PKCS#11 and RFC 8017 allow one. wolfCrypt rejects it on both sides, so

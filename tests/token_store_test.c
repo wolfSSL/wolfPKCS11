@@ -68,6 +68,8 @@
 #include <unistd.h>
 
 #define TEST_DIR "./store/token_store_test"
+/* SO key seed and the two public-object key copies end the token record. */
+#define PUB_EXT_LEN (16 + 2 * 60)
 
 /* A FIPS PBKDF2 does not hash a PIN shorter than 14 bytes. */
 #ifdef HAVE_FIPS
@@ -234,15 +236,16 @@ static void close_session(CK_SESSION_HANDLE session)
     }
 }
 
-static CK_RV create_token_secret(CK_SESSION_HANDLE session, const char* label,
-                                 CK_OBJECT_HANDLE* obj)
+static CK_RV create_token_secret_ex(CK_SESSION_HANDLE session,
+                                    const char* label, CK_BBOOL priv,
+                                    CK_OBJECT_HANDLE* obj)
 {
     CK_ATTRIBUTE tmpl[] = {
         { CKA_CLASS,    &secretClass, sizeof(secretClass) },
         { CKA_KEY_TYPE, &genericType, sizeof(genericType) },
         { CKA_VALUE,    keyData,      sizeof(keyData)     },
         { CKA_TOKEN,    &ckTrue,      sizeof(ckTrue)      },
-        { CKA_PRIVATE,  &ckFalse,     sizeof(ckFalse)     },
+        { CKA_PRIVATE,  &priv,        sizeof(priv)        },
         { CKA_LABEL,    NULL,         0                   },
     };
 
@@ -250,6 +253,12 @@ static CK_RV create_token_secret(CK_SESSION_HANDLE session, const char* label,
     tmpl[5].ulValueLen = (CK_ULONG)XSTRLEN(label);
     return funcList->C_CreateObject(session, tmpl,
                                     sizeof(tmpl) / sizeof(*tmpl), obj);
+}
+
+static CK_RV create_token_secret(CK_SESSION_HANDLE session, const char* label,
+                                 CK_OBJECT_HANDLE* obj)
+{
+    return create_token_secret_ex(session, label, CK_FALSE, obj);
 }
 
 static CK_ULONG count_label(CK_SESSION_HANDLE session, const char* label)
@@ -1006,7 +1015,7 @@ static void test_load_record_without_trailing_fields(void)
         if (rv == CKR_OK)
             rv = user_session(slot, &session);
         if (rv == CKR_OK) {
-            rv = create_token_secret(session, "legacy-keep", &obj);
+            rv = create_token_secret_ex(session, "legacy-keep", CK_TRUE, &obj);
             CHECK_RV(rv, "create token object", CKR_OK);
         }
         close_session(session);
@@ -1016,12 +1025,13 @@ static void test_load_record_without_trailing_fields(void)
             snprintf(tokenPath, sizeof(tokenPath), "%s/wp11_token_%016lx",
                      TEST_DIR, (unsigned long)slot);
             recordLen = read_store_file(tokenPath, record, sizeof(record));
-            CHECK_TRUE(recordLen > dropLen && recordLen < (long)sizeof(record),
+            CHECK_TRUE(recordLen > dropLen + PUB_EXT_LEN &&
+                       recordLen < (long)sizeof(record),
                        "token record is stored");
         }
-        if (rv == CKR_OK && recordLen > dropLen) {
+        if (rv == CKR_OK && recordLen > dropLen + PUB_EXT_LEN) {
             CHECK_TRUE(write_store_file(tokenPath, record,
-                                        (size_t)(recordLen - dropLen)) == 0,
+                (size_t)(recordLen - PUB_EXT_LEN - dropLen)) == 0,
                        "drop trailing token record fields");
             rv = lib_init();
             CHECK_RV(rv, "initialize with the shorter record", CKR_OK);
@@ -4191,9 +4201,9 @@ static void test_empty_pin_reload_ends_so_login(void)
 #endif
 
 #ifndef NO_HMAC
-/* An SO logout leaves an operation running on a copy a reload replaced, as
- * it leaves those on the current objects. */
-static void test_so_logout_keeps_replaced_op(void)
+/* An SO logout ends an operation on a public key copy a reload replaced, as
+ * it ends those on the current objects. */
+static void test_so_logout_ends_replaced_op(void)
 {
     CK_RV rv;
     CK_SLOT_ID slot = 0;
@@ -4216,7 +4226,7 @@ static void test_so_logout_keeps_replaced_op(void)
     pid_t pid = -1;
     int go = -1;
 
-    printf("\n--- an SO logout after a reload keeps a running sign ---\n");
+    printf("\n--- an SO logout after a reload ends a running sign ---\n");
     rv = token_setup(&slot);
     CHECK_RV(rv, "token setup", CKR_OK);
     funcList->C_Finalize(NULL);
@@ -4262,7 +4272,8 @@ static void test_so_logout_keeps_replaced_op(void)
         rv = funcList->C_Logout(other);
     if (rv == CKR_OK) {
         rv = funcList->C_SignFinal(session, sig, &sigLen);
-        CHECK_RV(rv, "sign finishes after the SO logout", CKR_OK);
+        CHECK_RV(rv, "sign ended by the SO logout",
+                 CKR_OPERATION_NOT_INITIALIZED);
     }
     close_session(other);
     close_session(session);
@@ -6009,7 +6020,7 @@ static int run_tests(void)
     test_empty_pin_reload_after_logout();
 #ifndef NO_HMAC
     test_empty_pin_reload_ends_so_login();
-    test_so_logout_keeps_replaced_op();
+    test_so_logout_ends_replaced_op();
 #endif
 #ifndef WOLFPKCS11_NSS
     test_dropped_key_retires_session_objects();

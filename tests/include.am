@@ -368,6 +368,11 @@ noinst_PROGRAMS += tests/token_key_unset_test
 tests_token_key_unset_test_SOURCES = tests/token_key_unset_test.c
 tests_token_key_unset_test_LDADD =
 
+check_PROGRAMS += tests/token_pub_key_test
+noinst_PROGRAMS += tests/token_pub_key_test
+tests_token_pub_key_test_SOURCES = tests/token_pub_key_test.c
+tests_token_pub_key_test_LDADD =
+
 check_PROGRAMS += tests/nss_configdir_prefix_test
 noinst_PROGRAMS += tests/nss_configdir_prefix_test
 tests_nss_configdir_prefix_test_SOURCES = tests/nss_configdir_prefix_test.c
@@ -613,6 +618,7 @@ tests_wrapkey_length_query_test_LDADD += src/libwolfpkcs11.la
 tests_ec_private_key_import_test_LDADD += src/libwolfpkcs11.la
 tests_set_pin_rekey_test_LDADD += src/libwolfpkcs11.la
 tests_token_key_unset_test_LDADD += src/libwolfpkcs11.la
+tests_token_pub_key_test_LDADD += src/libwolfpkcs11.la
 tests_nss_configdir_prefix_test_LDADD += src/libwolfpkcs11.la
 tests_logout_retire_test_LDADD += src/libwolfpkcs11.la
 tests_logout_key_ops_test_LDADD += src/libwolfpkcs11.la
@@ -706,6 +712,7 @@ tests_wrapkey_length_query_test_LDADD += src/libwolfpkcs11.la
 tests_ec_private_key_import_test_LDADD += src/libwolfpkcs11.la
 tests_set_pin_rekey_test_LDADD += src/libwolfpkcs11.la
 tests_token_key_unset_test_LDADD += src/libwolfpkcs11.la
+tests_token_pub_key_test_LDADD += src/libwolfpkcs11.la
 tests_nss_configdir_prefix_test_LDADD += src/libwolfpkcs11.la
 tests_logout_retire_test_LDADD += src/libwolfpkcs11.la
 tests_logout_key_ops_test_LDADD += src/libwolfpkcs11.la

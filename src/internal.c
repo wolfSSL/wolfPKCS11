@@ -1074,6 +1074,9 @@ static int wolfPKCS11_Store_GetMaxSize(int type, int variableSz)
                 FIELD_SIZE(WP11_Token, objCnt) +
                 FIELD_SIZE(WP11_Token, tokenFlags) +
                 FIELD_SIZE(WP11_Token, nextObjId) +
+                FIELD_SIZE(WP11_Token, soKeySeed) +
+                FIELD_SIZE(WP11_Token, pubByUser) +
+                FIELD_SIZE(WP11_Token, pubBySo) +
                 variableSz /* soPinLen + userPinLen + (objCnt * long) */
             ;
             break;
@@ -4282,6 +4285,7 @@ int WP11_Object_Copy(WP11_Object *src, WP11_Object *dest)
     dest->encoded = src->encoded;
     dest->undecoded = src->undecoded;
     dest->unbound = src->unbound;
+    dest->pubKeyRec = src->pubKeyRec;
 #endif
     dest->objClass = src->objClass;
     dest->keyGenMech = src->keyGenMech;
@@ -4852,16 +4856,54 @@ static void wp11_Object_PolicyAadFree(byte* aad, byte* buf)
 }
 
 static int wp11_Token_KeyInUse(const WP11_Token* token);
+static int wp11_Token_PubKeySet(const WP11_Token* token);
+static int wp11_Token_PubKeyNew(WP11_Token* token);
+
+#ifdef DEBUG_WOLFPKCS11
+static int wp11_storeLegacy = 0;
 
 /**
- * Encrypt key material with the token key, bound to the object's policy.
+ * Test hook: store as releases before the public-object key did, with no key
+ * copies in the token record and every key under the token key.
+ *
+ * @param  on  [in]  Non-zero to store the old format, 0 for the current one.
+ */
+WP11_API void WP11_Test_StoreLegacyFormat(int on)
+{
+    wp11_storeLegacy = on;
+}
+#endif
+
+/**
+ * Check whether an object's key data goes under the public-object key.
+ *
+ * @param  object  [in]  Key object.
+ * @return  1 for the public-object key, 0 for the token key.
+ */
+static int wp11_Object_UsesPubKey(WP11_Object* object)
+{
+#ifdef DEBUG_WOLFPKCS11
+    if (wp11_storeLegacy)
+        return 0;
+#endif
+    /* A stored key moves only once storage holds the key it moves to. */
+    if (object->keyData != NULL && !object->pubKeyRec &&
+            !object->slot->token.pubKeyStored) {
+        return 0;
+    }
+    return (object->opFlag & WP11_FLAG_PRIVATE) == 0;
+}
+
+/**
+ * Encrypt key material with the token key, or the public-object key for a key
+ * with CKA_PRIVATE false, bound to the object's policy.
  *
  * @param [in, out]  object  Key object.
  * @param [out]      out     Buffer for encrypted data and tag.
  * @param [in]       data    Key material.
  * @param [in]       len     Length of key material.
  * @return  0 on success.
- * @return  PIN_INVALID_E when the token key is not in use.
+ * @return  PIN_INVALID_E when the key to encrypt with is not loaded.
  * @return  Other -ve on failure.
  */
 static int wp11_Object_EncryptKeyData(WP11_Object* object, byte* out,
@@ -4871,25 +4913,33 @@ static int wp11_Object_EncryptKeyData(WP11_Object* object, byte* out,
     byte buf[WP11_POLICY_AAD_SZ];
     byte* aad;
     word32 aadSz;
+    WP11_Token* token = &object->slot->token;
+    int pub = wp11_Object_UsesPubKey(object);
 
-    if (!wp11_Token_KeyInUse(&object->slot->token))
+    if (pub && wp11_Token_PubKeyNew(token) != 0)
+        return PIN_INVALID_E;
+    if (pub && !wp11_Token_PubKeySet(token))
+        return PIN_INVALID_E;
+    if (!pub && !wp11_Token_KeyInUse(token))
         return PIN_INVALID_E;
 
     ret = wp11_Object_PolicyAad(object, buf, &aad, &aadSz);
     if (ret == 0) {
-        ret = wp11_EncryptData(out, data, len, object->slot->token.key,
-                               sizeof(object->slot->token.key), object->iv,
+        ret = wp11_EncryptData(out, data, len, pub ? token->pubKey : token->key,
+                               AES_256_KEY_SIZE, object->iv,
                                sizeof(object->iv), aad, aadSz, object->devId);
     }
-    if (ret == 0)
+    if (ret == 0) {
         object->unbound = 0;
+        object->pubKeyRec = (byte)pub;
+    }
     wp11_Object_PolicyAadFree(aad, buf);
 
     return ret;
 }
 
 /**
- * Decrypt key material with the token key, verifying the object's policy.
+ * Decrypt key material with the key it is under, verifying the object's policy.
  * Key data stored before the policy was bound is accepted and marked so it is
  * bound when next stored.
  *
@@ -4908,19 +4958,24 @@ static int wp11_Object_DecryptKeyData(WP11_Object* object, byte* out,
     byte buf[WP11_POLICY_AAD_SZ];
     byte* aad;
     word32 aadSz;
+    WP11_Token* token = &object->slot->token;
+    const byte* key = object->pubKeyRec ? token->pubKey : token->key;
+
+    if (object->pubKeyRec && !wp11_Token_PubKeySet(token))
+        return AES_GCM_AUTH_E;
 
     ret = wp11_Object_PolicyAad(object, buf, &aad, &aadSz);
     if (ret == 0) {
-        ret = wp11_DecryptData(out, data, len, object->slot->token.key,
-                               sizeof(object->slot->token.key), object->iv,
-                               sizeof(object->iv), aad, aadSz, object->devId);
+        ret = wp11_DecryptData(out, data, len, key, AES_256_KEY_SIZE,
+                               object->iv, sizeof(object->iv), aad, aadSz,
+                               object->devId);
     }
     wp11_Object_PolicyAadFree(aad, buf);
     /* Records stored before policy binding carry no templates. */
     if (ret == AES_GCM_AUTH_E && object->attrTmplLen == 0) {
-        ret = wp11_DecryptData(out, data, len, object->slot->token.key,
-                               sizeof(object->slot->token.key), object->iv,
-                               sizeof(object->iv), NULL, 0, object->devId);
+        ret = wp11_DecryptData(out, data, len, key, AES_256_KEY_SIZE,
+                               object->iv, sizeof(object->iv), NULL, 0,
+                               object->devId);
         if (ret == 0)
             object->unbound = 1;
     }
@@ -7278,6 +7333,8 @@ static int wp11_Object_Store_SymmKey(WP11_Object* object, int tokenId,
 /* Object record flag: the attribute-array templates follow the category.
  * Records before v2.0 stored WP11_FLAG_* bits 0x0001-0x0200 in this word. */
 #define WP11_OBJ_REC_TMPL  0x80000000U
+/* Object record flag: the key data is under the public-object key. */
+#define WP11_OBJ_REC_PUBKEY  0x40000000U
 
 static int wp11_Object_Load_Object(WP11_Object* object, int tokenId, int objId)
 {
@@ -7323,6 +7380,7 @@ static int wp11_Object_Load_Object(WP11_Object* object, int tokenId, int objId)
         if (ret == 0) {
             /* Record format flags. (4) */
             ret = wp11_storage_read_word32(storage, &recFlags);
+            object->pubKeyRec = (recFlags & WP11_OBJ_REC_PUBKEY) != 0;
         }
         if (ret == 0) {
             /* Read the operational flags of the object. (4) */
@@ -7508,6 +7566,8 @@ static int wp11_Object_Store_Object(WP11_Object* object, int tokenId, int objId)
 #endif
         + object->attrTmplLen);
 
+    if (object->pubKeyRec)
+        recFlags |= WP11_OBJ_REC_PUBKEY;
     /* Open access to key object. */
     ret = wp11_storage_open(WOLFPKCS11_STORE_OBJECT, tokenId, objId, variableSz,
         &storage);
@@ -7970,7 +8030,7 @@ typedef struct WP11_ReKeyData {
  */
 static int wp11_Object_NeedsReKey(WP11_Object* object)
 {
-    if (object->keyData == NULL)
+    if (object->keyData == NULL || object->pubKeyRec)
         return 0;
     if (object->objClass != CKO_PRIVATE_KEY &&
             object->objClass != CKO_SECRET_KEY) {
@@ -8730,6 +8790,193 @@ static int wp11_Token_KeyInUse(const WP11_Token* token)
 }
 
 /**
+ * Check whether a key buffer holds a key, rather than zeros.
+ *
+ * @param  key  [in]  Key buffer.
+ * @param  len  [in]  Length of key buffer.
+ * @return  1 when any byte is set, 0 otherwise.
+ */
+static int wp11_KeyBufSet(const byte* key, size_t len)
+{
+    byte acc = 0;
+    size_t i;
+
+    for (i = 0; i < len; i++)
+        acc |= key[i];
+    return acc != 0;
+}
+
+/**
+ * Check whether the public-object key is loaded.
+ *
+ * @param  token  [in]  Token.
+ * @return  1 when loaded, 0 otherwise.
+ */
+static int wp11_Token_PubKeySet(const WP11_Token* token)
+{
+    return wp11_KeyBufSet(token->pubKey, sizeof(token->pubKey));
+}
+
+/**
+ * Encrypt the public-object key under a key encryption key.
+ *
+ * @param [in]   token  Token.
+ * @param [in]   kek    Key encryption key.
+ * @param [in]   role   'U' for the user's copy, 'S' for the SO's copy.
+ * @param [out]  out    Buffer of WP11_PUB_KEY_WRAP_SZ bytes.
+ * @return  0 on success.
+ * @return  -ve on failure.
+ */
+static int wp11_Token_PubKeyWrap(WP11_Token* token, const byte* kek, byte role,
+                                 byte* out)
+{
+    int ret;
+
+    WP11_Lock_LockRW(&token->rngLock);
+    ret = wc_RNG_GenerateBlock(&token->rng, out, GCM_NONCE_MID_SZ);
+    WP11_Lock_UnlockRW(&token->rngLock);
+    if (ret == 0) {
+        ret = wp11_EncryptData(out + GCM_NONCE_MID_SZ, token->pubKey,
+                               (int)sizeof(token->pubKey), kek,
+                               AES_256_KEY_SIZE, out, GCM_NONCE_MID_SZ, &role,
+                               1, INVALID_DEVID);
+    }
+
+    return ret;
+}
+
+/**
+ * Decrypt a copy of the public-object key.
+ *
+ * @param [in]   kek   Key encryption key.
+ * @param [in]   role  'U' for the user's copy, 'S' for the SO's copy.
+ * @param [in]   in    Copy of WP11_PUB_KEY_WRAP_SZ bytes.
+ * @param [out]  key   Buffer of AES_256_KEY_SIZE bytes. Zeroed on failure.
+ * @return  0 on success.
+ * @return  AES_GCM_AUTH_E when the copy is not under kek.
+ * @return  Other -ve on failure.
+ */
+static int wp11_Token_PubKeyUnwrap(const byte* kek, byte role, const byte* in,
+                                   byte* key)
+{
+    int ret;
+
+    ret = wp11_DecryptData(key, in + GCM_NONCE_MID_SZ, AES_256_KEY_SIZE, kek,
+                           AES_256_KEY_SIZE, in, GCM_NONCE_MID_SZ, &role, 1,
+                           INVALID_DEVID);
+    if (ret != 0)
+        wc_ForceZero(key, AES_256_KEY_SIZE);
+
+    return ret;
+}
+
+/**
+ * Load the public-object key from the copy that a loaded key opens.
+ * Caller holds the token lock for writing, or is loading the token.
+ *
+ * @param [in, out]  token  Token.
+ */
+static void wp11_Token_PubKeyLoad(WP11_Token* token)
+{
+    if (wp11_Token_PubKeySet(token))
+        return;
+    if ((token->tokenFlags & WP11_TOKEN_FLAG_PUB_USER) != 0 &&
+            wp11_Token_KeyInUse(token)) {
+        (void)wp11_Token_PubKeyUnwrap(token->key, 'U', token->pubByUser,
+                                      token->pubKey);
+    }
+    if (!wp11_Token_PubKeySet(token) &&
+            (token->tokenFlags & WP11_TOKEN_FLAG_PUB_SO) != 0 &&
+            wp11_KeyBufSet(token->soKek, sizeof(token->soKek))) {
+        (void)wp11_Token_PubKeyUnwrap(token->soKek, 'S', token->pubBySo,
+                                      token->pubKey);
+    }
+}
+
+/**
+ * Create the public-object key when the token has none, with a copy under
+ * the token key in use and, while the SO is logged in, one under soKek.
+ * Caller holds the token lock for writing.
+ *
+ * @param [in, out]  token  Token.
+ * @return  0 on success or when the token already has a key or copies.
+ * @return  PIN_INVALID_E when the token key is not in use.
+ * @return  Other -ve on failure.
+ */
+static int wp11_Token_PubKeyNew(WP11_Token* token)
+{
+    int ret = 0;
+    int flags = token->tokenFlags;
+
+    if (wp11_Token_PubKeySet(token) ||
+            (flags & (WP11_TOKEN_FLAG_PUB_USER | WP11_TOKEN_FLAG_PUB_SO)) != 0)
+        return 0;
+    if (!wp11_Token_KeyInUse(token))
+        return PIN_INVALID_E;
+
+    WP11_Lock_LockRW(&token->rngLock);
+    ret = wc_RNG_GenerateBlock(&token->rng, token->pubKey,
+                               sizeof(token->pubKey));
+    if (ret == 0 && (flags & WP11_TOKEN_FLAG_PUB_EXT) == 0) {
+        ret = wc_RNG_GenerateBlock(&token->rng, token->soKeySeed,
+                                   sizeof(token->soKeySeed));
+    }
+    WP11_Lock_UnlockRW(&token->rngLock);
+    if (ret == 0)
+        ret = wp11_Token_PubKeyWrap(token, token->key, 'U', token->pubByUser);
+    if (ret == 0)
+        flags |= WP11_TOKEN_FLAG_PUB_EXT | WP11_TOKEN_FLAG_PUB_USER;
+    if (ret == 0 && wp11_KeyBufSet(token->soKek, sizeof(token->soKek))) {
+        ret = wp11_Token_PubKeyWrap(token, token->soKek, 'S', token->pubBySo);
+        if (ret == 0)
+            flags |= WP11_TOKEN_FLAG_PUB_SO;
+    }
+    if (ret == 0)
+        token->tokenFlags = flags;
+    else
+        wc_ForceZero(token->pubKey, sizeof(token->pubKey));
+
+    return ret;
+}
+
+/**
+ * Get the token flags as written to the token record.
+ *
+ * @param  token  [in]  Token.
+ * @return  Token flags.
+ */
+static int wp11_Token_StoredFlags(const WP11_Token* token)
+{
+#ifdef DEBUG_WOLFPKCS11
+    if (wp11_storeLegacy) {
+        return token->tokenFlags & ~(WP11_TOKEN_FLAG_PUB_EXT |
+            WP11_TOKEN_FLAG_PUB_USER | WP11_TOKEN_FLAG_PUB_SO);
+    }
+#endif
+    return token->tokenFlags;
+}
+
+/**
+ * Check whether the public-object key copies differ between two copies of a
+ * token.
+ *
+ * @param  token  [in]  Token.
+ * @param  prev   [in]  Earlier copy of the token.
+ * @return  1 when they differ, 0 otherwise.
+ */
+static int wp11_Token_PubCopiesChanged(const WP11_Token* token,
+                                       const WP11_Token* prev)
+{
+    int mask = WP11_TOKEN_FLAG_PUB_EXT | WP11_TOKEN_FLAG_PUB_USER |
+        WP11_TOKEN_FLAG_PUB_SO;
+
+    return ((token->tokenFlags ^ prev->tokenFlags) & mask) != 0 ||
+        XMEMCMP(token->pubByUser, prev->pubByUser,
+            sizeof(token->pubByUser)) != 0 ||
+        XMEMCMP(token->pubBySo, prev->pubBySo, sizeof(token->pubBySo)) != 0;
+}
+
+/**
  * Check whether the user PIN is empty, reusing the verdict for PIN data that
  * an earlier copy of the token had, as the check derives a key from the PIN.
  *
@@ -8906,6 +9153,25 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token,
                 }
             }
         }
+        if (ret == 0 && (token->tokenFlags & WP11_TOKEN_FLAG_PUB_EXT)) {
+            /* Read SO key seed and public-object key copies. (16 + 2 * 60) */
+            ret = wp11_storage_read_fixed_array(storage, token->soKeySeed,
+                                                sizeof(token->soKeySeed));
+            if (ret == 0) {
+                ret = wp11_storage_read_fixed_array(storage, token->pubByUser,
+                                                    sizeof(token->pubByUser));
+            }
+            if (ret == 0) {
+                ret = wp11_storage_read_fixed_array(storage, token->pubBySo,
+                                                    sizeof(token->pubBySo));
+            }
+            /* An older release kept the flags but dropped the copies. */
+            if (ret == BUFFER_E) {
+                token->tokenFlags &= ~(WP11_TOKEN_FLAG_PUB_EXT |
+                    WP11_TOKEN_FLAG_PUB_USER | WP11_TOKEN_FLAG_PUB_SO);
+                ret = 0;
+            }
+        }
 
         wp11_storage_close(storage);
 
@@ -8953,6 +9219,8 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token,
     wolfPKCS11_StoreBatchRelease(batchHeld);
 #endif
 
+    if (loaded && prev != NULL && wp11_Token_PubCopiesChanged(token, prev))
+        wc_ForceZero(token->pubKey, sizeof(token->pubKey));
     /* If there is no pin, there is no login, so decode now. Deriving a key
      * from the PIN runs after the batch locks are released. */
     if (loaded && wp11_Token_EmptyPin(slot, token, prev)) {
@@ -8966,6 +9234,8 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token,
             ret = HashPIN((char*)"", 0, token->seed, sizeof(token->seed),
                           token->key, sizeof(token->key), slot);
         }
+        if (ret == 0)
+            wp11_Token_PubKeyLoad(token);
         object = token->object;
         while (ret == 0 && object != NULL) {
             if (wp11_Object_IsEncrypted(object) || object->undecoded)
@@ -8975,6 +9245,11 @@ static int wp11_Token_Load(WP11_Slot* slot, int tokenId, WP11_Token* token,
         if (ret != 0)
             ret = CKR_DEVICE_ERROR;
 #endif
+    }
+    if (ret == 0 && loaded) {
+        token->pubKeyStored = (token->tokenFlags & (WP11_TOKEN_FLAG_PUB_USER |
+            WP11_TOKEN_FLAG_PUB_SO)) != 0;
+        wp11_Token_PubKeyLoad(token);
     }
 
     return ret;
@@ -9126,12 +9401,27 @@ static int wp11_Token_StorePass(WP11_Token* token, int tokenId, int what,
 
         if (ret == 0) {
             /* Write token flags. (4) */
-            ret = wp11_storage_write_int(storage, token->tokenFlags);
+            ret = wp11_storage_write_int(storage,
+                                         wp11_Token_StoredFlags(token));
         }
 
         if (ret == 0) {
             /* Write next object id. (4) */
             ret = wp11_storage_write_int(storage, token->nextObjId);
+        }
+        if (ret == 0 &&
+                (wp11_Token_StoredFlags(token) & WP11_TOKEN_FLAG_PUB_EXT)) {
+            /* Write SO key seed and public-object key copies. (16 + 2 * 60) */
+            ret = wp11_storage_write_fixed_array(storage, token->soKeySeed,
+                                                 sizeof(token->soKeySeed));
+            if (ret == 0) {
+                ret = wp11_storage_write_fixed_array(storage, token->pubByUser,
+                                                     sizeof(token->pubByUser));
+            }
+            if (ret == 0) {
+                ret = wp11_storage_write_fixed_array(storage, token->pubBySo,
+                                                     sizeof(token->pubBySo));
+            }
         }
 
         ret = wp11_storage_close_write(storage, ret);
@@ -9468,6 +9758,10 @@ static int wp11_Token_StoreSome(WP11_Token* token, int tokenId, int what,
         if (what == WP11_STORE_PASS_ALL)
             token->storeDirty = 0;
         if (what != WP11_STORE_PASS_OBJECT) {
+            if (wp11_Token_StoredFlags(token) & (WP11_TOKEN_FLAG_PUB_USER |
+                    WP11_TOKEN_FLAG_PUB_SO)) {
+                token->pubKeyStored = 1;
+            }
             token->storeLoginDirty = 0;
             token->storeSoFailBase = token->soFailedLogin;
             token->storeUserFailBase = token->userFailedLogin;
@@ -10864,6 +11158,54 @@ int WP11_Slot_CheckUserPin(WP11_Slot* slot, char* pin, int pinLen)
     return ret;
 }
 
+#ifndef WOLFPKCS11_NO_STORE
+/**
+ * Give the logged in SO the public-object key: keep the SO PIN key, load the
+ * key, add the SO's copy to a token that lacks one and decode the keys under
+ * it. Caller holds the slot lock for writing.
+ *
+ * @param  slot     [in]  Slot object.
+ * @param  seed     [in]  Seed the SO PIN key was derived with.
+ * @param  kek      [in]  SO PIN key.
+ * @param  newSeed  [in]  Whether seed is new to the token.
+ */
+static void wp11_Slot_SOLoginKeys(WP11_Slot* slot, const byte* seed,
+                                  const byte* kek, int newSeed)
+{
+    WP11_Token* token = &slot->token;
+    WP11_Object* object;
+    int store = 0;
+
+    WP11_Lock_LockRW(&token->lock);
+    if (newSeed && (token->tokenFlags & WP11_TOKEN_FLAG_PUB_EXT) == 0) {
+        XMEMCPY(token->soKeySeed, seed, sizeof(token->soKeySeed));
+        token->tokenFlags |= WP11_TOKEN_FLAG_PUB_EXT;
+        store = 1;
+    }
+    if (XMEMCMP(token->soKeySeed, seed, sizeof(token->soKeySeed)) == 0) {
+        XMEMCPY(token->soKek, kek, sizeof(token->soKek));
+        wp11_Token_PubKeyLoad(token);
+        if (wp11_Token_PubKeySet(token) &&
+                (token->tokenFlags & WP11_TOKEN_FLAG_PUB_SO) == 0 &&
+                wp11_Token_PubKeyWrap(token, kek, 'S', token->pubBySo) == 0) {
+            token->tokenFlags |= WP11_TOKEN_FLAG_PUB_SO;
+            store = 1;
+        }
+    }
+    if (store && wp11_Slot_StoreSome(slot, (int)slot->id,
+            WP11_STORE_PASS_TOKEN, NULL) != 0) {
+        WOLFPKCS11_MSG("SO login: failed to store the SO key copy");
+    }
+    for (object = token->object; object != NULL; object = object->next) {
+        if (object->pubKeyRec && (object->encoded || object->undecoded) &&
+                wp11_Object_Decode(object) != 0) {
+            object->undecoded = 1;
+        }
+    }
+    WP11_Lock_UnlockRW(&token->lock);
+}
+#endif
+
 /**
  * Log the SO (Security Officer) into the token.
  *
@@ -10887,6 +11229,11 @@ int WP11_Slot_SOLogin(WP11_Slot* slot, char* pin, int pinLen)
     int state;
     word32 soPinCnt;
     WP11_Token* token = &slot->token;
+#ifndef WOLFPKCS11_NO_STORE
+    byte keySeed[PIN_SEED_SZ];
+    byte kek[AES_256_KEY_SIZE];
+    int newSeed;
+#endif
 
 #ifndef WOLFPKCS11_NO_TIME
     if (wc_GetTime(&now, sizeof(now)) != 0)
@@ -10896,6 +11243,17 @@ int WP11_Slot_SOLogin(WP11_Slot* slot, char* pin, int pinLen)
     /* Write lock: the lockout check below may reset the failure count. */
     WP11_Lock_LockRW(&slot->lock);
     soPinCnt = slot->soPinCnt;
+#ifndef WOLFPKCS11_NO_STORE
+    /* A token from an older release gets its SO key seed now. */
+    newSeed = (token->tokenFlags & WP11_TOKEN_FLAG_PUB_EXT) == 0;
+    if (!newSeed)
+        XMEMCPY(keySeed, token->soKeySeed, sizeof(keySeed));
+    else if (ret == 0) {
+        WP11_Lock_LockRW(&token->rngLock);
+        ret = wc_RNG_GenerateBlock(&token->rng, keySeed, sizeof(keySeed));
+        WP11_Lock_UnlockRW(&token->rngLock);
+    }
+#endif
     if (ret == 0) {
         /* SO already logged in is the same user type; a logged-in USER is a
          * different one. */
@@ -10955,6 +11313,12 @@ int WP11_Slot_SOLogin(WP11_Slot* slot, char* pin, int pinLen)
     #endif
     }
 
+#ifndef WOLFPKCS11_NO_STORE
+    if (ret == 0) {
+        ret = HashPIN(pin, pinLen, keySeed, sizeof(keySeed), kek, sizeof(kek),
+                      slot);
+    }
+#endif
     if (ret == 0) {
         WP11_Lock_LockRW(&slot->lock);
         /* Not when the SO PIN changed since the check. */
@@ -10962,10 +11326,17 @@ int WP11_Slot_SOLogin(WP11_Slot* slot, char* pin, int pinLen)
             ret = BAD_STATE_E;
         else
             token->loginState = WP11_APP_STATE_RW_SO;
+    #ifndef WOLFPKCS11_NO_STORE
+        if (ret == 0)
+            wp11_Slot_SOLoginKeys(slot, keySeed, kek, newSeed);
+    #endif
         WP11_Lock_UnlockRW(&slot->lock);
     }
 #ifndef WOLFPKCS11_NO_TIME
     wp11_Slot_StoreLockout(slot, ret == PIN_INVALID_E);
+#endif
+#ifndef WOLFPKCS11_NO_STORE
+    wc_ForceZero(kek, sizeof(kek));
 #endif
 
     return ret;
@@ -10980,8 +11351,77 @@ typedef struct WP11_UserLoginData {
     byte seed[PIN_SEED_SZ];            /* Snapshot of token key seed          */
     byte key[AES_256_KEY_SIZE];        /* Token key derived from PIN          */
     byte prevKey[AES_256_KEY_SIZE];    /* Token key before the login          */
+    byte prevPubKey[AES_256_KEY_SIZE]; /* Public-object key before the login  */
+    int prevFlags;                     /* Token flags before the login        */
 #endif
 } WP11_UserLoginData;
+
+#ifndef WOLFPKCS11_NO_STORE
+/**
+ * Check whether a key record is under the token key only because an older
+ * release stored keys with CKA_PRIVATE false that way.
+ *
+ * @param  object  [in]  Token object.
+ * @return  1 when the key moves to the public-object key, 0 otherwise.
+ */
+static int wp11_Object_PubKeyLegacy(WP11_Object* object)
+{
+    if (object->keyData == NULL || object->pubKeyRec || object->encoded ||
+            object->undecoded || !wp11_Object_IsEncrypted(object) ||
+            (object->opFlag & WP11_FLAG_PRIVATE) != 0) {
+        return 0;
+    }
+#ifdef DEBUG_WOLFPKCS11
+    if (wp11_storeLegacy)
+        return 0;
+#endif
+#ifdef WOLFPKCS11_TPM
+    if (object->opFlag & WP11_FLAG_TPM)
+        return 0;
+#endif
+#ifdef WOLFPKCS11_STATEFUL_SIG_PRIVATE
+    if (wp11_Stateful_IsKey(object))
+        return 0;
+#endif
+    return 1;
+}
+
+/**
+ * Move decoded keys with CKA_PRIVATE false from the token key to the
+ * public-object key. The token record holding the key copies is stored first,
+ * so no key record is ever under a key that storage lacks.
+ * Caller holds the slot and token locks for writing.
+ *
+ * @param  slot  [in]  Slot object.
+ */
+static void wp11_Slot_MigratePubKeys(WP11_Slot* slot)
+{
+    WP11_Token* token = &slot->token;
+    WP11_Object* object;
+    int cnt = 0;
+
+    if (!wp11_Token_PubKeySet(token))
+        return;
+    for (object = token->object; object != NULL; object = object->next) {
+        if (wp11_Object_PubKeyLegacy(object))
+            cnt++;
+    }
+    if (cnt == 0)
+        return;
+    if (wp11_Token_StoreSome(token, (int)slot->id, WP11_STORE_PASS_TOKEN,
+            NULL) != 0) {
+        WOLFPKCS11_MSG("Login: failed to store the public-object key");
+        return;
+    }
+    for (object = token->object; object != NULL; object = object->next) {
+        if (wp11_Object_PubKeyLegacy(object))
+            object->unbound = 1;
+    }
+    if (wp11_Token_Store(token, (int)slot->id) != 0) {
+        WOLFPKCS11_MSG("Login: failed to move keys to the public-object key");
+    }
+}
+#endif
 
 /**
  * Check whether a session's initialized key operation uses the object as its
@@ -11375,7 +11815,11 @@ int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen)
     if (ret == 0) {
     #ifndef WOLFPKCS11_NO_STORE
         XMEMCPY(d->prevKey, token->key, sizeof(d->prevKey));
+        XMEMCPY(d->prevPubKey, token->pubKey, sizeof(d->prevPubKey));
+        d->prevFlags = token->tokenFlags;
         XMEMCPY(token->key, d->key, sizeof(token->key));
+        wp11_Token_PubKeyLoad(token);
+        (void)wp11_Token_PubKeyNew(token);
         object = token->object;
         while (ret == 0 && object != NULL) {
             if ((wp11_Object_IsEncrypted(object) && object->encoded) ||
@@ -11396,10 +11840,15 @@ int WP11_Slot_UserLogin(WP11_Slot* slot, char* pin, int pinLen)
                     wp11_Object_Scrub(object);
             }
             XMEMCPY(token->key, d->prevKey, sizeof(token->key));
+            XMEMCPY(token->pubKey, d->prevPubKey, sizeof(token->pubKey));
+            token->tokenFlags = d->prevFlags;
         }
     #endif
         if (ret == 0) {
             token->loginState = WP11_APP_STATE_RW_USER;
+        #ifndef WOLFPKCS11_NO_STORE
+            wp11_Slot_MigratePubKeys(slot);
+        #endif
         #ifndef WOLFPKCS11_NSS
             wp11_Slot_FreeUnlinkedObjects(slot);
         #endif
@@ -11436,6 +11885,88 @@ word32 WP11_Slot_SOPinCount(WP11_Slot* slot)
     return cnt;
 }
 
+#ifndef WOLFPKCS11_NO_STORE
+/* Token fields of the public-object key, saved to undo a failed change. */
+typedef struct WP11_PubKeyState {
+    byte soKeySeed[PIN_SEED_SZ];
+    byte soKek[AES_256_KEY_SIZE];
+    byte pubKey[AES_256_KEY_SIZE];
+    byte pubByUser[WP11_PUB_KEY_WRAP_SZ];
+    byte pubBySo[WP11_PUB_KEY_WRAP_SZ];
+} WP11_PubKeyState;
+
+/**
+ * Save the public-object key fields of the token.
+ * Caller holds the token lock.
+ *
+ * @param [in]   token  Token object.
+ * @param [out]  state  Saved fields.
+ */
+static void wp11_Token_SavePubKeyState(const WP11_Token* token,
+                                       WP11_PubKeyState* state)
+{
+    XMEMCPY(state->soKeySeed, token->soKeySeed, sizeof(state->soKeySeed));
+    XMEMCPY(state->soKek, token->soKek, sizeof(state->soKek));
+    XMEMCPY(state->pubKey, token->pubKey, sizeof(state->pubKey));
+    XMEMCPY(state->pubByUser, token->pubByUser, sizeof(state->pubByUser));
+    XMEMCPY(state->pubBySo, token->pubBySo, sizeof(state->pubBySo));
+}
+
+/**
+ * Restore the public-object key fields saved from the token.
+ * Caller holds the token lock for writing.
+ *
+ * @param [out]  token  Token object.
+ * @param [in]   state  Saved fields.
+ */
+static void wp11_Token_RestorePubKeyState(WP11_Token* token,
+                                          const WP11_PubKeyState* state)
+{
+    XMEMCPY(token->soKeySeed, state->soKeySeed, sizeof(token->soKeySeed));
+    XMEMCPY(token->soKek, state->soKek, sizeof(token->soKek));
+    XMEMCPY(token->pubKey, state->pubKey, sizeof(token->pubKey));
+    XMEMCPY(token->pubByUser, state->pubByUser, sizeof(token->pubByUser));
+    XMEMCPY(token->pubBySo, state->pubBySo, sizeof(token->pubBySo));
+}
+
+/**
+ * Put the SO's copy of the public-object key under a new SO PIN key, and
+ * create the key when the token has none and the token key is in use.
+ * Caller holds the token lock for writing.
+ *
+ * @param [in, out]  token  Token object.
+ * @param [in]       seed   Seed the new SO PIN key was derived with.
+ * @param [in]       kek    New SO PIN key.
+ * @param [in]       keep   Whether to keep kek as the logged in SO's key.
+ * @return  0 on success.
+ * @return  -ve on failure.
+ */
+static int wp11_Token_PubKeySoCopy(WP11_Token* token, const byte* seed,
+                                   const byte* kek, int keep)
+{
+    int ret = 0;
+
+    XMEMCPY(token->soKeySeed, seed, sizeof(token->soKeySeed));
+    XMEMCPY(token->soKek, kek, sizeof(token->soKek));
+    token->tokenFlags = (token->tokenFlags | WP11_TOKEN_FLAG_PUB_EXT) &
+        ~WP11_TOKEN_FLAG_PUB_SO;
+    if (!wp11_Token_PubKeySet(token)) {
+        ret = wp11_Token_PubKeyNew(token);
+        if (ret == PIN_INVALID_E)
+            ret = 0;
+    }
+    if (ret == 0 && wp11_Token_PubKeySet(token)) {
+        ret = wp11_Token_PubKeyWrap(token, kek, 'S', token->pubBySo);
+        if (ret == 0)
+            token->tokenFlags |= WP11_TOKEN_FLAG_PUB_SO;
+    }
+    if (!keep)
+        wc_ForceZero(token->soKek, sizeof(token->soKek));
+
+    return ret;
+}
+#endif /* !WOLFPKCS11_NO_STORE */
+
 /**
  * Set the SO's (Security Officer's) PIN.
  * Store the hash of the PIN and new seed.
@@ -11457,12 +11988,17 @@ static int wp11_Slot_SetSOPin(WP11_Slot* slot, char* pin, int pinLen,
     WP11_Token* token;
     byte pinSeed[PIN_SEED_SZ];
     byte pinHash[PIN_HASH_SZ];
+#ifndef WOLFPKCS11_NO_STORE
+    byte keySeed[PIN_SEED_SZ];
+    byte kek[AES_256_KEY_SIZE];
+#endif
 #ifdef WP11_STORE_BATCH
     byte oldPin[PIN_HASH_SZ];
     byte oldPinSeed[PIN_SEED_SZ];
     int oldPinLen;
     int oldFlags;
     byte oldDirty;
+    WP11_PubKeyState oldPub;
 #endif
 
     WP11_Lock_LockRW(&slot->lock);
@@ -11470,6 +12006,12 @@ static int wp11_Slot_SetSOPin(WP11_Slot* slot, char* pin, int pinLen,
     /* New seed each time. */
     WP11_Lock_LockRW(&slot->token.rngLock);
     ret = wc_RNG_GenerateBlock(&slot->token.rng, pinSeed, sizeof(pinSeed));
+#ifndef WOLFPKCS11_NO_STORE
+    if (ret == 0) {
+        ret = wc_RNG_GenerateBlock(&slot->token.rng, keySeed,
+                                   sizeof(keySeed));
+    }
+#endif
     WP11_Lock_UnlockRW(&slot->token.rngLock);
     if (ret == 0) {
         WP11_Lock_UnlockRW(&slot->lock);
@@ -11480,6 +12022,12 @@ static int wp11_Slot_SetSOPin(WP11_Slot* slot, char* pin, int pinLen,
         /* Costly Operation done out of lock. */
         ret = HashPIN(pin, pinLen, pinSeed, sizeof(pinSeed), pinHash,
                       sizeof(pinHash), slot);
+    #ifndef WOLFPKCS11_NO_STORE
+        if (ret == 0) {
+            ret = HashPIN(pin, pinLen, keySeed, sizeof(keySeed), kek,
+                          sizeof(kek), slot);
+        }
+    #endif
         WP11_Lock_LockRW(&slot->lock);
     }
     if (ret == 0 && since != NULL && slot->soPinCnt != *since)
@@ -11495,13 +12043,17 @@ static int wp11_Slot_SetSOPin(WP11_Slot* slot, char* pin, int pinLen,
         oldPinLen = token->soPinLen;
         oldFlags = token->tokenFlags;
         oldDirty = token->storeDirty;
+        wp11_Token_SavePubKeyState(token, &oldPub);
     #endif
         XMEMCPY(token->soPinSeed, pinSeed, sizeof(token->soPinSeed));
         XMEMCPY(token->soPin, pinHash, sizeof(token->soPin));
         token->soPinLen = sizeof(token->soPin);
         token->tokenFlags |= WP11_TOKEN_FLAG_SO_PIN_SET;
     #ifndef WOLFPKCS11_NO_STORE
-        ret = wp11_Token_Store(token, (int)slot->id);
+        ret = wp11_Token_PubKeySoCopy(token, keySeed, kek,
+            token->loginState == WP11_APP_STATE_RW_SO);
+        if (ret == 0)
+            ret = wp11_Token_Store(token, (int)slot->id);
     #ifdef WP11_STORE_BATCH
         if (ret != 0 && (oldFlags & WP11_TOKEN_FLAG_SO_PIN_SET)) {
             /* Keep the PIN that is still in storage in effect. */
@@ -11509,6 +12061,7 @@ static int wp11_Slot_SetSOPin(WP11_Slot* slot, char* pin, int pinLen,
             XMEMCPY(token->soPinSeed, oldPinSeed, sizeof(oldPinSeed));
             token->soPinLen = oldPinLen;
             token->tokenFlags = oldFlags;
+            wp11_Token_RestorePubKeyState(token, &oldPub);
             /* A failed batch left storage as it was. */
             token->storeDirty = oldDirty;
             restored = 1;
@@ -11521,9 +12074,13 @@ static int wp11_Slot_SetSOPin(WP11_Slot* slot, char* pin, int pinLen,
     }
     WP11_Lock_UnlockRW(&slot->lock);
     wc_ForceZero(pinHash, sizeof(pinHash));
+#ifndef WOLFPKCS11_NO_STORE
+    wc_ForceZero(kek, sizeof(kek));
+#endif
 #ifdef WP11_STORE_BATCH
     wc_ForceZero(oldPin, sizeof(oldPin));
     wc_ForceZero(oldPinSeed, sizeof(oldPinSeed));
+    wc_ForceZero(&oldPub, sizeof(oldPub));
 #endif
 
     return ret;
@@ -11546,6 +12103,7 @@ typedef struct WP11_UserPinState {
     int objCnt;
     byte seed[PIN_SEED_SZ];
     byte key[AES_256_KEY_SIZE];
+    WP11_PubKeyState pub;
 #endif
 } WP11_UserPinState;
 
@@ -11582,6 +12140,7 @@ static void wp11_Token_SaveUserPinState(WP11_Token* token,
     state->objCnt = token->objCnt;
     XMEMCPY(state->seed, token->seed, sizeof(state->seed));
     XMEMCPY(state->key, token->key, sizeof(state->key));
+    wp11_Token_SavePubKeyState(token, &state->pub);
 }
 
 /**
@@ -11602,6 +12161,46 @@ static void wp11_Token_RestoreUserPinState(WP11_Token* token,
     token->objCnt = state->objCnt;
     XMEMCPY(token->seed, state->seed, sizeof(token->seed));
     XMEMCPY(token->key, state->key, sizeof(token->key));
+    wp11_Token_RestorePubKeyState(token, &state->pub);
+}
+
+/**
+ * Put the user's copy of the public-object key under the token key just set
+ * from a new user PIN. A token without a key it can load gets a new one.
+ * Must be called with the slot lock and the token lock held.
+ *
+ * @param  token   [in]  Token object.
+ * @param  oldKey  [in]  Token key from the old user PIN. May be NULL.
+ * @return  0 on success.
+ * @return  -ve on failure.
+ */
+static int wp11_Token_PubKeyUserCopy(WP11_Token* token, const byte* oldKey)
+{
+    int ret = 0;
+    int copies = token->tokenFlags &
+        (WP11_TOKEN_FLAG_PUB_USER | WP11_TOKEN_FLAG_PUB_SO);
+
+    if (!wp11_Token_PubKeySet(token) && oldKey != NULL &&
+            (copies & WP11_TOKEN_FLAG_PUB_USER) != 0) {
+        ret = wp11_Token_PubKeyUnwrap(oldKey, 'U', token->pubByUser,
+                                      token->pubKey);
+        if (ret != 0)
+            return 0;
+    }
+    if (!wp11_Token_PubKeySet(token) && oldKey == NULL && copies != 0) {
+        /* Keys under the key that no PIN opens any more are lost. */
+        token->tokenFlags &= ~(WP11_TOKEN_FLAG_PUB_USER |
+            WP11_TOKEN_FLAG_PUB_SO);
+    }
+    if (!wp11_Token_PubKeySet(token))
+        return wp11_Token_PubKeyNew(token);
+    ret = wp11_Token_PubKeyWrap(token, token->key, 'U', token->pubByUser);
+    if (ret == 0) {
+        token->tokenFlags |= WP11_TOKEN_FLAG_PUB_EXT |
+            WP11_TOKEN_FLAG_PUB_USER;
+    }
+
+    return ret;
 }
 #endif /* !WOLFPKCS11_NO_STORE */
 
@@ -11810,6 +12409,8 @@ static int wp11_Slot_SetUserPin(WP11_Slot* slot, const word32* since,
     #ifdef WP11_STORE_BATCH
         oldDirty = token->storeDirty;
     #endif
+        ret = wp11_Token_PubKeyUserCopy(token,
+                                        oldPin != NULL ? d->oldKey : NULL);
         /* Stateful records found newer in the pass re-seal from the old key. */
         if (reKeyOld)
             token->reKeyOld = d->oldKey;
@@ -11817,7 +12418,8 @@ static int wp11_Slot_SetUserPin(WP11_Slot* slot, const word32* since,
         if (wp11_setPinStoreHook != NULL)
             wp11_setPinStoreHook();
     #endif
-        ret = wp11_Token_Store(token, (int)slot->id);
+        if (ret == 0)
+            ret = wp11_Token_Store(token, (int)slot->id);
         token->reKeyOld = NULL;
         if (ret != 0) {
             wp11_Token_ReKeySwap(reKey, reKeyCnt);
@@ -12033,12 +12635,18 @@ static void wp11_Slot_LogoutLocked(WP11_Slot* slot)
 {
 #ifndef WOLFPKCS11_NO_STORE
     int state;
+    int user;
 #endif
     WP11_Object* object;
 
 #ifndef WOLFPKCS11_NO_STORE
     state = slot->token.loginState;
-    if (state == WP11_APP_STATE_RO_USER || state == WP11_APP_STATE_RW_USER) {
+    user = state == WP11_APP_STATE_RO_USER || state == WP11_APP_STATE_RW_USER;
+    if (state == WP11_APP_STATE_RW_SO)
+        wc_ForceZero(slot->token.soKek, sizeof(slot->token.soKek));
+    /* The SO keeps the public-object key while the token key is in use. */
+    if (user || (state == WP11_APP_STATE_RW_SO &&
+            !wp11_Token_KeyInUse(&slot->token))) {
         /* Protect every decoded object; one failure must not stop the rest. */
         if (wp11_Token_EncodeObjects(&slot->token, 1) != 0) {
             WOLFPKCS11_MSG("Logout: failed to protect a token object");
@@ -12051,7 +12659,9 @@ static void wp11_Slot_LogoutLocked(WP11_Slot* slot)
         }
         /* Zero token key only on user logout — SO logout must preserve it
          * for subsequent object encryption (e.g., empty-PIN flow). */
-        wc_ForceZero(slot->token.key, sizeof(slot->token.key));
+        if (user)
+            wc_ForceZero(slot->token.key, sizeof(slot->token.key));
+        wc_ForceZero(slot->token.pubKey, sizeof(slot->token.pubKey));
         for (object = slot->token.object; object != NULL;
                 object = object->next) {
             if (object->encoded)
@@ -14621,6 +15231,12 @@ static void wp11_Token_CopyLoaded(WP11_Token* dst, const WP11_Token* src)
     dst->storeGenKnown = src->storeGenKnown;
     dst->storeSoFailBase = src->storeSoFailBase;
     dst->storeUserFailBase = src->storeUserFailBase;
+    XMEMCPY(dst->soKeySeed, src->soKeySeed, sizeof(dst->soKeySeed));
+    XMEMCPY(dst->soKek, src->soKek, sizeof(dst->soKek));
+    XMEMCPY(dst->pubKey, src->pubKey, sizeof(dst->pubKey));
+    XMEMCPY(dst->pubByUser, src->pubByUser, sizeof(dst->pubByUser));
+    XMEMCPY(dst->pubBySo, src->pubBySo, sizeof(dst->pubBySo));
+    dst->pubKeyStored = src->pubKeyStored;
 }
 
 /**
@@ -14895,11 +15511,21 @@ static int wp11_Slot_Reload(WP11_Slot* slot, int force)
                 object->undecoded = 1;
             }
         }
+        for (object = token->object; !user && !logout &&
+                token->loginState == WP11_APP_STATE_RW_SO && object != NULL;
+                object = object->next) {
+            if (object->pubKeyRec && object->undecoded &&
+                    wp11_Object_Decode(object) != 0) {
+                object->undecoded = 1;
+            }
+        }
         /* Without a login the key is the empty PIN's, if the PIN still is. */
         dropKey = !user && token->userPinEmpty != 1 &&
             wp11_Token_UserPinChanged(token, prev);
         if (dropKey) {
             wc_ForceZero(token->key, sizeof(token->key));
+            if (token->loginState != WP11_APP_STATE_RW_SO)
+                wc_ForceZero(token->pubKey, sizeof(token->pubKey));
             slot->logoutCnt++;
             slot->userLogoutCnt++;
             wp11_Slot_EndReplaced(slot);
@@ -14953,6 +15579,7 @@ static int wp11_Slot_Reload(WP11_Slot* slot, int force)
             /* An empty PIN leaves the token decoded as a load does. */
             if (token->userPinEmpty == 1) {
                 XMEMCPY(token->key, emptyKey, sizeof(token->key));
+                wp11_Token_PubKeyLoad(token);
                 for (object = token->object; object != NULL;
                         object = object->next) {
                     if ((wp11_Object_IsEncrypted(object) ||
