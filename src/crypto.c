@@ -1995,9 +1995,14 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
         #endif
         #ifdef WOLFPKCS11_MLDSA
                 case CKK_ML_DSA:
+                    if (objClass == CKO_PUBLIC_KEY && data[1] != NULL)
+                        return CKR_TEMPLATE_INCONSISTENT;
                     ret = WP11_Object_SetMldsaKey(obj, data, len);
                     if (ret == NOT_COMPILED_IN)
                         return CKR_PARAMETER_SET_NOT_SUPPORTED;
+                    if (ret == BAD_FUNC_ARG || ret == BUFFER_E ||
+                            ret == PUBLIC_KEY_E)
+                        return CKR_ATTRIBUTE_VALUE_INVALID;
                     break;
         #endif
         #ifndef NO_DH
@@ -2010,9 +2015,18 @@ static CK_RV SetAttributeValue(WP11_Session* session, WP11_Object* obj,
         #endif
         #ifdef WOLFPKCS11_MLKEM
                 case CKK_ML_KEM:
+                    if (objClass == CKO_PUBLIC_KEY && data[1] != NULL)
+                        return CKR_TEMPLATE_INCONSISTENT;
                     ret = WP11_Object_SetMlKemKey(obj, data, len);
                     if (ret == NOT_COMPILED_IN)
                         return CKR_PARAMETER_SET_NOT_SUPPORTED;
+                    if (ret == BAD_FUNC_ARG || ret == BUFFER_E ||
+                            ret == PUBLIC_KEY_E)
+                        return CKR_ATTRIBUTE_VALUE_INVALID;
+                #if LIBWOLFSSL_VERSION_HEX >= 0x05009000
+                    if (ret == MLKEM_PUB_HASH_E)
+                        return CKR_ATTRIBUTE_VALUE_INVALID;
+                #endif
                     break;
         #endif
         #ifdef WOLFPKCS11_LMS
@@ -2772,6 +2786,21 @@ static CK_RV CheckCreateRequiredAttributes(CK_ATTRIBUTE_PTR pTemplate,
                 if (rv == CKR_OK)
                     rv = RequireAttribute(pTemplate, ulCount, CKA_BASE);
                 if (rv == CKR_OK)
+                    rv = RequireAttribute(pTemplate, ulCount, CKA_VALUE);
+                break;
+        #endif
+        #if defined(WOLFPKCS11_MLDSA) || defined(WOLFPKCS11_MLKEM)
+        #ifdef WOLFPKCS11_MLDSA
+            case CKK_ML_DSA:
+        #endif
+        #ifdef WOLFPKCS11_MLKEM
+            case CKK_ML_KEM:
+        #endif
+                rv = RequireAttribute(pTemplate, ulCount, CKA_PARAMETER_SET);
+                if (rv != CKR_OK)
+                    break;
+                FindAttributeType(pTemplate, ulCount, CKA_SEED, &attr);
+                if (objectClass == CKO_PUBLIC_KEY || attr == NULL)
                     rv = RequireAttribute(pTemplate, ulCount, CKA_VALUE);
                 break;
         #endif
@@ -7389,12 +7418,9 @@ static CK_RV wp11_C_SignInit(CK_SESSION_HANDLE hSession,
         case CKM_HASH_ML_DSA:
             if (type != CKK_ML_DSA)
                 return CKR_KEY_TYPE_INCONSISTENT;
-            if ((pMechanism->pParameter != NULL) &&
+            if ((pMechanism->pParameter == NULL) ||
                 (pMechanism->ulParameterLen !=
                                        sizeof(CK_HASH_SIGN_ADDITIONAL_CONTEXT)))
-                return CKR_MECHANISM_PARAM_INVALID;
-            if ((pMechanism->pParameter == NULL) &&
-                                              (pMechanism->ulParameterLen != 0))
                 return CKR_MECHANISM_PARAM_INVALID;
 
             ret = WP11_Session_SetMldsaParams(session,
@@ -8771,12 +8797,9 @@ static CK_RV wp11_C_VerifyInit(CK_SESSION_HANDLE hSession,
         case CKM_HASH_ML_DSA:
             if (type != CKK_ML_DSA)
                 return CKR_KEY_TYPE_INCONSISTENT;
-            if ((pMechanism->pParameter != NULL) &&
+            if ((pMechanism->pParameter == NULL) ||
                 (pMechanism->ulParameterLen !=
                                        sizeof(CK_HASH_SIGN_ADDITIONAL_CONTEXT)))
-                return CKR_MECHANISM_PARAM_INVALID;
-            if ((pMechanism->pParameter == NULL) &&
-                                              (pMechanism->ulParameterLen != 0))
                 return CKR_MECHANISM_PARAM_INVALID;
 
             ret = WP11_Session_SetMldsaParams(session,
@@ -10949,6 +10972,48 @@ static CK_RV XmssFindGenAttr(CK_ATTRIBUTE_PTR pPublicKeyTemplate,
 }
 #endif /* WOLFPKCS11_XMSS_PRIVATE */
 
+#if defined(WOLFPKCS11_MLDSA) || defined(WOLFPKCS11_MLKEM)
+static CK_RV MlKeyPairGenCheck(CK_ATTRIBUTE_PTR pPublicKeyTemplate,
+                               CK_ULONG ulPublicKeyAttributeCount,
+                               CK_ATTRIBUTE_PTR pPrivateKeyTemplate,
+                               CK_ULONG ulPrivateKeyAttributeCount,
+                               CK_ATTRIBUTE_PTR* paramSet)
+{
+    CK_ATTRIBUTE_PTR pubAttr = NULL;
+    CK_ATTRIBUTE_PTR privAttr = NULL;
+
+    FindAttributeType(pPrivateKeyTemplate, ulPrivateKeyAttributeCount,
+                      CKA_SEED, &privAttr);
+    if (privAttr != NULL)
+        return CKR_TEMPLATE_INCONSISTENT;
+    FindAttributeType(pPrivateKeyTemplate, ulPrivateKeyAttributeCount,
+                      CKA_VALUE, &privAttr);
+    FindAttributeType(pPublicKeyTemplate, ulPublicKeyAttributeCount,
+                      CKA_VALUE, &pubAttr);
+    if (pubAttr != NULL || privAttr != NULL)
+        return CKR_TEMPLATE_INCONSISTENT;
+
+    FindAttributeType(pPublicKeyTemplate, ulPublicKeyAttributeCount,
+                      CKA_PARAMETER_SET, &pubAttr);
+    if (pubAttr == NULL)
+        return CKR_TEMPLATE_INCOMPLETE;
+    FindAttributeType(pPrivateKeyTemplate, ulPrivateKeyAttributeCount,
+                      CKA_PARAMETER_SET, &privAttr);
+    if (pubAttr->pValue == NULL || pubAttr->ulValueLen != sizeof(CK_ULONG) ||
+        (privAttr != NULL && (privAttr->pValue == NULL ||
+            privAttr->ulValueLen != sizeof(CK_ULONG)))) {
+        return CKR_ATTRIBUTE_VALUE_INVALID;
+    }
+    if (privAttr != NULL &&
+            *(CK_ULONG*)privAttr->pValue != *(CK_ULONG*)pubAttr->pValue) {
+        return CKR_TEMPLATE_INCONSISTENT;
+    }
+
+    *paramSet = pubAttr;
+    return CKR_OK;
+}
+#endif
+
 static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
                                     CK_MECHANISM_PTR pMechanism,
                                     CK_ATTRIBUTE_PTR pPublicKeyTemplate,
@@ -11292,6 +11357,12 @@ static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
                 return CKR_MECHANISM_PARAM_INVALID;
             }
 
+            rv = MlKeyPairGenCheck(pPublicKeyTemplate,
+                ulPublicKeyAttributeCount, pPrivateKeyTemplate,
+                ulPrivateKeyAttributeCount, &reqAttr);
+            if (rv != CKR_OK)
+                return rv;
+
             *phPublicKey = *phPrivateKey = CK_INVALID_HANDLE;
             rv = NewObject(session, CKK_ML_DSA, CKO_PUBLIC_KEY,
                            pPublicKeyTemplate, ulPublicKeyAttributeCount, &pub);
@@ -11314,6 +11385,12 @@ static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
                                               pMechanism->ulParameterLen != 0) {
                 return CKR_MECHANISM_PARAM_INVALID;
             }
+
+            rv = MlKeyPairGenCheck(pPublicKeyTemplate,
+                ulPublicKeyAttributeCount, pPrivateKeyTemplate,
+                ulPrivateKeyAttributeCount, &reqAttr);
+            if (rv != CKR_OK)
+                return rv;
 
             *phPublicKey = *phPrivateKey = CK_INVALID_HANDLE;
 
@@ -11340,8 +11417,6 @@ static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
                     unsigned int i;
                     unsigned int privParamIdx =
                                        (unsigned int)ulPrivateKeyAttributeCount;
-                    unsigned int pubParamIdx  =
-                                        (unsigned int)ulPublicKeyAttributeCount;
                     CK_ULONG newAttrCount;
                     /* Copy existing attributes; note any existing
                      * CKA_PARAMETER_SET in the private template. */
@@ -11352,41 +11427,23 @@ static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
                             privParamIdx = i;
                         }
                     }
-                    /* Find CKA_PARAMETER_SET in the public key template. */
-                    for (i = 0; i < ulPublicKeyAttributeCount; i++) {
-                        if (pPublicKeyTemplate[i].type == CKA_PARAMETER_SET) {
-                            pubParamIdx = i;
-                            break;
-                        }
-                    }
-                    if (pubParamIdx == ulPublicKeyAttributeCount) {
-                        /* CKA_PARAMETER_SET is not found in the public key
-                         * template */
-                        rv = CKR_TEMPLATE_INCOMPLETE;
+                    if (privParamIdx < ulPrivateKeyAttributeCount) {
+                        privTmplCpy[privParamIdx].pValue = reqAttr->pValue;
+                        privTmplCpy[privParamIdx].ulValueLen =
+                            reqAttr->ulValueLen;
+                        newAttrCount = ulPrivateKeyAttributeCount;
                     }
                     else {
-                        /* Ensure exactly one CKA_PARAMETER_SET in the private
-                         * template: overwrite existing entry if present,
-                         * otherwise append. */
-                        if (privParamIdx < ulPrivateKeyAttributeCount) {
-                            privTmplCpy[privParamIdx].pValue =
-                                pPublicKeyTemplate[pubParamIdx].pValue;
-                            privTmplCpy[privParamIdx].ulValueLen =
-                                pPublicKeyTemplate[pubParamIdx].ulValueLen;
-                            newAttrCount = ulPrivateKeyAttributeCount;
-                        }
-                        else {
-                            privTmplCpy[ulPrivateKeyAttributeCount].type =
-                                CKA_PARAMETER_SET;
-                            privTmplCpy[ulPrivateKeyAttributeCount].pValue =
-                                pPublicKeyTemplate[pubParamIdx].pValue;
-                            privTmplCpy[ulPrivateKeyAttributeCount].ulValueLen =
-                                pPublicKeyTemplate[pubParamIdx].ulValueLen;
-                            newAttrCount = ulPrivateKeyAttributeCount + 1;
-                        }
-                        rv = NewObject(session, CKK_ML_KEM, CKO_PRIVATE_KEY,
-                                privTmplCpy, newAttrCount, &priv);
+                        privTmplCpy[ulPrivateKeyAttributeCount].type =
+                            CKA_PARAMETER_SET;
+                        privTmplCpy[ulPrivateKeyAttributeCount].pValue =
+                            reqAttr->pValue;
+                        privTmplCpy[ulPrivateKeyAttributeCount].ulValueLen =
+                            reqAttr->ulValueLen;
+                        newAttrCount = ulPrivateKeyAttributeCount + 1;
                     }
+                    rv = NewObject(session, CKK_ML_KEM, CKO_PRIVATE_KEY,
+                            privTmplCpy, newAttrCount, &priv);
                 }
                 XFREE(privTmplCpy, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             }
