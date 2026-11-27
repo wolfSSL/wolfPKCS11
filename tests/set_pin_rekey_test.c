@@ -392,19 +392,23 @@ static int run_store_fail_phase(byte* curPin, CK_ULONG curPinLen)
 #define STRESS_PIN_JITTER_US  8000
 #define STRESS_KEY_DELAY_US   10000
 
+/* Keeps a stress login from using a PIN that a C_SetPIN is replacing. */
+static pthread_rwlock_t stressPinOpLock = PTHREAD_RWLOCK_INITIALIZER;
 /* Last PIN successfully set by the PIN-changing threads. */
 static pthread_mutex_t stressLock = PTHREAD_MUTEX_INITIALIZER;
 static byte stressPin[STRESS_PIN_BUF_SZ];
+static byte stressStart[STRESS_PIN_BUF_SZ];
 static int stressPinOk;
 static int stressPinErr;
 static int stressKeyErr;
 static int stressDone;
 /* Whether each stress key should exist once the threads are done. */
-static int stressKeyLive[STRESS_KEYS];
+static int stressKeyLive[2 * STRESS_KEYS];
 
 typedef struct StressArgs {
     CK_SLOT_ID slot;
     char tag;
+    int base;
 } StressArgs;
 
 static void stress_key_id(int i, byte* id)
@@ -437,6 +441,7 @@ static void* stress_change_pin(void* arg)
     }
     for (i = 0; i < STRESS_PIN_CHANGES; i++) {
         usleep((useconds_t)(rand_r(&seed) % STRESS_PIN_JITTER_US));
+        pthread_rwlock_rdlock(&stressPinOpLock);
         pthread_mutex_lock(&stressLock);
         XMEMCPY(oldPin, stressPin, sizeof(oldPin));
         pthread_mutex_unlock(&stressLock);
@@ -454,6 +459,7 @@ static void* stress_change_pin(void* arg)
             stressPinErr++;
         }
         pthread_mutex_unlock(&stressLock);
+        pthread_rwlock_unlock(&stressPinOpLock);
     }
     (void)funcList->C_CloseSession(session);
     return NULL;
@@ -490,16 +496,84 @@ static void* stress_create_keys(void* arg)
         return NULL;
     }
     for (i = 0; i < STRESS_KEYS && !done; i++) {
-        stress_key_id(i, id);
-        stress_key_value(i, value);
+        stress_key_id(args->base + i, id);
+        stress_key_value(args->base + i, value);
         tmpl[7].ulValueLen = (CK_ULONG)XSTRLEN((char*)id);
         rv = funcList->C_CreateObject(session, tmpl,
             sizeof(tmpl) / sizeof(*tmpl), &key);
         if (rv == CKR_OK && (i % 3) == 2)
             rv = funcList->C_DestroyObject(session, key);
         else if (rv == CKR_OK)
-            stressKeyLive[i] = 1;
+            stressKeyLive[args->base + i] = 1;
         if (rv != CKR_OK)
+            stressKeyErr++;
+
+        usleep(STRESS_KEY_DELAY_US);
+        pthread_mutex_lock(&stressLock);
+        done = stressDone;
+        pthread_mutex_unlock(&stressLock);
+    }
+    (void)funcList->C_CloseSession(session);
+    return NULL;
+}
+
+/* Create token AES keys while logged in for every other key, logging out
+ * after each, so the PIN changes run both with and without a login. */
+static void* stress_login_create_keys(void* arg)
+{
+    StressArgs* args = (StressArgs*)arg;
+    CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+    CK_OBJECT_CLASS secretClass = CKO_SECRET_KEY;
+    CK_KEY_TYPE aesType = CKK_AES;
+    CK_BBOOL ckTrue = CK_TRUE;
+    CK_BBOOL ckFalse = CK_FALSE;
+    CK_OBJECT_HANDLE key;
+    byte id[STRESS_ID_SZ];
+    byte value[sizeof(aesValue)];
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS,       &secretClass, sizeof(secretClass) },
+        { CKA_KEY_TYPE,    &aesType,     sizeof(aesType)     },
+        { CKA_TOKEN,       &ckTrue,      sizeof(ckTrue)      },
+        { CKA_PRIVATE,     &ckFalse,     sizeof(ckFalse)     },
+        { CKA_SENSITIVE,   &ckFalse,     sizeof(ckFalse)     },
+        { CKA_EXTRACTABLE, &ckTrue,      sizeof(ckTrue)      },
+        { CKA_VALUE,       value,        sizeof(value)       },
+        { CKA_ID,          id,           0                   },
+    };
+    CK_RV rv;
+    int loggedIn;
+    int done = 0;
+    int i;
+    int idx;
+
+    if (open_session(args->slot, NULL, 0, &session) != CKR_OK) {
+        stressKeyErr++;
+        return NULL;
+    }
+    for (i = 0; i < STRESS_KEYS && !done; i++) {
+        idx = args->base + i;
+        loggedIn = 0;
+        if ((i % 2) == 0) {
+            pthread_rwlock_wrlock(&stressPinOpLock);
+            rv = funcList->C_Login(session, CKU_USER, stressPin,
+                                   STRESS_PIN_LEN);
+            pthread_rwlock_unlock(&stressPinOpLock);
+            loggedIn = (rv == CKR_OK);
+            if (rv != CKR_OK)
+                stressKeyErr++;
+        }
+        stress_key_id(idx, id);
+        stress_key_value(idx, value);
+        tmpl[7].ulValueLen = (CK_ULONG)XSTRLEN((char*)id);
+        rv = funcList->C_CreateObject(session, tmpl,
+            sizeof(tmpl) / sizeof(*tmpl), &key);
+        if (rv == CKR_OK && (i % 3) == 2)
+            rv = funcList->C_DestroyObject(session, key);
+        else if (rv == CKR_OK)
+            stressKeyLive[idx] = 1;
+        if (rv != CKR_OK && (loggedIn || rv != CKR_USER_NOT_LOGGED_IN))
+            stressKeyErr++;
+        if (loggedIn && funcList->C_Logout(session) != CKR_OK)
             stressKeyErr++;
 
         usleep(STRESS_KEY_DELAY_US);
@@ -524,7 +598,7 @@ static CK_RV check_stress_keys(CK_SESSION_HANDLE session)
     };
     int i;
 
-    for (i = 0; rv == CKR_OK && i < STRESS_KEYS; i++) {
+    for (i = 0; rv == CKR_OK && i < 2 * STRESS_KEYS; i++) {
         stress_key_id(i, id);
         rv = find_key(session, CKO_SECRET_KEY, id,
                       (CK_ULONG)XSTRLEN((char*)id), &key);
@@ -543,17 +617,28 @@ static CK_RV check_stress_keys(CK_SESSION_HANDLE session)
     return rv;
 }
 
-/* Race PIN changes against each other and key creation, then verify. */
-static void run_threaded_phase(byte* curPin, CK_ULONG curPinLen)
+/* Race PIN changes against each other and key creation, then verify. With
+ * login 0, the PIN changes run from public sessions between logins. */
+static int run_threaded_phase(byte* curPin, CK_ULONG curPinLen, int login)
 {
+    int failed = test_failed;
     CK_RV rv;
     CK_SLOT_ID slot = 0;
     CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
-    byte startPin[STRESS_PIN_BUF_SZ] = "stress-pin-start";
+    byte startPin[STRESS_PIN_BUF_SZ];
     StressArgs argsA, argsB, argsC;
     pthread_t threadA, threadB, threadC;
     int startedA, startedB, startedC;
+    int live = 0;
+    int i;
 
+    printf("--- threaded C_SetPIN race%s ---\n", login ? "" : " without login");
+    XSTRNCPY((char*)startPin, login ? "stress-pin-start" : "stress-pin-other",
+             sizeof(startPin));
+    stressPinOk = 0;
+    stressPinErr = 0;
+    stressKeyErr = 0;
+    stressDone = 0;
     rv = restart(&slot);
     if (rv == CKR_OK)
         rv = open_session(slot, NULL, 0, &session);
@@ -561,20 +646,26 @@ static void run_threaded_phase(byte* curPin, CK_ULONG curPinLen)
         rv = funcList->C_SetPIN(session, curPin, curPinLen, startPin,
                                 STRESS_PIN_LEN);
     }
+    /* Token keys with CKA_PRIVATE false need a login once a PIN is set. */
+    if (rv == CKR_OK && login)
+        rv = funcList->C_Login(session, CKU_USER, startPin, STRESS_PIN_LEN);
     CHECK_RV(rv, "set PIN for threaded phase", CKR_OK);
     if (rv != CKR_OK) {
         shutdown_lib(session);
-        return;
+        return -1;
     }
 
     XMEMCPY(stressPin, startPin, sizeof(stressPin));
     argsA.slot = argsB.slot = argsC.slot = slot;
-    argsA.tag = 'A';
-    argsB.tag = 'B';
+    argsA.tag = login ? 'A' : 'C';
+    argsB.tag = login ? 'B' : 'D';
     argsC.tag = 'K';
+    argsA.base = argsB.base = 0;
+    argsC.base = login ? 0 : STRESS_KEYS;
     startedA = pthread_create(&threadA, NULL, stress_change_pin, &argsA) == 0;
     startedB = pthread_create(&threadB, NULL, stress_change_pin, &argsB) == 0;
-    startedC = pthread_create(&threadC, NULL, stress_create_keys, &argsC) == 0;
+    startedC = pthread_create(&threadC, NULL,
+        login ? stress_create_keys : stress_login_create_keys, &argsC) == 0;
     CHECK_TRUE(startedA && startedB && startedC, "start threads");
     if (startedA)
         pthread_join(threadA, NULL);
@@ -589,6 +680,9 @@ static void run_threaded_phase(byte* curPin, CK_ULONG curPinLen)
     CHECK_TRUE(stressPinErr == 0, "concurrent C_SetPIN only lose races");
     CHECK_TRUE(stressPinOk > 0, "concurrent C_SetPIN made progress");
     CHECK_TRUE(stressKeyErr == 0, "keys created and destroyed concurrently");
+    for (i = argsC.base; i < argsC.base + STRESS_KEYS; i++)
+        live += stressKeyLive[i];
+    printf("INFO: %d PIN changes, %d keys live\n", stressPinOk, live);
     shutdown_lib(session);
     session = CK_INVALID_HANDLE;
 
@@ -605,6 +699,7 @@ static void run_threaded_phase(byte* curPin, CK_ULONG curPinLen)
     CHECK_RV(rv, "concurrently created keys usable after threaded phase",
              CKR_OK);
     shutdown_lib(session);
+    return test_failed == failed ? 0 : -1;
 }
 #endif /* SET_PIN_REKEY_THREADS */
 
@@ -720,7 +815,10 @@ static void run_test(void)
 #endif
 
 #ifdef SET_PIN_REKEY_THREADS
-    run_threaded_phase(curPin, curPinLen);
+    if (run_threaded_phase(curPin, curPinLen, 1) == 0) {
+        XMEMCPY(stressStart, stressPin, sizeof(stressStart));
+        (void)run_threaded_phase(stressStart, STRESS_PIN_LEN, 0);
+    }
 #endif
 
     cleanup_test_files();

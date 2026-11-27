@@ -6727,15 +6727,12 @@ static CK_RV test_wrap_key_wrap_with_trusted(void* args)
     CK_ULONG untrustedWrapTmplCnt = sizeof(untrustedWrapTmpl) /
                                     sizeof(*untrustedWrapTmpl);
     /* CKA_TRUSTED may only be set by the SO, so the trusted wrapping key is
-     * provisioned as a public session object under an SO session.
-     * CKA_DERIVE lets the token key reach the key state check as an HKDF
-     * salt key below. */
+     * provisioned as a public session object under an SO session. */
     CK_ATTRIBUTE trustedWrapTmpl[] = {
         { CKA_CLASS,       &secretKeyClass,   sizeof(secretKeyClass)    },
         { CKA_KEY_TYPE,    &aesKeyType,       sizeof(aesKeyType)        },
         { CKA_VALUE,       aes_128_key,       sizeof(aes_128_key)       },
         { CKA_WRAP,        &ckTrue,           sizeof(ckTrue)            },
-        { CKA_DERIVE,      &ckTrue,           sizeof(ckTrue)            },
         { CKA_TRUSTED,     &ckTrusted,        sizeof(CK_BBOOL)          },
         { CKA_TOKEN,       &onToken,          sizeof(onToken)           },
         { CKA_PRIVATE,     &ckFalse,          sizeof(ckFalse)           },
@@ -6817,66 +6814,12 @@ static CK_RV test_wrap_key_wrap_with_trusted(void* args)
                                   wrappedKey, &wrappedKeyLen);
         CHECK_CKR(ret, "Wrap CKA_WRAP_WITH_TRUSTED key with trusted wrapping key");
     }
-    /* A token key the SO created does not decode for the user. */
     if (ret == CKR_OK) {
         wrappedKeyLen = sizeof(wrappedKey);
         ret = funcList->C_WrapKey(session, &mech, trustedTokenKey, key,
                                   wrappedKey, &wrappedKeyLen);
-        CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED,
-                       "Wrap with trusted token key created by SO");
+        CHECK_CKR(ret, "Wrap with trusted token key created by SO");
     }
-#ifndef NO_SHA256
-    if (ret == CKR_OK) {
-        CK_MECHANISM digestMech = { CKM_SHA256, NULL, 0 };
-
-        ret = funcList->C_DigestInit(session, &digestMech);
-        CHECK_CKR(ret, "Digest init for token key created by SO");
-        if (ret == CKR_OK) {
-            ret = funcList->C_DigestKey(session, trustedTokenKey);
-            CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED,
-                           "Digest token key created by SO");
-        }
-    }
-#endif
-#ifdef WOLFPKCS11_HKDF
-    if (ret == CKR_OK) {
-        CK_OBJECT_HANDLE base = CK_INVALID_HANDLE;
-        CK_OBJECT_HANDLE derived = CK_INVALID_HANDLE;
-        CK_ULONG outLen = 32;
-        CK_HKDF_PARAMS hkdf;
-        CK_MECHANISM hkdfMech = { CKM_HKDF_DERIVE, &hkdf, sizeof(hkdf) };
-        CK_ATTRIBUTE baseTmpl[] = {
-            { CKA_CLASS,    &secretKeyClass, sizeof(secretKeyClass) },
-            { CKA_KEY_TYPE, &genericKeyType, sizeof(genericKeyType) },
-            { CKA_VALUE,    keyData,         sizeof(keyData)        },
-            { CKA_DERIVE,   &ckTrue,         sizeof(ckTrue)         },
-        };
-        CK_ATTRIBUTE outTmpl[] = {
-            { CKA_CLASS,     &secretKeyClass, sizeof(secretKeyClass) },
-            { CKA_KEY_TYPE,  &genericKeyType, sizeof(genericKeyType) },
-            { CKA_VALUE_LEN, &outLen,         sizeof(outLen)         },
-        };
-
-        XMEMSET(&hkdf, 0, sizeof(hkdf));
-        hkdf.bExtract = CK_TRUE;
-        hkdf.prfHashMechanism = CKM_SHA256_HMAC;
-        hkdf.ulSaltType = CKF_HKDF_SALT_KEY;
-        hkdf.hSaltKey = trustedTokenKey;
-        ret = funcList->C_CreateObject(session, baseTmpl,
-                                       sizeof(baseTmpl) / sizeof(*baseTmpl),
-                                       &base);
-        CHECK_CKR(ret, "Create HKDF base key");
-        if (ret == CKR_OK) {
-            ret = funcList->C_DeriveKey(session, &hkdfMech, base, outTmpl,
-                                        sizeof(outTmpl) / sizeof(*outTmpl),
-                                        &derived);
-            CHECK_CKR_FAIL(ret, CKR_FUNCTION_FAILED,
-                           "HKDF with salt token key created by SO");
-            funcList->C_DestroyObject(session, base);
-        }
-    }
-#endif
-
     funcList->C_DestroyObject(session, untrustedKey);
     funcList->C_DestroyObject(session, trustedKey);
     funcList->C_DestroyObject(session, trustedTokenKey);

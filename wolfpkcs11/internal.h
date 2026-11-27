@@ -333,6 +333,13 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 /* Flags for token. */
 #define WP11_TOKEN_FLAG_USER_PIN_SET   0x00000001
 #define WP11_TOKEN_FLAG_SO_PIN_SET     0x00000002
+/* The token record holds the SO key seed and both public-object key copies. */
+#define WP11_TOKEN_FLAG_PUB_EXT        0x00000004
+#define WP11_TOKEN_FLAG_PUB_USER       0x00000008
+#define WP11_TOKEN_FLAG_PUB_SO         0x00000010
+
+/* Public-object key encrypted under a key encryption key: IV, key and tag. */
+#define WP11_PUB_KEY_WRAP_SZ           (12 + 32 + 16)
 
 /* Operation session has initialized for. */
 #define WP11_INIT_AES_CBC_ENC          0x0001
@@ -537,6 +544,9 @@ WP11_API void WP11_Slot_SetPinCheckHook(void (*hook)(void));
 WP11_API void WP11_Test_SetPinStoreHook(void (*hook)(void));
 WP11_API void WP11_Test_FailTokenInit(int fail);
 WP11_API void WP11_Test_FailSeedRandom(int fail);
+#ifndef WOLFPKCS11_NO_STORE
+WP11_API void WP11_Test_StoreLegacyFormat(int on);
+#endif
 #if !defined(WOLFPKCS11_NO_STORE) && !defined(WOLFPKCS11_CUSTOM_STORE) && \
     !defined(WOLFPKCS11_TPM_STORE) && !defined(_WIN32) && !defined(_MSC_VER)
 /* Exit status of a process ended by the store rename test hook. */

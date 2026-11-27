@@ -899,6 +899,12 @@ if(WOLFPKCS11_TESTS)
     add_wpkcs11_test(slot_devid_default_test
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/slot_devid_default_test.c)
     set_tests_properties(slot_devid_default_test PROPERTIES SKIP_RETURN_CODE 77)
+    foreach(test_target token_key_unset_test token_pub_key_test)
+        add_wpkcs11_test(${test_target}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/${test_target}.c)
+        set_tests_properties(${test_target} PROPERTIES SKIP_RETURN_CODE 77)
+    endforeach()
+    target_link_libraries(token_pub_key_test wolfpkcs11)
 endif()
 
 if(WOLFPKCS11_EXAMPLES)

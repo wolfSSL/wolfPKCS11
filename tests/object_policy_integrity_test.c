@@ -1444,6 +1444,16 @@ static CK_RV create_unbound_public_key(CK_SESSION_HANDLE session)
     return rv;
 }
 
+static CK_RV create_aes_and_public_key(CK_SESSION_HANDLE session)
+{
+    CK_RV rv;
+
+    rv = create_aes_key(session);
+    if (rv == CKR_OK)
+        rv = create_unbound_public_key(session);
+    return rv;
+}
+
 /* With the user's key never decoded in this process, a PIN change whose
  * store fails must not touch the stored key. */
 static int child_undecoded_keys_survive_failed_pin_change(int asSO)
@@ -1461,7 +1471,7 @@ static int child_undecoded_keys_survive_failed_pin_change(int asSO)
         rv = open_session(slot, 0, &session);
     if (rv == CKR_OK && asSO)
         rv = funcList->C_Login(session, CKU_SO, soPin, sizeof(soPin) - 1);
-    if (rv == CKR_OK)
+    if (rv == CKR_OK && asSO)
         rv = create_unbound_public_key(session);
     if (rv == CKR_OK && block_store(lockPath, sizeof(lockPath)) != 0)
         rv = CKR_GENERAL_ERROR;
@@ -1530,8 +1540,8 @@ static void test_failed_store_keeps_undecoded_keys(void)
 
     printf("\n--- failed PIN change with undecoded keys keeps them ---\n");
     set_aes_check();
-    rv = store_objects(create_aes_key);
-    CHECK_RV(rv, "store AES key", CKR_OK);
+    rv = store_objects(create_aes_and_public_key);
+    CHECK_RV(rv, "store AES keys", CKR_OK);
     if (rv == CKR_OK) {
         CHECK_TRUE(run_in_child(child_public_pin_change_fails) == CHILD_PASS,
                    "public session PIN change store failure is forced");
@@ -1539,8 +1549,8 @@ static void test_failed_store_keeps_undecoded_keys(void)
                    "key survives a failed public session PIN change");
     }
     cleanup_test_files();
-    rv = store_objects(create_aes_key);
-    CHECK_RV(rv, "store AES key", CKR_OK);
+    rv = store_objects(create_aes_and_public_key);
+    CHECK_RV(rv, "store AES keys", CKR_OK);
     if (rv == CKR_OK) {
         CHECK_TRUE(run_in_child(child_so_init_pin_fails) == CHILD_PASS,
                    "SO user PIN init store failure is forced");
