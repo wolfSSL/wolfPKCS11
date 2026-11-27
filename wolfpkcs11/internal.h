@@ -188,6 +188,14 @@ C_EXTRA_FLAGS="-DWOLFSSL_PUBLIC_MP -DWC_RSA_DIRECT"
 #if defined(WOLFPKCS11_LMS_PRIVATE) || defined(WOLFPKCS11_XMSS_PRIVATE)
 #define WOLFPKCS11_STATEFUL_SIG_PRIVATE
 #endif
+/* A device holding the signature state, through wolfSSL crypto callbacks. */
+#define WP11_HSS_DEVICE_ID_LEN    16
+#if defined(WOLFPKCS11_LMS_PRIVATE) && defined(WOLF_CRYPTO_CB) && \
+    defined(WOLF_PRIVATE_KEY_ID) && !defined(WOLF_CRYPTO_CB_FIND) && \
+    defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX >= 0x05009004 && \
+    LMS_MAX_ID_LEN >= WP11_HSS_DEVICE_ID_LEN
+#define WOLFPKCS11_HSS_DEVICE
+#endif
 
 #if defined(WOLFPKCS11_STATEFUL_SIG_PRIVATE) && defined(NO_HMAC)
 #error LMS/HSS and XMSS private keys require HMAC to seal the signature state (not --disable-hmac).
@@ -823,7 +831,7 @@ WP11_LOCAL int WP11_Hss_Verify(unsigned char* sig, word32 sigLen,
 WP11_LOCAL int WP11_Hss_GenerateKeyPair(WP11_Object* pub, WP11_Object* priv,
                                         CK_ULONG levels, CK_LMS_TYPE lmsType,
                                         CK_LMOTS_TYPE lmotsType,
-                                        WP11_Slot* slot);
+                                        int useDevice, WP11_Slot* slot);
 WP11_LOCAL int WP11_Hss_Sign(unsigned char* data, word32 dataLen,
                              unsigned char* sig, word32* sigLen,
                              WP11_Object* priv);

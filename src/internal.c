@@ -6272,13 +6272,13 @@ static int wp11_Object_Store_EccKey(WP11_Object* object, int tokenId, int objId)
 
 #ifdef WOLFPKCS11_MLDSA
 static int MldsaKeyTryDecode(wc_MlDsaKey* key, byte level, byte* data,
-                             word32 len, CK_OBJECT_CLASS class)
+                             word32 len, CK_OBJECT_CLASS class, int devId)
 {
     int ret = 0;
     word32 idx = 0;
 
     /* Init key */
-    ret = wc_MlDsaKey_Init(key, NULL, INVALID_DEVID);
+    ret = wc_MlDsaKey_Init(key, NULL, devId);
 
     if (ret == 0) {
         /* Set level */
@@ -6299,6 +6299,24 @@ static int MldsaKeyTryDecode(wc_MlDsaKey* key, byte level, byte* data,
         wc_MlDsaKey_Free(key);
     }
 
+    return ret;
+}
+
+/* Decode again at the level found, on the object's device, so that failed
+ * level tries never reach the device. */
+static int MldsaKeyOnDevice(WP11_Object* object, byte* data, word32 len)
+{
+    int ret;
+    byte level = 0;
+
+    if (object->devId == INVALID_DEVID)
+        return 0;
+    ret = wc_MlDsaKey_GetParams(object->data.mldsaKey, &level);
+    if (ret == 0) {
+        wc_MlDsaKey_Free(object->data.mldsaKey);
+        ret = MldsaKeyTryDecode(object->data.mldsaKey, level, data, len,
+                                object->objClass, object->devId);
+    }
     return ret;
 }
 
@@ -6337,15 +6355,19 @@ static int wp11_Object_Decode_MldsaKey(WP11_Object* object)
         if (ret == 0) {
             /* Decode ML-DSA private key. */
             ret = MldsaKeyTryDecode(object->data.mldsaKey, WC_ML_DSA_44,
-                                    der, len, object->objClass);
+                                    der, len, object->objClass, INVALID_DEVID);
             if (ret != 0) {
                 ret = MldsaKeyTryDecode(object->data.mldsaKey, WC_ML_DSA_65,
-                                        der, len, object->objClass);
+                                        der, len, object->objClass,
+                                        INVALID_DEVID);
             }
             if (ret != 0) {
                 ret = MldsaKeyTryDecode(object->data.mldsaKey, WC_ML_DSA_87,
-                                        der, len, object->objClass);
+                                        der, len, object->objClass,
+                                        INVALID_DEVID);
             }
+            if (ret == 0)
+                ret = MldsaKeyOnDevice(object, der, len);
         }
         if (der != NULL) {
             wc_ForceZero(der, len);
@@ -6356,16 +6378,20 @@ static int wp11_Object_Decode_MldsaKey(WP11_Object* object)
         /* Decode ML-DSA public key. */
         ret = MldsaKeyTryDecode(object->data.mldsaKey, WC_ML_DSA_44,
                                 object->keyData, object->keyDataLen,
-                                object->objClass);
+                                object->objClass, INVALID_DEVID);
         if (ret != 0) {
             ret = MldsaKeyTryDecode(object->data.mldsaKey, WC_ML_DSA_65,
                                     object->keyData, object->keyDataLen,
-                                    object->objClass);
+                                    object->objClass, INVALID_DEVID);
         }
         if (ret != 0) {
             ret = MldsaKeyTryDecode(object->data.mldsaKey, WC_ML_DSA_87,
                                     object->keyData, object->keyDataLen,
-                                    object->objClass);
+                                    object->objClass, INVALID_DEVID);
+        }
+        if (ret == 0) {
+            ret = MldsaKeyOnDevice(object, object->keyData,
+                                   object->keyDataLen);
         }
     }
     object->encoded = (ret != 0);
@@ -9683,6 +9709,8 @@ static int wp11_Slot_Init(WP11_Slot* slot, int id)
     /* Session objects live and die with the slot's sessions, so their ids
      * start again here, on each C_Initialize. */
     slot->nextSessObjId = 1;
+    /* 0 is a valid crypto-callback device id; software needs INVALID_DEVID. */
+    slot->devId = INVALID_DEVID;
     slot->token.state = WP11_TOKEN_STATE_UNKNOWN;
     slot->token.tokenFlags = 0;
     slot->calls[0].slot = slot;
@@ -18358,7 +18386,17 @@ static int wp11_Object_SetAttr(WP11_Object* object, CK_ATTRIBUTE_TYPE type,
             }
             break;
         case CKA_WOLFSSL_DEVID:
-            object->devId = (int)(*(CK_ULONG*)data);
+        #ifdef WOLFPKCS11_STATEFUL_SIG_PRIVATE
+            /* A device key signs on the device its record names. */
+            if (wp11_Stateful_OnDevice(object) &&
+                    (int)(*(CK_ULONG*)data) != object->devId) {
+                ret = NOT_AVAILABLE_E;
+            }
+            else
+        #endif
+            {
+                object->devId = (int)(*(CK_ULONG*)data);
+            }
             break;
 #ifdef WOLFPKCS11_LMS
         case CKA_HSS_LEVELS:

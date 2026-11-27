@@ -11164,6 +11164,7 @@ static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
             CK_ATTRIBUTE* valueAttr = NULL;
             CK_ATTRIBUTE_PTR privTmpl = NULL;
             CK_ULONG privTmplCnt = 0;
+            CK_ATTRIBUTE* devAttr = NULL;
 
             /* v3.3: the keygen mechanism carries no parameter. */
             if (pMechanism->pParameter != NULL ||
@@ -11206,12 +11207,17 @@ static CK_RV wp11_C_GenerateKeyPair(CK_SESSION_HANDLE hSession,
             if (privTmpl != NULL)
                 XFREE(privTmpl, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             if (rv == CKR_OK) {
+                /* Only a device named in the template holds the state. */
+                FindAttributeType(pPrivateKeyTemplate,
+                    ulPrivateKeyAttributeCount, CKA_WOLFSSL_DEVID, &devAttr);
                 ret = WP11_Hss_GenerateKeyPair(pub, priv, hssLevels, hssLms,
-                    hssLmots, WP11_Session_GetSlot(session));
+                    hssLmots, devAttr != NULL, WP11_Session_GetSlot(session));
                 if (ret == BAD_FUNC_ARG)
                     rv = CKR_ATTRIBUTE_VALUE_INVALID;
                 else if (ret == MEMORY_E)
                     rv = CKR_DEVICE_MEMORY;
+                else if (ret == WC_HW_E)
+                    rv = CKR_DEVICE_ERROR;
                 else if (ret != 0)
                     rv = CKR_FUNCTION_FAILED;
             }
